@@ -1,0 +1,32 @@
+[
+{
+  "directory": "/home/roots/CLionProjects/FFmpegAAc/build",
+  "command": "/usr/bin/g++   -I/usr/local/ffmpeg/include -I/home/roots/CLionProjects/FFmpegAAc/utils -I/home/roots/CLionProjects/FFmpegAAc/log/KXY_Message.h  -g   -std=gnu++17 -o CMakeFiles/FFmpegAAc.dir/main.cpp.o -c /home/roots/CLionProjects/FFmpegAAc/main.cpp",
+  "file": "/home/roots/CLionProjects/FFmpegAAc/main.cpp"
+},
+{
+  "directory": "/home/roots/CLionProjects/FFmpegAAc/build",
+  "command": "/usr/bin/g++   -I/usr/local/ffmpeg/include -I/home/roots/CLionProjects/FFmpegAAc/utils -I/home/roots/CLionProjects/FFmpegAAc/log/KXY_Message.h  -g   -std=gnu++17 -o CMakeFiles/FFmpegAAc.dir/log/KXY_logger.cpp.o -c /home/roots/CLionProjects/FFmpegAAc/log/KXY_logger.cpp",
+  "file": "/home/roots/CLionProjects/FFmpegAAc/log/KXY_logger.cpp"
+},
+{
+  "directory": "/home/roots/CLionProjects/FFmpegAAc/build",
+  "command": "/usr/bin/g++   -I/usr/local/ffmpeg/include -I/home/roots/CLionProjects/FFmpegAAc/utils -I/home/roots/CLionProjects/FFmpegAAc/log/KXY_Message.h  -g   -std=gnu++17 -o CMakeFiles/FFmpegAAc.dir/network/TcpSocket.cpp.o -c /home/roots/CLionProjects/FFmpegAAc/network/TcpSocket.cpp",
+  "file": "/home/roots/CLionProjects/FFmpegAAc/network/TcpSocket.cpp"
+},
+{
+  "directory": "/home/roots/CLionProjects/FFmpegAAc/build",
+  "command": "/usr/bin/g++   -I/usr/local/ffmpeg/include -I/home/roots/CLionProjects/FFmpegAAc/utils -I/home/roots/CLionProjects/FFmpegAAc/log/KXY_Message.h  -g   -std=gnu++17 -o CMakeFiles/FFmpegAAc.dir/network/SocketUtil.cpp.o -c /home/roots/CLionProjects/FFmpegAAc/network/SocketUtil.cpp",
+  "file": "/home/roots/CLionProjects/FFmpegAAc/network/SocketUtil.cpp"
+},
+{
+  "directory": "/home/roots/CLionProjects/FFmpegAAc/build",
+  "command": "/usr/bin/g++   -I/usr/local/ffmpeg/include -I/home/roots/CLionProjects/FFmpegAAc/utils -I/home/roots/CLionProjects/FFmpegAAc/log/KXY_Message.h  -g   -std=gnu++17 -o CMakeFiles/FFmpegAAc.dir/network/BufferWrite.cpp.o -c /home/roots/CLionProjects/FFmpegAAc/network/BufferWrite.cpp",
+  "file": "/home/roots/CLionProjects/FFmpegAAc/network/BufferWrite.cpp"
+},
+{
+  "directory": "/home/roots/CLionProjects/FFmpegAAc/build",
+  "command": "/usr/bin/g++   -I/usr/local/ffmpeg/include -I/home/roots/CLionProjects/FFmpegAAc/utils -I/home/roots/CLionProjects/FFmpegAAc/log/KXY_Message.h  -g   -std=gnu++17 -o CMakeFiles/FFmpegAAc.dir/utils/Time.cpp.o -c /home/roots/CLionProjects/FFmpegAAc/utils/Time.cpp",
+  "file": "/home/roots/CLionProjects/FFmpegAAc/utils/Time.cpp"
+}
+]
