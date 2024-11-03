@@ -21,7 +21,7 @@ enum EventType
 
 class Channel {
 public:
-    typedef srd::function<void()> EventCallback;
+    typedef std::function<void()> EventCallback;
     Channel() = delete;
 
     Channel(int fd)

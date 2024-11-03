@@ -7,6 +7,7 @@
 
 #include "TcpSocket.h"
 #include <string>
+#include "Socket.h"
 
 class SocketUtil {
 public:

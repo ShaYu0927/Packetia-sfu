@@ -1,4 +1,7 @@
 #include "BufferWrite.h"
+#include "Socket.h"
+#include "SocketUtil.h"
+
 
 bool BufferWirte::Append(std::shared_ptr<char> data,uint32_t size,uint32_t index)
 {
@@ -42,7 +45,7 @@ int  BufferWirte::Send(int socketfd,int timeOut)
 {
     if(timeOut > 0)
     {
-        SocketUtil::SetBlock(socketfd, timeOut); 
+        SocketUtil::SetBlock(socketfd,timeOut);
     }
 
     int ret   = 0;

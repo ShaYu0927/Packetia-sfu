@@ -17,7 +17,8 @@ set(CMAKE_CXX_COMPILER_ID "GNU")
 set(CMAKE_CXX_TARGET_INCLUDE_PATH
   "/usr/local/ffmpeg/include"
   "../utils"
-  "../log/KXY_Message.h"
+  "../log"
+  "../network"
   )
 
 # Targets to which this target links.

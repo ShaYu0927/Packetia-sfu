@@ -45,12 +45,17 @@ CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libavutil/samplef
 CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libavutil/version.h
 CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libswscale/swscale.h
 
+CMakeFiles/FFmpegAAc.dir/network/BufferWrite.cpp.o: ../log/KXY_Message.h
+CMakeFiles/FFmpegAAc.dir/network/BufferWrite.cpp.o: ../log/KXY_logger.h
 CMakeFiles/FFmpegAAc.dir/network/BufferWrite.cpp.o: ../network/BufferWrite.cpp
 CMakeFiles/FFmpegAAc.dir/network/BufferWrite.cpp.o: ../network/BufferWrite.h
 CMakeFiles/FFmpegAAc.dir/network/BufferWrite.cpp.o: ../network/Socket.h
+CMakeFiles/FFmpegAAc.dir/network/BufferWrite.cpp.o: ../network/SocketUtil.h
+CMakeFiles/FFmpegAAc.dir/network/BufferWrite.cpp.o: ../network/TcpSocket.h
 
 CMakeFiles/FFmpegAAc.dir/network/SocketUtil.cpp.o: ../log/KXY_Message.h
 CMakeFiles/FFmpegAAc.dir/network/SocketUtil.cpp.o: ../log/KXY_logger.h
+CMakeFiles/FFmpegAAc.dir/network/SocketUtil.cpp.o: ../network/Socket.h
 CMakeFiles/FFmpegAAc.dir/network/SocketUtil.cpp.o: ../network/SocketUtil.cpp
 CMakeFiles/FFmpegAAc.dir/network/SocketUtil.cpp.o: ../network/SocketUtil.h
 CMakeFiles/FFmpegAAc.dir/network/SocketUtil.cpp.o: ../network/TcpSocket.h

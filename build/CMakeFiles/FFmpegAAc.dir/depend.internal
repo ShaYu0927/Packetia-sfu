@@ -46,12 +46,17 @@ CMakeFiles/FFmpegAAc.dir/main.cpp.o
  /usr/local/ffmpeg/include/libavutil/version.h
  /usr/local/ffmpeg/include/libswscale/swscale.h
 CMakeFiles/FFmpegAAc.dir/network/BufferWrite.cpp.o
+ /home/roots/CLionProjects/FFmpegAAc/log/KXY_Message.h
+ /home/roots/CLionProjects/FFmpegAAc/log/KXY_logger.h
  /home/roots/CLionProjects/FFmpegAAc/network/BufferWrite.cpp
  /home/roots/CLionProjects/FFmpegAAc/network/BufferWrite.h
  /home/roots/CLionProjects/FFmpegAAc/network/Socket.h
+ /home/roots/CLionProjects/FFmpegAAc/network/SocketUtil.h
+ /home/roots/CLionProjects/FFmpegAAc/network/TcpSocket.h
 CMakeFiles/FFmpegAAc.dir/network/SocketUtil.cpp.o
  /home/roots/CLionProjects/FFmpegAAc/log/KXY_Message.h
  /home/roots/CLionProjects/FFmpegAAc/log/KXY_logger.h
+ /home/roots/CLionProjects/FFmpegAAc/network/Socket.h
  /home/roots/CLionProjects/FFmpegAAc/network/SocketUtil.cpp
  /home/roots/CLionProjects/FFmpegAAc/network/SocketUtil.h
  /home/roots/CLionProjects/FFmpegAAc/network/TcpSocket.h

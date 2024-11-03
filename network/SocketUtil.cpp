@@ -4,7 +4,7 @@
 
 #include "SocketUtil.h"
 #include <fcntl.h>
-bool Bind(int sockfd, std::string ip, uint16_t port)
+bool SocketUtil::Bind(int sockfd, std::string ip, uint16_t port)
 {
     struct sockaddr_in addr = {0};
     addr.sin_family = AF_INET;
@@ -16,12 +16,12 @@ bool Bind(int sockfd, std::string ip, uint16_t port)
     }
     return true;
 }
-void SetNonBlock(int fd)
+void SocketUtil::SetNonBlock(int fd)
 {
     unsigned long flag = 1;
     fcntl(fd, F_SETFL, flag | O_NONBLOCK);
 }
-void SetBlock(int fd, int write_timeout=0)
+void SocketUtil::SetBlock(int fd, int write_timeout)
 {
     //设置套接字 fd 为非阻塞模式。非阻塞模式意味着读写操作不会阻塞当前线程，如果没有数据可用，操作会立即返回，而不是等待
     int flags = fcntl(fd, F_GETFL, 0);
@@ -34,12 +34,12 @@ void SetBlock(int fd, int write_timeout=0)
 
     }
 }
-void SetReuseAddr(int fd)
+void SocketUtil::SetReuseAddr(int fd)
 {
     int on = 1;
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (char *)&on, sizeof(on));
 }
-void SetReusePort(int sockfd)
+void SocketUtil::SetReusePort(int sockfd)
 {
 #ifdef SO_REUSEPORT
     int on = 1;
@@ -47,7 +47,7 @@ void SetReusePort(int sockfd)
 #endif
 }
 //禁用 Nagle 算法
-void SetNoDelay(int sockfd)
+void SocketUtil::SetNoDelay(int sockfd)
 {
 #ifdef TCP_NODELAY
     int on = 1;
@@ -55,51 +55,74 @@ void SetNoDelay(int sockfd)
 #endif
 }
 //设置保持活动选项
-void SetKeepAlive(int sockfd)
+void SocketUtil::SetKeepAlive(int sockfd)
 {
     int on = 1;
     setsockopt(sockfd, SOL_SOCKET, SO_KEEPALIVE, (char *)&on, sizeof(on));
 }
-void SetNoSigpipe(int sockfd)
+
+void SocketUtil::SetNoSigpipe(int sockfd)
 {
 #ifdef SO_NOSIGPIPE
     int on = 1;
     setsockopt(sockfd, SOL_SOCKET, SO_NOSIGPIPE, (char *)&on, sizeof(on)); //setsockopt可以控制套接字的行为
 #endif
 }
-void SetSendBufSize(int sockfd, int size)
+void SocketUtil::SetSendBufSize(int sockfd, int size)
 {
     setsockopt(sockfd, SOL_SOCKET, SO_SNDBUF, (char *)&size, sizeof(size));
 }
-void SetRecvBufSize(int sockfd, int size)
+void SocketUtil::SetRecvBufSize(int sockfd, int size)
 {
     setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, (char *)&size, sizeof(size));
 }
-std::string GetPeerIp(int sockfd)
+std::string SocketUtil::GetPeerIp(int sockfd)
 {
-
+    struct sockaddr_in addr = { 0 };
+    socklen_t addrlen = sizeof(struct sockaddr_in);
+    if (getpeername(sockfd, (struct sockaddr *)&addr, &addrlen) == 0)
+    {
+        return inet_ntoa(addr.sin_addr);
+    }
+    return "0.0.0.0";
 }
-std::string GetSocketIp(int sockfd)
+
+int SocketUtil::GetSocketAddr(int sockfd, struct sockaddr_in* addr)
 {
-
+    socklen_t addrlen = sizeof(struct sockaddr_in);
+    return getsockname(sockfd, (struct sockaddr*)addr, &addrlen);
 }
-int GetSocketAddr(int sockfd, struct sockaddr_in* addr)
+
+std::string SocketUtil::GetSocketIp(int sockfd)
 {
-
+    struct sockaddr_in addr = {0};
+    char str[INET_ADDRSTRLEN] = "127.0.0.1";
+    if (GetSocketAddr(sockfd, &addr) == 0) {
+        inet_ntop(AF_INET, &addr.sin_addr, str, sizeof(str));
+    }
+    return str;
 }
-uint16_t GetPeerPort(int sockfd)
+
+uint16_t SocketUtil::GetPeerPort(int sockfd)
 {
-
+    struct sockaddr_in addr = { 0 };
+    socklen_t addrlen = sizeof(struct sockaddr_in);
+    if (getpeername(sockfd, (struct sockaddr *)&addr, &addrlen) == 0)
+    {
+        return ntohs(addr.sin_port);
+    }
+    return 0;
 }
-int GetPeerAddr(int sockfd, struct sockaddr_in *addr)
+int SocketUtil::GetPeerAddr(int sockfd, struct sockaddr_in *addr)
 {
-
+    socklen_t addrlen = sizeof(struct sockaddr_in);
+    return getpeername(sockfd, (struct sockaddr *)addr, &addrlen);
 }
-void Close(int sockfd)
+void SocketUtil::Close(int sockfd)
 {
-
+    close(sockfd);
 }
-bool Connect(int sockfd, std::string ip, uint16_t port, int timeout=0)
+bool SocketUtil::Connect(int sockfd, std::string ip, uint16_t port, int timeout)
 {
     bool isConnected = true;
     if(timeout > 0)
@@ -125,12 +148,12 @@ bool Connect(int sockfd, std::string ip, uint16_t port, int timeout=0)
             if (FD_ISSET(sockfd, &fd_write)) {
                 isConnected = true;
 			}
-			SocketUtil::SetBlock(sockfd);
+			SetBlock(sockfd);
         }
         else
         {
             isConnected = false;
         }
     }
-
+    return isConnected;
 }

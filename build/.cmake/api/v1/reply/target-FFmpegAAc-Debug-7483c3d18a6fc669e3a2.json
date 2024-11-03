@@ -25,13 +25,13 @@
 			{
 				"command" : 0,
 				"file" : 0,
-				"line" : 38,
+				"line" : 45,
 				"parent" : 0
 			},
 			{
 				"command" : 1,
 				"file" : 0,
-				"line" : 34,
+				"line" : 37,
 				"parent" : 0
 			}
 		]
@@ -60,7 +60,11 @@
 				},
 				{
 					"backtrace" : 2,
-					"path" : "/home/roots/CLionProjects/FFmpegAAc/log/KXY_Message.h"
+					"path" : "/home/roots/CLionProjects/FFmpegAAc/log"
+				},
+				{
+					"backtrace" : 2,
+					"path" : "/home/roots/CLionProjects/FFmpegAAc/network"
 				}
 			],
 			"language" : "CXX",
@@ -68,10 +72,10 @@
 			[
 				0,
 				1,
-				4,
-				6,
-				9,
-				11
+				5,
+				7,
+				10,
+				12
 			]
 		}
 	],
@@ -87,10 +91,6 @@
 			{
 				"fragment" : "",
 				"role" : "flags"
-			},
-			{
-				"fragment" : "-lavcodec",
-				"role" : "libraries"
 			},
 			{
 				"fragment" : "-lavcodec",
@@ -113,7 +113,15 @@
 				"role" : "libraries"
 			},
 			{
+				"fragment" : "-lavdevice",
+				"role" : "libraries"
+			},
+			{
 				"fragment" : "-lpthread",
+				"role" : "libraries"
+			},
+			{
+				"fragment" : "-lc",
 				"role" : "libraries"
 			}
 		],
@@ -134,10 +142,10 @@
 			[
 				0,
 				1,
-				4,
-				6,
-				9,
-				11
+				5,
+				7,
+				10,
+				12
 			]
 		},
 		{
@@ -146,11 +154,12 @@
 			[
 				2,
 				3,
-				5,
-				7,
+				4,
+				6,
 				8,
-				10,
-				12
+				9,
+				11,
+				13
 			]
 		}
 	],
@@ -176,6 +185,11 @@
 		{
 			"backtrace" : 1,
 			"path" : "log/KXY_Message.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 1,
+			"path" : "network/Socket.h",
 			"sourceGroupIndex" : 1
 		},
 		{
