@@ -21,6 +21,8 @@ set(FILES
     utils/ThreadSafeQueue.h
     utils/Time.cpp
     utils/Time.h
+    utils/MemoryManager.h
+    utils/MemoryManager.cpp
 )
 
 

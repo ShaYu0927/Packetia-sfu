@@ -258,6 +258,33 @@ network/TcpSocket.cpp.s:
 	$(MAKE) -f CMakeFiles/FFmpegAAc.dir/build.make CMakeFiles/FFmpegAAc.dir/network/TcpSocket.cpp.s
 .PHONY : network/TcpSocket.cpp.s
 
+utils/MemoryManager.o: utils/MemoryManager.cpp.o
+
+.PHONY : utils/MemoryManager.o
+
+# target to build an object file
+utils/MemoryManager.cpp.o:
+	$(MAKE) -f CMakeFiles/FFmpegAAc.dir/build.make CMakeFiles/FFmpegAAc.dir/utils/MemoryManager.cpp.o
+.PHONY : utils/MemoryManager.cpp.o
+
+utils/MemoryManager.i: utils/MemoryManager.cpp.i
+
+.PHONY : utils/MemoryManager.i
+
+# target to preprocess a source file
+utils/MemoryManager.cpp.i:
+	$(MAKE) -f CMakeFiles/FFmpegAAc.dir/build.make CMakeFiles/FFmpegAAc.dir/utils/MemoryManager.cpp.i
+.PHONY : utils/MemoryManager.cpp.i
+
+utils/MemoryManager.s: utils/MemoryManager.cpp.s
+
+.PHONY : utils/MemoryManager.s
+
+# target to generate assembly for a file
+utils/MemoryManager.cpp.s:
+	$(MAKE) -f CMakeFiles/FFmpegAAc.dir/build.make CMakeFiles/FFmpegAAc.dir/utils/MemoryManager.cpp.s
+.PHONY : utils/MemoryManager.cpp.s
+
 utils/Time.o: utils/Time.cpp.o
 
 .PHONY : utils/Time.o
@@ -309,6 +336,9 @@ help:
 	@echo "... network/TcpSocket.o"
 	@echo "... network/TcpSocket.i"
 	@echo "... network/TcpSocket.s"
+	@echo "... utils/MemoryManager.o"
+	@echo "... utils/MemoryManager.i"
+	@echo "... utils/MemoryManager.s"
 	@echo "... utils/Time.o"
 	@echo "... utils/Time.i"
 	@echo "... utils/Time.s"

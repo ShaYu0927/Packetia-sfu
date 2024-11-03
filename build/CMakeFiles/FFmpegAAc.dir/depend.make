@@ -5,45 +5,8 @@ CMakeFiles/FFmpegAAc.dir/log/KXY_logger.cpp.o: ../log/KXY_Message.h
 CMakeFiles/FFmpegAAc.dir/log/KXY_logger.cpp.o: ../log/KXY_logger.cpp
 CMakeFiles/FFmpegAAc.dir/log/KXY_logger.cpp.o: ../log/KXY_logger.h
 
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: ../log/KXY_Message.h
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: ../log/KXY_logger.h
 CMakeFiles/FFmpegAAc.dir/main.cpp.o: ../main.cpp
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libavcodec/avcodec.h
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libavcodec/codec.h
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libavcodec/codec_desc.h
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libavcodec/codec_id.h
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libavcodec/codec_par.h
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libavcodec/defs.h
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libavcodec/packet.h
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libavcodec/version.h
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libavcodec/version_major.h
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libavformat/avformat.h
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libavformat/avio.h
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libavformat/version.h
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libavformat/version_major.h
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libavutil/attributes.h
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libavutil/avconfig.h
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libavutil/avutil.h
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libavutil/buffer.h
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libavutil/channel_layout.h
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libavutil/common.h
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libavutil/dict.h
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libavutil/error.h
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libavutil/frame.h
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libavutil/hwcontext.h
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libavutil/imgutils.h
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libavutil/intfloat.h
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libavutil/log.h
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libavutil/macros.h
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libavutil/mathematics.h
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libavutil/mem.h
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libavutil/opt.h
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libavutil/pixdesc.h
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libavutil/pixfmt.h
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libavutil/rational.h
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libavutil/samplefmt.h
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libavutil/version.h
-CMakeFiles/FFmpegAAc.dir/main.cpp.o: /usr/local/ffmpeg/include/libswscale/swscale.h
+CMakeFiles/FFmpegAAc.dir/main.cpp.o: ../utils/MemoryManager.h
 
 CMakeFiles/FFmpegAAc.dir/network/BufferWrite.cpp.o: ../log/KXY_Message.h
 CMakeFiles/FFmpegAAc.dir/network/BufferWrite.cpp.o: ../log/KXY_logger.h
@@ -64,6 +27,9 @@ CMakeFiles/FFmpegAAc.dir/network/TcpSocket.cpp.o: ../log/KXY_Message.h
 CMakeFiles/FFmpegAAc.dir/network/TcpSocket.cpp.o: ../log/KXY_logger.h
 CMakeFiles/FFmpegAAc.dir/network/TcpSocket.cpp.o: ../network/TcpSocket.cpp
 CMakeFiles/FFmpegAAc.dir/network/TcpSocket.cpp.o: ../network/TcpSocket.h
+
+CMakeFiles/FFmpegAAc.dir/utils/MemoryManager.cpp.o: ../utils/MemoryManager.cpp
+CMakeFiles/FFmpegAAc.dir/utils/MemoryManager.cpp.o: ../utils/MemoryManager.h
 
 CMakeFiles/FFmpegAAc.dir/utils/Time.cpp.o: ../utils/Time.cpp
 CMakeFiles/FFmpegAAc.dir/utils/Time.cpp.o: ../utils/Time.h

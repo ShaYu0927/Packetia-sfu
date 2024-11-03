@@ -28,5 +28,10 @@
   "directory": "/home/roots/CLionProjects/FFmpegAAc/build",
   "command": "/usr/bin/g++   -I/usr/local/ffmpeg/include -I/home/roots/CLionProjects/FFmpegAAc/utils -I/home/roots/CLionProjects/FFmpegAAc/log -I/home/roots/CLionProjects/FFmpegAAc/network  -g   -std=gnu++17 -o CMakeFiles/FFmpegAAc.dir/utils/Time.cpp.o -c /home/roots/CLionProjects/FFmpegAAc/utils/Time.cpp",
   "file": "/home/roots/CLionProjects/FFmpegAAc/utils/Time.cpp"
+},
+{
+  "directory": "/home/roots/CLionProjects/FFmpegAAc/build",
+  "command": "/usr/bin/g++   -I/usr/local/ffmpeg/include -I/home/roots/CLionProjects/FFmpegAAc/utils -I/home/roots/CLionProjects/FFmpegAAc/log -I/home/roots/CLionProjects/FFmpegAAc/network  -g   -std=gnu++17 -o CMakeFiles/FFmpegAAc.dir/utils/MemoryManager.cpp.o -c /home/roots/CLionProjects/FFmpegAAc/utils/MemoryManager.cpp",
+  "file": "/home/roots/CLionProjects/FFmpegAAc/utils/MemoryManager.cpp"
 }
 ]

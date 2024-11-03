@@ -1,29 +1,39 @@
 #include <iostream>
-#include "./log/KXY_logger.h"
-extern "C"
-{
-#include <libavformat/avformat.h>
-#include <libavcodec/avcodec.h>
-#include <libswscale/swscale.h>
-#include <libavutil/opt.h>
-#include <libavcodec/avcodec.h>
-#include <libavutil/imgutils.h>
-}
-#define NUM 10000
+#include "utils/MemoryManager.h" // 确保包含头文件
+#include <string.h>
+
 int main() {
-    CatLog::Delete();
-    CatLog::Instance();
-    std::thread thread_test_0([]{
-        for(int i = 0; i < NUM; i++)
-        {
-            std::cout << "Attempting to write log: ./kxyLog" << std::endl;
-            CatLog::__Write_Log("/home/roots/CLionProjects/FFmpegAAc/kxyLog",__DEBUG_LOG("log: " + std::to_string(i)));
+    const uint32_t blockSize = 1024; // 每个块的大小
+    const int numBlocks = 10; // 块的数量
+
+    // 初始化内存管理器
+    MemoryManager& memManager = MemoryManager::Instance();
+
+    // 测试内存分配
+    std::cout << "Allocating memory blocks..." << std::endl;
+    for (int i = 0; i < numBlocks; ++i) {
+        void* ptr = Alloc(blockSize);
+        if (ptr) {
+            std::cout << "Allocated block " << i + 1 << " at address: " << ptr << std::endl;
+            // 模拟使用分配的内存
+            memset(ptr, 0, blockSize); // 将内存清零
+        } else {
+            std::cout << "Failed to allocate block " << i + 1 << std::endl;
         }
-    });
-    thread_test_0.join();
-    CatLog::Delete();
+    }
+
+    // 测试内存释放
+    std::cout << "Freeing memory blocks..." << std::endl;
+    for (int i = 0; i < numBlocks; ++i) {
+        void* ptr = Alloc(blockSize); // 再次分配以获取地址用于释放
+        Free(ptr);
+        std::cout << "Freed block " << i + 1 << " at address: " << ptr << std::endl;
+    }
+
+    std::cout << "Memory allocation and deallocation test completed." << std::endl;
 
     return 0;
 }
+
 
 

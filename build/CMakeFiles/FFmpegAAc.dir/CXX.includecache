@@ -6,3 +6,25 @@
 
 #IncludeRegexTransform: 
 
+/home/roots/CLionProjects/FFmpegAAc/main.cpp
+iostream
+-
+utils/MemoryManager.h
+/home/roots/CLionProjects/FFmpegAAc/utils/MemoryManager.h
+string.h
+-
+
+/home/roots/CLionProjects/FFmpegAAc/utils/MemoryManager.cpp
+MemoryManager.h
+/home/roots/CLionProjects/FFmpegAAc/utils/MemoryManager.h
+
+/home/roots/CLionProjects/FFmpegAAc/utils/MemoryManager.h
+string
+-
+cstdint
+-
+memory
+-
+mutex
+-
+
