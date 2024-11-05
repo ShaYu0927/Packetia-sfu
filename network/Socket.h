@@ -1,6 +1,7 @@
 #ifndef XOP_SOCKET_H
 #define XOP_SOCKET_H
 
+
 #if defined(__linux) || defined(__linux__) 
 #include <sys/types.h>         
 #include <sys/socket.h>
@@ -20,7 +21,8 @@
 #include <sys/select.h>
 #define SOCKET int
 #define INVALID_SOCKET  (-1)
-#define SOCKET_ERROR    (-1) 
+#define SOCKET_ERROR    (-1)
+
 
 #elif defined(WIN32) || defined(_WIN32) 
 #define FD_SETSIZE      1024
