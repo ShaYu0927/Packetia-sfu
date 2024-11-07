@@ -5,6 +5,7 @@ file(REMOVE_RECURSE
   "CMakeFiles/FFmpegAAc.dir/network/SocketUtil.cpp.o"
   "CMakeFiles/FFmpegAAc.dir/network/TcpSocket.cpp.o"
   "CMakeFiles/FFmpegAAc.dir/utils/MemoryManager.cpp.o"
+  "CMakeFiles/FFmpegAAc.dir/utils/Pip.cpp.o"
   "CMakeFiles/FFmpegAAc.dir/utils/Time.cpp.o"
   "FFmpegAAc"
   "FFmpegAAc.pdb"

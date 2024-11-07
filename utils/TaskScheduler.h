@@ -1,0 +1,53 @@
+#ifndef _TASK_SCHEDULER_H_
+#define _TASK_SCHEDULER_H_
+
+#include "./channel.h"
+#include "Pip.h"
+#include "Time.h"
+#include "RingBuffer.h"
+#include <functional>
+
+//任务调度器
+
+typedef std::function<void(void)> TriggerEvent;
+
+class TaskScheduler
+{
+public:
+    TaskScheduler(int id = 1);
+    virtual ~TaskScheduler();
+
+    void start();
+    void stop();
+
+    virtual void UpdateChannel(std::shared_ptr<Channel> channel) { };
+	virtual void RemoveChannel(std::shared_ptr<Channel>& channel) { };
+	virtual bool HandleEvent(int timeout) { return false; };
+
+    int GetId() const{
+        return id_;
+    }
+
+    TimeId AddTimer(TimeEvent timerEvent, uint32_t msec);
+    void RemoveTimer(TimeId timerId);
+    bool AddTriggerEvent(TriggerEvent callback);
+protected:
+
+    int id_ = 0;                                                //调度器的唯一 ID
+    std::atomic_bool         is_shutdown_;
+    std::unique_ptr<Pip>     wakeup_pipe_;                      // 唤醒管道，用于通知事件
+    std::shared_ptr<Channel> wakeup_channel_;                   // 唤醒通道，用于事件处理。
+    std::unique_ptr<RingBuffer<TriggerEvent>> trigger_events_;  //触发事件的环形缓冲区。
+
+
+    std::mutex mutex_;
+	TimeQueue  timer_queue_; //定时器队列，用于管理定时事件。
+
+
+    static const char kTriggetEvent = 1;
+	static const char kTimerEvent = 2;
+	static const int  kMaxTriggetEvents = 50000;
+};
+
+
+#endif

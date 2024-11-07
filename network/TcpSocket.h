@@ -7,10 +7,7 @@
 
 #include <cstdint>
 #include <string>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <unistd.h>
-#include <arpa/inet.h>
+#include "Socket.h"
 #include "../log/KXY_logger.h"
 
 class TcpSocket {

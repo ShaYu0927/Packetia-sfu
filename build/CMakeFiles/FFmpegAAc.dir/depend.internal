@@ -31,6 +31,13 @@ CMakeFiles/FFmpegAAc.dir/network/TcpSocket.cpp.o
 CMakeFiles/FFmpegAAc.dir/utils/MemoryManager.cpp.o
  /home/roots/CLionProjects/FFmpegAAc/utils/MemoryManager.cpp
  /home/roots/CLionProjects/FFmpegAAc/utils/MemoryManager.h
+CMakeFiles/FFmpegAAc.dir/utils/Pip.cpp.o
+ ../log/KXY_Message.h
+ ../log/KXY_logger.h
+ ../network/Socket.h
+ ../network/TcpSocket.h
+ /home/roots/CLionProjects/FFmpegAAc/utils/Pip.cpp
+ /home/roots/CLionProjects/FFmpegAAc/utils/Pip.h
 CMakeFiles/FFmpegAAc.dir/utils/Time.cpp.o
  /home/roots/CLionProjects/FFmpegAAc/utils/Time.cpp
  /home/roots/CLionProjects/FFmpegAAc/utils/Time.h

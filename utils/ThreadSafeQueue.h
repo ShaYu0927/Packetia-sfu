@@ -98,5 +98,4 @@ private:
     std:condition_variable m_condition;
 };
 
-#endif
 #endif //FFMPEGAAC_THREADSAFEQUEUE_H

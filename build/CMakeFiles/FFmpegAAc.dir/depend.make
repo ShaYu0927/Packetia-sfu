@@ -31,6 +31,13 @@ CMakeFiles/FFmpegAAc.dir/network/TcpSocket.cpp.o: ../network/TcpSocket.h
 CMakeFiles/FFmpegAAc.dir/utils/MemoryManager.cpp.o: ../utils/MemoryManager.cpp
 CMakeFiles/FFmpegAAc.dir/utils/MemoryManager.cpp.o: ../utils/MemoryManager.h
 
+CMakeFiles/FFmpegAAc.dir/utils/Pip.cpp.o: ../log/KXY_Message.h
+CMakeFiles/FFmpegAAc.dir/utils/Pip.cpp.o: ../log/KXY_logger.h
+CMakeFiles/FFmpegAAc.dir/utils/Pip.cpp.o: ../network/Socket.h
+CMakeFiles/FFmpegAAc.dir/utils/Pip.cpp.o: ../network/TcpSocket.h
+CMakeFiles/FFmpegAAc.dir/utils/Pip.cpp.o: ../utils/Pip.cpp
+CMakeFiles/FFmpegAAc.dir/utils/Pip.cpp.o: ../utils/Pip.h
+
 CMakeFiles/FFmpegAAc.dir/utils/Time.cpp.o: ../utils/Time.cpp
 CMakeFiles/FFmpegAAc.dir/utils/Time.cpp.o: ../utils/Time.h
 

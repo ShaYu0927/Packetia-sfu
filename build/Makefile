@@ -285,6 +285,33 @@ utils/MemoryManager.cpp.s:
 	$(MAKE) -f CMakeFiles/FFmpegAAc.dir/build.make CMakeFiles/FFmpegAAc.dir/utils/MemoryManager.cpp.s
 .PHONY : utils/MemoryManager.cpp.s
 
+utils/Pip.o: utils/Pip.cpp.o
+
+.PHONY : utils/Pip.o
+
+# target to build an object file
+utils/Pip.cpp.o:
+	$(MAKE) -f CMakeFiles/FFmpegAAc.dir/build.make CMakeFiles/FFmpegAAc.dir/utils/Pip.cpp.o
+.PHONY : utils/Pip.cpp.o
+
+utils/Pip.i: utils/Pip.cpp.i
+
+.PHONY : utils/Pip.i
+
+# target to preprocess a source file
+utils/Pip.cpp.i:
+	$(MAKE) -f CMakeFiles/FFmpegAAc.dir/build.make CMakeFiles/FFmpegAAc.dir/utils/Pip.cpp.i
+.PHONY : utils/Pip.cpp.i
+
+utils/Pip.s: utils/Pip.cpp.s
+
+.PHONY : utils/Pip.s
+
+# target to generate assembly for a file
+utils/Pip.cpp.s:
+	$(MAKE) -f CMakeFiles/FFmpegAAc.dir/build.make CMakeFiles/FFmpegAAc.dir/utils/Pip.cpp.s
+.PHONY : utils/Pip.cpp.s
+
 utils/Time.o: utils/Time.cpp.o
 
 .PHONY : utils/Time.o
@@ -339,6 +366,9 @@ help:
 	@echo "... utils/MemoryManager.o"
 	@echo "... utils/MemoryManager.i"
 	@echo "... utils/MemoryManager.s"
+	@echo "... utils/Pip.o"
+	@echo "... utils/Pip.i"
+	@echo "... utils/Pip.s"
 	@echo "... utils/Time.o"
 	@echo "... utils/Time.i"
 	@echo "... utils/Time.s"
