@@ -312,6 +312,33 @@ utils/Pip.cpp.s:
 	$(MAKE) -f CMakeFiles/FFmpegAAc.dir/build.make CMakeFiles/FFmpegAAc.dir/utils/Pip.cpp.s
 .PHONY : utils/Pip.cpp.s
 
+utils/TaskScheduler.o: utils/TaskScheduler.cpp.o
+
+.PHONY : utils/TaskScheduler.o
+
+# target to build an object file
+utils/TaskScheduler.cpp.o:
+	$(MAKE) -f CMakeFiles/FFmpegAAc.dir/build.make CMakeFiles/FFmpegAAc.dir/utils/TaskScheduler.cpp.o
+.PHONY : utils/TaskScheduler.cpp.o
+
+utils/TaskScheduler.i: utils/TaskScheduler.cpp.i
+
+.PHONY : utils/TaskScheduler.i
+
+# target to preprocess a source file
+utils/TaskScheduler.cpp.i:
+	$(MAKE) -f CMakeFiles/FFmpegAAc.dir/build.make CMakeFiles/FFmpegAAc.dir/utils/TaskScheduler.cpp.i
+.PHONY : utils/TaskScheduler.cpp.i
+
+utils/TaskScheduler.s: utils/TaskScheduler.cpp.s
+
+.PHONY : utils/TaskScheduler.s
+
+# target to generate assembly for a file
+utils/TaskScheduler.cpp.s:
+	$(MAKE) -f CMakeFiles/FFmpegAAc.dir/build.make CMakeFiles/FFmpegAAc.dir/utils/TaskScheduler.cpp.s
+.PHONY : utils/TaskScheduler.cpp.s
+
 utils/Time.o: utils/Time.cpp.o
 
 .PHONY : utils/Time.o
@@ -369,6 +396,9 @@ help:
 	@echo "... utils/Pip.o"
 	@echo "... utils/Pip.i"
 	@echo "... utils/Pip.s"
+	@echo "... utils/TaskScheduler.o"
+	@echo "... utils/TaskScheduler.i"
+	@echo "... utils/TaskScheduler.s"
 	@echo "... utils/Time.o"
 	@echo "... utils/Time.i"
 	@echo "... utils/Time.s"

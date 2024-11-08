@@ -42,7 +42,7 @@ public:
 
     bool IsFull()  const 
 	{ 
-		return ((num_datas_==capacity_) ? true : false); 
+		return ((num_datas_==capcity_) ? true : false); 
 	}
 
     bool IsEmpty() const 
@@ -58,7 +58,7 @@ private:
     template <typename F>
 	bool PushData(F&& data)
 	{
-		if (num_datas_ < capacity_)
+		if (num_datas_ < capcity_)
 		{
 			buffer_[put_pos_] = std::forward<F>(data);
 			Add(put_pos_);
@@ -71,7 +71,7 @@ private:
 
     void Add(int& pos)
 	{	
-		pos = (((pos+1)==capacity_) ? 0 : (pos+1));
+		pos = (((pos+1)==capcity_) ? 0 : (pos+1));
 	}
 
 private:

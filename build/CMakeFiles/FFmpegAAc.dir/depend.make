@@ -25,6 +25,7 @@ CMakeFiles/FFmpegAAc.dir/network/SocketUtil.cpp.o: ../network/TcpSocket.h
 
 CMakeFiles/FFmpegAAc.dir/network/TcpSocket.cpp.o: ../log/KXY_Message.h
 CMakeFiles/FFmpegAAc.dir/network/TcpSocket.cpp.o: ../log/KXY_logger.h
+CMakeFiles/FFmpegAAc.dir/network/TcpSocket.cpp.o: ../network/Socket.h
 CMakeFiles/FFmpegAAc.dir/network/TcpSocket.cpp.o: ../network/TcpSocket.cpp
 CMakeFiles/FFmpegAAc.dir/network/TcpSocket.cpp.o: ../network/TcpSocket.h
 
@@ -37,6 +38,17 @@ CMakeFiles/FFmpegAAc.dir/utils/Pip.cpp.o: ../network/Socket.h
 CMakeFiles/FFmpegAAc.dir/utils/Pip.cpp.o: ../network/TcpSocket.h
 CMakeFiles/FFmpegAAc.dir/utils/Pip.cpp.o: ../utils/Pip.cpp
 CMakeFiles/FFmpegAAc.dir/utils/Pip.cpp.o: ../utils/Pip.h
+
+CMakeFiles/FFmpegAAc.dir/utils/TaskScheduler.cpp.o: ../log/KXY_Message.h
+CMakeFiles/FFmpegAAc.dir/utils/TaskScheduler.cpp.o: ../log/KXY_logger.h
+CMakeFiles/FFmpegAAc.dir/utils/TaskScheduler.cpp.o: ../network/Socket.h
+CMakeFiles/FFmpegAAc.dir/utils/TaskScheduler.cpp.o: ../network/TcpSocket.h
+CMakeFiles/FFmpegAAc.dir/utils/TaskScheduler.cpp.o: ../network/channel.h
+CMakeFiles/FFmpegAAc.dir/utils/TaskScheduler.cpp.o: ../utils/Pip.h
+CMakeFiles/FFmpegAAc.dir/utils/TaskScheduler.cpp.o: ../utils/RingBuffer.h
+CMakeFiles/FFmpegAAc.dir/utils/TaskScheduler.cpp.o: ../utils/TaskScheduler.cpp
+CMakeFiles/FFmpegAAc.dir/utils/TaskScheduler.cpp.o: ../utils/TaskScheduler.h
+CMakeFiles/FFmpegAAc.dir/utils/TaskScheduler.cpp.o: ../utils/Time.h
 
 CMakeFiles/FFmpegAAc.dir/utils/Time.cpp.o: ../utils/Time.cpp
 CMakeFiles/FFmpegAAc.dir/utils/Time.cpp.o: ../utils/Time.h

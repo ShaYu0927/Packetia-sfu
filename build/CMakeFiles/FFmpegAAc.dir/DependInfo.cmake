@@ -11,6 +11,7 @@ set(CMAKE_DEPENDS_CHECK_CXX
   "/home/roots/CLionProjects/FFmpegAAc/network/TcpSocket.cpp" "/home/roots/CLionProjects/FFmpegAAc/build/CMakeFiles/FFmpegAAc.dir/network/TcpSocket.cpp.o"
   "/home/roots/CLionProjects/FFmpegAAc/utils/MemoryManager.cpp" "/home/roots/CLionProjects/FFmpegAAc/build/CMakeFiles/FFmpegAAc.dir/utils/MemoryManager.cpp.o"
   "/home/roots/CLionProjects/FFmpegAAc/utils/Pip.cpp" "/home/roots/CLionProjects/FFmpegAAc/build/CMakeFiles/FFmpegAAc.dir/utils/Pip.cpp.o"
+  "/home/roots/CLionProjects/FFmpegAAc/utils/TaskScheduler.cpp" "/home/roots/CLionProjects/FFmpegAAc/build/CMakeFiles/FFmpegAAc.dir/utils/TaskScheduler.cpp.o"
   "/home/roots/CLionProjects/FFmpegAAc/utils/Time.cpp" "/home/roots/CLionProjects/FFmpegAAc/build/CMakeFiles/FFmpegAAc.dir/utils/Time.cpp.o"
   )
 set(CMAKE_CXX_COMPILER_ID "GNU")

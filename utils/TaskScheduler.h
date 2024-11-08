@@ -6,6 +6,8 @@
 #include "Time.h"
 #include "RingBuffer.h"
 #include <functional>
+#include <signal.h>
+
 
 //任务调度器
 
@@ -32,6 +34,8 @@ public:
     void RemoveTimer(TimeId timerId);
     bool AddTriggerEvent(TriggerEvent callback);
 protected:
+    void Wake();
+	void HandleTriggerEvent();
 
     int id_ = 0;                                                //调度器的唯一 ID
     std::atomic_bool         is_shutdown_;

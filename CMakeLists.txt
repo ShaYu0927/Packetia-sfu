@@ -26,6 +26,8 @@ set(FILES
     utils/RingBuffer.h
     utils/MemoryManager.h
     utils/MemoryManager.cpp
+    utils/TaskScheduler.h
+    utils/TaskScheduler.cpp
 )
 
 

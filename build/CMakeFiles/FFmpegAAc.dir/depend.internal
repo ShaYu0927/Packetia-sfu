@@ -26,6 +26,7 @@ CMakeFiles/FFmpegAAc.dir/network/SocketUtil.cpp.o
 CMakeFiles/FFmpegAAc.dir/network/TcpSocket.cpp.o
  /home/roots/CLionProjects/FFmpegAAc/log/KXY_Message.h
  /home/roots/CLionProjects/FFmpegAAc/log/KXY_logger.h
+ /home/roots/CLionProjects/FFmpegAAc/network/Socket.h
  /home/roots/CLionProjects/FFmpegAAc/network/TcpSocket.cpp
  /home/roots/CLionProjects/FFmpegAAc/network/TcpSocket.h
 CMakeFiles/FFmpegAAc.dir/utils/MemoryManager.cpp.o
@@ -38,6 +39,17 @@ CMakeFiles/FFmpegAAc.dir/utils/Pip.cpp.o
  ../network/TcpSocket.h
  /home/roots/CLionProjects/FFmpegAAc/utils/Pip.cpp
  /home/roots/CLionProjects/FFmpegAAc/utils/Pip.h
+CMakeFiles/FFmpegAAc.dir/utils/TaskScheduler.cpp.o
+ ../log/KXY_Message.h
+ ../log/KXY_logger.h
+ ../network/Socket.h
+ ../network/TcpSocket.h
+ ../network/channel.h
+ /home/roots/CLionProjects/FFmpegAAc/utils/Pip.h
+ /home/roots/CLionProjects/FFmpegAAc/utils/RingBuffer.h
+ /home/roots/CLionProjects/FFmpegAAc/utils/TaskScheduler.cpp
+ /home/roots/CLionProjects/FFmpegAAc/utils/TaskScheduler.h
+ /home/roots/CLionProjects/FFmpegAAc/utils/Time.h
 CMakeFiles/FFmpegAAc.dir/utils/Time.cpp.o
  /home/roots/CLionProjects/FFmpegAAc/utils/Time.cpp
  /home/roots/CLionProjects/FFmpegAAc/utils/Time.h

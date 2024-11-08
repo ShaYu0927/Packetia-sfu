@@ -25,13 +25,13 @@
 			{
 				"command" : 0,
 				"file" : 0,
-				"line" : 50,
+				"line" : 52,
 				"parent" : 0
 			},
 			{
 				"command" : 1,
 				"file" : 0,
-				"line" : 42,
+				"line" : 44,
 				"parent" : 0
 			}
 		]
@@ -77,7 +77,8 @@
 				10,
 				12,
 				15,
-				18
+				18,
+				20
 			]
 		}
 	],
@@ -149,7 +150,8 @@
 				10,
 				12,
 				15,
-				18
+				18,
+				20
 			]
 		},
 		{
@@ -166,7 +168,8 @@
 				13,
 				14,
 				16,
-				17
+				17,
+				19
 			]
 		}
 	],
@@ -273,6 +276,17 @@
 			"backtrace" : 1,
 			"compileGroupIndex" : 0,
 			"path" : "utils/MemoryManager.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"path" : "utils/TaskScheduler.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "utils/TaskScheduler.cpp",
 			"sourceGroupIndex" : 0
 		}
 	],
