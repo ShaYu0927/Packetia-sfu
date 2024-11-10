@@ -28,6 +28,8 @@ set(FILES
     utils/MemoryManager.cpp
     utils/TaskScheduler.h
     utils/TaskScheduler.cpp
+    utils/SelectTaskScheduler.h
+    utils/SelectTaskScheduler.cpp
 )
 
 

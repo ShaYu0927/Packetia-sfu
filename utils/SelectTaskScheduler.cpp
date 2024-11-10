@@ -42,7 +42,7 @@ void SelectTaskScheduler::UpdateChannel(std::shared_ptr<Channel> channel)
     }
 }
 
-void SelectTaskScheduler::RemoveChannel(std::shared_ptr<Channel> channel)
+void SelectTaskScheduler::RemoveChannel(std::shared_ptr<Channel>& channel)
 {
     std::lock_guard<std::mutex> lock(mutex_);
 

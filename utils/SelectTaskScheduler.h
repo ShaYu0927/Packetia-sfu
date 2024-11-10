@@ -7,7 +7,7 @@
 #include <unistd.h>
 #include <forward_list>
 
-#include "network/Socket.h"
+#include "./Socket.h"
 #include "TaskScheduler.h"
 /**
  * 
@@ -21,7 +21,7 @@ public:
     virtual ~SelectTaskScheduler();
 
     void UpdateChannel(std::shared_ptr<Channel> channel);
-    void RemoveChannel(std::shared_ptr<Channel> channel);
+    void RemoveChannel(std::shared_ptr<Channel>& channel);
     bool HandleEvent(int timeout);
 
 private:
