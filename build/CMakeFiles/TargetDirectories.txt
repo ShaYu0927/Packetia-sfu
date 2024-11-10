@@ -1,3 +1,0 @@
-/home/roots/CLionProjects/FFmpegAAc/build/CMakeFiles/rebuild_cache.dir
-/home/roots/CLionProjects/FFmpegAAc/build/CMakeFiles/edit_cache.dir
-/home/roots/CLionProjects/FFmpegAAc/build/CMakeFiles/FFmpegAAc.dir
