@@ -60,7 +60,13 @@ public:
         return events_;
     }
 
-    void HandleEvent()
+    int GetSocket() const { return socket_; }
+
+    bool IsNoneEvent() const { return events_ == EVENT_NONE; }
+	bool IsWriting() const { return (events_ & EVENT_OUT) != 0; }
+	bool IsReading() const { return (events_ & EVENT_IN) != 0; }
+
+    void HandleEvent(int events)
     {
         if (events_ & EVENT_IN)
         {

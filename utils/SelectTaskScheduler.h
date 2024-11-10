@@ -5,6 +5,7 @@
 #include <sys/time.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <forward_list>
 
 #include "network/Socket.h"
 #include "TaskScheduler.h"
