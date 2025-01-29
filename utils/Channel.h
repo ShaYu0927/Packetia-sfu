@@ -57,6 +57,11 @@ public:
     void SetEvents(int events)
     {
         events_ = events;
+    }
+
+    int GetEvents() const
+    {
+        return events_;
     }   
 
     void EnableReading() 
@@ -75,25 +80,25 @@ public:
 	bool IsWriting() const { return (events_ & EVENT_OUT) != 0; }
 	bool IsReading() const { return (events_ & EVENT_IN) != 0; }
 
-    void HandleEvent()
+    void HandleEvent(int events)
     {
-        if(events_ & EVENT_IN)
+        if(events & EVENT_IN)
         {
             readCallback_();
         }
 
-        if(events_ & EVENT_OUT)
+        if(events & EVENT_OUT)
         {
             writeCallback_();
         }
 
-        if(events_ & EVENT_HUP)
+        if(events & EVENT_HUP)
         {
             close_callback_();
 			return ;
         }
 
-        if(events_ & EVENT_ERROR)
+        if(events & EVENT_ERROR)
         {
             errorCallback_();
         }

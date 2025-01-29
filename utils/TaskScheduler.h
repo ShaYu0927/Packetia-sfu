@@ -1,7 +1,7 @@
 #ifndef _TASK_SCHEDULER_H_
 #define _TASK_SCHEDULER_H_
 
-#include "./channel.h"
+#include "Channel.h"
 #include "Pip.h"
 #include "Time.h"
 #include "RingBuffer.h"

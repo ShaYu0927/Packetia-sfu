@@ -20,7 +20,7 @@ TaskScheduler::TaskScheduler(int id)
     {
         wakeup_channel_.reset(new Channel(wakeup_pipe_->Read()));
         wakeup_channel_->EnableReading();
-        wakeup_channel_->setReadCallback([this]{this->Wake();});
+        wakeup_channel_->SetReadCallback([this]{this->Wake();});
     }
 }
 
