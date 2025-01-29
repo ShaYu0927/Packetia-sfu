@@ -2,8 +2,12 @@
 #include "Socket.h"
 #include "SocketUtil.h"
 
+BufferWirte::BufferWirte(int capacity)
+    :max_queue_size(capacity)
+{
+}
 
-bool BufferWirte::Append(std::shared_ptr<char> data,uint32_t size,uint32_t index)
+bool BufferWirte::Append(std::shared_ptr<char> data, uint32_t size, uint32_t index)
 {
     if(size < index)
     {

@@ -17,6 +17,8 @@ void WriteUint16LE(char* p, uint32_t value);
 class BufferWirte 
 {
 public:
+    BufferWirte(int capacity = KMaxQueueLength);
+	~BufferWirte() {}
     bool IsEmpty() const
     {
         return buffer_.empty();
