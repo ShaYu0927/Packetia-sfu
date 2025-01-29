@@ -30,6 +30,7 @@ set(FILES
     utils/TaskScheduler.cpp
     utils/SelectTaskScheduler.h
     utils/SelectTaskScheduler.cpp
+    utils/Channel.h
 )
 
 
