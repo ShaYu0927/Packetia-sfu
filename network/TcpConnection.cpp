@@ -6,7 +6,7 @@
 
 TcpConnection::TcpConnection(TaskScheduler *task_scheduler, SOCKET sockfd)
     : task_scheduler_(task_scheduler)
-	// , read_buffer_(new BufferReader)
+	, read_buffer_(new BufferReader)
 	, write_buffer_(new BufferWirte(500))
 	, channel_(new Channel(sockfd))
 {
@@ -87,7 +87,28 @@ void TcpConnection::close()
 
 void TcpConnection::HandleRead()
 {
-    
+    {
+		std::lock_guard<std::mutex> lock(mutex_);
+
+		if (is_closed_) {
+			return;
+		}
+		
+		int ret = read_buffer_->Read(channel_->GetSocket());
+		if (ret <= 0) {
+			this->close();
+			return;
+		}
+	}
+
+	if (read_cb_) {
+		bool ret = read_cb_(shared_from_this(), *read_buffer_);
+		if (false == ret) 
+		{
+			std::lock_guard<std::mutex> lock(mutex_);
+			this->close();
+		}
+	}
 }
 
 void TcpConnection::HandleWrite()
@@ -96,7 +117,7 @@ void TcpConnection::HandleWrite()
 		return;
 	}
 	
-	//std::lock_guard<std::mutex> lock(mutex_);
+	std::lock_guard<std::mutex> lock(mutex_);
 	if (!mutex_.try_lock()) {
 		return;
 	}

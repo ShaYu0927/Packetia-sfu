@@ -9,6 +9,7 @@
 #include <functional>
 #include "TaskScheduler.h"
 #include "BufferWrite.h"
+#include "BufferRead.h"
 
 
 class TcpConnection : public std::enable_shared_from_this<TcpConnection>
@@ -17,7 +18,7 @@ public:
     using Ptr = std::shared_ptr<TcpConnection>;
     using DisconnectCallback = std::function<void(std::shared_ptr<TcpConnection> conn)>;
     using MessageCallback = std::function<void(std::shared_ptr<TcpConnection> conn, const char* data, int len)>;
-    using ReadCallback = std::function<void(std::shared_ptr<TcpConnection> conn)>;
+    using ReadCallback = std::function<bool(std::shared_ptr<TcpConnection> conn,BufferReader& buffer)>;
     using WriteCompleteCallback = std::function<void(std::shared_ptr<TcpConnection> conn)>;
     using CloseCallback = std::function<void(std::shared_ptr<TcpConnection> conn)>;
     using ErrorCallback = std::function<void(std::shared_ptr<TcpConnection> conn)>;
@@ -36,6 +37,9 @@ public:
 
     void SetCloseCallback(const CloseCallback& cb)
 	{ close_callback_ = cb; }
+
+    void SetDisconnectCallback(const DisconnectCallback& cb)
+	{ disconnect_callback_ = cb; }
 
     void Disconnect();
 
@@ -61,11 +65,10 @@ protected:
 	virtual void HandleClose();
 	virtual void HandleError();	
 
-    void SetDisconnectCallback(const DisconnectCallback& cb)
-	{ disconnect_callback_ = cb; }
+    
 
 
-    //std::unique_ptr<BufferReader> read_buffer_;
+    std::unique_ptr<BufferReader> read_buffer_;
 	std::unique_ptr<BufferWirte> write_buffer_;
 
 private:
