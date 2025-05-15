@@ -17,6 +17,18 @@ EventLoop::~EventLoop()
 
 std::shared_ptr<TaskScheduler> EventLoop::GetTaskScheduler()
 {
+	std::lock_guard<std::mutex> locker(mutex_);
+	if (task_schedulers_.size() == 1) {
+		return task_schedulers_.at(0);	
+	}
+	else
+	{
+		auto iter = task_schedulers_.at(index_);
+		index_++;
+		if (index_ >= task_schedulers_.size()) {
+			index_ = 1;
+		}
+	}
     return std::shared_ptr<TaskScheduler>();
 }
 

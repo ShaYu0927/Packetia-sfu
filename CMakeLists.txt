@@ -3,7 +3,7 @@ project(FFmpegAAc)
 
 set(CMAKE_CXX_STANDARD 17)
 
-set(FFMPEG_ROOT "/usr/local/ffmpeg")
+set(FFMPEG_ROOT "/home/kxy/ffmpeg-build")
 set(PKG_CONFIG_PATH "${FFMPEG_ROOT}/lib/pkgconfig")
 
 # 源文件列表
@@ -14,6 +14,10 @@ set(FILES
     network/Socket.h
     network/TcpSocket.cpp
     network/TcpSocket.h
+    network/TcpServer.cpp
+    network/TcpServer.h
+    network/TcpConnection.cpp
+    network/TcpConnection.h
     network/SocketUtil.cpp
     network/SocketUtil.h
     network/BufferWrite.h
