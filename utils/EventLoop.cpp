@@ -91,7 +91,7 @@ void EventLoop::Loop()
         std::shared_ptr<TaskScheduler> task_scheduler = std::make_shared<EpollTaskScheduler>(index_++);
         task_schedulers_.push_back(task_scheduler);
         std::shared_ptr<std::thread> thread = std::make_shared<std::thread>([task_scheduler]{
-            task_scheduler->HandleEvent(1000);
+            task_scheduler->HandleEvent(10000);
         });
         threads_.push_back(thread);
     }

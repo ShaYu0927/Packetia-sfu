@@ -8,8 +8,8 @@ set(PKG_CONFIG_PATH "${FFMPEG_ROOT}/lib/pkgconfig")
 
 # 源文件列表
 set(FILES
-    log/KXY_logger.cpp
-    log/KXY_logger.h
+    log/logger.cpp
+    log/logger.h
     log/KXY_Message.h
     network/Socket.h
     network/TcpSocket.cpp
@@ -66,6 +66,8 @@ include_directories(
 
 
 add_executable(FFmpegAAc main.cpp ${FILES})
+add_executable(tcp_client test/tcp_client.cpp)
+
 
 link_directories(
     ${AVCODEC_LIBRARY_DIRS}
@@ -89,4 +91,7 @@ target_link_libraries(FFmpegAAc
 )
 
 
+target_compile_options(tcp_client PRIVATE -Wall -Wextra -g)
 
+enable_testing()
+add_test(NAME TcpClientTest COMMAND tcp_client)

@@ -4,7 +4,6 @@
 Acceptor::Acceptor(EventLoop *eventLoop)
     : event_loop_(eventLoop)
     , tcp_socket_(new TcpSocket)
-    , channel_ptr_(new Channel(tcp_socket_->GetSocket()))
 {
 
 }
@@ -59,10 +58,13 @@ void Acceptor::OnAccept()
 {
     std::lock_guard<std::mutex> locker(mutex_);
     int sockfd = tcp_socket_->Accept();
+    std::cout << "OnAccept called, accept fd: " << sockfd << std::endl;
     if(sockfd > 0)
     {
+        
         if (new_connection_callback_) 
         {
+            std::cout << "[Acceptor] OnAccept success, connfd: " << sockfd << std::endl;
             new_connection_callback_(sockfd);
         }
         else

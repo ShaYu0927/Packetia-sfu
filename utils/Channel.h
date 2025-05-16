@@ -2,6 +2,7 @@
 #define _CHANNEL_H_
 
 #include <functional>
+#include <iostream>
 #include <memory>
 #include "Socket.h"
 
@@ -82,6 +83,7 @@ public:
 
     void HandleEvent(int events)
     {
+        std::cout << "Channel::HandleEvent called on fd=" << sockfd_ << " events=" << events << std::endl;
         if(events & EVENT_IN)
         {
             readCallback_();

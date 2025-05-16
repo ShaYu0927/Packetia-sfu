@@ -18,8 +18,10 @@ bool SocketUtil::Bind(int sockfd, std::string ip, uint16_t port)
 }
 void SocketUtil::SetNonBlock(int fd)
 {
-    unsigned long flag = 1;
-    fcntl(fd, F_SETFL, flag | O_NONBLOCK);
+     int flags = fcntl(fd, F_GETFL, 0);
+    if (flags == -1)
+        flags = 0;
+    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 }
 void SocketUtil::SetBlock(int fd, int write_timeout)
 {

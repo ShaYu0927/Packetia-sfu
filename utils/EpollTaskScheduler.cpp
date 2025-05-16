@@ -53,9 +53,9 @@ bool EpollTaskScheduler::HandleEvent(int timeout)
 {
     struct epoll_event events[512] = {0};
 	int num_events = -1;
-
+    
     num_events = epoll_wait(epollfd_, events, 512, timeout);
-
+    std::cout << "epoll_wait returned " << num_events << " events" << std::endl;
     if(num_events < 0)  
     {
 		if(errno != EINTR) 
@@ -85,6 +85,10 @@ void EpollTaskScheduler::Update(int operation, std::shared_ptr<Channel> &channel
 
 	if(::epoll_ctl(epollfd_, operation, channel->GetSocket(), &event) < 0) 
     {
-
+        perror("epoll_ctl error");
 	}
+    else
+    {
+        std::cout << "epoll_ctl operation: " << operation << " fd: " << channel->GetSocket() << std::endl;
+    }
 }

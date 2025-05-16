@@ -13,6 +13,8 @@ TcpServer::TcpServer(EventLoop *event_loop)
 {
     acceptor_->SetNewConnectionCallback([this](int sockfd) 
     {
+        //std::cout << "[Server] New connection accepted: sockfd = " << sockfd << std::endl;
+        CatLog::__Write_Log(__INFO_HEAD, "New connection accepted: sockfd = %d", sockfd);
         TcpConnection::Ptr conn = this->OnConnect(sockfd);
         if(conn)
         {

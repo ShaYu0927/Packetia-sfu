@@ -8,7 +8,7 @@
 #include <cstdint>
 #include <string>
 #include "Socket.h"
-#include "../log/KXY_logger.h"
+#include "logger.h"
 
 class TcpSocket {
 public:

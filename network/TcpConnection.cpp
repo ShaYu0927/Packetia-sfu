@@ -87,6 +87,7 @@ void TcpConnection::close()
 
 void TcpConnection::HandleRead()
 {
+	std::cout << "[Debug] Enter HandleRead()" << std::endl;
     {
 		std::lock_guard<std::mutex> lock(mutex_);
 
