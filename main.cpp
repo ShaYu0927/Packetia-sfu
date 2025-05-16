@@ -10,15 +10,22 @@ int main() {
 	TcpServer server(&loop);
 	std::string ip = "0.0.0.0";
 	uint16_t port = 8888;
-	server.Start(ip, port);
+	if(!server.Start(ip, port))
+	{
+		std::cout << "Failed to start server on " << ip << ":" << port << std::endl;
+		return -1;
+	}
+	else
+	{
+		std::cout << "Server started on " << ip << ":" << port << std::endl;
+	}
 
 	loop.Loop();
 
 	while (true) {
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	}
-
-    return 0;
+	return 0;
 }
 
 

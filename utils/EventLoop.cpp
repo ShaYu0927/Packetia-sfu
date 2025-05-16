@@ -13,6 +13,7 @@ EventLoop::EventLoop(uint32_t num_threads)
 
 EventLoop::~EventLoop()
 {
+	this->Stop();
 }
 
 std::shared_ptr<TaskScheduler> EventLoop::GetTaskScheduler()

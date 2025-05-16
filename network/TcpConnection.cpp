@@ -100,7 +100,7 @@ void TcpConnection::HandleRead()
 			return;
 		}
 	}
-
+	std::cout << "Received data: " << std::string(read_buffer_->Peek(), read_buffer_->ReadableBytes()) << std::endl;
 	if (read_cb_) {
 		bool ret = read_cb_(shared_from_this(), *read_buffer_);
 		if (false == ret) 

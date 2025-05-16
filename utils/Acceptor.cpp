@@ -19,7 +19,6 @@ int Acceptor::Listen(std::string ip, uint16_t port)
     if(tcp_socket_->GetSocket() == INVALID_SOCKET)
     {
         tcp_socket_->Close();
-        return -1;
     }
     SOCKET sockfd = tcp_socket_->Create();
     if(sockfd == INVALID_SOCKET)
