@@ -13,8 +13,7 @@ TcpServer::TcpServer(EventLoop *event_loop)
 {
     acceptor_->SetNewConnectionCallback([this](int sockfd) 
     {
-        //std::cout << "[Server] New connection accepted: sockfd = " << sockfd << std::endl;
-        CatLog::__Write_Log(__INFO_HEAD, "New connection accepted: sockfd = %d", sockfd);
+        LOG_INFO("New connection accepted: sockfd = " + std::to_string(sockfd));
         TcpConnection::Ptr conn = this->OnConnect(sockfd);
         if(conn)
         {
@@ -26,6 +25,13 @@ TcpServer::TcpServer(EventLoop *event_loop)
                 if (!scheduler->AddTriggerEvent([this, socketfd] {this->RemoveConnection(socketfd); })) {
 					scheduler->AddTimer([this, socketfd]() {this->RemoveConnection(socketfd); return false; }, 100);
 				}   
+            });
+
+            conn->SetReadCallback([](TcpConnection::Ptr conn, BufferReader& buffer) {
+                std::string msg(buffer.Peek(), buffer.ReadableBytes());
+                std::cout << "[业务] 收到消息: " << msg << std::endl;
+        
+                return true; // 返回false会关闭连接
             });
         }
     });

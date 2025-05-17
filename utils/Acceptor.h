@@ -6,6 +6,7 @@
 #include "TcpSocket.h"
 #include "EventLoop.h"
 #include "SocketUtil.h"
+#include "logger.h"
 
 typedef std::function<void(int)> NewConnectionCallback;
 

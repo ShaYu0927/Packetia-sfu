@@ -2,22 +2,18 @@
 #include <thread>
 #include "TcpServer.h"
 #include "EventLoop.h"
+#include "logger.h"
 #include <string.h>
 
 int main() {
-    EventLoop loop;
 
+    EventLoop loop;
 	TcpServer server(&loop);
 	std::string ip = "0.0.0.0";
 	uint16_t port = 8888;
-	if(!server.Start(ip, port))
+	if(server.Start(ip, port))
 	{
-		std::cout << "Failed to start server on " << ip << ":" << port << std::endl;
-		return -1;
-	}
-	else
-	{
-		std::cout << "Server started on " << ip << ":" << port << std::endl;
+		LOG_INFO("Server started on " + ip + ":" + std::to_string(port));
 	}
 
 	loop.Loop();

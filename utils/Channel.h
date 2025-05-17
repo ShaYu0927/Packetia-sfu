@@ -5,6 +5,7 @@
 #include <iostream>
 #include <memory>
 #include "Socket.h"
+#include "logger.h"
 
 enum EventType
 {
@@ -25,7 +26,7 @@ public:
     Channel() = delete;
 
     Channel(SOCKET sockfd) 
-		: sockfd_(sockfd)
+		: sockfd_(sockfd), events_(EVENT_NONE)
 	{
 
 	}
@@ -83,11 +84,11 @@ public:
 
     void HandleEvent(int events)
     {
-        std::cout << "Channel::HandleEvent called on fd=" << sockfd_ << " events=" << events << std::endl;
-        if(events & EVENT_IN)
+        LOG_INFO("Channel::HandleEvent called on fd=" + std::to_string(sockfd_) + " events=" + std::to_string(events));
+        if (events & (EVENT_PRI | EVENT_IN)) 
         {
-            readCallback_();
-        }
+			readCallback_();
+		}
 
         if(events & EVENT_OUT)
         {

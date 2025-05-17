@@ -40,6 +40,7 @@ int Acceptor::Listen(std::string ip, uint16_t port)
 	}
     channel_ptr_->SetReadCallback([this]() { this->OnAccept(); }); //有新连接，触发回调函数
 	channel_ptr_->EnableReading();
+    LOG_INFO("EnableReading called on fd=" + std::to_string(tcp_socket_->GetSocket()));
 	event_loop_->UpdateChannel(channel_ptr_);
     return 0;
 }
@@ -58,13 +59,13 @@ void Acceptor::OnAccept()
 {
     std::lock_guard<std::mutex> locker(mutex_);
     int sockfd = tcp_socket_->Accept();
-    std::cout << "OnAccept called, accept fd: " << sockfd << std::endl;
+    LOG_INFO("OnAccept called, accept fd: " + std::to_string(sockfd));
     if(sockfd > 0)
     {
         
         if (new_connection_callback_) 
         {
-            std::cout << "[Acceptor] OnAccept success, connfd: " << sockfd << std::endl;
+            LOG_INFO("OnAccept success, connfd: " + std::to_string(sockfd));
             new_connection_callback_(sockfd);
         }
         else

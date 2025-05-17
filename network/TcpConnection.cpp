@@ -21,7 +21,9 @@ TcpConnection::TcpConnection(TaskScheduler *task_scheduler, SOCKET sockfd)
 	SocketUtil::SetKeepAlive(sockfd);
 
     channel_->EnableReading();
-	task_scheduler_->UpdateChannel(channel_);
+    LOG_INFO("Channel EnableReading called. sockfd=" + std::to_string(sockfd));
+    task_scheduler_->UpdateChannel(channel_);
+    LOG_INFO("Channel updated in task scheduler. sockfd=" + std::to_string(sockfd));
 }
 
 TcpConnection::~TcpConnection()
@@ -87,7 +89,7 @@ void TcpConnection::close()
 
 void TcpConnection::HandleRead()
 {
-	std::cout << "[Debug] Enter HandleRead()" << std::endl;
+	LOG_INFO("HandleRead: about to read from fd=" + std::to_string(channel_->GetSocket()));
     {
 		std::lock_guard<std::mutex> lock(mutex_);
 
@@ -101,7 +103,6 @@ void TcpConnection::HandleRead()
 			return;
 		}
 	}
-	std::cout << "Received data: " << std::string(read_buffer_->Peek(), read_buffer_->ReadableBytes()) << std::endl;
 	if (read_cb_) {
 		bool ret = read_cb_(shared_from_this(), *read_buffer_);
 		if (false == ret) 

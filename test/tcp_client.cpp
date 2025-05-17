@@ -2,7 +2,9 @@
 #include <cstring>      // memset
 #include <sys/socket.h> // socket
 #include <arpa/inet.h>  // sockaddr_in, inet_addr
-#include <unistd.h>     // close
+#include <unistd.h>     // close, sleep
+#include <chrono>
+#include <thread>
 
 int main() {
     const char* server_ip = "127.0.0.1"; // 服务器IP
@@ -25,7 +27,6 @@ int main() {
         return 1;
     }
 
-    
     if (connect(sock, (sockaddr*)&server_addr, sizeof(server_addr)) < 0) 
     {
         std::cerr << "Connection failed\n";
@@ -34,19 +35,33 @@ int main() {
     }
     std::cout << "Connected to server\n";
 
-    
     const char* message = "Hello from client!\n";
-    send(sock, message, strlen(message), 0);
-
-    // 接收数据
     char buffer[1024];
-    int bytes_received = recv(sock, buffer, sizeof(buffer) - 1, 0);
-    if (bytes_received > 0) {
-        buffer[bytes_received] = '\0'; // null-terminate
-        std::cout << "Received from server: " << buffer;
+
+    while (true) {
+        ssize_t sent_bytes = send(sock, message, strlen(message), 0);
+        if (sent_bytes < 0) {
+            std::cerr << "Send failed\n";
+            break;
+        }
+        std::cout << "Sent message to server\n";
+
+        ssize_t bytes_received = recv(sock, buffer, sizeof(buffer) - 1, 0);
+        if (bytes_received > 0) {
+            buffer[bytes_received] = '\0'; // null-terminate
+            std::cout << "Received from server: " << buffer;
+        } else if (bytes_received == 0) {
+            std::cout << "Server closed connection\n";
+            break;
+        } else {
+            std::cerr << "Recv failed\n";
+            break;
+        }
+
+        std::this_thread::sleep_for(std::chrono::seconds(1)); // 等待1秒
     }
 
-    // 关闭连接
     close(sock);
     return 0;
 }
+
