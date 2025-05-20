@@ -24,6 +24,10 @@ set(FILES
     network/BufferWrite.cpp
     network/BufferRead.h
     network/BufferRead.cpp
+    Rtsp/RtspServer.cpp
+    Rtsp/RtspServer.h
+    Rtsp/RtspMessage.cpp
+    Rtsp/RtspMessage.h
     utils/ThreadSafeQueue.h
     utils/Time.cpp
     utils/Time.h
@@ -92,6 +96,8 @@ target_link_libraries(FFmpegAAc
 
 
 target_compile_options(tcp_client PRIVATE -Wall -Wextra -g)
+target_link_libraries(tcp_client pthread)
+
 
 enable_testing()
 add_test(NAME TcpClientTest COMMAND tcp_client)
