@@ -29,7 +29,7 @@ public:
 
 	uint16_t GetPort() const 
 	{ return port_; }
-
+	EventLoop* GetEventLoop() const { return event_loop_; }
 
 protected:
     virtual TcpConnection::Ptr OnConnect(SOCKET sockfd);

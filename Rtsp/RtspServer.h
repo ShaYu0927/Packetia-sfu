@@ -3,10 +3,12 @@
 
 
 #include <string>
+#include <memory>
 #include "TcpServer.h"
 #include "TcpConnection.h"
+#include "RtspConnection.h"
 
-class RtspServer : public TcpServer
+class RtspServer : public TcpServer, public std::enable_shared_from_this<RtspServer>
 {
 public:
     RtspServer(EventLoop* event_loop);

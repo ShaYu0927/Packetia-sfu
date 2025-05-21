@@ -4,6 +4,16 @@
 #include <string>
 #include <memory>
 
+enum MediaType
+{
+	//PCMU = 0,	 
+	PCMA = 8,
+	H264 = 96,
+	AAC  = 37,
+	H265 = 265,   
+	NONE
+};	
+
 enum MediaChannelId
 {
     channel_0,
