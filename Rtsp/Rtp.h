@@ -1,0 +1,20 @@
+#ifndef _RTP_H_
+#define _RTP_H_
+
+
+enum RTPTransport
+{
+    RTP_OVER_TCP = 0,
+    RTP_OVER_UDP,
+    RTP_OVER_MULTICAST,
+    RTP_OVER_HTTP,
+    RTP_OVER_FILE,
+    RTP_OVER_UNIX_DOMAIN_SOCKET,
+    RTP_OVER_SSL,
+    RTP_OVER_TLS,
+    RTP_OVER_WEBSOCKET,
+    RTP_OVER_QUIC,
+};
+
+
+#endif

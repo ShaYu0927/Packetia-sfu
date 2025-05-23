@@ -24,9 +24,46 @@ RtspConnection::~RtspConnection()
     * @param buffer 消息缓冲区
     */
 
-bool RtspConnection::onRead(BufferReader &buffer)
+bool RtspConnection::HandleRtspRequest(BufferReader &buffer)
+{
+    std::string str(buffer.Peek(), buffer.ReadableBytes());
+	if (str.find("rtsp") != std::string::npos || str.find("RTSP") != std::string::npos)
+	{
+		std::cout << str << std::endl;
+	}
+
+    
+    return false;
+}
+
+bool RtspConnection::HandleRtspResponse(BufferReader &buffer)
 {
     return false;
+}
+
+bool RtspConnection::onRead(BufferReader &buffer)
+{
+    int size = buffer.ReadableBytes();
+    if (size <= 0)
+    {
+        return false;
+    }
+
+    if (mode_ == RTSP_SERVER) {
+
+		if (!HandleRtspRequest(buffer))
+        {
+			return false; 
+		}
+	}
+	else if (mode_ == RTSP_PUSHER) {
+		if (!HandleRtspResponse(buffer)) 
+        {           
+			return false;
+		}
+	}
+
+    return true;
 }
 
 bool RtspConnection::onClose()
