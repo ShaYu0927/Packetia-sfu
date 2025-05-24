@@ -5,8 +5,9 @@
 #include "BufferWrite.h"
 #include "EventLoop.h"
 #include "Rtsp.h"
-
 #include "Media.h"
+
+class RtspServer;
 
 
 class RtspConnection : public TcpConnection
@@ -31,7 +32,7 @@ public:
     };
 
 
-    RtspConnection(std::shared_ptr<Rtsp> rtsp_server, TaskScheduler *task_scheduler, SOCKET sockfd);
+    RtspConnection(std::shared_ptr<RtspServer> rtsp_server, TaskScheduler *task_scheduler, SOCKET sockfd);
     virtual ~RtspConnection();
 
     void OnMessage(BufferReader* buffer);
@@ -52,7 +53,7 @@ private:
 private:
     bool active_ = false;
     std::atomic<int> heart_count_ = 0;
-    std::shared_ptr<Rtsp> rtsp_server_;
+    std::shared_ptr<RtspServer> rtsp_server_;
     ConnectionMode mode_ = RTSP_SERVER;
     ConnectionState state_ = INIT;
     MediaSessionId session_id_ = 0;

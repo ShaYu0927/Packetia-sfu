@@ -7,7 +7,11 @@ RtspServer::RtspServer(EventLoop* event_loop)
     
 }
 
+RtspServer::~RtspServer()
+{
+}
+
 TcpConnection::Ptr RtspServer:: OnConnect(SOCKET sockfd)
 {
-    return std::make_shared<RtspConnection>(shared_from_this(), this->GetEventLoop(), sockfd);
+    return std::make_shared<RtspConnection>(shared_from_this(), this->GetEventLoop()->GetTaskScheduler().get(), sockfd);
 }

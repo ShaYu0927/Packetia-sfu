@@ -1,6 +1,6 @@
 #include "RtspConnection.h"
 
-RtspConnection::RtspConnection(std::shared_ptr<Rtsp> rtsp_server, TaskScheduler *task_scheduler, SOCKET sockfd)
+RtspConnection::RtspConnection(std::shared_ptr<RtspServer> rtsp_server, TaskScheduler *task_scheduler, SOCKET sockfd)
     : TcpConnection(task_scheduler, sockfd)
     , rtsp_server_(rtsp_server)
 {

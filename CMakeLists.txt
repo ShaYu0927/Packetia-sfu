@@ -28,6 +28,10 @@ set(FILES
     Rtsp/RtspServer.h
     Rtsp/RtspMessage.cpp
     Rtsp/RtspMessage.h
+    Rtsp/Rtp.h
+    Rtsp/Rtsp.h
+    Rtsp/RtspConnection.cpp
+    Rtsp/RtspConnection.h
     utils/ThreadSafeQueue.h
     utils/Time.cpp
     utils/Time.h
@@ -65,6 +69,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/utils
     ${CMAKE_SOURCE_DIR}/log
     ${CMAKE_SOURCE_DIR}/network
+    ${CMAKE_SOURCE_DIR}/Rtsp
     
 )
 
