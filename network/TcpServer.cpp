@@ -18,6 +18,14 @@ TcpServer::TcpServer(EventLoop *event_loop)
         if(conn)
         {
             this->AddConnection(sockfd, conn);
+            if (dynamic_cast<RtspConnection*>(conn.get()) == nullptr) 
+            {
+                conn->SetReadCallback([](TcpConnection::Ptr conn, BufferReader& buffer) {
+                    std::string msg(buffer.Peek(), buffer.ReadableBytes());
+                    LOG_INFO("[业务] 收到消息: " + msg);
+                    return true;
+                    });
+            }
             conn->SetDisconnectCallback([this](TcpConnection::Ptr conn){
                 auto scheduler = conn->GetTaskScheduler();
                 int socketfd = conn->GetSocket();
@@ -27,12 +35,6 @@ TcpServer::TcpServer(EventLoop *event_loop)
 				}   
             });
 
-            conn->SetReadCallback([](TcpConnection::Ptr conn, BufferReader& buffer) {
-                std::string msg(buffer.Peek(), buffer.ReadableBytes());
-                std::cout << "[业务] 收到消息: " << msg << std::endl;
-        
-                return true; // 返回false会关闭连接
-            });
         }
     });
 }

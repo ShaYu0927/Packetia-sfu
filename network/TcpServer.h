@@ -12,6 +12,7 @@
 #include <unordered_map>
 #include "Socket.h"
 #include "TcpConnection.h"
+#include "RtspConnection.h"
 #include "EventLoop.h"
 #include "Acceptor.h"
 
@@ -36,7 +37,6 @@ protected:
 	virtual void AddConnection(SOCKET sockfd, TcpConnection::Ptr tcp_conn);
 	virtual void RemoveConnection(SOCKET sockfd);
 
-private:
     EventLoop* event_loop_;
 	uint16_t port_;
 	std::string ip_;

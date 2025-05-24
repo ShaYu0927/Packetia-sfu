@@ -89,29 +89,32 @@ void TcpConnection::close()
 
 void TcpConnection::HandleRead()
 {
-	LOG_INFO("HandleRead: about to read from fd=" + std::to_string(channel_->GetSocket()));
+    LOG_INFO("HandleRead: about to read from fd=" + std::to_string(channel_->GetSocket()));
     {
-		std::lock_guard<std::mutex> lock(mutex_);
-
-		if (is_closed_) {
-			return;
-		}
-		
-		int ret = read_buffer_->Read(channel_->GetSocket());
-		if (ret <= 0) {
-			this->close();
-			return;
-		}
-	}
-	if (read_cb_) {
-		bool ret = read_cb_(shared_from_this(), *read_buffer_);
-		if (false == ret) 
-		{
-			std::lock_guard<std::mutex> lock(mutex_);
-			this->close();
-		}
-	}
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (is_closed_) {
+            LOG_INFO("HandleRead: connection already closed");
+            return;
+        }
+        
+        int ret = read_buffer_->Read(channel_->GetSocket());
+        LOG_INFO("HandleRead: read_buffer_->Read returned " + std::to_string(ret));
+        if (ret <= 0) {
+            LOG_INFO("HandleRead: read <= 0, closing connection");
+            this->close();
+            return;
+        }
+    }
+    if (read_cb_) {
+        bool ret = read_cb_(shared_from_this(), *read_buffer_);
+        if (!ret) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            LOG_INFO("HandleRead: read_cb_ returned false, closing connection");
+            this->close();
+        }
+    }
 }
+
 
 void TcpConnection::HandleWrite()
 {

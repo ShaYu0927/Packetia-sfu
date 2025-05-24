@@ -15,6 +15,10 @@
 class TcpConnection : public std::enable_shared_from_this<TcpConnection>
 {
 public:
+
+    enum class ConnectionType { Generic, Rtsp };
+    virtual ConnectionType GetConnectionType() const { return ConnectionType::Generic; }
+
     using Ptr = std::shared_ptr<TcpConnection>;
     using DisconnectCallback = std::function<void(std::shared_ptr<TcpConnection> conn)>;
     using MessageCallback = std::function<void(std::shared_ptr<TcpConnection> conn, const char* data, int len)>;
@@ -71,7 +75,6 @@ protected:
     std::unique_ptr<BufferReader> read_buffer_;
 	std::unique_ptr<BufferWirte> write_buffer_;
 
-private:
     DisconnectCallback disconnect_callback_;
     MessageCallback message_callback_;
     ReadCallback read_cb_;

@@ -3,16 +3,11 @@
 RtspConnection::RtspConnection(std::shared_ptr<RtspServer> rtsp_server, TaskScheduler *task_scheduler, SOCKET sockfd)
     : TcpConnection(task_scheduler, sockfd)
     , rtsp_server_(rtsp_server)
+    ,task_scheduler_(task_scheduler)
 {
     // Initialize the connection
+    LOG_INFO("RtspConnection created with sockfd: " + std::to_string(sockfd));
     active_ = true;
-    this->SetReadCallback([this](std::shared_ptr<TcpConnection> conn, BufferReader& buffer) {
-		return this->onRead(buffer);
-	});
-
-    this->SetCloseCallback([this](std::shared_ptr<TcpConnection> conn) {
-        return this->onClose();
-    });
 }
 
 RtspConnection::~RtspConnection()
@@ -26,14 +21,20 @@ RtspConnection::~RtspConnection()
 
 bool RtspConnection::HandleRtspRequest(BufferReader &buffer)
 {
+    LOG_INFO("RtspConnection::HandleRtspRequest called, sockfd: " + std::to_string(this->GetSocket()));
+    if (buffer.ReadableBytes() <= 0)
+    {
+        LOG_ERROR("Buffer is empty or invalid");
+        return false;
+    }
     std::string str(buffer.Peek(), buffer.ReadableBytes());
 	if (str.find("rtsp") != std::string::npos || str.find("RTSP") != std::string::npos)
 	{
-		std::cout << str << std::endl;
+		LOG_INFO("Received RTSP request: " + str);
 	}
 
     
-    return false;
+    return true;
 }
 
 bool RtspConnection::HandleRtspResponse(BufferReader &buffer)
@@ -43,6 +44,7 @@ bool RtspConnection::HandleRtspResponse(BufferReader &buffer)
 
 bool RtspConnection::onRead(BufferReader &buffer)
 {
+    LOG_INFO("RtspConnection::onRead called, sockfd: " + std::to_string(this->GetSocket()));
     int size = buffer.ReadableBytes();
     if (size <= 0)
     {
