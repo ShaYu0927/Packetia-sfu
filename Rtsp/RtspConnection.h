@@ -3,6 +3,7 @@
 
 #include "TcpConnection.h"
 #include "BufferWrite.h"
+#include "RtspMessage.h"
 #include "EventLoop.h"
 #include "Rtsp.h"
 #include "Media.h"
@@ -46,6 +47,14 @@ public:
     bool HandleRtspRequest(BufferReader& buffer);
     bool HandleRtspResponse(BufferReader& buffer);
     
+
+    void HandleCmdOptions();
+    void HandleCmdDescribe();
+    void HandleCmdSetup();
+    void HandleCmdPlay();
+    void HandleCmdPause();
+    void HandleCmdTeardown();
+
 protected:
     friend class RtspServer; 
     bool onRead(BufferReader& buffer);
@@ -62,6 +71,10 @@ private:
     ConnectionMode mode_ = RTSP_SERVER;
     ConnectionState state_ = INIT;
     MediaSessionId session_id_ = 0;
+
+
+    std::unique_ptr<RtspRequest> rtsp_request_;
+    std::unique_ptr<RtspResponse> read_buffer_;
 };
 
 

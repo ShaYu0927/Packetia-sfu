@@ -2,6 +2,7 @@
 
 bool RtspRequest::ParseRequest(BufferReader *buffer)
 {
+    LOG_INFO("Parsing RTSP request from buffer");
     if(buffer->Peek()[0] == '$')  //判读是否RTP OVER TCP
     {
         method_ = Method::RTCP;
@@ -14,8 +15,10 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
         if(state_ == kParseRequestLine)
         {
             const char* firstCtrlf = buffer->FindFirstCrlf();
-            if(!firstCtrlf)
+            LOG_INFO("First CRLF found at: " + std::to_string(firstCtrlf - buffer->Peek()));
+            if(firstCtrlf)
             {
+                LOG_INFO("Parsing request line");
                 ret = ParseRequestLine(buffer->Peek(), firstCtrlf);
 				buffer->RetrieveUntil(firstCtrlf + 2);
             }
@@ -23,8 +26,9 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
         if(state_ == kParseHeadersLine)
         {
             const char* firstCrlf = buffer->FindFirstCrlf();
-            if(!firstCrlf)
+            if(firstCrlf)
             {
+                LOG_INFO("Parsing header lines");
                 ret = ParseHeaderLines(buffer->Peek(), firstCrlf);
                 buffer->RetrieveUntil(firstCrlf + 2);
             }
@@ -37,9 +41,15 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
     return true;
 }
 
+int RtspRequest::BuildOptionsRes(std::shared_ptr<char> data, int size)
+{
+    return 0;
+}
+
 //OPTIONS rtsp://192.168.1.100:8554/live RTSP/1.0\r\n
 bool RtspRequest::ParseRequestLine(const char *begin, const char *end)
 {
+    LOG_INFO("Parsing RTSP request line: " + std::string(begin, end));
     std::string request_line(begin, end);
     char method[16] = {0};
     char uri[256] = {0};

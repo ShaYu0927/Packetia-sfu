@@ -4,6 +4,7 @@
 #include <string>
 #include <unordered_map>
 #include "BufferRead.h"
+#include "logger.h"
 #include "Rtp.h"
 
 class RtspRequest
@@ -68,7 +69,20 @@ public:
     bool ParseRequest(BufferReader *buffer);
 
  
+    Method GetMethod() const { return method_; }
+    const std::string& GetMethodString() const { return method_str_; }
+    Version GetVersion() const { return version_; }
+    const std::string& GetSessionId() const { return session_id_; }
+    const std::string& GetContentType() const { return content_type_; }
+    const std::string& GetContentLength() const { return content_length_; }
+    const std::string& GetUserAgent() const { return user_agent_; }
+    const std::string& GetAccept() const { return accept_; }
+    const std::string& GetRange() const { return range_; }
+    const std::string& GetTransport() const { return transport_; }
 
+
+    int BuildOptionsRes(std::shared_ptr<char> data,int size);
+    int BuildDescribeRes(std::shared_ptr<char> data, int size, const std::string& sdp);
 
 
 
@@ -98,6 +112,12 @@ private:
 
     std::unordered_map<std::string, std::pair<std::string, uint32_t>> request_line_param_;
     std::unordered_map<std::string, std::pair<std::string, uint32_t>> header_line_param_;
+};
+
+
+class RtspResponse
+{
+
 };
 
 #endif

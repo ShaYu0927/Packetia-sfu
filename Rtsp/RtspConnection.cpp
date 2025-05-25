@@ -4,6 +4,8 @@ RtspConnection::RtspConnection(std::shared_ptr<RtspServer> rtsp_server, TaskSche
     : TcpConnection(task_scheduler, sockfd)
     , rtsp_server_(rtsp_server)
     ,task_scheduler_(task_scheduler)
+    ,rtsp_request_(std::make_unique<RtspRequest>())
+    ,read_buffer_(std::make_unique<RtspResponse>())
 {
     // Initialize the connection
     LOG_INFO("RtspConnection created with sockfd: " + std::to_string(sockfd));
@@ -32,7 +34,38 @@ bool RtspConnection::HandleRtspRequest(BufferReader &buffer)
 	{
 		LOG_INFO("Received RTSP request: " + str);
 	}
-
+    LOG_INFO("Parsing RTSP request from buffer, size: " + std::to_string(buffer.ReadableBytes()));
+    if (!rtsp_request_->ParseRequest(&buffer)) 
+    {
+        LOG_ERROR("Failed to parse RTSP request");
+        return false;
+    }
+    // RtspRequest::Method method = rtsp_request_->GetMethod();
+    // switch(method)
+    // {
+    //     case RtspRequest::Method::OPTIONS:
+    //         LOG_INFO("Handling OPTIONS request");
+    //         HandleCmdOptions();
+    //         break;
+    //     case RtspRequest::Method::DESCRIBE:
+    //         HandleCmdDescribe();
+    //         break;
+    //     case RtspRequest::Method::SETUP:
+    //         HandleCmdSetup();
+    //         break;
+    //     case RtspRequest::Method::PLAY:
+    //         HandleCmdPlay();
+    //         break;
+    //     case RtspRequest::Method::PAUSE:
+    //         HandleCmdPause();
+    //         break;
+    //     case RtspRequest::Method::TEARDOWN:
+    //         HandleCmdTeardown();
+    //         break;
+    //     default:
+    //         LOG_ERROR("Unsupported RTSP method: " + rtsp_request_->GetMethodString());
+    //         return false;
+    // }
     
     return true;
 }
@@ -40,6 +73,30 @@ bool RtspConnection::HandleRtspRequest(BufferReader &buffer)
 bool RtspConnection::HandleRtspResponse(BufferReader &buffer)
 {
     return false;
+}
+
+void RtspConnection::HandleCmdOptions()
+{
+}
+
+void RtspConnection::HandleCmdDescribe()
+{
+}
+
+void RtspConnection::HandleCmdSetup()
+{
+}
+
+void RtspConnection::HandleCmdPlay()
+{
+}
+
+void RtspConnection::HandleCmdPause()
+{
+}
+
+void RtspConnection::HandleCmdTeardown()
+{
 }
 
 bool RtspConnection::onRead(BufferReader &buffer)
