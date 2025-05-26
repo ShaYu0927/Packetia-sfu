@@ -55,8 +55,11 @@ public:
     void HandleCmdPause();
     void HandleCmdTeardown();
 
+    void SendRtspMessage(std::shared_ptr<char> data, uint32_t size);
+
 protected:
     friend class RtspServer; 
+    friend class RtspMessage;
     bool onRead(BufferReader& buffer);
     bool onWrite(BufferWirte& buffer);
     bool onClose();

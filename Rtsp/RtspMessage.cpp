@@ -18,7 +18,7 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
             LOG_INFO("First CRLF found at: " + std::to_string(firstCtrlf - buffer->Peek()));
             if(firstCtrlf)
             {
-                LOG_INFO("Parsing request line");
+
                 ret = ParseRequestLine(buffer->Peek(), firstCtrlf);
 				buffer->RetrieveUntil(firstCtrlf + 2);
             }
@@ -28,7 +28,6 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
             const char* firstCrlf = buffer->FindFirstCrlf();
             if(firstCrlf)
             {
-                LOG_INFO("Parsing header lines");
                 ret = ParseHeaderLines(buffer->Peek(), firstCrlf);
                 buffer->RetrieveUntil(firstCrlf + 2);
             }
@@ -112,7 +111,58 @@ bool RtspRequest::ParseRequestLine(const char *begin, const char *end)
 
 bool RtspRequest::ParseHeaderLines(const char *begin, const char *end)
 {
-    return false;
+    LOG_INFO("Parsing RTSP header lines: " + std::string(begin, end));
+    std::string header_lines(begin, end);
+    if(!ParseCseq(header_lines))
+    {
+       if(header_line_param_.find("CSeq") == header_line_param_.end())
+       {
+           LOG_ERROR("CSeq not found in header lines");
+           return false;
+       }
+    }
+    if(method_ == Method::DESCRIBE || method_ == Method::SETUP || method_ == Method::PLAY)
+    {
+        if(!ParseTransport(header_lines))
+        {
+            ParseAuthorization(header_lines);
+        }
+    }
+   
+    if(method_ == Method::OPTIONS) 
+    {
+		state_ = kGotAll;
+		return true;
+	}
+
+    if(method_ == Method::DESCRIBE) 
+    {
+		if(ParseAccept(header_lines)) 
+        {
+			state_ = kGotAll;
+		}
+		return true;
+	}
+
+    if(method_ == Method::SETUP) 
+    {
+        if(ParseTransport(header_lines))
+        {
+            state_ = kGotAll;
+        }
+        return true;
+    }
+
+    if(method_ == Method::PLAY) 
+    {
+		if(ParseSessionId(header_lines)) 
+        {
+			state_ = kGotAll;
+		}
+		return true;
+	}
+
+    return true;
 }
 
 bool RtspRequest::ParseCseq(const std::string &message)
@@ -175,10 +225,36 @@ bool RtspRequest::ParseTransport(std::string &message)
 
 bool RtspRequest::ParseMediaChannel(std::string &message)
 {
-    return false;
+    channel_id_ = channel_0;
+
+	auto iter = request_line_param_.find("url");
+	if(iter != request_line_param_.end()) {
+		std::size_t pos = iter->second.first.find("track1");
+		if (pos != std::string::npos) {
+			channel_id_ = channel_1;
+		}       
+	}
+
+	return true;
 }
 
 bool RtspRequest::ParseAuthorization(std::string &message)
 {
+    std::size_t pos = message.find("Authorization:");
+    if (pos != std::string::npos)
+    {
+        if(pos != std::string::npos)
+        {
+            if((message.find("resonse")) != std::string::npos)
+            {
+                auth_response_ = message.substr(pos + 10, 32);
+			    if (auth_response_.size() == 32) 
+                {
+				    return true;
+			    }
+            }
+        }
+    }
+
     return false;
 }

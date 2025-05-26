@@ -40,32 +40,32 @@ bool RtspConnection::HandleRtspRequest(BufferReader &buffer)
         LOG_ERROR("Failed to parse RTSP request");
         return false;
     }
-    // RtspRequest::Method method = rtsp_request_->GetMethod();
-    // switch(method)
-    // {
-    //     case RtspRequest::Method::OPTIONS:
-    //         LOG_INFO("Handling OPTIONS request");
-    //         HandleCmdOptions();
-    //         break;
-    //     case RtspRequest::Method::DESCRIBE:
-    //         HandleCmdDescribe();
-    //         break;
-    //     case RtspRequest::Method::SETUP:
-    //         HandleCmdSetup();
-    //         break;
-    //     case RtspRequest::Method::PLAY:
-    //         HandleCmdPlay();
-    //         break;
-    //     case RtspRequest::Method::PAUSE:
-    //         HandleCmdPause();
-    //         break;
-    //     case RtspRequest::Method::TEARDOWN:
-    //         HandleCmdTeardown();
-    //         break;
-    //     default:
-    //         LOG_ERROR("Unsupported RTSP method: " + rtsp_request_->GetMethodString());
-    //         return false;
-    // }
+    RtspRequest::Method method = rtsp_request_->GetMethod();
+    switch(method)
+    {
+        case RtspRequest::Method::OPTIONS:
+            LOG_INFO("Handling OPTIONS request");
+            HandleCmdOptions();
+            break;
+        case RtspRequest::Method::DESCRIBE:
+            HandleCmdDescribe();
+            break;
+        case RtspRequest::Method::SETUP:
+            HandleCmdSetup();
+            break;
+        case RtspRequest::Method::PLAY:
+            HandleCmdPlay();
+            break;
+        case RtspRequest::Method::PAUSE:
+            HandleCmdPause();
+            break;
+        case RtspRequest::Method::TEARDOWN:
+            HandleCmdTeardown();
+            break;
+        default:
+            LOG_ERROR("Unsupported RTSP method: " + rtsp_request_->GetMethodString());
+            return false;
+    }
     
     return true;
 }
@@ -97,6 +97,16 @@ void RtspConnection::HandleCmdPause()
 
 void RtspConnection::HandleCmdTeardown()
 {
+}
+
+void RtspConnection::SendRtspMessage(std::shared_ptr<char> data, uint32_t size)
+{
+#if RTSP_DEBUG
+	cout << buf.get() << endl;
+#endif
+
+	this->Send(data, size);
+	return;
 }
 
 bool RtspConnection::onRead(BufferReader &buffer)

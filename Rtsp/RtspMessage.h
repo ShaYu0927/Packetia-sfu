@@ -6,6 +6,8 @@
 #include "BufferRead.h"
 #include "logger.h"
 #include "Rtp.h"
+#include "Media.h"
+
 
 class RtspRequest
 {
@@ -100,6 +102,8 @@ private:
     std::string transport_;                             //传输协议
     std::string authorization_;                         //授权
     std::string date_;
+    MediaChannelId channel_id_;
+    std::string auth_response_;
 
     bool ParseRequestLine(const char* begin, const char* end);
     bool ParseHeaderLines(const char*begin,const char* end);
