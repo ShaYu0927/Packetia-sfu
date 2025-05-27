@@ -7,8 +7,13 @@
 class MediaSource
 {
 public:
+    using Ptr = std::unique_ptr<MediaSource>;
+
     MediaSource() = default;
-    virtual ~MediaSource() ;
+    virtual ~MediaSource()
+    {
+
+    }
 
     virtual MediaType GetMediaType() const
     { return media_type_; }

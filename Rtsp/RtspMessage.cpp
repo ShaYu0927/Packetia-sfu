@@ -40,10 +40,61 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
     return true;
 }
 
+std::string RtspRequest::GetRtspUSuffix() const
+{
+    auto iter = request_line_param_.find("url_suffix");
+    if (iter != request_line_param_.end())
+    {
+        return iter->second.first;
+    }
+    return "";
+}
+
 int RtspRequest::BuildOptionsRes(std::shared_ptr<char> data, int size)
 {
-    return 0;
+    memset((void*)data.get(), 0, size);
+    snprintf((char*)data.get(), size,
+			"RTSP/1.0 200 OK\r\n"
+			"CSeq: %u\r\n"
+			"Public: OPTIONS, DESCRIBE, SETUP, TEARDOWN, PLAY\r\n"
+			"\r\n",
+			this->GetCSeq());
+
+	return (int)strlen(data.get());
 }
+
+int RtspRequest::BuildNotFoundRes(std::shared_ptr<char> data, int size)
+{
+    memset((void*)data.get(), 0, size);
+	snprintf((char*)data.get(), size,
+			"RTSP/1.0 404 Stream Not Found\r\n"
+			"CSeq: %u\r\n"
+			"\r\n",
+			this->GetCSeq());
+
+	return (int)strlen(data.get());
+}
+
+int RtspRequest::BuildServerErrorRes(std::shared_ptr<char> data, int size, const std::string &error_message)
+{
+    // 构造标准 RTSP 错误响应头
+    std::ostringstream oss;
+    oss << "RTSP/1.0 500 Internal Server Error\r\n";
+    oss << "CSeq: " << this->GetCSeq() << "\r\n";  // 假设你有保存的 CSeq 值
+    oss << "Content-Length: " << error_message.length() << "\r\n";
+    oss << "Content-Type: text/plain\r\n";
+    oss << "\r\n";
+    oss << error_message;
+
+    std::string res_str = oss.str();
+    if (res_str.length() > static_cast<size_t>(size)) {
+        return -1; // buffer 太小
+    }
+
+    memcpy(data.get(), res_str.c_str(), res_str.length());
+    return static_cast<int>(res_str.length());
+}
+
 
 //OPTIONS rtsp://192.168.1.100:8554/live RTSP/1.0\r\n
 bool RtspRequest::ParseRequestLine(const char *begin, const char *end)

@@ -40,6 +40,12 @@ public:
         RTSP_1_0,
         RTSP_2_0
     };
+   std::array<std::string, 3> ServerError = {
+    "RTSP/1.0 500 Internal Server Error\r\n",
+    "RTSP/1.0 404 Not Found\r\n",
+    "RTSP/1.0 400 Bad Request\r\n"
+    };
+
 
     Method GetMethodString(const char* method)
     {
@@ -81,10 +87,22 @@ public:
     const std::string& GetAccept() const { return accept_; }
     const std::string& GetRange() const { return range_; }
     const std::string& GetTransport() const { return transport_; }
+    std::string GetRtspUSuffix() const;
+    std::string GetCSeq() const
+    {
+        auto iter = header_line_param_.find("CSeq");
+        if (iter != header_line_param_.end())
+        {
+            return iter->second.first;
+        }
+        return "";
+    }
 
 
     int BuildOptionsRes(std::shared_ptr<char> data,int size);
     int BuildDescribeRes(std::shared_ptr<char> data, int size, const std::string& sdp);
+    int BuildNotFoundRes(std::shared_ptr<char> data,int size);
+    int BuildServerErrorRes(std::shared_ptr<char> data, int size, const std::string& error_message);
 
 
 
@@ -101,6 +119,7 @@ private:
     std::string range_;                                 //范围
     std::string transport_;                             //传输协议
     std::string authorization_;                         //授权
+    std::string rtsp_url_suffix_;                       //RTSP URL后缀
     std::string date_;
     MediaChannelId channel_id_;
     std::string auth_response_;

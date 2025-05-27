@@ -6,6 +6,7 @@ RtspConnection::RtspConnection(std::shared_ptr<RtspServer> rtsp_server, TaskSche
     ,task_scheduler_(task_scheduler)
     ,rtsp_request_(std::make_unique<RtspRequest>())
     ,read_buffer_(std::make_unique<RtspResponse>())
+    ,rtsp_(std::make_shared<Rtsp>())
 {
     // Initialize the connection
     LOG_INFO("RtspConnection created with sockfd: " + std::to_string(sockfd));
@@ -77,10 +78,51 @@ bool RtspConnection::HandleRtspResponse(BufferReader &buffer)
 
 void RtspConnection::HandleCmdOptions()
 {
+    std::shared_ptr<char> res(new char[2048], std::default_delete<char[]>());
+    int size = rtsp_request_->BuildOptionsRes(res, 1024);
+    this->SendRtspMessage(res, size);	
 }
 
 void RtspConnection::HandleCmdDescribe()
 {
+    LOG_INFO("Handling DESCRIBE request");
+    int size = 0;
+
+    //创建RTPConnection对象
+
+	std::shared_ptr<char> res(new char[4096], std::default_delete<char[]>());
+	MediaSession::Ptr media_session = nullptr;
+
+    MediaSession::Ptr media_session = nullptr;
+
+    //判断suffix
+    if (rtsp_) 
+    {
+            media_session = rtsp_->LookMediaSession(rtsp_request_->GetRtspUSuffix());
+            if (!media_session) 
+            {
+                LOG_ERROR("Media session not found for suffix: " + rtsp_request_->GetRtspUSuffix());
+                
+                return;
+            }
+    }
+
+
+    //客户端添加到会话,设置RTP的参数
+    if (media_session) 
+    {
+        session_id_ = media_session->GetId();
+        //media_session->AddClient(this->GetSocket(),session_id_); // 0 is a placeholder for channel_id
+    }
+    else 
+    {
+        LOG_ERROR("Media session is null");
+        return;
+    }
+
+
+
+
 }
 
 void RtspConnection::HandleCmdSetup()

@@ -4,6 +4,7 @@
 #include "TcpConnection.h"
 #include "BufferWrite.h"
 #include "RtspMessage.h"
+#include "MediaSession.h"
 #include "EventLoop.h"
 #include "Rtsp.h"
 #include "Media.h"
@@ -60,6 +61,8 @@ public:
 protected:
     friend class RtspServer; 
     friend class RtspMessage;
+
+
     bool onRead(BufferReader& buffer);
     bool onWrite(BufferWirte& buffer);
     bool onClose();
@@ -75,7 +78,7 @@ private:
     ConnectionState state_ = INIT;
     MediaSessionId session_id_ = 0;
 
-
+    std::shared_ptr<Rtsp> rtsp_;
     std::unique_ptr<RtspRequest> rtsp_request_;
     std::unique_ptr<RtspResponse> read_buffer_;
 };
