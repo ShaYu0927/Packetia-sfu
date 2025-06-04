@@ -49,6 +49,7 @@ bool RtspConnection::HandleRtspRequest(BufferReader &buffer)
             HandleCmdOptions();
             break;
         case RtspRequest::Method::DESCRIBE:
+            LOG_INFO("Handling DESCRIBE request");
             HandleCmdDescribe();
             break;
         case RtspRequest::Method::SETUP:
@@ -94,8 +95,7 @@ void RtspConnection::HandleCmdDescribe()
 	std::shared_ptr<char> res(new char[4096], std::default_delete<char[]>());
 	MediaSession::Ptr media_session = nullptr;
 
-
-    //判断suffix
+    //判断suffix, 后面媒体会话
     if (rtsp_) 
     {
             media_session = rtsp_->LookMediaSession(rtsp_request_->GetRtspUSuffix());

@@ -28,6 +28,8 @@ set(FILES
     Rtsp/RtspServer.h
     Rtsp/RtspMessage.cpp
     Rtsp/RtspMessage.h
+    Rtsp/RtpConnection.cpp
+    Rtsp/RtpConnection.h
     Rtsp/Rtp.h
     Rtsp/Rtsp.h
     Rtsp/RtspConnection.cpp
