@@ -79,7 +79,7 @@ public:
 
     
 
-    bool has_auth_info_ = false;
+    bool has_auth_info_;
 	std::string realm_;
 	std::string username_;
 	std::string password_;

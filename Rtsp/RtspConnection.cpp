@@ -80,6 +80,7 @@ void RtspConnection::HandleCmdOptions()
 {
     std::shared_ptr<char> res(new char[2048], std::default_delete<char[]>());
     int size = rtsp_request_->BuildOptionsRes(res, 1024);
+    LOG_INFO("Handling OPTIONS request, response size: " + std::to_string(size));
     this->SendRtspMessage(res, size);	
 }
 
@@ -93,7 +94,6 @@ void RtspConnection::HandleCmdDescribe()
 	std::shared_ptr<char> res(new char[4096], std::default_delete<char[]>());
 	MediaSession::Ptr media_session = nullptr;
 
-    MediaSession::Ptr media_session = nullptr;
 
     //判断suffix
     if (rtsp_) 

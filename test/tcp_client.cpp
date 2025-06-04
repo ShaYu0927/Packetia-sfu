@@ -5,7 +5,7 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <unistd.h>
-#include <pthread.h>
+#include <sstream>
 
 void client_thread(int id, const char* server_ip, int server_port) {
     int sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -14,8 +14,7 @@ void client_thread(int id, const char* server_ip, int server_port) {
         return;
     }
 
-    sockaddr_in server_addr;
-    memset(&server_addr, 0, sizeof(server_addr));
+    sockaddr_in server_addr{};
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(server_port);
     if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) <= 0) {
@@ -32,17 +31,23 @@ void client_thread(int id, const char* server_ip, int server_port) {
 
     std::cout << "Client " << id << ": Connected to server\n";
 
-    const char* message = "Hello from client!\n";
-    char buffer[1024];
+    // 构造 RTSP OPTIONS 请求
+    std::ostringstream oss;
+    oss << "OPTIONS rtsp://127.0.0.1/test RTSP/1.0\r\n"
+        << "CSeq: 1\r\n"
+        << "User-Agent: RtspTestClient/1.0\r\n"
+        << "\r\n";
 
-    for (int i = 0; i < 10; ++i) { // 每个客户端发10次消息
-        ssize_t sent_bytes = send(sock, message, strlen(message), 0);
-        if (sent_bytes < 0) {
-            std::cerr << "Client " << id << ": Send failed\n";
-            break;
-        }
+    std::string request = oss.str();
+    send(sock, request.c_str(), request.size(), 0);
 
-        std::this_thread::sleep_for(std::chrono::seconds(1));
+    char buffer[4096] = {0};
+    ssize_t received = recv(sock, buffer, sizeof(buffer) - 1, 0);
+    if (received > 0) {
+        std::cout << "Client " << id << ": Received response:\n";
+        std::cout << buffer << std::endl;
+    } else {
+        std::cerr << "Client " << id << ": Failed to receive response\n";
     }
 
     close(sock);
@@ -51,8 +56,8 @@ void client_thread(int id, const char* server_ip, int server_port) {
 
 int main() {
     const char* server_ip = "127.0.0.1";
-    const int server_port = 8888;
-    const int num_clients = 5; // 启动 5 个客户端线程
+    const int server_port = 554; // RTSP 默认端口
+    const int num_clients = 3;
 
     std::vector<std::thread> clients;
     for (int i = 0; i < num_clients; ++i) {
@@ -65,5 +70,3 @@ int main() {
 
     return 0;
 }
-
-

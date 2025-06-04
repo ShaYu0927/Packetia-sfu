@@ -8,7 +8,10 @@ class MediaSession {
 public:
     using Ptr = std::shared_ptr<MediaSession>;
     std::string GetRtspSuffix() const;
-    MediaSessionId GetId() const;
+    MediaSessionId GetId() const
+    {
+        return session_id_;
+    }
 
     void AddClient(int client_fd, MediaChannelId channel_id);
     void RemoveClient(int client_fd);

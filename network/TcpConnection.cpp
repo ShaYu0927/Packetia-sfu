@@ -119,41 +119,30 @@ void TcpConnection::HandleRead()
 void TcpConnection::HandleWrite()
 {
     if (is_closed_) {
-		return;
-	}
+        return;
+    }
 	
-	std::lock_guard<std::mutex> lock(mutex_);
-	if (!mutex_.try_lock()) {
-		return;
-	}
+    std::lock_guard<std::mutex> lock(mutex_);  // 一次锁定
 
-	int ret = 0;
-	bool empty = false;
-	do
-	{
-		ret = write_buffer_->Send(channel_->GetSocket());
-		if (ret < 0) 
-        {
-			this->close();
-			mutex_.unlock();
-			return;
-		}
-		empty = write_buffer_->IsEmpty();
-	} while (0);
+    int ret = write_buffer_->Send(channel_->GetSocket());
+    if (ret < 0) {
+        this->close();
+        return;
+    }
 
-	if (empty) {
-		if (channel_->IsWriting()) {
-			channel_->DisableWriting();
-			task_scheduler_->UpdateChannel(channel_);
-		}
-	}
-	else if(!channel_->IsWriting()) {
-		channel_->EnableWriting();
-		task_scheduler_->UpdateChannel(channel_);
-	}
-
-	mutex_.unlock();
+    if (write_buffer_->IsEmpty()) {
+        if (channel_->IsWriting()) {
+            channel_->DisableWriting();
+            task_scheduler_->UpdateChannel(channel_);
+        }
+    } else {
+        if (!channel_->IsWriting()) {
+            channel_->EnableWriting();
+            task_scheduler_->UpdateChannel(channel_);
+        }
+    }
 }
+
 
 void TcpConnection::HandleClose()
 {
