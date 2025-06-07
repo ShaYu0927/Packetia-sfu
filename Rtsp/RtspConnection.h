@@ -5,6 +5,7 @@
 #include "BufferWrite.h"
 #include "RtspMessage.h"
 #include "MediaSession.h"
+#include "RtpConnection.h"
 #include "EventLoop.h"
 #include "Rtsp.h"
 #include "Media.h"
@@ -78,6 +79,7 @@ private:
     ConnectionState state_ = INIT;
     MediaSessionId session_id_ = 0;
 
+    std::shared_ptr<RtpConnection> rtp_connection_;
     std::shared_ptr<Rtsp> rtsp_;
     std::unique_ptr<RtspRequest> rtsp_request_;
     std::unique_ptr<RtspResponse> read_buffer_;

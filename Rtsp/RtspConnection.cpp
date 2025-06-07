@@ -91,6 +91,9 @@ void RtspConnection::HandleCmdDescribe()
     int size = 0;
 
     //创建RTPConnection对象
+    if (rtp_connection_ == nullptr) {
+		rtp_connection_.reset(new RtpConnection(shared_from_this()));
+	}
 
 	std::shared_ptr<char> res(new char[4096], std::default_delete<char[]>());
 	MediaSession::Ptr media_session = nullptr;
@@ -113,6 +116,13 @@ void RtspConnection::HandleCmdDescribe()
     {
         session_id_ = media_session->GetId();
         //media_session->AddClient(this->GetSocket(),session_id_); // 0 is a placeholder for channel_id
+
+        for(int i = 0; i < MAX_MEDIA_CHANNEL; ++i) 
+        {
+            rtp_connection_->SetClockrate((MediaChannelId)i, media_session->GetMediaChannelClockRate((MediaChannelId)i));
+            rtp_connection_->SetPlayLoadType((MediaChannelId)i, media_session->GetMediaChannelPayloadType((MediaChannelId)i));
+        }
+
     }
     else 
     {

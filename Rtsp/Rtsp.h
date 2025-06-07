@@ -5,6 +5,7 @@
 #include <string>
 #include <sstream>
 #include <memory>
+#include <map>
 
 struct RtspUrlInfo
 {
@@ -64,9 +65,6 @@ public:
             rtsp_url_info_.port = 554; // Default RTSP port
         }
     }
-
-
-
 
 
     virtual MediaSession::Ptr LookMediaSession(const std::string& suffix)
