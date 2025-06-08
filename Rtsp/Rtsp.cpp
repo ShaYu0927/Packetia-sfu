@@ -11,11 +11,13 @@ std::string Sdp::GetSdpMessage(const std::string &ip, const std::string &session
          << "a=control:*\r\n"
          << "a=range:npt=0-\r\n";
 
-     for (const auto& media : media_list_) {
+     for (const auto& media : media_list_) 
+     {
         oss << "m=" << media.media_type << " " << media.port << " " << media.protocol
             << " " << media.payload_type << "\r\n";
         oss << "a=rtpmap:" << media.payload_type << " " << media.codec_name << "/" << media.clock_rate << "\r\n";
-        if (!media.control.empty()) {
+        if (!media.control.empty()) 
+        {
             oss << "a=control:" << media.control << "\r\n";
          }
      }

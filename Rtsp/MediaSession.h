@@ -35,6 +35,9 @@ public:
         return 0;
     }
 
+    virtual MediaSession::Ptr LookMediaSession(const std::string& suffix) = 0;
+    virtual MediaSession::Ptr LookMediaSession(MediaSessionId sessionId) = 0;
+
 private:
     MediaSessionId session_id_ = 0;
 	std::string suffix_;

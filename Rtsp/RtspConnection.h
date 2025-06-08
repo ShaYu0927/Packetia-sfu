@@ -81,6 +81,7 @@ private:
 
     std::shared_ptr<RtpConnection> rtp_connection_;
     std::shared_ptr<Rtsp> rtsp_;
+    std::unique_ptr<Sdp> sdp_;
     std::unique_ptr<RtspRequest> rtsp_request_;
     std::unique_ptr<RtspResponse> read_buffer_;
 };

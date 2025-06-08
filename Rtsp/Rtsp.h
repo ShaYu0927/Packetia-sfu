@@ -6,6 +6,10 @@
 #include <sstream>
 #include <memory>
 #include <map>
+#include "MediaSession.h"
+
+
+class MediaSession;
 
 struct RtspUrlInfo
 {
@@ -15,7 +19,7 @@ struct RtspUrlInfo
 	std::string suffix;
 };
 
-class Rtsp : public std::enable_shared_from_this<Rtsp>
+class Rtsp : public std::enable_shared_from_this<Rtsp> , public MediaSession
 {
 public:
     Rtsp() : has_auth_info_(false) {}
@@ -113,11 +117,10 @@ public:
     };
 
 
-
     Sdp() = default;
-    virtual ~Sdp() {}
+    ~Sdp() {}
 
-    virtual std::string GetSdpMessage(const std::string& ip, const std::string& session_name = "Media Session");
+    std::string GetSdpMessage(const std::string& ip, const std::string& session_name = "Media Session");
 
     void AddMedia(const MediaDescription& media);
 

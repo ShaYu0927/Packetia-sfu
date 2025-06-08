@@ -63,6 +63,26 @@ int RtspRequest::BuildOptionsRes(std::shared_ptr<char> data, int size)
 	return (int)strlen(data.get());
 }
 
+int RtspRequest::BuildDescribeRes(std::shared_ptr<char> data, int size, const std::string &sdp)
+{
+    std::ostringstream oss;
+    oss << "RTSP/1.0 200 OK\r\n";
+    oss << "CSeq: " << this->GetCSeq() << "\r\n";
+    oss << "Content-Type: application/sdp\r\n";
+    oss << "Content-Length: " << sdp.size() << "\r\n";
+    oss << "\r\n";
+
+     std::string res = oss.str() + sdp;
+
+    // 检查是否能写入数据缓冲区
+    if (res.size() > static_cast<size_t>(size)) {
+        return -1; // buffer 太小
+    }
+
+    std::memcpy(data.get(), res.data(), res.size());
+    return static_cast<int>(res.size());
+}
+
 int RtspRequest::BuildNotFoundRes(std::shared_ptr<char> data, int size)
 {
     memset((void*)data.get(), 0, size);

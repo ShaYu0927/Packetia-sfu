@@ -30,8 +30,12 @@ set(FILES
     Rtsp/RtspMessage.h
     Rtsp/RtpConnection.cpp
     Rtsp/RtpConnection.h
+    Rtsp/MediaSession.cpp
+    Rtsp/MediaSession.h
+    Rtsp/MediaSource.h
     Rtsp/Rtp.h
     Rtsp/Rtsp.h
+    Rtsp/Rtsp.cpp
     Rtsp/RtspConnection.cpp
     Rtsp/RtspConnection.h
     utils/ThreadSafeQueue.h
