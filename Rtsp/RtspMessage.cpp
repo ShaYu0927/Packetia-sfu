@@ -3,42 +3,59 @@
 bool RtspRequest::ParseRequest(BufferReader *buffer)
 {
     LOG_INFO("Parsing RTSP request from buffer");
-    if(buffer->Peek()[0] == '$')  //判读是否RTP OVER TCP
+    if(buffer->Peek()[0] == '$')  //判断是否RTP OVER TCP
     {
         method_ = Method::RTCP;
         return true;
     }
 
     bool ret = true;
-    while(1)
+    while(true)
     {
         if(state_ == kParseRequestLine)
         {
-            const char* firstCtrlf = buffer->FindFirstCrlf();
-            LOG_INFO("First CRLF found at: " + std::to_string(firstCtrlf - buffer->Peek()));
-            if(firstCtrlf)
-            {
+            const char* firstCrlf = buffer->FindFirstCrlf();
+            if(!firstCrlf)
+                break;  // 还没完整一行，等待更多数据
 
-                ret = ParseRequestLine(buffer->Peek(), firstCtrlf);
-				buffer->RetrieveUntil(firstCtrlf + 2);
-            }
+            LOG_INFO("First CRLF found at: " + std::to_string(firstCrlf - buffer->Peek()));
+            ret = ParseRequestLine(buffer->Peek(), firstCrlf);
+            buffer->RetrieveUntil(firstCrlf + 2);
+
+            if(!ret)
+                return false;
         }
-        if(state_ == kParseHeadersLine)
+        else if(state_ == kParseHeadersLine)
         {
             const char* firstCrlf = buffer->FindFirstCrlf();
-            if(firstCrlf)
+            if(!firstCrlf)
+                break;  // 还没完整一行，等待更多数据
+
+            // 空行表示头部结束
+            if(firstCrlf == buffer->Peek() || (firstCrlf[0] == '\r' && firstCrlf[1] == '\n'))
             {
-                ret = ParseHeaderLines(buffer->Peek(), firstCrlf);
+                // 读取空行，结束头部解析
                 buffer->RetrieveUntil(firstCrlf + 2);
+                // 头部解析完成，改变状态
+                state_ = kParseDone;  // 或者其他状态表示解析完毕
+                break;
             }
+
+            ret = ParseHeaderLines(buffer->Peek(), firstCrlf);
+            buffer->RetrieveUntil(firstCrlf + 2);
+
+            if(!ret)
+                return false;
         }
         else
         {
-            break; 
+            // 解析完成或者错误，跳出循环
+            break;
         }
     }
     return true;
 }
+
 
 std::string RtspRequest::GetRtspUSuffix() const
 {
@@ -131,6 +148,8 @@ bool RtspRequest::ParseRequestLine(const char *begin, const char *end)
     method_ = GetMethodString(method);
     if (method_ == Method::NONE)
         return false;
+    method_str_ = method;
+    LOG_INFO("Parsed RTSP method: " + method_str_); 
 
     if (strncmp(version, "RTSP/1.0", 8) == 0)
         version_ = Version::RTSP_1_0;
@@ -184,6 +203,11 @@ bool RtspRequest::ParseHeaderLines(const char *begin, const char *end)
 {
     LOG_INFO("Parsing RTSP header lines: " + std::string(begin, end));
     std::string header_lines(begin, end);
+    if(header_lines.empty())
+    {
+        LOG_ERROR("Header lines are empty");
+        return false;
+    }
     if(!ParseCseq(header_lines))
     {
        if(header_line_param_.find("CSeq") == header_line_param_.end())

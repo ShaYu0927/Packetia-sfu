@@ -12,6 +12,16 @@ RtspConnection::RtspConnection(std::shared_ptr<RtspServer> rtsp_server, TaskSche
     // Initialize the connection
     LOG_INFO("RtspConnection created with sockfd: " + std::to_string(sockfd));
     active_ = true;
+
+    //初始化 RTP 与 Rtcp 通道
+    this->SetReadCallback([this](std::shared_ptr<TcpConnection> conn, BufferReader &buffer) -> bool {
+        return this->onRead(buffer);
+    });
+
+    this->SetCloseCallback([this](std::shared_ptr<TcpConnection> conn) -> bool{
+        return this->onClose();
+    }); 
+
 }
 
 RtspConnection::~RtspConnection()
@@ -22,6 +32,43 @@ RtspConnection::~RtspConnection()
     * @brief 处理接收到的消息
     * @param buffer 消息缓冲区
     */
+
+void RtspConnection::OnMessage(BufferReader *buffer)
+{
+}
+
+bool RtspConnection::onClose()
+{
+    if(session_id_ != 0)
+    {
+        LOG_INFO("Closing RtspConnection, session_id: " + std::to_string(session_id_));
+        auto rtsp = rtsp_.get();
+        if (rtsp) 
+        {
+            auto MediaSession = rtsp_->LookMediaSession(session_id_);
+            if(MediaSession)
+            {
+                LOG_INFO("Removing MediaSession with id: " + std::to_string(session_id_));
+                MediaSession->RemoveClient(this->GetSocket());
+            }
+            else
+            {
+                LOG_ERROR("MediaSession not found for session_id: " + std::to_string(session_id_));
+            }
+        }
+        session_id_ = 0;
+    }
+
+    for(int n = 0; n < MAX_MEDIA_CHANNEL; ++n)
+    {
+       if(rtcp_channels_[n] && rtcp_channels_[n]->IsNoneEvent())
+       {
+           LOG_INFO("Closing RTCP channel for MediaChannelId: " + std::to_string(n));
+           task_scheduler_->RemoveChannel(rtcp_channels_[n]);
+       }
+    }
+    return true;
+}
 
 bool RtspConnection::HandleRtspRequest(BufferReader &buffer)
 {
@@ -43,6 +90,7 @@ bool RtspConnection::HandleRtspRequest(BufferReader &buffer)
         return false;
     }
     RtspRequest::Method method = rtsp_request_->GetMethod();
+    LOG_INFO("Parsed RTSP method: " + rtsp_request_->GetMethodString());
     switch(method)
     {
         case RtspRequest::Method::OPTIONS:
@@ -69,12 +117,20 @@ bool RtspConnection::HandleRtspRequest(BufferReader &buffer)
             LOG_ERROR("Unsupported RTSP method: " + rtsp_request_->GetMethodString());
             return false;
     }
-    
+    LOG_INFO("1111");
     return true;
 }
 
+/**
+ * @brief 处理 RTSP 响应 ,适用于推流、拉流
+ * @param buffer 响应缓冲区
+ * @return 是否处理成功
+ */
+
 bool RtspConnection::HandleRtspResponse(BufferReader &buffer)
 {
+    LOG_INFO("RtspConnection::HandleRtspResponse called, sockfd: " + std::to_string(this->GetSocket()));
+
     return false;
 }
 
@@ -128,6 +184,11 @@ void RtspConnection::HandleCmdDescribe()
 
 void RtspConnection::HandleCmdSetup()
 {
+    LOG_INFO("Handling SETUP request");
+    if (!rtsp_) {
+        LOG_ERROR("RTSP context is null");
+        return;
+    }
 }
 
 void RtspConnection::HandleCmdPlay()
@@ -178,7 +239,3 @@ bool RtspConnection::onRead(BufferReader &buffer)
     return true;
 }
 
-bool RtspConnection::onClose()
-{
-    return false;
-}

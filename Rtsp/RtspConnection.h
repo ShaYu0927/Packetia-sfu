@@ -42,7 +42,6 @@ public:
     ConnectionType GetConnectionType() const override { return ConnectionType::Rtsp; }
 
     void OnMessage(BufferReader* buffer);
-    void OnClose();
     bool isActive() const { return active_; } 
 
 
@@ -84,6 +83,10 @@ private:
     std::unique_ptr<Sdp> sdp_;
     std::unique_ptr<RtspRequest> rtsp_request_;
     std::unique_ptr<RtspResponse> read_buffer_;
+
+
+    std::shared_ptr<Channel>       rtp_channel_;
+	std::shared_ptr<Channel>       rtcp_channels_[MAX_MEDIA_CHANNEL];
 };
 
 

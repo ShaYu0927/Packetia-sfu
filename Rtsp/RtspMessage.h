@@ -34,6 +34,7 @@ public:
 		kParseHeadersLine,
 		//kParseBody,	
 		kGotAll,
+        kParseDone
 	};
     enum class Version
     {
