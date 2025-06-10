@@ -1,8 +1,11 @@
 #ifndef _MEDIASESSION_H_
 #define _MEDIASESSION_H_
 
+#include <mutex>
+#include <map>
 #include "Media.h"
 #include "MediaSource.h"
+#include "RtpConnection.h"
 
 class MediaSession {
 public:
@@ -13,25 +16,21 @@ public:
         return session_id_;
     }
 
-    void AddClient(int client_fd, MediaChannelId channel_id);
-    void RemoveClient(int client_fd);
+    void AddSource(int client_fd, MediaSource::Ptr media_source);
+    void RemoveSource(int client_fd);
     void PushFrame(MediaChannelId channel_id, AVFrame& frame);
 
     std::string GetSdpMessage(std::string ip, std::string session_name ="");
 
     uint32_t GetMediaChannelClockRate(MediaChannelId channel_id) const
     {
-        if (channel_id < media_sources_.size()) {
-            return media_sources_[channel_id]->GetClockRate();
-        }
+        
         return 0;
     }
 
     uint32_t GetMediaChannelPayloadType(MediaChannelId channel_id) const
     {
-        if (channel_id < media_sources_.size()) {
-            return media_sources_[channel_id]->GetPayload();
-        }
+        
         return 0;
     }
 
@@ -43,7 +42,21 @@ private:
 	std::string suffix_;
 	std::string sdp_;
 
-    std::vector<MediaSource::Ptr> media_sources_; // 媒体源列表
+    std::vector<std::unique_ptr<MediaSource::Ptr>> media_sources_; // 媒体源列表
+
+    std::mutex mutex_;
+	std::mutex map_mutex_;
+	std::map<int, std::weak_ptr<RtpConnection>> clients_;  // 客户端连接列表，使用 weak_ptr 避免循环引用
+
+
+    // 复合传输
+    bool is_multicast_ = false;
+	uint16_t multicast_port_[MAX_MEDIA_CHANNEL];
+	std::string multicast_ip_;
+	std::atomic_bool has_new_client_;
+
+	static std::atomic_uint last_session_id_;
+
 };
 
 

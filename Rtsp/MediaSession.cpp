@@ -5,13 +5,7 @@ std::string MediaSession::GetRtspSuffix() const
     return suffix_;
 }
 
-void MediaSession::AddClient(int client_fd, MediaChannelId channel_id)
-{
-}
 
-void MediaSession::RemoveClient(int client_fd)
-{
-}
 
 void MediaSession::PushFrame(MediaChannelId channel_id, AVFrame &frame)
 {

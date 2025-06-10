@@ -2,12 +2,14 @@
 #define _MEDIASOURCE_H_
 
 #include <functional>
-#include "Media.h" 
+#include "Media.h"
+#include "Rtp.h" 
 
 class MediaSource
 {
 public:
     using Ptr = std::unique_ptr<MediaSource>;
+    using SendFrameCallback = std::function<bool (MediaChannelId channel_id, RtpPacket pkt)>;
 
     MediaSource() = default;
     virtual ~MediaSource()
@@ -34,7 +36,7 @@ private:
     MediaType media_type_ = NONE;
 	uint32_t  payload_    = 0;
 	uint32_t  clock_rate_ = 0;
-
+    SendFrameCallback send_frame_callback_;
 
 };  
 

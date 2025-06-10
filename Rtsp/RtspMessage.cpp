@@ -16,7 +16,7 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
         {
             const char* firstCrlf = buffer->FindFirstCrlf();
             if(!firstCrlf)
-                break;  // 还没完整一行，等待更多数据
+                break;  // 还没完整一行，等待更多数据   
 
             LOG_INFO("First CRLF found at: " + std::to_string(firstCrlf - buffer->Peek()));
             ret = ParseRequestLine(buffer->Peek(), firstCrlf);
