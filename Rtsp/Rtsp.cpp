@@ -1,4 +1,5 @@
 #include "Rtsp.h"
+#include "MediaSession.h"
 
 std::string Sdp::GetSdpMessage(const std::string &ip, const std::string &session_name)
 {

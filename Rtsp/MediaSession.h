@@ -1,63 +1,72 @@
-#ifndef _MEDIASESSION_H_
-#define _MEDIASESSION_H_
+#pragma once
 
-#include <mutex>
+#include <memory>
+#include <string>
+#include <vector>
 #include <map>
-#include "Media.h"
+#include <unordered_map>
+#include <deque>
+#include <mutex>
+#include <condition_variable>
+#include <thread>
+#include <atomic>
+
 #include "MediaSource.h"
+#include "Rtp.h"
 #include "RtpConnection.h"
 
-class MediaSession {
+using MediaSessionId = uint64_t;
+using MediaSourcePtr = std::shared_ptr<MediaSource>;
+using RtpPacketPtr = std::shared_ptr<RtpPacket>;
+
+class MediaSession : public std::enable_shared_from_this<MediaSession>
+{
 public:
     using Ptr = std::shared_ptr<MediaSession>;
-    std::string GetRtspSuffix() const;
-    MediaSessionId GetId() const
-    {
-        return session_id_;
-    }
 
-    void AddSource(int client_fd, MediaSource::Ptr media_source);
-    void RemoveSource(int client_fd);
-    void PushFrame(MediaChannelId channel_id, AVFrame& frame);
+    static Ptr CreateNew(const std::string& suffix);
 
-    std::string GetSdpMessage(std::string ip, std::string session_name ="");
+    bool AddSource(MediaChannelId channel_id, MediaSourcePtr source);
+    void PushFrame(MediaChannelId channel_id, const AVFrame& frame);
+    std::string GetSdpMessage(const std::string& ip, const std::string& session_name = "");
 
-    uint32_t GetMediaChannelClockRate(MediaChannelId channel_id) const
-    {
-        
-        return 0;
-    }
+    bool AddClient(int client_fd, std::shared_ptr<RtpConnection> conn);
+    void RemoveClient(int client_fd);
 
-    uint32_t GetMediaChannelPayloadType(MediaChannelId channel_id) const
-    {
-        
-        return 0;
-    }
-
-    virtual MediaSession::Ptr LookMediaSession(const std::string& suffix) = 0;
-    virtual MediaSession::Ptr LookMediaSession(MediaSessionId sessionId) = 0;
+    void Start();
+    void Stop();
 
 private:
-    MediaSessionId session_id_ = 0;
-	std::string suffix_;
-	std::string sdp_;
+    struct ClientSession {
+        std::shared_ptr<RtpConnection> connection;
+        std::deque<RtpPacketPtr> send_queue;
+        std::mutex queue_mutex;
+        std::condition_variable queue_cv;
+        std::thread send_thread;
+        std::atomic_bool running{true};
+    };
 
-    std::vector<std::unique_ptr<MediaSource::Ptr>> media_sources_; // 媒体源列表
+    struct PacketCache {
+        std::unordered_map<uint16_t, RtpPacketPtr> packets;
+        std::mutex cache_mutex;
+    };
 
-    std::mutex mutex_;
-	std::mutex map_mutex_;
-	std::map<int, std::weak_ptr<RtpConnection>> clients_;  // 客户端连接列表，使用 weak_ptr 避免循环引用
+    MediaSession(const std::string& suffix);
+    void DispatchRtpPacket(MediaChannelId channel_id, RtpPacketPtr pkt);
+    void SendLoop(ClientSession* client);
 
+private:
+    MediaSessionId session_id_{0};
+    std::string suffix_;
+    std::string sdp_;
 
-    // 复合传输
-    bool is_multicast_ = false;
-	uint16_t multicast_port_[MAX_MEDIA_CHANNEL];
-	std::string multicast_ip_;
-	std::atomic_bool has_new_client_;
+    std::vector<MediaSourcePtr> media_sources_;
+    PacketCache packet_cache_;
 
-	static std::atomic_uint last_session_id_;
+    std::mutex clients_mutex_;
+    std::map<int, std::unique_ptr<ClientSession>> clients_;
 
+    std::atomic_bool running_{false};
+
+    static std::atomic_uint64_t last_session_id_;
 };
-
-
-#endif // _MEDIASESSION_H_

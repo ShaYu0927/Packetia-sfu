@@ -25,7 +25,7 @@ public:
     virtual std::string GetAttribute()  = 0;
 
     
-    virtual bool HanleFrame(MediaSessionId session_id, MediaChannelId channel_id, AVFrame& frame) = 0;
+    virtual bool HanleFrame(MediaChannelId channel_id, const AVFrame &frame) = 0;
     virtual uint32_t GetPayload() const
     { return payload_; }
     virtual uint32_t GetClockRate() const

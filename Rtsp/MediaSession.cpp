@@ -1,25 +1,118 @@
 #include "MediaSession.h"
 
-std::string MediaSession::GetRtspSuffix() const
+
+MediaSession::Ptr MediaSession::CreateNew(const std::string& suffix)
+ {
+    return Ptr(new MediaSession(suffix));
+ }
+
+
+bool MediaSession::AddSource(MediaChannelId channel_id, MediaSourcePtr source)
 {
-    return suffix_;
-}
-
-
-
-void MediaSession::PushFrame(MediaChannelId channel_id, AVFrame &frame)
-{
-}
-
-std::string MediaSession::GetSdpMessage(std::string ip, std::string session_name)
-{
-    if(sdp_ == "")
+    if(channel_id >= media_sources_.size())
     {
-        return sdp_;
+        LOG_ERROR("Invalid channel_id: " + std::to_string(channel_id));
+        return false;
     }
 
-    if (media_sources_.empty()) {
-		return "";
-	}
-    return "v=0\r\ns=" + session_name + "\r\nc=IN IP4 " + ip + "\r\n";
+    media_sources_[channel_id] = source;
+
+    // source->SetFrameCallback([this, channel_id](const AVFrame& frame) {
+    //     // 你这里可以封装为RtpPacket
+    //     auto rtp_pkt = std::make_shared<RtpPacket>();
+    //     rtp_pkt->FillFromFrame(frame);
+    //     DispatchRtpPacket(channel_id, rtp_pkt);
+    // });
+
+    return false;
+}
+
+void MediaSession::PushFrame(MediaChannelId channel_id, const AVFrame &frame)
+{
+    if (channel_id >= media_sources_.size()) return;
+    if (media_sources_[channel_id])
+        media_sources_[channel_id]->HanleFrame(channel_id,frame);
+}
+
+
+std::string MediaSession::GetSdpMessage(const std::string& ip, const std::string& session_name)
+{
+    return "";
+}
+
+bool MediaSession::AddClient(int client_fd, std::shared_ptr<RtpConnection> conn)
+{
+    auto client = std::make_unique<ClientSession>();
+    client->connection = conn;
+    client->send_thread = std::thread(&MediaSession::SendLoop, this, client.get());
+    {
+        std::lock_guard<std::mutex> lock(clients_mutex_);
+        clients_[client_fd] = std::move(client);
+    }
+    return true;
+}
+
+void MediaSession::RemoveClient(int client_fd)
+{
+    std::unique_ptr<ClientSession> client;
+    {
+        std::lock_guard<std::mutex> lock(clients_mutex_);
+        auto iter = clients_.find(client_fd);
+        if (iter != clients_.end()) {
+            client = std::move(iter->second);
+            clients_.erase(iter);
+        }
+    }
+    if (client) 
+    {
+        client->running = false;
+        client->queue_cv.notify_one();
+        if (client->send_thread.joinable())
+            client->send_thread.join();
+    }
+}
+
+void MediaSession::Start()
+{
+    running_ = true;
+    std::lock_guard<std::mutex> lock(clients_mutex_);
+    for (auto &client : clients_) {
+        if (!client.second->send_thread.joinable()) {
+            client.second->send_thread = std::thread(&MediaSession::SendLoop, this, client.second.get());
+        }
+    }
+    if (clients_.empty()) {
+        LOG_ERROR("No clients connected to the media session.");
+        return;
+    }
+}
+
+
+void MediaSession::Stop()
+{
+    running_ = false;
+    std::lock_guard<std::mutex> lock(clients_mutex_);
+    for (auto &client : clients_) {
+        client.second->running = false;
+        client.second->queue_cv.notify_one();
+        if (client.second->send_thread.joinable())
+            client.second->send_thread.join();
+    }
+    clients_.clear();
+}
+
+MediaSession::MediaSession(const std::string &suffix)
+    : suffix_(suffix)
+{
+     session_id_ = ++last_session_id_;
+     media_sources_.resize(MAX_MEDIA_CHANNEL);
+}
+
+//缓存RTP数据包
+void MediaSession::DispatchRtpPacket(MediaChannelId channel_id, RtpPacketPtr pkt)
+{
+}
+
+void MediaSession::SendLoop(ClientSession *client)
+{
 }
