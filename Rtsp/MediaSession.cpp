@@ -1,5 +1,6 @@
 #include "MediaSession.h"
 
+std::atomic_uint64_t MediaSession::last_session_id_{0};
 
 MediaSession::Ptr MediaSession::CreateNew(const std::string& suffix)
  {

@@ -172,10 +172,40 @@ bool RtpConnection::SetupRtpOverMulticast(MediaChannelId channel_id, std::string
 
 void RtpConnection::SetFrameType(uint8_t frameType)
 {
+    frame_type_ = frameType;
+    for (auto& channel : media_channels_) {
+        channel.rtp_header.payload = frameType;
+    }
+
+    //标记在这个会话里面是否已经收到了关键帧
+    if(!has_key_frame_ && (frameType == 0 || frameType == FRAME_TYPE_I))
+    {
+        has_key_frame_ = true;
+    }
 }
 
+//在已进入可播放状态 (有关键帧) 且当前通道允许时，构造 RTP 头，维护时序与封装规范，否则丢弃。
 void RtpConnection::SetRtpHeader(MediaChannelId channel_id, RtpPacket pkt)
 {
+    if((media_channels_[channel_id].is_play || media_channels_[channel_id].is_record) && has_key_frame_)
+    {
+        media_channels_[channel_id].rtp_header.marker = pkt.last;
+        media_channels_[channel_id].rtp_header.ts = htonl(pkt.timestamp);
+        media_channels_[channel_id].rtp_header.seq = htons(media_channels_[channel_id].packet_seq++);
+        memccpy(pkt.data.get(), &media_channels_[channel_id].rtp_header, 0, sizeof(RtpHeader));
+    }
+    else
+    {
+        //如果没有播放或者录制，直接丢弃这个包
+        pkt.size = 0;
+        pkt.data.reset();
+        return;
+    }
+}
+
+int RtpConnection::SentRtpPacket(MediaChannelId channel_id, RtpPacket pkt)
+{
+
 }
 
 int RtpConnection::SendRtpOverTcp(MediaChannelId channel_id, RtpPacket pkt)

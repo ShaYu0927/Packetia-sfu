@@ -15,7 +15,7 @@
 #include "Rtp.h"
 #include "RtpConnection.h"
 
-using MediaSessionId = uint64_t;
+
 using MediaSourcePtr = std::shared_ptr<MediaSource>;
 using RtpPacketPtr = std::shared_ptr<RtpPacket>;
 
@@ -23,7 +23,7 @@ class MediaSession : public std::enable_shared_from_this<MediaSession>
 {
 public:
     using Ptr = std::shared_ptr<MediaSession>;
-
+    MediaSession() = default;
     static Ptr CreateNew(const std::string& suffix);
 
     bool AddSource(MediaChannelId channel_id, MediaSourcePtr source);
@@ -35,6 +35,18 @@ public:
 
     void Start();
     void Stop();
+
+    MediaSessionId GetId() const { return session_id_; }
+    const std::string& GetRtspSuffix() const { return suffix_; }
+
+    MediaSessionId GetMediaChannelClockRate(MediaChannelId channel_id) const {
+        // 这里可以根据实际情况返回媒体通道的时钟频率
+        return 90000; // 默认值，实际应用中可能需要根据具体媒体类型返回不同的值
+    }
+    uint8_t GetMediaChannelPayloadType(MediaChannelId channel_id) const {
+        // 这里可以根据实际情况返回媒体通道的负载类型
+        return 96; // 默认值，实际应用中可能需要根据具体媒体类型返回不同的值
+    }
 
 private:
     struct ClientSession {

@@ -25,15 +25,16 @@ public:
     bool SetupRtpOverUdp(MediaChannelId channel_id, uint16_t rtp_port, uint16_t rtcp_port);
     bool SetupRtpOverMulticast(MediaChannelId channel_id, std::string ip, uint16_t port);
 
+    void SetFrameType(uint8_t frame_type);
+    
 
 
 private:
     friend class RtspConnection;
     friend class MediaSession;
 
-    void SetFrameType(uint8_t frameType = 0);
-
     void SetRtpHeader(MediaChannelId channel_id, RtpPacket pkt);
+    int SentRtpPacket(MediaChannelId channel_id, RtpPacket pkt);
     int  SendRtpOverTcp(MediaChannelId channel_id, RtpPacket pkt);
     int  SendRtpOverUdp(MediaChannelId channel_id, RtpPacket pkt);
 
@@ -59,7 +60,7 @@ private:
     struct sockaddr_in peer_rtp_addr_[MAX_MEDIA_CHANNEL];
     struct sockaddr_in peer_rtcp_sddr_[MAX_MEDIA_CHANNEL];
 
-    std::vector<MediaChannelInfo> media_channels_;
+    std::vector<MediaChannelInfo> media_channels_;   //存储音频和视频的通道信息
 };
 
 
