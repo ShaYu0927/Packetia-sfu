@@ -28,7 +28,12 @@ public:
     void SetFrameType(uint8_t frame_type);
     
 
-
+    uint16_t GetLocalRtpPort(MediaChannelId channel_id) const {
+        return local_rtp_port_[channel_id];
+    }
+    uint16_t GetLocalRtcpPort(MediaChannelId channel_id) const {
+        return local_rtcp_port_[channel_id];
+    }
 private:
     friend class RtspConnection;
     friend class MediaSession;

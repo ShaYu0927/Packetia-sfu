@@ -61,6 +61,7 @@ public:
 protected:
     friend class RtspServer; 
     friend class RtspMessage;
+    friend class RtpConnection;
 
 
     bool onRead(BufferReader& buffer);

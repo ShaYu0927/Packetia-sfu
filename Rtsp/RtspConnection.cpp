@@ -189,6 +189,42 @@ void RtspConnection::HandleCmdSetup()
         LOG_ERROR("RTSP context is null");
         return;
     }
+
+    int size = 0;
+    std::shared_ptr<char> res(new char[2048], std::default_delete<char[]>());
+    MediaChannelId channel_id = rtsp_request_->GetSessionId();  // 获取媒体通道ID
+
+    // 查找媒体会话
+    MediaSession::Ptr media_session = nullptr;
+
+	std::shared_ptr<Rtsp> rtsp = std::move(rtsp_);
+    if (rtsp) {
+        media_session = rtsp->LookMediaSession(rtsp_request_->GetRtspUSuffix());
+    }
+
+    if (!media_session) {
+        LOG_ERROR("Media session not found for suffix: " + rtsp_request_->GetRtspUSuffix());
+        size = rtsp_request_->BuildNotFoundRes(res, 2048);
+        this->SendRtspMessage(res, size);
+        return;
+    }
+
+    // 初始化 RTP 通道
+    if (!rtp_connection_) 
+    {
+        rtp_connection_ = std::make_shared<RtpConnection>(shared_from_this());
+    }
+
+    // 设置 RTP 参数
+    rtp_connection_->SetClockrate(channel_id, media_session->GetMediaChannelClockRate(channel_id));
+    rtp_connection_->SetPlayLoadType(channel_id, media_session->GetMediaChannelPayloadType(channel_id));
+
+    // 构建 SETUP 响应
+    // size = rtsp_request_->BuildSetupRes(res, 2048, channel_id);
+    // this->SendRtspMessage(res, size);
+
+    // 添加客户端到媒体会话
+    media_session->AddClient(this->GetSocket(), rtp_connection_);
 }
 
 void RtspConnection::HandleCmdPlay()

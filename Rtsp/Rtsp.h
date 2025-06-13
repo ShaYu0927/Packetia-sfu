@@ -79,7 +79,7 @@ public:
     virtual MediaSession::Ptr LookMediaSession(MediaSessionId sessionId)
 	{ return nullptr; }
 
-    
+   
 
     bool has_auth_info_;
 	std::string realm_;

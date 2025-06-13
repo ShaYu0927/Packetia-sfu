@@ -100,6 +100,44 @@ int RtspRequest::BuildDescribeRes(std::shared_ptr<char> data, int size, const st
     return static_cast<int>(res.size());
 }
 
+int RtspRequest::BuildSetupRes(std::shared_ptr<char> data, int size, uint16_t rtp_port, uint16_t rtcp_port, MediaChannelId channel_id)
+{
+    memset((void*)data.get(), 0, size);
+    std::ostringstream oss;
+    oss << "RTSP/1.0 200 OK\r\n";
+    oss << "CSeq: " << this->GetCSeq() << "\r\n";
+    oss << "Session: " << session_id_ << "\r\n";
+    oss << "Transport: ";
+
+    if (transport_mode_ == RTP_OVER_TCP) 
+    {
+        // RTP over TCP (interleaved方式)
+        oss << "RTP/AVP/TCP;unicast;interleaved=" 
+            << (channel_id * 2) << "-" << (channel_id * 2 + 1) << "\r\n";\
+    }
+    else if (transport_mode_ == RTP_OVER_UDP) 
+    {
+        // RTP over UDP
+        oss << "RTP/AVP;unicast;client_port=" 
+            << rtp_port << "-" 
+            << rtcp_port << "\r\n";
+    }
+    else 
+    {
+        // 其他传输方式
+        oss << "RTP/AVP;unicast\r\n";
+    }
+    std::string res = oss.str();
+    if (res.size() > size) {
+        // buffer不够，返回错误
+        return -1;
+    }
+
+    memcpy(data.get(), res.c_str(), res.size());
+
+    return res.size();
+}
+
 int RtspRequest::BuildNotFoundRes(std::shared_ptr<char> data, int size)
 {
     memset((void*)data.get(), 0, size);

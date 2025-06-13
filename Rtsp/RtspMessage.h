@@ -81,7 +81,7 @@ public:
     Method GetMethod() const { return method_; }
     const std::string& GetMethodString() const { return method_str_; }
     Version GetVersion() const { return version_; }
-    const std::string& GetSessionId() const { return session_id_; }
+    const MediaChannelId& GetSessionId() const { return session_id_; }
     const std::string& GetContentType() const { return content_type_; }
     const std::string& GetContentLength() const { return content_length_; }
     const std::string& GetUserAgent() const { return user_agent_; }
@@ -102,6 +102,7 @@ public:
 
     int BuildOptionsRes(std::shared_ptr<char> data,int size);
     int BuildDescribeRes(std::shared_ptr<char> data, int size, const std::string& sdp);
+    int BuildSetupRes(std::shared_ptr<char> data, int size, uint16_t rtp_port, uint16_t rtcp_port, MediaChannelId channel_id);
     int BuildNotFoundRes(std::shared_ptr<char> data,int size);
     int BuildServerErrorRes(std::shared_ptr<char> data, int size, const std::string& error_message);
 
@@ -112,7 +113,7 @@ private:
     RtspRequestParseState state_;                       //解析状态
     std::string method_str_;                            //请求方法字符串
     Version version_;                                   //版本
-    std::string session_id_;                            //会话ID
+    MediaChannelId session_id_;                            //会话ID
     std::string content_type_;                          //内容类型
     std::string content_length_;                        //内容长度
     std::string user_agent_;                            //用户代理
@@ -124,6 +125,8 @@ private:
     std::string date_;
     MediaChannelId channel_id_;
     std::string auth_response_;
+
+    RTPTransportMode transport_mode_; //传输方式，默认为TCP
 
     bool ParseRequestLine(const char* begin, const char* end);
     bool ParseHeaderLines(const char*begin,const char* end);
