@@ -150,3 +150,16 @@ std::string SdpParser::getControlUrl(const std::string &url) const
     }
     return url; // fallback
 }
+
+bool Rtsp::AddMediaSession(const MediaSession::Ptr &session)
+{
+     const auto& suffix = session->GetRtspSuffix();
+    if (media_sessions_.find(suffix) != media_sessions_.end()) {
+        LOG_INFO("MediaSession already exists: " + suffix);
+        return false;
+    }
+
+    media_sessions_[suffix] = session;
+    LOG_INFO("Added MediaSession: " + suffix);
+    return true;
+}

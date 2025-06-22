@@ -7,6 +7,7 @@
 #include <memory>
 #include <map>
 #include "MediaSession.h"
+#include "logger.h"
 
 
 class MediaSession;
@@ -79,7 +80,7 @@ public:
     virtual MediaSession::Ptr LookMediaSession(MediaSessionId sessionId)
 	{ return nullptr; }
 
-   
+   bool AddMediaSession(const MediaSession::Ptr& session);
 
     bool has_auth_info_;
 	std::string realm_;
@@ -87,6 +88,7 @@ public:
 	std::string password_;
 	std::string version_;
 	struct RtspUrlInfo rtsp_url_info_;
+    std::map<std::string, MediaSession::Ptr> media_sessions_; // Maps suffix to MediaSession
 };
 
 

@@ -126,6 +126,9 @@ private:
     MediaChannelId channel_id_;
     std::string auth_response_;
 
+    uint16_t rtp_port_ = 0; //RTP端口
+    uint16_t rtcp_port_ = 0;
+
     RTPTransportMode transport_mode_; //传输方式，默认为TCP
 
     bool ParseRequestLine(const char* begin, const char* end);
@@ -133,7 +136,7 @@ private:
     bool ParseCseq(const std::string& message);
     bool ParseSessionId(const std::string& line);
     bool ParseAccept(std::string& message);
-    bool ParseTransport(std::string& message);
+    bool ParseTransport(const std::string &header);
     bool ParseMediaChannel(std::string& message);
 	bool ParseAuthorization(std::string& message);
 

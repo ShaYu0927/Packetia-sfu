@@ -2,59 +2,87 @@
 
 bool RtspRequest::ParseRequest(BufferReader *buffer)
 {
-    LOG_INFO("Parsing RTSP request from buffer");
-    if(buffer->Peek()[0] == '$')  //判断是否RTP OVER TCP
+    LOG_INFO("=== [RtspRequest] Begin parsing RTSP request from buffer ===");
+    
+    if (buffer->Peek()[0] == '$') // 判断是否 RTP OVER TCP
     {
         method_ = Method::RTCP;
+        LOG_INFO("Detected RTP over TCP ('$' leading byte).");
         return true;
     }
 
     bool ret = true;
-    while(true)
+    while (true)
     {
-        if(state_ == kParseRequestLine)
+        if (state_ == kParseRequestLine)
         {
-            const char* firstCrlf = buffer->FindFirstCrlf();
-            if(!firstCrlf)
-                break;  // 还没完整一行，等待更多数据   
+            LOG_INFO("State: kParseRequestLine");
 
-            LOG_INFO("First CRLF found at: " + std::to_string(firstCrlf - buffer->Peek()));
+            const char* firstCrlf = buffer->FindFirstCrlf();
+            if (!firstCrlf)
+            {
+                LOG_INFO("Waiting for more data to complete request line...");
+                break;
+            }
+
+           std::string line(buffer->Peek(), firstCrlf - buffer->Peek());
+            LOG_INFO("Request line: [" + line + "]");
+
             ret = ParseRequestLine(buffer->Peek(), firstCrlf);
             buffer->RetrieveUntil(firstCrlf + 2);
 
-            if(!ret)
-                return false;
-        }
-        else if(state_ == kParseHeadersLine)
-        {
-            const char* firstCrlf = buffer->FindFirstCrlf();
-            if(!firstCrlf)
-                break;  // 还没完整一行，等待更多数据
-
-            // 空行表示头部结束
-            if(firstCrlf == buffer->Peek() || (firstCrlf[0] == '\r' && firstCrlf[1] == '\n'))
+            if (!ret)
             {
-                // 读取空行，结束头部解析
+                LOG_ERROR("Failed to parse request line.");
+                return false;
+            }
+
+            LOG_INFO("Request line parsed successfully.");
+        }
+        else if (state_ == kParseHeadersLine)
+        {
+            LOG_INFO("State: kParseHeadersLine");
+
+            const char* firstCrlf = buffer->FindFirstCrlf();
+            if (!firstCrlf)
+            {
+                LOG_INFO("Waiting for more data to complete header line...");
+                break;
+            }
+
+            std::string line(buffer->Peek(), firstCrlf - buffer->Peek());
+            LOG_INFO("Header line: [" + line + "]");
+
+            // 即使是空行，也应该先判断是否前面还有 header
+            if (line.empty()) {
                 buffer->RetrieveUntil(firstCrlf + 2);
-                // 头部解析完成，改变状态
-                state_ = kParseDone;  // 或者其他状态表示解析完毕
+                state_ = kParseDone;
+                LOG_INFO("End of headers detected. State changed to kParseDone.");
                 break;
             }
 
             ret = ParseHeaderLines(buffer->Peek(), firstCrlf);
             buffer->RetrieveUntil(firstCrlf + 2);
 
-            if(!ret)
+            if (!ret)
+            {
+                LOG_ERROR("Failed to parse header line.");
                 return false;
+            }
+
+            LOG_INFO("Header line parsed successfully.");
         }
         else
         {
-            // 解析完成或者错误，跳出循环
+            LOG_INFO("State is not parsing. Breaking out of loop.");
             break;
         }
     }
+
+    LOG_INFO("=== [RtspRequest] Finished parsing, state = " + std::to_string(state_) + " ===");
     return true;
 }
+
 
 
 std::string RtspRequest::GetRtspUSuffix() const
@@ -171,10 +199,9 @@ int RtspRequest::BuildServerErrorRes(std::shared_ptr<char> data, int size, const
 }
 
 
-//OPTIONS rtsp://192.168.1.100:8554/live RTSP/1.0\r\n
 bool RtspRequest::ParseRequestLine(const char *begin, const char *end)
 {
-    LOG_INFO("Parsing RTSP request line: " + std::string(begin, end));
+    LOG_INFO("Parsing RTSP request line: [" + std::string(begin, end) + "]");
     std::string request_line(begin, end);
     char method[16] = {0};
     char uri[256] = {0};
@@ -187,7 +214,7 @@ bool RtspRequest::ParseRequestLine(const char *begin, const char *end)
     if (method_ == Method::NONE)
         return false;
     method_str_ = method;
-    LOG_INFO("Parsed RTSP method: " + method_str_); 
+    LOG_INFO("Parsed method=[" + method_str_ + "], uri=[" + std::string(uri) + "], version=[" + std::string(version) + "]");
 
     if (strncmp(version, "RTSP/1.0", 8) == 0)
         version_ = Version::RTSP_1_0;
@@ -202,29 +229,48 @@ bool RtspRequest::ParseRequestLine(const char *begin, const char *end)
     else
         uri_str = uri;
 
+    LOG_INFO("URI without schema: [" + uri_str + "]");
+
     if (uri_str.find(" ") != std::string::npos ||
-        uri_str.find("\r\n") != std::string::npos ||
-        uri_str.find("\n") != std::string::npos ||
         uri_str.find("\r") != std::string::npos ||
+        uri_str.find("\n") != std::string::npos ||
         uri_str.find("\t") != std::string::npos ||
         uri_str.find('\0') != std::string::npos)
     {
+        LOG_ERROR("Invalid characters found in URI: [" + uri_str + "]");
         return false;
     }
 
-    // 提取 IP、端口、后缀
+    // 尝试提取 IP、端口、suffix（兼容无 suffix 的情况）
     uint16_t port = 0;
     char ip[64] = {0};
     char suffix[64] = {0};
+    bool parse_ok = false;
 
-    if (sscanf(uri_str.c_str(), "%[^:]:%hu/%s", ip, &port, suffix) != 3) {
-        if (sscanf(uri_str.c_str(), "%[^/]/%s", ip, suffix) == 2) {
-            port = 554;
-        } else {
-            return false;
-        }
+    if (sscanf(uri_str.c_str(), "%63[^:]:%hu/%63s", ip, &port, suffix) == 3) {
+        LOG_INFO("Parsed uri with port and suffix: ip=[" + std::string(ip) + "], port=[" + std::to_string(port) + "], suffix=[" + std::string(suffix) + "]");
+        parse_ok = true;
+    } else if (sscanf(uri_str.c_str(), "%63[^:]:%hu", ip, &port) == 2) {
+        LOG_INFO("Parsed uri with port only: ip=[" + std::string(ip) + "], port=[" + std::to_string(port) + "]");
+        suffix[0] = '\0';
+        parse_ok = true;
+    } else if (sscanf(uri_str.c_str(), "%63[^/]/%63s", ip, suffix) == 2) {
+        port = 554;
+        LOG_INFO("Parsed uri without port: ip=[" + std::string(ip) + "], suffix=[" + std::string(suffix) + "]");
+        parse_ok = true;
+    } else if (sscanf(uri_str.c_str(), "%63s", ip) == 1) {
+        port = 554;
+        suffix[0] = '\0';
+        LOG_INFO("Parsed uri with only ip: ip=[" + std::string(ip) + "]");
+        parse_ok = true;
     }
 
+    if (!parse_ok) {
+        LOG_ERROR("Failed to parse ip/port/suffix from uri: [" + uri_str + "]");
+        return false;
+    }
+
+    // 填入参数
     request_line_param_.emplace("url", std::make_pair(uri_str, 0));
     request_line_param_.emplace("url_ip", std::make_pair(std::string(ip), 0));
     request_line_param_.emplace("url_port", std::make_pair("", static_cast<uint32_t>(port)));
@@ -233,70 +279,66 @@ bool RtspRequest::ParseRequestLine(const char *begin, const char *end)
     request_line_param_.emplace("method", std::make_pair(std::string(method), 0));
 
     state_ = kParseHeadersLine;
+    LOG_INFO("RTSP request line parsed successfully.");
     return true;
 }
+
 
 
 bool RtspRequest::ParseHeaderLines(const char *begin, const char *end)
 {
-    LOG_INFO("Parsing RTSP header lines: " + std::string(begin, end));
-    std::string header_lines(begin, end);
-    if(header_lines.empty())
-    {
-        LOG_ERROR("Header lines are empty");
+    std::string line(begin, end);
+    LOG_INFO("Parsing RTSP header line: [" + line + "]");
+
+    if (line.empty()) {
+        LOG_INFO("Empty header line encountered");
         return false;
     }
-    if(!ParseCseq(header_lines))
-    {
-       if(header_line_param_.find("CSeq") == header_line_param_.end())
-       {
-           LOG_ERROR("CSeq not found in header lines");
-           return false;
-       }
-    }
-    if(method_ == Method::DESCRIBE || method_ == Method::SETUP || method_ == Method::PLAY)
-    {
-        if(!ParseTransport(header_lines))
-        {
-            ParseAuthorization(header_lines);
-        }
-    }
-   
-    if(method_ == Method::OPTIONS) 
-    {
-		state_ = kGotAll;
-		return true;
-	}
 
-    if(method_ == Method::DESCRIBE) 
-    {
-		if(ParseAccept(header_lines)) 
-        {
-			state_ = kGotAll;
-		}
-		return true;
-	}
-
-    if(method_ == Method::SETUP) 
-    {
-        if(ParseTransport(header_lines))
-        {
-            state_ = kGotAll;
+    // 解析 CSeq
+    if (line.find("CSeq:") == 0) {
+        if (!ParseCseq(line)) {
+            LOG_ERROR("CSeq parsing failed");
+            return false;
         }
         return true;
     }
 
-    if(method_ == Method::PLAY) 
-    {
-		if(ParseSessionId(header_lines)) 
-        {
-			state_ = kGotAll;
-		}
-		return true;
-	}
+    // 解析 Accept
+    if (method_ == Method::DESCRIBE && line.find("Accept:") == 0) {
+        ParseAccept(line);
+        return true;
+    }
 
+    // 解析 Transport
+    if (method_ == Method::SETUP && line.find("Transport:") == 0) {
+        LOG_INFO("Parsing SETUP Transport header: " + line);
+        if (!ParseTransport(line)) {
+            LOG_ERROR("Failed to parse Transport header");
+            return false;
+        }
+        return true;
+    }
+
+    // 解析 Session
+    if ((method_ == Method::PLAY || method_ == Method::TEARDOWN) && line.find("Session:") == 0) {
+        if (!ParseSessionId(line)) {
+            LOG_ERROR("Failed to parse Session header");
+            return false;
+        }
+        return true;
+    }
+
+    // 解析 Authorization
+    if (line.find("Authorization:") == 0) {
+        ParseAuthorization(line);
+        return true;
+    }
+
+    LOG_INFO("Unhandled or irrelevant header: " + line);
     return true;
 }
+
 
 bool RtspRequest::ParseCseq(const std::string &message)
 {
@@ -304,8 +346,11 @@ bool RtspRequest::ParseCseq(const std::string &message)
     if(pos != std::string::npos)
     {
         uint32_t cseq = 0;
-        sscanf(message.c_str() + pos, "%*[^:]: %u", &cseq);
-        header_line_param_.emplace("CSeq", std::make_pair(std::to_string(cseq), 0));
+        if (sscanf(message.c_str() + pos, "%*[^:]: %u", &cseq) == 1)
+        {
+            header_line_param_.emplace("CSeq", std::make_pair(std::to_string(cseq), 0));
+            return true;
+        }
     }
     return false;
 }
@@ -331,30 +376,44 @@ bool RtspRequest::ParseAccept(std::string &message)
 }
 
 //解析 RTSP 中的 Transport 头部，提取传输方式（TCP/UDP/Multicast）和对应的 端口 或 通道号。
-bool RtspRequest::ParseTransport(std::string &message)
-{
-    size_t pos = message.find("Transport:");
-    if (pos != std::string::npos)
-    {
-       if((pos = message.find("RTP/AVP/TCP")) != std::string::npos)
-        {
-            transport_ = RTP_OVER_TCP;
-			uint16_t rtpChannel = 0, rtcpChannel = 0;
-            return true;
+bool RtspRequest::ParseTransport(const std::string &header) {
+   std::istringstream iss(header);
+    std::string line;
+    while (std::getline(iss, line)) {
+        // 移除行尾的 \r
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
         }
-        else if((pos = message.find("RTP/AVP/UDP")) != std::string::npos)
-        {
-            header_line_param_.emplace("Transport", std::make_pair("RTP/AVP/UDP", 0));
-            return true;
-        }
-        else if((pos = message.find("RTP/AVP/MULTICAST")) != std::string::npos)
-        {
-            header_line_param_.emplace("Transport", std::make_pair("RTP/AVP/MULTICAST", 0));
-            return true;
+
+        if (line.find("Transport:") != std::string::npos) {
+            LOG_INFO("Parsing Transport line: " + line);
+
+            // 提取 client_port
+            size_t port_pos = line.find("client_port=");
+            if (port_pos != std::string::npos) {
+                std::string ports = line.substr(port_pos + strlen("client_port="));
+                auto dash = ports.find('-');
+                if (dash != std::string::npos) {
+                    uint16_t rtp_port = static_cast<uint16_t>(std::stoi(ports.substr(0, dash)));
+                    uint16_t rtcp_port = static_cast<uint16_t>(std::stoi(ports.substr(dash + 1)));
+
+                    this->rtp_port_ = rtp_port;
+                    this->rtcp_port_ = rtcp_port;
+                    this->transport_mode_ = RTP_OVER_UDP;
+
+                    LOG_INFO("Parsed client ports: " + std::to_string(rtp_port) + "-" + std::to_string(rtcp_port));
+                    return true;
+                }
+            }
+
+            LOG_ERROR("Transport line found but client_port not parsed");
+            return false;
         }
     }
+
     return false;
 }
+
 
 bool RtspRequest::ParseMediaChannel(std::string &message)
 {
