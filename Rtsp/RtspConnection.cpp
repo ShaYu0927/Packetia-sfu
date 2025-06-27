@@ -154,7 +154,7 @@ void RtspConnection::HandleCmdDescribe()
     auto suffix = rtsp_request_->GetRtspUSuffix();
     auto media_session = rtsp_->LookMediaSession(suffix);
     if (!media_session) {
-        LOG_ERROR("Media session not found for suffix: " + suffix);
+        LOG_ERROR("Media session not found for suffix: create suffix" + suffix);
         std::shared_ptr<char> errorRes(new char[256], std::default_delete<char[]>());
         media_session = MediaSession::CreateNew(suffix);
         rtsp_->AddMediaSession(media_session);
@@ -183,6 +183,9 @@ void RtspConnection::HandleCmdDescribe()
     this->SendRtspMessage(res, size);
 }
 
+/*
+    处理客户端 SETUP 请求，根据传输模式（TCP/UDP/组播）为每个 track 建立对应的 RTP 通道，并构造符合 RTSP 标准的响应报文
+*/
 void RtspConnection::HandleCmdSetup() {
     LOG_INFO("Handling SETUP request");
     if (!rtsp_) {
@@ -206,27 +209,27 @@ void RtspConnection::HandleCmdSetup() {
         rtp_connection_ = std::make_shared<RtpConnection>(shared_from_this());
     }
 
-    //获取 RTP 和 RTCP 端口
-    auto transport = rtsp_request_->GetTransport();
-    if (transport.empty()) {
-        LOG_ERROR("Transport information is missing in SETUP request");
-        return;
+    if(media_session->isMulticast())  //如果组包传输
+    {
+        std::string multicast_ip = media_session->GetMulticastIp();
+        if(rtsp_request_->GetTransport().find("multicast") != std::string::npos)
+        {
+            LOG_INFO("Setting up multicast RTP connection for channel: " + std::to_string(channel_id));
+            if (!rtp_connection_->SetupRtpOverMulticast(channel_id, multicast_ip, media_session->GetMulticastPort(channel_id))) 
+            {
+                LOG_ERROR("Failed to setup RTP over multicast for channel: " + std::to_string(channel_id));
+                return;
+            }
+        }
+        else
+        {
+            LOG_ERROR("Invalid transport type for multicast setup");
+            return;
+        }
+
     }
-    LOG_INFO("Transport info: " + transport);
+   
 
-    // 设置 RTP 参数
-    rtp_connection_->SetClockrate(channel_id, media_session->GetMediaChannelClockRate(channel_id));
-    rtp_connection_->SetPlayLoadType(channel_id, media_session->GetMediaChannelPayloadType(channel_id));
-
-    // 解析 Transport 字段并设置端口等参数
-    // auto transport = rtsp_request_->GetTransportInfo();
-    // rtp_connection_->SetupTransport(channel_id, transport);  // 你需要实现这个方法
-
-    // 返回 SETUP 响应
-    // int size = rtsp_request_->BuildSetupRes(res, 2048, channel_id);
-    // this->SendRtspMessage(res, size);
-
-    // 添加客户端
     media_session->AddClient(channel_id,rtp_connection_);
 }
 

@@ -375,12 +375,11 @@ bool RtspRequest::ParseAccept(std::string &message)
     return false;
 }
 
-//解析 RTSP 中的 Transport 头部，提取传输方式（TCP/UDP/Multicast）和对应的 端口 或 通道号。
 bool RtspRequest::ParseTransport(const std::string &header) {
-   std::istringstream iss(header);
+    std::istringstream iss(header);
     std::string line;
     while (std::getline(iss, line)) {
-        // 移除行尾的 \r
+        // 移除行尾 \r
         if (!line.empty() && line.back() == '\r') {
             line.pop_back();
         }
@@ -388,9 +387,27 @@ bool RtspRequest::ParseTransport(const std::string &header) {
         if (line.find("Transport:") != std::string::npos) {
             LOG_INFO("Parsing Transport line: " + line);
 
-            // 提取 client_port
-            size_t port_pos = line.find("client_port=");
-            if (port_pos != std::string::npos) {
+            // 判断 TCP
+            if (line.find("interleaved=") != std::string::npos) {
+                // RTP over TCP
+                size_t pos = line.find("interleaved=");
+                std::string channels = line.substr(pos + strlen("interleaved="));
+                auto dash = channels.find('-');
+                if (dash != std::string::npos) {
+                    uint16_t rtp_channel = static_cast<uint16_t>(std::stoi(channels.substr(0, dash)));
+                    uint16_t rtcp_channel = static_cast<uint16_t>(std::stoi(channels.substr(dash + 1)));
+
+                    this->rtp_channel_ = rtp_channel;
+                    this->rtcp_channel_ = rtcp_channel;
+                    this->transport_mode_ = RTP_OVER_TCP;
+
+                    LOG_INFO("Parsed interleaved channels: " + std::to_string(rtp_channel) + "-" + std::to_string(rtcp_channel));
+                    return true;
+                }
+            }
+            // 判断 UDP
+            else if (line.find("client_port=") != std::string::npos) {
+                size_t port_pos = line.find("client_port=");
                 std::string ports = line.substr(port_pos + strlen("client_port="));
                 auto dash = ports.find('-');
                 if (dash != std::string::npos) {
@@ -405,14 +422,22 @@ bool RtspRequest::ParseTransport(const std::string &header) {
                     return true;
                 }
             }
+            // 判断 Multicast
+            else if (line.find("multicast") != std::string::npos) {
+                this->transport_mode_ = RTP_OVER_MULTICAST;
+                LOG_INFO("Parsed transport mode: Multicast");
+                return true;
+            }
 
-            LOG_ERROR("Transport line found but client_port not parsed");
+            // 未识别
+            LOG_ERROR("Transport line found but not parsed: " + line);
             return false;
         }
     }
 
     return false;
 }
+
 
 
 bool RtspRequest::ParseMediaChannel(std::string &message)

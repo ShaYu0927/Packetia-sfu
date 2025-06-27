@@ -126,6 +126,9 @@ private:
     MediaChannelId channel_id_;
     std::string auth_response_;
 
+    uint16_t rtp_channel_ = 0; //RTP端口
+    uint16_t rtcp_channel_ = 0;
+
     uint16_t rtp_port_ = 0; //RTP端口
     uint16_t rtcp_port_ = 0;
 

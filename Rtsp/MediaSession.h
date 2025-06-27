@@ -48,6 +48,22 @@ public:
         return 96; // 默认值，实际应用中可能需要根据具体媒体类型返回不同的值
     }
 
+    bool isMulticast() const {
+        return is_multicast_;
+    }
+
+    std::string GetMulticastIp() const {
+        return multicast_ip_;
+    }
+
+    uint16_t GetMulticastPort(MediaChannelId channel_id) const {
+        if (channel_id >= MAX_MEDIA_CHANNEL) {
+            return 0; // Invalid channel
+        }
+        return multicast_port_[channel_id];
+    }
+
+
 private:
     struct ClientSession {
         std::shared_ptr<RtpConnection> connection;
@@ -67,6 +83,8 @@ private:
     void DispatchRtpPacket(MediaChannelId channel_id, RtpPacketPtr pkt);
     void SendLoop(ClientSession* client);
 
+  
+
 private:
     MediaSessionId session_id_{0};
     std::string suffix_;
@@ -81,4 +99,9 @@ private:
     std::atomic_bool running_{false};
 
     static std::atomic_uint64_t last_session_id_;
+
+    bool is_multicast_{false};
+    std::string multicast_ip_;
+    uint16_t multicast_port_[MAX_MEDIA_CHANNEL];
+    std::atomic_bool has_new_client_;
 };
