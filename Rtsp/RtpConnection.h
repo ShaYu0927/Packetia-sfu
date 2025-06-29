@@ -15,7 +15,10 @@ class RtpConnection
 {
 public:
     RtpConnection(std::weak_ptr<TcpConnection> rtsp_connection);
-    virtual ~RtpConnection();  
+    virtual ~RtpConnection();
+    
+    uint32_t GetRtpSessionId() const
+    { return (uint32_t)((size_t)(this)); }
 
     void SetClockrate(MediaChannelId channel_id, uint32_t clock_rate);
 

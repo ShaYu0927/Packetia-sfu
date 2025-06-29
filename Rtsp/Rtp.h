@@ -25,6 +25,7 @@ enum RTPTransportMode
     RTP_OVER_TLS,
     RTP_OVER_WEBSOCKET,
     RTP_OVER_QUIC,
+	RTP_OVER_UNKNOWN
 };
 
 

@@ -83,7 +83,22 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
     return true;
 }
 
-
+const RTPTransportMode RtspRequest::GetTransport() const
+{
+    if(transport_mode_ == RTP_OVER_TCP)
+    {
+        return RTP_OVER_TCP;
+    }
+    else if(transport_mode_ == RTP_OVER_UDP)
+    {
+        return RTP_OVER_UDP;
+    }
+    else if(transport_mode_ == RTP_OVER_MULTICAST)
+    {
+        return RTP_OVER_MULTICAST;
+    }
+    return RTP_OVER_UNKNOWN;
+}
 
 std::string RtspRequest::GetRtspUSuffix() const
 {
@@ -198,6 +213,10 @@ int RtspRequest::BuildServerErrorRes(std::shared_ptr<char> data, int size, const
     return static_cast<int>(res_str.length());
 }
 
+int RtspRequest::BuildSetupMulticastRes(std::shared_ptr<char> data, int size, const char *multicast_ip, uint16_t port, uint32_t session_id)
+{
+    return 0;
+}
 
 bool RtspRequest::ParseRequestLine(const char *begin, const char *end)
 {
@@ -214,7 +233,7 @@ bool RtspRequest::ParseRequestLine(const char *begin, const char *end)
     if (method_ == Method::NONE)
         return false;
     method_str_ = method;
-    LOG_INFO("Parsed method=[" + method_str_ + "], uri=[" + std::string(uri) + "], version=[" + std::string(version) + "]");
+    // LOG_INFO("Parsed method=[" + method_str_ + "], uri=[" + std::string(uri) + "], version=[" + std::string(version) + "]");
 
     if (strncmp(version, "RTSP/1.0", 8) == 0)
         version_ = Version::RTSP_1_0;

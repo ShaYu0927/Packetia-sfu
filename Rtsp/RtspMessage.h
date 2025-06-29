@@ -87,7 +87,7 @@ public:
     const std::string& GetUserAgent() const { return user_agent_; }
     const std::string& GetAccept() const { return accept_; }
     const std::string& GetRange() const { return range_; }
-    const std::string& GetTransport() const { return transport_; }
+    const RTPTransportMode GetTransport() const;
     std::string GetRtspUSuffix() const;
     std::string GetCSeq() const
     {
@@ -99,12 +99,32 @@ public:
         return "";
     }
 
+    const uint16_t GetRtpChannel() const
+    {
+        return rtp_channel_;
+    }
+
+    const uint16_t GetRtcpChannel() const
+    {
+        
+        return rtcp_channel_;
+    }
+    const uint16_t GetRtpPort() const
+    {
+        return rtp_port_;
+    }
+    const uint16_t GetRtcpPort() const
+    {
+        return rtcp_port_;
+    }
+
 
     int BuildOptionsRes(std::shared_ptr<char> data,int size);
     int BuildDescribeRes(std::shared_ptr<char> data, int size, const std::string& sdp);
     int BuildSetupRes(std::shared_ptr<char> data, int size, uint16_t rtp_port, uint16_t rtcp_port, MediaChannelId channel_id);
     int BuildNotFoundRes(std::shared_ptr<char> data,int size);
     int BuildServerErrorRes(std::shared_ptr<char> data, int size, const std::string& error_message);
+    int BuildSetupMulticastRes(std::shared_ptr<char> data, int size, const char* multicast_ip, uint16_t port, uint32_t session_id);
 
 
 

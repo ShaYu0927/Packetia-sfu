@@ -186,20 +186,24 @@ void RtspConnection::HandleCmdDescribe()
 /*
     处理客户端 SETUP 请求，根据传输模式（TCP/UDP/组播）为每个 track 建立对应的 RTP 通道，并构造符合 RTSP 标准的响应报文
 */
-void RtspConnection::HandleCmdSetup() {
+void RtspConnection::HandleCmdSetup() 
+{
     LOG_INFO("Handling SETUP request");
-    if (!rtsp_) {
+    if (!rtsp_) 
+    {
         LOG_ERROR("RTSP context is null");
         return;
     }
 
-    std::shared_ptr<char> res(new char[2048], std::default_delete<char[]>());
+    std::shared_ptr<char> res(new char[10240], std::default_delete<char[]>());
+    int size = 0;
     MediaChannelId channel_id = rtsp_request_->GetSessionId();
     auto rtsp = rtsp_; // 避免 move 导致后续失效
 
     auto media_session = rtsp->LookMediaSession(rtsp_request_->GetRtspUSuffix());
-    if (!media_session) {
-        LOG_INFO("Media session not found for suffix: " + rtsp_request_->GetRtspUSuffix());
+    if (!media_session) 
+    {
+        LOG_INFO("Media session is created" + rtsp_request_->GetRtspUSuffix());
         media_session = MediaSession::CreateNew(rtsp_request_->GetRtspUSuffix()); 
         rtsp->AddMediaSession(media_session);
     }
@@ -212,24 +216,68 @@ void RtspConnection::HandleCmdSetup() {
     if(media_session->isMulticast())  //如果组包传输
     {
         std::string multicast_ip = media_session->GetMulticastIp();
-        if(rtsp_request_->GetTransport().find("multicast") != std::string::npos)
+        if(rtsp_request_->GetTransport() == RTP_OVER_MULTICAST)
         {
+            uint16_t port = media_session->GetMulticastPort(channel_id);
+            auto session_id = rtp_connection_->GetRtpSessionId();
             LOG_INFO("Setting up multicast RTP connection for channel: " + std::to_string(channel_id));
             if (!rtp_connection_->SetupRtpOverMulticast(channel_id, multicast_ip, media_session->GetMulticastPort(channel_id))) 
             {
                 LOG_ERROR("Failed to setup RTP over multicast for channel: " + std::to_string(channel_id));
+                size = rtsp_request_->BuildNotFoundRes(res, 4096);
+                this->SendRtspMessage(res, size);
                 return;
             }
+            size = rtsp_request_->BuildSetupMulticastRes(res, 4096, multicast_ip.c_str(), port, session_id);
         }
         else
         {
+            LOG_ERROR("Invalid transport type for multicast setup");
+            int size = rtsp_request_->BuildNotFoundRes(res, 4096);
+            this->SendRtspMessage(res, size);
             LOG_ERROR("Invalid transport type for multicast setup");
             return;
         }
 
     }
-   
-
+    else
+    {
+        //判读是否是 TCP 传输 或者 UDP 传输
+        if(rtsp_request_->GetTransport() == RTP_OVER_TCP)
+        {
+            LOG_INFO("RTP OVER TCP");
+            uint16_t rtp_channel = rtsp_request_->GetRtpChannel();
+            uint16_t rtcp_channel = rtsp_request_->GetRtcpChannel();
+            if (!rtp_connection_->SetupRtpOverTcp(channel_id, rtp_channel, rtcp_channel)) 
+            {
+                LOG_ERROR("Failed to setup RTP over TCP for channel: " + std::to_string(channel_id));
+                size = rtsp_request_->BuildNotFoundRes(res, 4096);
+                this->SendRtspMessage(res, size);
+                return;
+            }
+            size = rtsp_request_->BuildSetupRes(res, 4096, rtp_channel, rtcp_channel, channel_id);
+        }
+        else if(rtsp_request_->GetTransport() == RTP_OVER_UDP)
+        {
+            LOG_INFO("RTP OVER UDP");
+            uint16_t rtp_port = rtsp_request_->GetRtpPort();
+            uint16_t rtcp_port = rtsp_request_->GetRtcpPort();
+            if (!rtp_connection_->SetupRtpOverUdp(channel_id, rtp_port, rtcp_port)) 
+            {
+                LOG_ERROR("Failed to setup RTP over UDP for channel: " + std::to_string(channel_id));
+                size = rtsp_request_->BuildNotFoundRes(res, 4096);
+                this->SendRtspMessage(res, size);
+                return;
+            }
+            size = rtsp_request_->BuildSetupRes(res, 4096, rtp_port, rtcp_port, channel_id);
+        }
+        else
+        {
+            LOG_ERROR("Unsupported transport mode for SETUP");
+            return;
+        }
+    }
+    this->SendRtspMessage(res, size);
     media_session->AddClient(channel_id,rtp_connection_);
 }
 
@@ -251,7 +299,9 @@ void RtspConnection::SendRtspMessage(std::shared_ptr<char> data, uint32_t size)
 #if RTSP_DEBUG
 	cout << buf.get() << endl;
 #endif
-
+    LOG_DEBUG("RTSP message content (" + std::to_string(size) + " bytes):");
+    LOG_DEBUG("\n" + std::string(data.get(), size));
+    LOG_DEBUG("End of RTSP message content");
 	this->Send(data, size);
 	return;
 }
