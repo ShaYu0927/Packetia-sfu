@@ -74,6 +74,7 @@ private:
         std::atomic_bool running{true};
     };
 
+    //缓存队列包
     struct PacketCache {
         std::unordered_map<uint16_t, RtpPacketPtr> packets;
         std::mutex cache_mutex;

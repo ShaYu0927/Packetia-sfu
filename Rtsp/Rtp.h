@@ -28,6 +28,16 @@ enum RTPTransportMode
 	RTP_OVER_UNKNOWN
 };
 
+enum TrackType
+{	
+	TrackInvalid = -1,
+	TrackVideo = 0,
+	TrackAudio,
+	TrackTitle,
+	TrackApplication,
+	TrackMax
+};
+
 
 typedef struct _RTP_header
 {

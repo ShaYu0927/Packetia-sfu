@@ -96,6 +96,7 @@ bool RtspConnection::HandleRtspRequest(BufferReader &buffer)
         case RtspRequest::Method::OPTIONS:
             LOG_INFO("Handling OPTIONS request");
             HandleCmdOptions();
+            rtsp_request_->Reset(); // 重置请求状态
             break;
         case RtspRequest::Method::DESCRIBE:
             LOG_INFO("Handling DESCRIBE request");
@@ -117,6 +118,7 @@ bool RtspConnection::HandleRtspRequest(BufferReader &buffer)
             LOG_ERROR("Unsupported RTSP method: " + rtsp_request_->GetMethodString());
             return false;
     }
+    
     return true;
 }
 

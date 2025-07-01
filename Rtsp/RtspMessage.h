@@ -118,6 +118,29 @@ public:
         return rtcp_port_;
     }
 
+    void Reset()
+    {
+        method_ = Method::NONE;
+        state_ = RtspRequestParseState::kParseRequestLine;
+        method_str_.clear();
+        version_ = Version::RTSP_1_0;
+        content_type_.clear();
+        content_length_.clear();
+        user_agent_.clear();
+        accept_.clear();
+        range_.clear();
+        transport_.clear();
+        authorization_.clear();
+        rtsp_url_suffix_.clear();
+        date_.clear();
+        channel_id_ = channel_0;
+        rtp_channel_ = 0;
+        rtcp_channel_ = 0;
+        rtp_port_ = 0;
+        rtcp_port_ = 0;
+        transport_mode_ = RTP_OVER_TCP;
+    }
+
 
     int BuildOptionsRes(std::shared_ptr<char> data,int size);
     int BuildDescribeRes(std::shared_ptr<char> data, int size, const std::string& sdp);

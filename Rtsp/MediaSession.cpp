@@ -73,6 +73,7 @@ void MediaSession::RemoveClient(int client_fd)
     }
 }
 
+//媒体从这里推流给客户端
 void MediaSession::Start()
 {
     running_ = true;
@@ -112,8 +113,25 @@ MediaSession::MediaSession(const std::string &suffix)
 //缓存RTP数据包
 void MediaSession::DispatchRtpPacket(MediaChannelId channel_id, RtpPacketPtr pkt)
 {
+    
 }
 
 void MediaSession::SendLoop(ClientSession *client)
 {
+    while(client->running)
+    {
+        std::unique_lock<std::mutex> lock(client->queue_mutex);
+        client->queue_cv.wait(lock, [&client] { return !client->send_queue.empty() || !client->running; });
+
+        while (!client->send_queue.empty() && client->running) 
+        {
+            auto pkt = client->send_queue.front();
+            client->send_queue.pop_front();
+            lock.unlock();
+
+          
+
+            lock.lock();
+        }
+    }
 }

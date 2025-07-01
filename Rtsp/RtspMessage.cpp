@@ -52,6 +52,10 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
 
             std::string line(buffer->Peek(), firstCrlf - buffer->Peek());
             LOG_INFO("Header line: [" + line + "]");
+            if(line == "CSeq")
+            {
+                header_line_param_["CSeq"] = std::make_pair(line, 0);
+            }
 
             // 即使是空行，也应该先判断是否前面还有 header
             if (line.empty()) {
@@ -113,12 +117,14 @@ std::string RtspRequest::GetRtspUSuffix() const
 int RtspRequest::BuildOptionsRes(std::shared_ptr<char> data, int size)
 {
     memset((void*)data.get(), 0, size);
-    snprintf((char*)data.get(), size,
-			"RTSP/1.0 200 OK\r\n"
-			"CSeq: %u\r\n"
-			"Public: OPTIONS, DESCRIBE, SETUP, TEARDOWN, PLAY\r\n"
-			"\r\n",
-			this->GetCSeq());
+    LOG_DEBUG("Building RTSP OPTIONS response with CSeq:" + this->GetCSeq());
+   snprintf(data.get(), size,
+        "RTSP/1.0 200 OK\r\n"
+        "CSeq: %s\r\n"
+        "Public: OPTIONS, DESCRIBE, SETUP, TEARDOWN, PLAY\r\n"
+        "\r\n",
+        this->GetCSeq().c_str()
+    );
 
 	return (int)strlen(data.get());
 }
