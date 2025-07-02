@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <functional>
 #include <iostream>
+#include "logger.h"
 #include "Rtsp.h"
 #include "Rtp.h"
 
@@ -108,6 +109,8 @@ public:
     RtpPacket::Ptr inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len);
     void setNtpStamp(uint32_t rtp_stamp, uint64_t ntp_stamp_ms);
     void setPayloadType(uint8_t pt);
+
+    uint8_t _pt = 0xFF; //当前跟踪的有效载荷类型
 
 protected:
     virtual void onRtpSorted(RtpPacket::Ptr rtp) {}

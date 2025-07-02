@@ -204,24 +204,6 @@ private:
     std::vector<SdpTracker::Ptr> _track_vec;
 };
 
-class RtpHeader
-{};
-
-class RtpPacket : public std::enable_shared_from_this<RtpPacket>
-{
-public:
-    using Ptr = std::shared_ptr<RtpPacket>;
-
-    RtpHeader rtp_header; // RTP header
-    std::shared_ptr<uint8_t> data; // RTP payload data
-    size_t size; // Size of the RTP packet
-
-    RtpPacket(size_t size = 0) : size(size) {
-        data = std::shared_ptr<uint8_t>(new uint8_t[size]);
-    }
-
-    void FillFromFrame(const AVFrame& frame); // Fill RTP packet from AVFrame
-};
 
 
 

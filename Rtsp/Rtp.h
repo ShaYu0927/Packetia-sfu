@@ -39,46 +39,56 @@ enum TrackType
 };
 
 
-typedef struct _RTP_header
-{
-#if RTP_HEADER_BIG_ENDIAN
-	/* 大端序 */
-	unsigned char version   : 2;
-	unsigned char padding   : 1;
-	unsigned char extension : 1;
-	unsigned char csrc      : 4;
-	unsigned char marker    : 1;
-	unsigned char payload   : 7;
-#else
-	/* 小端序 */
-	unsigned char csrc      : 4;
-	unsigned char extension : 1;
-	unsigned char padding   : 1;
-	unsigned char version   : 2;
-	unsigned char payload   : 7;
-	unsigned char marker    : 1;
-#endif 
-	unsigned short seq;
-	unsigned int   ts;
-	unsigned int   ssrc;
-} RtpHeader;
+class RtpHeader {
+public:
+    static constexpr size_t kSize = 12;
 
-struct RtpPacket
-{
-    RtpPacket()
-		: data(new uint8_t[1600], std::default_delete<uint8_t[]>())
-	{
-		type = 0;
-		size = 0;
-		timestamp = 0;
-		last = 0;
-	}
-    std::shared_ptr<uint8_t> data;
-	uint32_t size;
-	uint32_t timestamp;
-	uint8_t  type;
-	uint8_t  last;
+    RtpHeader();
+
+    // 解析RTP头部（从裸数据）
+    bool parse(const uint8_t* data, size_t size);
+
+    // 序列化 RTP 头部到 buffer（12字节）
+    void serialize(uint8_t* out) const;
+
+    // Getter & Setter（主机字节序）
+    uint8_t getVersion() const;
+    void setVersion(uint8_t ver);
+
+    uint8_t getPayloadType() const;
+    void setPayloadType(uint8_t pt);
+
+    bool getMarker() const;
+    void setMarker(bool marker);
+
+    uint16_t getSequence() const;
+    void setSequence(uint16_t seq);
+
+    uint32_t getTimestamp() const;
+    void setTimestamp(uint32_t ts);
+
+    uint32_t getSSRC() const;
+    void setSSRC(uint32_t ssrc);
+
+	uint16_t pt;  // 负载类型
+
+private:
+    uint8_t _version = 2;
+    bool _padding = false;
+    bool _extension = false;
+    uint8_t _csrc = 0;
+
+    bool _marker = false;
+    uint8_t _payload_type = 0;
+
+    uint16_t _seq = 0;
+    uint32_t _timestamp = 0;
+    uint32_t _ssrc = 0;
+
+	
 };
+
+
 
 struct MediaChannelInfo
 {
@@ -102,6 +112,48 @@ struct MediaChannelInfo
 	bool is_setup;
 	bool is_play;
 	bool is_record;
+};
+
+//整个RTP包的结构体
+class RtpPacket
+{
+public:
+	using Ptr = std::shared_ptr<RtpPacket>;
+	
+
+
+	// 主机字节序的seq
+    uint16_t getSeq() const;
+    uint32_t getStamp() const;
+    // 主机字节序的时间戳，已经转换为毫秒
+    uint64_t getStampMS(bool ntp = true) const;
+    // 主机字节序的ssrc
+    uint32_t getSSRC() const;
+    // 有效负载，跳过csrc、ext
+    uint8_t *getPayload();
+    // 有效负载长度，不包括csrc、ext、padding
+    size_t getPayloadSize() const;
+
+	// 音视频类型
+    TrackType type;
+
+	//音视频采样率
+	uint32_t sample_rate;
+
+	//ntp时间戳
+	uint64_t ntp_stamp_ms;
+
+	int track_index;
+
+	static Ptr create();
+
+	static constexpr int kRtpVersion = 2;
+    static constexpr int kRtpHeaderSize = 12;
+    static constexpr int kRtpTcpHeaderSize = 4;
+	static constexpr int kRtpMaxSize = 2;
+
+private:
+	RtpPacket() = default;
 };
 
 #endif
