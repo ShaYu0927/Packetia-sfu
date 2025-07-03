@@ -36,6 +36,7 @@ set(FILES
     Rtsp/MediaSession.h
     Rtsp/MediaSource.h
     Rtsp/Rtp.h
+    Rtsp/Rtp.cpp
     Rtsp/Rtsp.h
     Rtsp/Rtsp.cpp
     Rtsp/RtspConnection.cpp
@@ -61,6 +62,8 @@ set(FILES
     utils/EventLoop.cpp
     utils/Acceptor.h
     utils/Acceptor.cpp
+    Common/NtpStamp.h
+    Common/NtpStamp.cpp
 )
 
 
@@ -80,6 +83,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/log
     ${CMAKE_SOURCE_DIR}/network
     ${CMAKE_SOURCE_DIR}/Rtsp
+    ${CMAKE_SOURCE_DIR}/Common
     
 )
 

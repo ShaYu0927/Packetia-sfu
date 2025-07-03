@@ -26,7 +26,7 @@ public:
 
     bool SetupRtpOverTcp(MediaChannelId channel_id, uint16_t rtp_channel, uint16_t rtcp_channel);
     bool SetupRtpOverUdp(MediaChannelId channel_id, uint16_t rtp_port, uint16_t rtcp_port);
-    bool SetupRtpOverMulticast(MediaChannelId channel_id, std::string ip, uint16_t port);
+    bool SetupRtpOverMulticast(MediaChannelId channel_id, const std::string& ip, uint16_t port);
 
     void SetFrameType(uint8_t frame_type);
     
@@ -41,7 +41,7 @@ private:
     friend class RtspConnection;
     friend class MediaSession;
 
-    void SetRtpHeader(MediaChannelId channel_id, RtpPacket pkt);
+    void SetRtpHeader(MediaChannelId channel_id, RtpPacket& pkt);
     int SentRtpPacket(MediaChannelId channel_id, RtpPacket pkt);
     int  SendRtpOverTcp(MediaChannelId channel_id, RtpPacket pkt);
     int  SendRtpOverUdp(MediaChannelId channel_id, RtpPacket pkt);

@@ -9,6 +9,7 @@
 #include "logger.h"
 #include "Rtsp.h"
 #include "Rtp.h"
+#include "NtpStamp.h"
 
 template<typename Packet, typename Seq = uint16_t>
 class EnhancedPacketSortor {
@@ -100,7 +101,7 @@ private:
 };
 
 
-class RtpTrack : public EnhancedPacketSortor<RtpTrack, uint16_t>
+class RtpTrack : public EnhancedPacketSortor<std::shared_ptr<RtpPacket>, uint16_t>
 {
 public:
     RtpTrack();
@@ -111,6 +112,9 @@ public:
     void setPayloadType(uint8_t pt);
 
     uint8_t _pt = 0xFF; //当前跟踪的有效载荷类型
+
+    bool _disable_ntp;
+    NtpStamp _ntp_stamp; 
 
 protected:
     virtual void onRtpSorted(RtpPacket::Ptr rtp) {}

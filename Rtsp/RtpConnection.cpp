@@ -3,29 +3,29 @@
 RtpConnection::RtpConnection(std::weak_ptr<TcpConnection> rtsp_connection)
     :rtsp_connection_(rtsp_connection)
 {
-    //初始化媒体通道端口
     std::random_device rd;
-    media_channels_.resize(MAX_MEDIA_CHANNEL);
-    for(int i = 0; i < MAX_MEDIA_CHANNEL; ++i) {
-        local_rtp_port_[i] = 0;
-        local_rtcp_port_[i] = 0;
+    std::mt19937 gen(rd()); // 更强的随机生成器
+    std::uniform_int_distribution<uint16_t> seq_dist(0, 0xFFFF);
+    std::uniform_int_distribution<uint32_t> ts_dist(0, 0xFFFFFFFF);
+    std::uniform_int_distribution<uint16_t> port_dist(10000, 50000); // RTP/RTCP 端口范围
 
-        media_channels_[i].rtp_header.version = RTP_VERSION;
-        media_channels_[i].packet_seq = rd() & 0xffff;
-        media_channels_[i].rtp_header.seq = 0;
-        media_channels_[i].rtp_header.ts = htonl(rd());
-        media_channels_[i].rtp_header.ssrc = htonl(rd());
-    }
-    
-    auto conn = rtsp_connection.lock();
-    if (conn) 
-    {
-        rtsp_ip_ = conn->GetIp();
-        rtsp_port_ = conn->GetPort();
-    } 
-    else 
-    {
-        rtsp_ip_ = "";
+    media_channels_.resize(MAX_MEDIA_CHANNEL);
+
+    for (int i = 0; i < MAX_MEDIA_CHANNEL; ++i) {
+        // 初始化端口号为偶数，rtcp 为 rtp+1
+        uint16_t base_port = port_dist(gen) & 0xFFFE;
+        local_rtp_port_[i] = base_port;
+        local_rtcp_port_[i] = base_port + 1;
+
+        auto& channel = media_channels_[i];
+        channel.rtp_header.setVersion(RTP_VERSION);
+        channel.rtp_sequence = seq_dist(gen);
+        channel.rtp_header.setSequence(channel.rtp_sequence);
+        channel.rtp_header.setTimestamp(ts_dist(gen));
+        channel.rtp_header.setSSRC(ts_dist(gen));
+
+        channel.transport.transport_type = MediaTransportType::UDP; // 默认UDP
+        channel.state = MediaSessionState::Init;
     }
 }
 
@@ -62,16 +62,28 @@ bool RtpConnection::SetupRtpOverTcp(MediaChannelId channel_id, uint16_t rtp_chan
 {
     auto conn = rtsp_connection_.lock();
     if (!conn) {
-        return false; // RTSP connection is not available
+        return false; // RTSP connection lost
     }
-    media_channels_[channel_id].rtp_channel = rtp_channel;
-    media_channels_[channel_id].rtcp_channel = rtcp_channel;
-    media_channels_[channel_id].is_setup = true;
-    rtpfd_[channel_id] = conn->GetSocket();
-	rtcpfd_[channel_id] = conn->GetSocket();
+
+    if (channel_id >= media_channels_.size()) {
+        return false; // Invalid channel
+    }
+
+    auto& channel = media_channels_[channel_id];
+    channel.transport.transport_type = MediaTransportType::TCP;
+    channel.transport.tcp.rtp_channel = rtp_channel;
+    channel.transport.tcp.rtcp_channel = rtcp_channel;
+
+    channel.markSetup(); // 设置状态标志
+
+    int socket_fd = conn->GetSocket();
+    rtpfd_[channel_id] = socket_fd;
+    rtcpfd_[channel_id] = socket_fd;
+
     transport_mode_ = RTPTransportMode::RTP_OVER_TCP;
     return true;
 }
+
 
 /*
     客户端：SETUP ... Transport: RTP/AVP;unicast;client_port=5000-5001
@@ -86,95 +98,145 @@ bool RtpConnection::SetupRtpOverUdp(MediaChannelId channel_id, uint16_t rtp_port
 {
     auto conn = rtsp_connection_.lock();
     if (!conn) {
-        return false; // RTSP connection is not available
+        return false;
     }
-    if(SocketUtil::GetPeerAddr(conn->GetSocket(), &peer_addr_) < 0) 
-    {
-		return false;
-	}
-    media_channels_[channel_id].rtp_port = rtp_port;
-    media_channels_[channel_id].rtcp_port = rtcp_port;
+
+    if (channel_id >= media_channels_.size()) {
+        return false;
+    }
+
+    if (SocketUtil::GetPeerAddr(conn->GetSocket(), &peer_addr_) < 0) {
+        return false;
+    }
+
+    auto& channel = media_channels_[channel_id];
+    channel.transport.transport_type = MediaTransportType::UDP;
+    channel.transport.udp.rtp_port = rtp_port;
+    channel.transport.udp.rtcp_port = rtcp_port;
+
     std::random_device rd;
-    for(int n = 0; n < 10; ++n) 
-    {
-       if (n == 10) 
-       {
-			return false;
-	   }
-       local_rtp_port_[channel_id] = rd() & 0xfffe;
-	   local_rtcp_port_[channel_id] =local_rtp_port_[channel_id] + 1;
+    bool bind_success = false;
 
-       // 创建 RTP socket与 RTCP socket
+    for (int n = 0; n < 10; ++n) {
+        uint16_t base_port = (rd() & 0xfffe) | 0x2000;  // 起始端口避免过低
+        local_rtp_port_[channel_id] = base_port;
+        local_rtcp_port_[channel_id] = base_port + 1;
 
-       rtpfd_[channel_id] = ::socket(AF_INET, SOCK_DGRAM, 0);
-       if(!SocketUtil::Bind(rtpfd_[channel_id], "0.0.0.0",  local_rtp_port_[channel_id])) {
-			SocketUtil::Close(rtpfd_[channel_id]);
-			continue;
-		}
+        rtpfd_[channel_id] = ::socket(AF_INET, SOCK_DGRAM, 0);
+        if (!SocketUtil::Bind(rtpfd_[channel_id], "0.0.0.0", base_port)) {
+            SocketUtil::Close(rtpfd_[channel_id]);
+            continue;
+        }
 
         rtcpfd_[channel_id] = ::socket(AF_INET, SOCK_DGRAM, 0);
-
-        if(!SocketUtil::Bind(rtcpfd_[channel_id], "0.0.0.0", local_rtcp_port_[channel_id]))
-        {
+        if (!SocketUtil::Bind(rtcpfd_[channel_id], "0.0.0.0", base_port + 1)) {
             SocketUtil::Close(rtcpfd_[channel_id]);
             SocketUtil::Close(rtpfd_[channel_id]);
             continue;
         }
+
+        bind_success = true;
         break;
     }
 
-    SocketUtil::SetSendBufSize(rtpfd_[channel_id], 50*1024);
+    if (!bind_success) {
+        return false;
+    }
 
-    peer_rtp_addr_[channel_id].sin_family = AF_INET;
-	peer_rtp_addr_[channel_id].sin_addr.s_addr = peer_addr_.sin_addr.s_addr;
-	peer_rtp_addr_[channel_id].sin_port = htons(media_channels_[channel_id].rtp_port);
+    SocketUtil::SetSendBufSize(rtpfd_[channel_id], 50 * 1024);
 
-    peer_rtcp_sddr_[channel_id].sin_family = AF_INET;
-    peer_rtcp_sddr_[channel_id].sin_addr.s_addr = peer_addr_.sin_addr.s_addr;
-    peer_rtcp_sddr_[channel_id].sin_port = htons(media_channels_[channel_id].rtcp_port);
+    // 设置对端地址
+    peer_rtp_addr_[channel_id] = {
+        .sin_family = AF_INET,
+        .sin_port = htons(rtp_port),
+        .sin_addr = peer_addr_.sin_addr,
+    };
+    peer_rtcp_sddr_[channel_id] = {
+        .sin_family = AF_INET,
+        .sin_port = htons(rtcp_port),
+        .sin_addr = peer_addr_.sin_addr,
+    };
 
-    media_channels_[channel_id].is_setup = true;
-	transport_mode_ = RTP_OVER_UDP;
+    channel.markSetup();
+    transport_mode_ = RTP_OVER_UDP;
+
+    // InfoL << "Setup RTP over UDP: channel_id=" << channel_id
+    //       << ", local_rtp_port=" << local_rtp_port_[channel_id]
+    //       << ", peer_rtp_port=" << rtp_port;
 
     return true;
 }
 
-bool RtpConnection::SetupRtpOverMulticast(MediaChannelId channel_id, std::string ip, uint16_t port)
+
+bool RtpConnection::SetupRtpOverMulticast(MediaChannelId channel_id, const std::string& ip, uint16_t port)
 {
+    if (channel_id >= media_channels_.size()) {
+        return false;
+    }
+
     std::random_device rd;
-    for(int n = 0;n < 10;n++)
-    {
-        if(n == 10) 
-        {
-            return false; // Failed to bind multicast address
-        }
-        local_rtp_port_[channel_id] = rd() & 0xfffe;
+    bool bind_success = false;
+
+    for (int n = 0; n < 10; ++n) {
+        uint16_t local_port = (rd() & 0xfffe) | 0x2000;
+        local_rtp_port_[channel_id] = local_port;
+
         rtpfd_[channel_id] = ::socket(AF_INET, SOCK_DGRAM, 0);
-        if(!SocketUtil::Bind(rtpfd_[channel_id], ip, local_rtp_port_[channel_id])) 
-        {
+        if (rtpfd_[channel_id] < 0) {
+            continue;
+        }
+
+        if (!SocketUtil::Bind(rtpfd_[channel_id], "0.0.0.0", local_port)) {
             SocketUtil::Close(rtpfd_[channel_id]);
             continue;
         }
+
+        // 加入 multicast group
+        struct ip_mreq mreq;
+        mreq.imr_multiaddr.s_addr = inet_addr(ip.c_str());
+        mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+
+        if (setsockopt(rtpfd_[channel_id], IPPROTO_IP, IP_ADD_MEMBERSHIP, (char*)&mreq, sizeof(mreq)) < 0) {
+            SocketUtil::Close(rtpfd_[channel_id]);
+            continue;
+        }
+
+        bind_success = true;
         break;
     }
 
-    media_channels_[channel_id].rtp_port = port;
+    if (!bind_success) {
+        return false;
+    }
 
-    peer_rtp_addr_[channel_id].sin_family = AF_INET;
-	peer_rtp_addr_[channel_id].sin_addr.s_addr = inet_addr(ip.c_str());
-	peer_rtp_addr_[channel_id].sin_port = htons(port);
+    auto& channel = media_channels_[channel_id];
+    channel.transport.transport_type = MediaTransportType::UDP;
+    channel.transport.udp.rtp_port = port;
 
-    media_channels_[channel_id].is_setup = true;
-	transport_mode_ = RTP_OVER_MULTICAST;
-	is_multicast_ = true;
-	return true;
+    // 目标地址设置
+    peer_rtp_addr_[channel_id] = {
+        .sin_family = AF_INET,
+        .sin_port = htons(port),
+        .sin_addr = { .s_addr = inet_addr(ip.c_str()) }
+    };
+
+    channel.markSetup(); // 使用状态标志更优
+    transport_mode_ = RTP_OVER_MULTICAST;
+    is_multicast_ = true;
+
+    // InfoL << "Setup RTP over Multicast: channel_id=" << channel_id
+    //       << ", local_port=" << local_rtp_port_[channel_id]
+    //       << ", group_ip=" << ip
+    //       << ", group_port=" << port;
+
+    return true;
 }
 
 void RtpConnection::SetFrameType(uint8_t frameType)
 {
     frame_type_ = frameType;
     for (auto& channel : media_channels_) {
-        channel.rtp_header.payload = frameType;
+        channel.rtp_header.setPayloadType(frameType);
     }
 
     //标记在这个会话里面是否已经收到了关键帧
@@ -184,24 +246,32 @@ void RtpConnection::SetFrameType(uint8_t frameType)
     }
 }
 
-//在已进入可播放状态 (有关键帧) 且当前通道允许时，构造 RTP 头，维护时序与封装规范，否则丢弃。
-void RtpConnection::SetRtpHeader(MediaChannelId channel_id, RtpPacket pkt)
+void RtpConnection::SetRtpHeader(MediaChannelId channel_id, RtpPacket& pkt)
 {
-    if((media_channels_[channel_id].is_play || media_channels_[channel_id].is_record) && has_key_frame_)
-    {
-        media_channels_[channel_id].rtp_header.marker = pkt.last;
-        media_channels_[channel_id].rtp_header.ts = htonl(pkt.timestamp);
-        media_channels_[channel_id].rtp_header.seq = htons(media_channels_[channel_id].packet_seq++);
-        memccpy(pkt.data.get(), &media_channels_[channel_id].rtp_header, 0, sizeof(RtpHeader));
-    }
-    else
-    {
-        //如果没有播放或者录制，直接丢弃这个包
+    auto& channel = media_channels_[channel_id];
+
+    // 若未播放或未录制或尚未有关键帧，丢弃
+    if (!(channel.isPlay() || channel.isRecord()) || !has_key_frame_) {
         pkt.size = 0;
         pkt.data.reset();
         return;
     }
+
+    // 设置 RTP header
+    channel.rtp_header.setMarker(pkt.getMarker());
+    channel.rtp_header.setTimestamp(pkt.getStamp());
+    channel.rtp_header.setSequence(channel.rtp_sequence++);
+
+    // 将 RTP header 序列化为网络字节序并写入 packet 前部
+    if (pkt.data && pkt.size >= RtpHeader::kSize) {
+        channel.rtp_header.serialize(pkt.data.get());
+    } else {
+        // 安全检查不通过，丢弃
+        pkt.size = 0;
+        pkt.data.reset();
+    }
 }
+
 
 int RtpConnection::SentRtpPacket(MediaChannelId channel_id, RtpPacket pkt)
 {
