@@ -103,12 +103,15 @@ bool RtspConnection::HandleRtspRequest(BufferReader &buffer)
             HandleCmdDescribe();
             break;
         case RtspRequest::Method::SETUP:
+            LOG_INFO("Handing SETUP request");
             HandleCmdSetup();
             break;
         case RtspRequest::Method::PLAY:
+            LOG_INFO("Handing Play request");
             HandleCmdPlay();
             break;
         case RtspRequest::Method::PAUSE:
+            LOG_INFO("Hading Pause request");
             HandleCmdPause();
             break;
         case RtspRequest::Method::TEARDOWN:
