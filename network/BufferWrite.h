@@ -14,9 +14,10 @@ void WriteUint24LE(char* p, uint32_t value);
 void WriteUint16BE(char* p, uint32_t value);
 void WriteUint16LE(char* p, uint32_t value);
 
-class BufferWirte 
+class BufferWirte : public std::enable_shared_from_this<BufferWirte>
 {
 public:
+    using Ptr = std::shared_ptr<BufferWirte>;
     BufferWirte(int capacity = KMaxQueueLength);
 	~BufferWirte() {}
     bool IsEmpty() const

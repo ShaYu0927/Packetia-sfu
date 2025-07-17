@@ -181,10 +181,18 @@ void RtspConnection::HandleCmdDescribe()
     }
 
     // 构建 SDP
-    std::string sdp_message = sdp_->GetSdpMessage(rtsp_->rtsp_url_info_.ip, media_session->GetRtspSuffix());
-
     std::shared_ptr<char> res(new char[4096], std::default_delete<char[]>());
-    int size = rtsp_request_->BuildDescribeRes(res, 4096, sdp_message);
+    int size = 0;
+    std::string sdp_message = sdp_->GetSdpMessage(rtsp_->rtsp_url_info_.ip, media_session->GetRtspSuffix());
+    if(sdp_message == "")
+    {
+        size = rtsp_request_->BuildNotFoundRes(res,4096);
+    }
+    else
+    {
+        size = rtsp_request_->BuildDescribeRes(res, 4096, sdp_message);
+    }
+   
     this->SendRtspMessage(res, size);
 }
 

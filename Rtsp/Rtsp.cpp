@@ -3,6 +3,12 @@
 
 std::string Sdp::GetSdpMessage(const std::string &ip, const std::string &session_name)
 {
+    
+    if(media_list_.size() == 0)
+    {
+        return "";
+    }
+
      std::ostringstream oss;
      oss << "v=0\r\n"
          << "o=- 0 0 IN IP4 " << ip << "\r\n"

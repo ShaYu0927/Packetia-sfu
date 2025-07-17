@@ -2,6 +2,7 @@
 #define _RTSPMESSAGE_H_
 
 #include <string>
+#include <array>
 #include <unordered_map>
 #include "BufferRead.h"
 #include "logger.h"
