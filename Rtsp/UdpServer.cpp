@@ -1,7 +1,6 @@
 #include "UdpServer.h"
 
-void UDPServer::listen(uint16_t port)
-{
+void UDPServer::listen(uint16_t port) {
     if (_udp_fd > 0) return;
 
     _udp_fd = ::socket(AF_INET, SOCK_DGRAM, 0);
@@ -20,31 +19,39 @@ void UDPServer::listen(uint16_t port)
     _recv_thread = std::thread(&UDPServer::recvLoop, this);
 }
 
-void UDPServer::listenPeer(const std::string &peer_ip, void *obj, const onRecvData &cb)
-{
+void UDPServer::listenPeer(const std::string &peer_ip, void *obj, const onRecvData &cb) {
     std::lock_guard<std::mutex> lck(_mtx);
     auto &vec = _callbacks[peer_ip];
     for (auto &entry : vec) {
-        if (entry.obj == obj) return; // 已存在
+        if (entry.first == obj) return; // 已存在
     }
     vec.push_back({obj, cb});
 }
 
-void UDPServer::stopListenPeer(const std::string &peer_ip, void *obj)
-{
+void UDPServer::stopListenPeer(const std::string &peer_ip, void *obj) {
     std::lock_guard<std::mutex> lck(_mtx);
     auto it = _callbacks.find(peer_ip);
     if (it != _callbacks.end()) {
         auto &vec = it->second;
         vec.erase(std::remove_if(vec.begin(), vec.end(),
-                                 [obj](const CallbackEntry &e) { return e.obj == obj; }),
+                                 [obj](const CallbackEntry &entry) { return entry.first == obj; }),
                   vec.end());
         if (vec.empty()) _callbacks.erase(it);
     }
 }
 
-void UDPServer::recvLoop()
-{
+void UDPServer::stop() {
+    if (_recv_thread.joinable()) {
+        _running = false;
+        _recv_thread.join();
+    }
+    if (_udp_fd > 0) {
+        //close(_udp_fd);
+        _udp_fd = -1;
+    }
+}
+
+void UDPServer::recvLoop() {
     char buffer[1500];
     while (_running) {
         sockaddr_in peer_addr{};
@@ -59,14 +66,13 @@ void UDPServer::recvLoop()
     }
 }
 
-void UDPServer::dispatchToCallbacks(const std::string &peer_ip, const std::vector<char> &data, sockaddr *addr)
-{
+void UDPServer::dispatchToCallbacks(const std::string &peer_ip, const std::vector<char> &data, sockaddr *addr) {
     std::vector<CallbackEntry> cbs;
     {
         std::lock_guard<std::mutex> lck(_mtx);
         auto it = _callbacks.find(peer_ip);
         if (it == _callbacks.end()) return;
-        cbs = it->second;
+        cbs = std::move(it->second);
     }
 
     // 计算 interval
@@ -78,10 +84,11 @@ void UDPServer::dispatchToCallbacks(const std::string &peer_ip, const std::vecto
     }
     last = now;
 
-    // 创建 Buffer::Ptr
-    auto buffer = std::make_shared<BufferWirte>(data.data(), data.size());
+    // 创建 shared_ptr 对象
+    auto buffer = std::make_shared<std::vector<char>>(data);
 
+    // 遍历所有注册的回调并执行
     for (const auto &entry : cbs) {
-        entry.cb(intervaled, buffer, addr);
+        entry.second(intervaled, buffer, addr);
     }
 }

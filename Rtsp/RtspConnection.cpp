@@ -146,6 +146,7 @@ void RtspConnection::HandleCmdOptions()
     this->SendRtspMessage(res, size);	
 }
 
+//客户端播放流,服务器协商拟定
 void RtspConnection::HandleCmdDescribe()
 {
     LOG_INFO("Handling DESCRIBE request");
@@ -292,11 +293,61 @@ void RtspConnection::HandleCmdSetup()
     }
     this->SendRtspMessage(res, size);
     media_session->AddClient(channel_id,rtp_connection_);
+
+    //对端口进行初始化
+
 }
 
 
 void RtspConnection::HandleCmdPlay()
 {
+    //需要校验前面的SETUP逻辑,在前面初始化了session层
+    LOG_INFO("Handling PLAY request");
+    if (!rtsp_) 
+    {
+        LOG_ERROR("RTSP context is null");
+        return;
+    }
+
+    auto suffix = rtsp_request_->GetRtspUSuffix(); //获取当前流的suffix
+    auto media_session = rtsp_->LookMediaSession(suffix); //查找对应的session
+    if(!media_session)
+    {
+        LOG_ERROR("Media session not found for suffix: " + suffix);
+        std::shared_ptr<char> errorRes(new char[256], std::default_delete<char[]>());
+        rtsp_request_->BuildNotFoundRes(errorRes, 256);
+        this->SendRtspMessage(errorRes, 256);
+        return;
+    }
+
+    //获取RTP的连接对象
+    if (!rtp_connection_) 
+    {
+        rtp_connection_ = std::make_shared<RtpConnection>(shared_from_this());
+    }
+
+    RTPTransportMode mode = rtp_connection_->GetTransport();
+    
+    //开始推送流
+     if (mode == RTPTransportMode::RTP_OVER_TCP) 
+     {
+        // 设置 TCP 推流
+        LOG_INFO("Starting RTP stream over TCP");
+        //rtp_connection_->StartTcpStream();
+    } else if (mode == RTPTransportMode::RTP_OVER_UDP) 
+    {
+        // 设置 UDP 推流
+        LOG_INFO("Starting RTP stream over UDP");
+        //rtp_connection_->StartUdpStream();
+    } 
+    else if (mode == RTPTransportMode::RTP_OVER_MULTICAST) 
+    {
+        // 设置 Multicast 推流
+        LOG_INFO("Starting RTP stream over Multicast");
+        //rtp_connection_->StartMulticastStream();
+    }
+
+
 }
 
 void RtspConnection::HandleCmdPause()

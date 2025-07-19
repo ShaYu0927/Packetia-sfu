@@ -246,7 +246,17 @@ void RtpConnection::SetFrameType(uint8_t frameType)
     }
 }
 
-void RtpConnection::SetRtpHeader(MediaChannelId channel_id, RtpPacket& pkt)
+int RtpConnection::StartSendRTP(uint32_t timestamp)
+{
+    return 0;
+}
+
+int RtpConnection::StartSendRTCP()
+{
+    return 0;
+}
+
+void RtpConnection::SetRtpHeader(MediaChannelId channel_id, RtpPacket &pkt)
 {
     auto& channel = media_channels_[channel_id];
 

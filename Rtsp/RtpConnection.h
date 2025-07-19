@@ -31,18 +31,26 @@ public:
     void SetFrameType(uint8_t frame_type);
     
 
-    uint16_t GetLocalRtpPort(MediaChannelId channel_id) const {
+    uint16_t GetLocalRtpPort(MediaChannelId channel_id) const 
+    {
         return local_rtp_port_[channel_id];
     }
-    uint16_t GetLocalRtcpPort(MediaChannelId channel_id) const {
+    uint16_t GetLocalRtcpPort(MediaChannelId channel_id) const 
+    {
         return local_rtcp_port_[channel_id];
     }
+
+    int StartSendRTP(uint32_t timestamp);
+    int StartSendRTCP();
+
+    RTPTransportMode GetTransport() const { return transport_mode_; }
+
 private:
     friend class RtspConnection;
     friend class MediaSession;
 
     void SetRtpHeader(MediaChannelId channel_id, RtpPacket& pkt);
-    int SentRtpPacket(MediaChannelId channel_id, RtpPacket pkt);
+    int  SentRtpPacket(MediaChannelId channel_id, RtpPacket pkt);
     int  SendRtpOverTcp(MediaChannelId channel_id, RtpPacket pkt);
     int  SendRtpOverUdp(MediaChannelId channel_id, RtpPacket pkt);
 

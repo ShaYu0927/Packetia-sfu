@@ -3,7 +3,6 @@
 
 std::string Sdp::GetSdpMessage(const std::string &ip, const std::string &session_name)
 {
-    
     if(media_list_.size() == 0)
     {
         return "";

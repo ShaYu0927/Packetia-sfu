@@ -1,53 +1,43 @@
 #ifndef _UDPSERVER_H_
 #define _UDPSERVER_H_
 
-#include <stdint.h>
-#include <mutex>
-#include <memory>
 #include <functional>
-#include <unordered_map>
 #include <thread>
-#include <atomic>
+#include <mutex>
+#include <map>
+#include <vector>
+#include <string>
 #include <stdexcept>
-#include "Socket.h"
+#include <chrono>
+#include <memory>
+#include <algorithm>
+#include <netinet/in.h>  // for sockaddr_in, sockaddr, etc.
+#include <sys/socket.h>
+#include <arpa/inet.h>   // for inet_ntoa
 
-#include "BufferWrite.h"
+// 类型定义
+using onRecvData = std::function<void(int interval, const std::shared_ptr<std::vector<char>> &data, sockaddr *addr)>;
+using CallbackEntry = std::pair<void*, onRecvData>;
 
-class BufferRaw : public  BufferWirte{
+class UDPServer {
 public:
-    BufferRaw(const char *data, size_t size) : _data(data, data + size) {}
-    const char *data() const { return _data.data(); }
-    size_t size() const  { return _data.size(); }
-private:
-    std::vector<char> _data;
-};
-
-
-class UDPServer : public std::enable_shared_from_this<UDPServer>
-{
-public:
-    using onRecvData = std::function<bool(int intervaled, BufferWirte::Ptr& buffer, struct sockaddr *peer_addr)>;
+    UDPServer() : _udp_fd(-1), _running(false) {}
 
     void listen(uint16_t port);
     void listenPeer(const std::string &peer_ip, void *obj, const onRecvData &cb);
     void stopListenPeer(const std::string &peer_ip, void *obj);
-    void recvLoop();
+    void stop();
 
 private:
+    void recvLoop();
     void dispatchToCallbacks(const std::string &peer_ip, const std::vector<char> &data, sockaddr *addr);
 
-    int _udp_fd = -1;
-    std::atomic<bool> _running = false;
+    int _udp_fd;
+    bool _running;
     std::thread _recv_thread;
-
-    struct CallbackEntry {
-        void *obj;
-        onRecvData cb;
-    };
-
     std::mutex _mtx;
-    std::unordered_map<std::string, std::vector<CallbackEntry>> _callbacks;
-    std::unordered_map<std::string, std::chrono::steady_clock::time_point> _last_recv_time;
+    std::map<std::string, std::vector<CallbackEntry>> _callbacks; // 绑定IP与回调的映射
+    std::map<std::string, std::chrono::steady_clock::time_point> _last_recv_time; // 记录每个peer的最后接收时间
 };
 
 
