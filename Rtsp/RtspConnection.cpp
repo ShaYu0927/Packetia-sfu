@@ -208,7 +208,7 @@ void RtspConnection::HandleCmdSetup()
         LOG_ERROR("RTSP context is null");
         return;
     }
-
+    int trackIdx = rtsp_request_->GetSessionId();  //这个需要根据control来判断
     std::shared_ptr<char> res(new char[10240], std::default_delete<char[]>());
     int size = 0;
     MediaChannelId channel_id = rtsp_request_->GetSessionId();
@@ -269,21 +269,28 @@ void RtspConnection::HandleCmdSetup()
                 this->SendRtspMessage(res, size);
                 return;
             }
+            //回复告诉客户端已经协商成功，端口
             size = rtsp_request_->BuildSetupRes(res, 4096, rtp_channel, rtcp_channel, channel_id);
         }
         else if(rtsp_request_->GetTransport() == RTP_OVER_UDP)
         {
             LOG_INFO("RTP OVER UDP");
-            uint16_t rtp_port = rtsp_request_->GetRtpPort();
-            uint16_t rtcp_port = rtsp_request_->GetRtcpPort();
-            if (!rtp_connection_->SetupRtpOverUdp(channel_id, rtp_port, rtcp_port)) 
-            {
-                LOG_ERROR("Failed to setup RTP over UDP for channel: " + std::to_string(channel_id));
-                size = rtsp_request_->BuildNotFoundRes(res, 4096);
-                this->SendRtspMessage(res, size);
-                return;
-            }
-            size = rtsp_request_->BuildSetupRes(res, 4096, rtp_port, rtcp_port, channel_id);
+            //分配UDP复用端口，RTP 5000, RTCP 5001，通过UDPserver 监听
+            auto ptrPort = UDPServer::allocatePair();
+            rtp_connection_->local_rtp_port_[trackIdx]  = ptrPort.first;
+            rtp_connection_->local_rtcp_port_[trackIdx] = ptrPort.second;
+            runLoopReceive(); //启动接收线程
+
+            // uint16_t rtp_channel = rtsp_request_->GetRtpChannel();
+            // uint16_t rtcp_channel = rtsp_request_->GetRtcpChannel();
+
+            // if (!rtp_connection_->SetupRtpOverUdp(channel_id, rtp_channel, rtcp_channel)) 
+            // {
+            //     LOG_ERROR("Failed to setup RTP over UDP for channel: " + std::to_string(channel_id));
+            //     size = rtsp_request_->BuildNotFoundRes(res, 4096);
+            //     this->SendRtspMessage(res, size);
+            //     return;
+            // }
         }
         else
         {

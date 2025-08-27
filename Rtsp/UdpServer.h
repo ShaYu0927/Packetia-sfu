@@ -28,6 +28,10 @@ public:
     void stopListenPeer(const std::string &peer_ip, void *obj);
     void stop();
 
+    static std::pair<int,int> allocatePair();
+
+    void runLoopReceive();
+
 private:
     void recvLoop();
     void dispatchToCallbacks(const std::string &peer_ip, const std::vector<char> &data, sockaddr *addr);

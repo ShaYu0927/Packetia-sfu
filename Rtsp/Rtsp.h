@@ -103,7 +103,7 @@ public:
 
 
 */
-class Sdp  // SDP (Session Description Protocol) class
+class Sdp // SDP (Session Description Protocol) class
 {
 public:
     using Ptr = std::shared_ptr<Sdp>;
@@ -127,6 +127,9 @@ public:
     void AddMedia(const MediaDescription& media);
 
     std::vector<MediaDescription> media_list_;
+
+
+
 
 };
 
@@ -157,7 +160,7 @@ public:
 
     std::string toString(uint16_t port = 0) const;
     std::string getName() const;
-    std::string getControlUrl(const std::string &base_url) const;
+    std::string getControlUrl(const std::string &base_url) const; //a=control:trackID=1
 
 
 public:

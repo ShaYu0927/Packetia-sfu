@@ -51,6 +51,55 @@ void UDPServer::stop() {
     }
 }
 
+std::pair<int, int> UDPServer::allocatePair()
+{
+    const uint16_t start_port = 5000;
+    const uint16_t end_port = 6000;
+    for(uint16_t port = start_port; port < end_port; port += 2) 
+    {
+        int rtp_fd = ::socket(AF_INET, SOCK_DGRAM, 0);
+        if (rtp_fd < 0) continue;
+
+        sockaddr_in rtp_addr{};
+        rtp_addr.sin_family = AF_INET;
+        rtp_addr.sin_addr.s_addr = INADDR_ANY;
+        rtp_addr.sin_port = htons(port);
+
+        if (::bind(rtp_fd, (sockaddr*)&rtp_addr, sizeof(rtp_addr)) != 0) {
+            // 绑定失败，尝试下一个端口
+            //close(rtp_fd);
+            continue;
+        }
+
+        int rtcp_fd = ::socket(AF_INET, SOCK_DGRAM, 0);
+        if (rtcp_fd < 0) {
+            //close(rtp_fd);
+            continue;
+        }
+
+        sockaddr_in rtcp_addr{};
+        rtcp_addr.sin_family = AF_INET;
+        rtcp_addr.sin_addr.s_addr = INADDR_ANY;
+        rtcp_addr.sin_port = htons(port + 1);
+
+        if (::bind(rtcp_fd, (sockaddr*)&rtcp_addr, sizeof(rtcp_addr)) != 0) {
+            // 绑定失败，释放 RTP 套接字并尝试下一个端口
+            //close(rtp_fd);
+            //close(rtcp_fd);
+            continue;
+        }
+
+        return std::pair<int, int>(port, port + 1);
+    }
+    return std::pair<int, int>();
+}
+
+void UDPServer::runLoopReceive()
+{
+    _running = true;
+    _recv_thread = std::thread(&UDPServer::recvLoop, this);
+}
+
 void UDPServer::recvLoop() {
     char buffer[1500];
     while (_running) {

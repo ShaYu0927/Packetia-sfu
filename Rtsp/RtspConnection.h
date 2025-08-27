@@ -10,11 +10,12 @@
 #include "Rtsp.h"
 #include "Media.h"
 #include "logger.h"
+#include "UdpServer.h"
 
 class RtspServer;
 
 
-class RtspConnection : public TcpConnection
+class RtspConnection : public TcpConnection , public UDPServer 
 {
 public:
     using Ptr = std::shared_ptr<RtspConnection>;
@@ -86,8 +87,8 @@ private:
     std::unique_ptr<RtspResponse> read_buffer_;
 
 
-    std::shared_ptr<Channel>       rtp_channel_;
-	std::shared_ptr<Channel>       rtcp_channels_[MAX_MEDIA_CHANNEL];
+    std::shared_ptr<Channel>       rtp_channel_;        // rtp socket
+	std::shared_ptr<Channel>       rtcp_channels_[MAX_MEDIA_CHANNEL]; //rtcp socket
 };
 
 

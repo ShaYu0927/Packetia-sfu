@@ -102,6 +102,7 @@ bool SdpParser::Parse(const std::string &sdp_message, Sdp::Ptr &sdp) {
             size_t pos = line.find(":");
             if (pos != std::string::npos)
                 current.control = line.substr(pos + 1);
+                
         }
     }
 
