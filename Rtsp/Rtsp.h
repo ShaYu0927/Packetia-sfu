@@ -9,6 +9,8 @@
 #include "MediaSession.h"
 #include "logger.h"
 
+#include "RtspMessage.h"
+
 
 class MediaSession;
 
@@ -103,7 +105,7 @@ public:
 
 
 */
-class Sdp // SDP (Session Description Protocol) class
+class Sdp : public std::enable_shared_from_this<Sdp> // SDP (Session Description Protocol) class
 {
 public:
     using Ptr = std::shared_ptr<Sdp>;
@@ -116,6 +118,8 @@ public:
         std::string codec_name;  // e.g., "H264"
         int clock_rate;          // e.g., 90000
         std::string control;     // e.g., "trackID=0"
+        std::string sprop_ps;
+        std::string ssp;
     };
 
 
@@ -126,15 +130,31 @@ public:
 
     void AddMedia(const MediaDescription& media);
 
+    int GetMediaCount() const { return static_cast<int>(media_list_.size()); }
+    int GetControlId(int index) const 
+    {
+        if (index < 0 || index >= static_cast<int>(media_list_.size())) 
+        {
+            return -1; // Invalid index
+        }
+        const std::string& control = media_list_[index].control;
+        size_t pos = control.find("trackID=");
+        if (pos != std::string::npos) 
+        {
+            return std::stoi(control.substr(pos + 8));
+        }
+        return -1; // Not found
+    }
+
+    //媒体列表
     std::vector<MediaDescription> media_list_;
 
+    virtual void Parse();
 
-
-
+    std::string buildANNOUNCEBody();
 };
 
-class SdpTracker
-{
+class SdpTracker {
 public:
     typedef enum {
         TrackInvalid = -1,
@@ -187,7 +207,7 @@ public:
 };
 
 
-class SdpParser
+class SdpParser 
 {
 public:
     using Ptr = std::shared_ptr<SdpParser>;

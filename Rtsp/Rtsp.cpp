@@ -36,6 +36,46 @@ void Sdp::AddMedia(const MediaDescription &media)
     media_list_.emplace_back(media);
 }
 
+void Sdp::Parse()
+{
+}
+
+std::string Sdp::buildANNOUNCEBody()
+{
+    std::ostringstream oss;
+
+    // 基础 SDP 信息
+    oss << "v=0\r\n";
+    oss << "o=- 0 0 IN IP4 127.0.0.1\r\n";
+    oss << "s=No Name\r\n";
+    oss << "c=IN IP4 127.0.0.1\r\n";
+    oss << "t=0 0\r\n";
+
+    if(media_list_.size() == 0)
+    {
+        return "";
+    }
+
+    for (const auto& m : media_list_)
+    {
+        oss << "m=" << m.media_type << " " << m.port << " RTP/AVP " << m.payload_type << "\r\n";
+        oss << "a=rtpmap:" << m.payload_type << " " << m.codec_name << "/" << m.clock_rate << "\r\n";
+        if (!m.codec_name.empty())
+        {
+            oss << "a=fmtp:" << m.payload_type << " "; 
+            if (m.codec_name == "H265") {
+                oss << "sprop-vps=xxx; sprop-sps=xxx; sprop-pps=xxx";
+            } else if (m.codec_name == "MPEG4-GENERIC") {
+                oss << "config=1210";
+            }
+            oss << "\r\n";
+        }
+        oss << "a=control:" << m.control << "\r\n";
+    }
+
+    return oss.str();
+}
+
 void SdpParser::load(const std::string &sdp)
 {
     _track_vec.clear();

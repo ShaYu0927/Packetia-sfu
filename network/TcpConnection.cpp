@@ -89,30 +89,51 @@ void TcpConnection::close()
 
 void TcpConnection::HandleRead()
 {
-    LOG_INFO("HandleRead: about to read from fd=" + std::to_string(channel_->GetSocket()));
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (is_closed_) {
-            LOG_INFO("HandleRead: connection already closed");
-            return;
-        }
+    // LOG_INFO("HandleRead: about to read from fd=" + std::to_string(channel_->GetSocket()));
+    // {
+    //     std::lock_guard<std::mutex> lock(mutex_);
+    //     if (is_closed_) {
+    //         LOG_INFO("HandleRead: connection already closed");
+    //         return;
+    //     }
         
-        int ret = read_buffer_->Read(channel_->GetSocket());
-        LOG_INFO("HandleRead: read_buffer_->Read returned " + std::to_string(ret));
-        if (ret <= 0) {
-            LOG_INFO("HandleRead: read <= 0, closing connection");
+    //     int ret = read_buffer_->Read(channel_->GetSocket());
+    //     LOG_INFO("HandleRead: read_buffer_->Read returned " + std::to_string(ret));
+    //     LOG_INFO("HandleRead: read_buffer_->Read returned " + std::to_string(ret));
+    //     LOG_INFO("HandleRead: read_buffer_->ReadableBytes=" + std::to_string(read_buffer_->ReadableBytes()));
+    //     if (ret <= 0) {
+    //         LOG_INFO("HandleRead: read <= 0, closing connection");
+    //         this->close();
+    //         return;
+    //     }
+    // }
+    // if (read_cb_) {
+    //     bool ret = read_cb_(shared_from_this(), *read_buffer_);
+    //     if (!ret) {
+    //         std::lock_guard<std::mutex> lock(mutex_);
+    //         LOG_INFO("HandleRead: read_cb_ returned false, closing connection");
+    //         this->close();
+    //     }
+    // }
+
+    int n = 0;
+    do {
+            n = read_buffer_->Read(channel_->GetSocket());
+            LOG_INFO("Read returned: " + std::to_string(n));
+    } while(n > 0);
+
+    if (n == 0) {
+        LOG_INFO("Peer closed connection");
+        this->close();
+        return;
+    } else if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+            LOG_ERROR("Read error");
             this->close();
             return;
         }
-    }
-    if (read_cb_) {
-        bool ret = read_cb_(shared_from_this(), *read_buffer_);
-        if (!ret) {
-            std::lock_guard<std::mutex> lock(mutex_);
-            LOG_INFO("HandleRead: read_cb_ returned false, closing connection");
-            this->close();
-        }
-    }
+
+        // 调用 RTSP 解析函数
+        if (read_cb_) read_cb_(shared_from_this(), *read_buffer_);
 }
 
 

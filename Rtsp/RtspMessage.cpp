@@ -2,7 +2,8 @@
 
 bool RtspRequest::ParseRequest(BufferReader *buffer)
 {
-    LOG_INFO("=== [RtspRequest] Begin parsing RTSP request from buffer ===");
+    LOG_INFO("ReadableBytes=" + std::to_string(buffer->ReadableBytes()));
+
     
     if (buffer->Peek()[0] == '$') // 判断是否 RTP OVER TCP
     {
@@ -10,6 +11,7 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
         LOG_INFO("Detected RTP over TCP ('$' leading byte).");
         return true;
     }
+    
 
     bool ret = true;
     while (true)
@@ -25,8 +27,14 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
                 break;
             }
 
-           std::string line(buffer->Peek(), firstCrlf - buffer->Peek());
+            std::string line(buffer->Peek(), firstCrlf - buffer->Peek());
             LOG_INFO("Request line: [" + line + "]");
+
+            //存储CSeq
+            if (line.find("CSeq:") != std::string::npos)
+            {
+                ParseCseq(line);
+            }
 
             ret = ParseRequestLine(buffer->Peek(), firstCrlf);
             buffer->RetrieveUntil(firstCrlf + 2);
@@ -87,6 +95,8 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
         else if (state_ == kParseBody)
         {
             LOG_INFO("State: kParseBody");
+            LOG_INFO("Before parsing body, ReadableBytes=" + std::to_string(buffer->ReadableBytes()));
+            //LOG_INFO("Peek first 20 bytes: [" + std::string(buffer->Peek(), std::min(20, buffer->ReadableBytes())) + "]");
 
             int content_len = GetContentLength();
             if (content_len > 0 && buffer->ReadableBytes() >= content_len) {
@@ -267,6 +277,36 @@ int RtspRequest::BuildSetupMulticastRes(std::shared_ptr<char> data, int size, co
     return 0;
 }
 
+int RtspRequest::BuildANNOUNCERes(std::shared_ptr<char> data, int size)
+{
+    LOG_INFO("Building RTSP ANNOUNCE response with CSeq:" + this->GetCSeq());
+
+    if (!data || size <= 0) return 0;
+    std::string body = sdp_->buildANNOUNCEBody();
+
+    // 清空缓冲区（可选）
+    memset(data.get(), 0, size);
+
+    // snprintf 返回写入的字符数，不包括 '\0'
+    int written = snprintf(data.get(), size,
+       "RTSP/1.0 200 OK\r\n"
+        "CSeq: %s\r\n"
+        "Content-Type: application/sdp\r\n"
+        "Content-Length: %zu\r\n"
+        "\r\n%s",
+        this->GetCSeq().c_str(),
+        body.size(),
+        body.c_str()
+    );
+
+    if (written < 0 || written >= size) {
+        LOG_ERROR("Failed to build RTSP ANNOUNCE response or buffer too small");
+        return 0;
+    }
+
+    return written;  // 返回实际写入长度
+}
+
 bool RtspRequest::ParseRequestLine(const char *begin, const char *end)
 {
     LOG_INFO("Parsing RTSP request line: [" + std::string(begin, end) + "]");
@@ -433,7 +473,56 @@ bool RtspRequest::ParseBodyLine(const char *begin, const char *end)
 {
     std::string body(begin, end);
     LOG_INFO("Parsing RTSP body line: [" + body + "]");
-    return false;
+    std::istringstream iss(body);
+    std::string line;
+    sdp_ = std::make_shared<Sdp>();
+    Sdp::MediaDescription media;
+
+    bool inMedia = false;
+
+    std::shared_ptr<Sdp::MediaDescription> currentMedia;
+
+    while (std::getline(iss, line)) {
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+
+        LOG_INFO("Body line: [" + line + "]");
+
+        if (line.rfind("m=", 0) == 0) {
+            // 新建一个 media
+            currentMedia = std::make_shared<Sdp::MediaDescription>();
+            std::istringstream ms(line.substr(2));
+            ms >> currentMedia->media_type >> currentMedia->port >> currentMedia->protocol >> currentMedia->payload_type;
+
+            // 不 push_back，现在只创建
+        }
+        else if (line.rfind("a=rtpmap:", 0) == 0 && currentMedia) {
+            size_t sep = line.find(' ');
+            if (sep != std::string::npos) {
+                int pt = std::stoi(line.substr(9, sep - 9));
+                std::string codec_info = line.substr(sep + 1);
+                size_t slash = codec_info.find('/');
+                if (slash != std::string::npos) {
+                    currentMedia->codec_name = codec_info.substr(0, slash);
+                    currentMedia->clock_rate = std::stoi(codec_info.substr(slash + 1));
+                }
+            }
+        }
+        else if (line.rfind("a=control:", 0) == 0 && currentMedia) {
+            currentMedia->control = line.substr(10);
+            sdp_->media_list_.push_back(*currentMedia);  // 填充完成后 push_back
+            currentMedia.reset();                        // 准备下一 media
+        }
+    }
+
+    for (auto &m : sdp_->media_list_) {
+        LOG_INFO("Media type: " + m.media_type + ", codec: " + m.codec_name +
+                 ", payload: " + std::to_string(m.payload_type) +
+                 ", clock: " + std::to_string(m.clock_rate) +
+                 ", control: " + m.control);
+    }
+
+    return true;
 }
 
 bool RtspRequest::ParseCseq(const std::string &message)
@@ -444,10 +533,13 @@ bool RtspRequest::ParseCseq(const std::string &message)
         uint32_t cseq = 0;
         if (sscanf(message.c_str() + pos, "%*[^:]: %u", &cseq) == 1)
         {
-            header_line_param_.emplace("CSeq", std::make_pair(std::to_string(cseq), 0));
+            LOG_INFO("Building RTSP ANNOUNCE response with CSeq:" + std::to_string(cseq));
+            header_line_param_["CSeq"] = std::make_pair(std::to_string(cseq), 0);
+            LOG_INFO("Building RTSP ANNOUNCE response with CSeq:" + this->GetCSeq());
             return true;
         }
     }
+   
     return false;
 }
 

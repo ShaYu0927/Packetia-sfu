@@ -8,6 +8,10 @@
 #include "logger.h"
 #include "Rtp.h"
 #include "Media.h"
+#include "Rtsp.h"
+
+class Sdp;
+
 
 
 class RtspRequest
@@ -47,6 +51,7 @@ public:
     "RTSP/1.0 404 Not Found\r\n",
     "RTSP/1.0 400 Bad Request\r\n"
     };
+
 
 
     Method GetMethodString(const char* method)
@@ -151,7 +156,7 @@ public:
     int BuildNotFoundRes(std::shared_ptr<char> data,int size);
     int BuildServerErrorRes(std::shared_ptr<char> data, int size, const std::string& error_message);
     int BuildSetupMulticastRes(std::shared_ptr<char> data, int size, const char* multicast_ip, uint16_t port, uint32_t session_id);
-
+    int BuildANNOUNCERes(std::shared_ptr<char> data, int size);
 
 
 private:
@@ -192,6 +197,11 @@ private:
 
     std::unordered_map<std::string, std::pair<std::string, uint32_t>> request_line_param_;
     std::unordered_map<std::string, std::pair<std::string, uint32_t>> header_line_param_;
+
+public:
+    std::shared_ptr<Sdp> sdp_;
+
+
 };
 
 

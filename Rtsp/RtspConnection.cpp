@@ -118,6 +118,10 @@ bool RtspConnection::HandleRtspRequest(BufferReader &buffer)
         case RtspRequest::Method::TEARDOWN:
             HandleCmdTeardown();
             break;
+        case RtspRequest::Method::ANNOUNCE:
+            LOG_INFO("Handling ANNOUNCE request");
+            HandleCmdANNOUNCE();
+            break;
         default:
             LOG_ERROR("Unsupported RTSP method: " + rtsp_request_->GetMethodString());
             return false;
@@ -196,6 +200,24 @@ void RtspConnection::HandleCmdDescribe()
     }
    
     this->SendRtspMessage(res, size);
+}
+
+void RtspConnection::HandleCmdANNOUNCE()
+{
+    if(!rtsp_request_->sdp_)
+    {
+        rtsp_request_->sdp_ = std::make_shared<Sdp>();
+    }
+    std::string body = rtsp_request_->sdp_->buildANNOUNCEBody();
+    if(body.size() == 0)
+    {
+        return;
+    }
+
+    LOG_INFO("Handling ANNOUNCE request");
+    std::shared_ptr<char> res(new char[4096], std::default_delete<char[]>());
+    int MessageSize = rtsp_request_->BuildANNOUNCERes(res, 4096);
+    this->SendRtspMessage(res, MessageSize);
 }
 
 /*

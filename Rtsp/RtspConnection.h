@@ -52,6 +52,7 @@ public:
 
     void HandleCmdOptions();
     void HandleCmdDescribe();
+    void HandleCmdANNOUNCE();
     void HandleCmdSetup();
     void HandleCmdPlay();
     void HandleCmdPause();
