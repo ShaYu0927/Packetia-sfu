@@ -41,7 +41,7 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
         }
         else if (state_ == kParseHeadersLine)
         {
-            LOG_INFO("State: kParseHeadersLine");
+            //LOG_INFO("State: kParseHeadersLine");
 
             const char* firstCrlf = buffer->FindFirstCrlf();
             if (!firstCrlf)
@@ -52,19 +52,28 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
 
             std::string line(buffer->Peek(), firstCrlf - buffer->Peek());
             LOG_INFO("Header line: [" + line + "]");
-            if(line == "CSeq")
+
+             // 即使是空行，也应该先判断是否前面还有 header
+            if (line.empty()) 
             {
-                header_line_param_["CSeq"] = std::make_pair(line, 0);
-            }
-
-            // 即使是空行，也应该先判断是否前面还有 header
-            if (line.empty()) {
                 buffer->RetrieveUntil(firstCrlf + 2);
-                state_ = kParseDone;
-                LOG_INFO("End of headers detected. State changed to kParseDone.");
-                break;
+                int content_len = GetContentLength();
+                LOG_INFO("End of headers detected. Content-Length: " + std::to_string(content_len));
+                if (header_line_param_.count("Content-Length") > 0)
+                {
+                    state_ = kParseBody;  // 如果有 body，就进入 kParseBody
+                    LOG_INFO("End of headers detected. Content-Length present, next state = kParseBody.");
+                }
+                else
+                {
+                    state_ = kParseDone;  // 没有 body，直接结束
+                    LOG_INFO("End of headers detected. No body, state changed to kParseDone.");
+                    break;
+                }
+                continue;
             }
-
+            
+           
             ret = ParseHeaderLines(buffer->Peek(), firstCrlf);
             buffer->RetrieveUntil(firstCrlf + 2);
 
@@ -73,8 +82,29 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
                 LOG_ERROR("Failed to parse header line.");
                 return false;
             }
-
             LOG_INFO("Header line parsed successfully.");
+        }
+        else if (state_ == kParseBody)
+        {
+            LOG_INFO("State: kParseBody");
+
+            int content_len = GetContentLength();
+            if (content_len > 0 && buffer->ReadableBytes() >= content_len) {
+                ret = ParseBodyLine(buffer->Peek(), buffer->Peek() + content_len);
+                buffer->Retrieve(content_len);
+                state_ = kParseDone;
+            }
+            else 
+            {
+                LOG_INFO("Waiting for more data to complete body...");
+                break;
+            }
+
+        }
+        else if (state_ == kParseDone)
+        {
+            LOG_INFO("State: kParseDone. Parsing complete.");
+            break;
         }
         else
         {
@@ -86,6 +116,8 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
     LOG_INFO("=== [RtspRequest] Finished parsing, state = " + std::to_string(state_) + " ===");
     return true;
 }
+
+
 
 const RTPTransportMode RtspRequest::GetTransport() const
 {
@@ -102,6 +134,17 @@ const RTPTransportMode RtspRequest::GetTransport() const
         return RTP_OVER_MULTICAST;
     }
     return RTP_OVER_UNKNOWN;
+}
+
+//Content-Length: 561
+const int RtspRequest::GetContentLength()
+{
+    auto iter = header_line_param_.find("Content-Length");
+    if (iter != header_line_param_.end())
+    {
+        return std::stoi(iter->second.first);
+    }
+    return 0;
 }
 
 std::string RtspRequest::GetRtspUSuffix() const
@@ -321,7 +364,8 @@ bool RtspRequest::ParseHeaderLines(const char *begin, const char *end)
     }
 
     // 解析 CSeq
-    if (line.find("CSeq:") == 0) {
+    if (line.find("CSeq:") == 0) 
+    {
         if (!ParseCseq(line)) {
             LOG_ERROR("CSeq parsing failed");
             return false;
@@ -330,13 +374,15 @@ bool RtspRequest::ParseHeaderLines(const char *begin, const char *end)
     }
 
     // 解析 Accept
-    if (method_ == Method::DESCRIBE && line.find("Accept:") == 0) {
+    if (method_ == Method::DESCRIBE && line.find("Accept:") == 0) 
+    {
         ParseAccept(line);
         return true;
     }
 
     // 解析 Transport
-    if (method_ == Method::SETUP && line.find("Transport:") == 0) {
+    if (method_ == Method::SETUP && line.find("Transport:") == 0) 
+    {
         LOG_INFO("Parsing SETUP Transport header: " + line);
         if (!ParseTransport(line)) {
             LOG_ERROR("Failed to parse Transport header");
@@ -346,7 +392,8 @@ bool RtspRequest::ParseHeaderLines(const char *begin, const char *end)
     }
 
     // 解析 Session
-    if ((method_ == Method::PLAY || method_ == Method::TEARDOWN) && line.find("Session:") == 0) {
+    if ((method_ == Method::PLAY || method_ == Method::TEARDOWN) && line.find("Session:") == 0) 
+    {
         if (!ParseSessionId(line)) {
             LOG_ERROR("Failed to parse Session header");
             return false;
@@ -355,15 +402,39 @@ bool RtspRequest::ParseHeaderLines(const char *begin, const char *end)
     }
 
     // 解析 Authorization
-    if (line.find("Authorization:") == 0) {
+    if (line.find("Authorization:") == 0) 
+    {
         ParseAuthorization(line);
         return true;
+    }
+
+    //解析 Content-Length
+    if (line.find("Content-Length:") == 0) 
+    {
+        int content_length = 0;
+        if (sscanf(line.c_str(), "Content-Length: %d", &content_length) == 1) {
+            content_length_ = std::to_string(content_length);
+            header_line_param_["Content-Length"] = std::make_pair(content_length_, static_cast<uint32_t>(content_length));
+            LOG_INFO("Parsed Content-Length: " + content_length_);
+            return true;
+        } 
+        else 
+        {
+            LOG_ERROR("Failed to parse Content-Length value");
+            return false;
+        }
     }
 
     LOG_INFO("Unhandled or irrelevant header: " + line);
     return true;
 }
 
+bool RtspRequest::ParseBodyLine(const char *begin, const char *end)
+{
+    std::string body(begin, end);
+    LOG_INFO("Parsing RTSP body line: [" + body + "]");
+    return false;
+}
 
 bool RtspRequest::ParseCseq(const std::string &message)
 {

@@ -81,6 +81,7 @@ bool RtspConnection::HandleRtspRequest(BufferReader &buffer)
     std::string str(buffer.Peek(), buffer.ReadableBytes());
 	if (str.find("rtsp") != std::string::npos || str.find("RTSP") != std::string::npos)
 	{
+        std::cout << std::endl;
 		LOG_INFO("Received RTSP request: " + str);
 	}
     LOG_INFO("Parsing RTSP request from buffer, size: " + std::to_string(buffer.ReadableBytes()));
@@ -305,6 +306,11 @@ void RtspConnection::HandleCmdSetup()
 
 }
 
+/**
+ *  确认 Session ID 是否存在且有效。需要保证多个track都注册不同的session ID。
+    确认客户端是否已经做过 SETUP。
+    确认请求的 URL（stream 或 track）是否合法。
+*/
 
 void RtspConnection::HandleCmdPlay()
 {
@@ -334,8 +340,9 @@ void RtspConnection::HandleCmdPlay()
     }
 
     RTPTransportMode mode = rtp_connection_->GetTransport();
+
     
-    //开始推送流
+    //开始推送流,但目前没有做推流，而是模拟拉流
      if (mode == RTPTransportMode::RTP_OVER_TCP) 
      {
         // 设置 TCP 推流

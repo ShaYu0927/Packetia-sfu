@@ -33,7 +33,7 @@ public:
 	{
 		kParseRequestLine,
 		kParseHeadersLine,
-		//kParseBody,	
+		kParseBody,	
 		kGotAll,
         kParseDone
 	};
@@ -77,6 +77,7 @@ public:
     }
     
     bool ParseRequest(BufferReader *buffer);
+    
 
  
     Method GetMethod() const { return method_; }
@@ -89,6 +90,7 @@ public:
     const std::string& GetAccept() const { return accept_; }
     const std::string& GetRange() const { return range_; }
     const RTPTransportMode GetTransport() const;
+    const int GetContentLength();
     std::string GetRtspUSuffix() const;
     std::string GetCSeq() const
     {
@@ -180,6 +182,7 @@ private:
 
     bool ParseRequestLine(const char* begin, const char* end);
     bool ParseHeaderLines(const char*begin,const char* end);
+    bool ParseBodyLine(const char*begin,const char* end);
     bool ParseCseq(const std::string& message);
     bool ParseSessionId(const std::string& line);
     bool ParseAccept(std::string& message);
