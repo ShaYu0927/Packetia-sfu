@@ -146,8 +146,11 @@ public:
         return -1; // Not found
     }
 
+    virtual RtspSessionDesc parse(const std::string &sdp);
+
     //媒体列表
     std::vector<MediaDescription> media_list_;
+    RtspSessionDesc sessionDesc;
 
     virtual void Parse();
 

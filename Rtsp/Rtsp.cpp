@@ -36,6 +36,90 @@ void Sdp::AddMedia(const MediaDescription &media)
     media_list_.emplace_back(media);
 }
 
+RtspSessionDesc Sdp::parse(const std::string &sdp)
+{
+    RtspSessionDesc session;
+    std::istringstream iss(sdp);
+    std::string line;
+    std::shared_ptr<RtpTrackInfo> currentTrack;
+
+    while (std::getline(iss, line)) {
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+
+        if (line.rfind("v=", 0) == 0) {
+            session.version = line.substr(2);
+        } else if (line.rfind("o=", 0) == 0) {
+            session.origin = line.substr(2);
+        } else if (line.rfind("s=", 0) == 0) {
+            session.session_name = line.substr(2);
+        } else if (line.rfind("c=", 0) == 0) {
+            session.connection = line.substr(2);
+        } else if (line.rfind("t=", 0) == 0) {
+            session.timing = line.substr(2);
+        } else if (line.rfind("a=tool:", 0) == 0) {
+            session.tool = line.substr(7);
+        } else if (line.rfind("m=", 0) == 0) {
+            // 新建 track
+            currentTrack = std::make_shared<RtpTrackInfo>();
+            std::istringstream ms(line.substr(2));
+            std::string media_type, protocol;
+            ms >> media_type;      // video / audio
+            ms >> currentTrack->payload_type; // port (其实常为0)
+            ms >> protocol;        // RTP/AVP
+            ms >> currentTrack->payload_type;
+        } else if (line.rfind("a=rtpmap:", 0) == 0 && currentTrack) {
+            currentTrack->rtpmap = line.substr(2);
+            size_t sep = line.find(' ');
+            if (sep != std::string::npos) {
+                int pt = std::stoi(line.substr(9, sep - 9));
+                std::string codec_info = line.substr(sep + 1);
+                size_t slash = codec_info.find('/');
+                if (slash != std::string::npos) {
+                    currentTrack->codec = codec_info.substr(0, slash);
+                    currentTrack->clock_rate = std::stoi(codec_info.substr(slash + 1));
+                    // 如果还有第二个斜杠 -> 表示声道数
+                    size_t slash2 = codec_info.find('/', slash + 1);
+                    if (slash2 != std::string::npos) {
+                        currentTrack->channels = std::stoi(codec_info.substr(slash2 + 1));
+                    }
+                }
+            }
+        } else if (line.rfind("a=fmtp:", 0) == 0 && currentTrack) {
+            currentTrack->fmtp = line.substr(2);
+            // 提取 vps/sps/pps 或 AAC config
+            if (currentTrack->codec == "H265") {
+                size_t vps_pos = line.find("sprop-vps=");
+                if (vps_pos != std::string::npos) {
+                    size_t end = line.find(';', vps_pos);
+                    currentTrack->vps = line.substr(vps_pos + 10, end - (vps_pos + 10));
+                }
+                size_t sps_pos = line.find("sprop-sps=");
+                if (sps_pos != std::string::npos) {
+                    size_t end = line.find(';', sps_pos);
+                    currentTrack->sps = line.substr(sps_pos + 10, end - (sps_pos + 10));
+                }
+                size_t pps_pos = line.find("sprop-pps=");
+                if (pps_pos != std::string::npos) {
+                    size_t end = line.find(';', pps_pos);
+                    currentTrack->pps = line.substr(pps_pos + 10, end - (pps_pos + 10));
+                }
+            } else if (currentTrack->codec == "MPEG4-GENERIC") {
+                size_t cfg_pos = line.find("config=");
+                if (cfg_pos != std::string::npos) {
+                    currentTrack->audio_config = line.substr(cfg_pos + 7);
+                }
+            }
+        } else if (line.rfind("a=control:", 0) == 0 && currentTrack) {
+            currentTrack->control = line.substr(10);
+            session.tracks.push_back(*currentTrack);
+            currentTrack.reset();
+        }
+    }
+
+    return session;
+}
+
 void Sdp::Parse()
 {
 }

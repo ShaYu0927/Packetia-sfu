@@ -496,7 +496,8 @@ bool RtspRequest::ParseBodyLine(const char *begin, const char *end)
 
             // 不 push_back，现在只创建
         }
-        else if (line.rfind("a=rtpmap:", 0) == 0 && currentMedia) {
+        else if (line.rfind("a=rtpmap:", 0) == 0 && currentMedia) 
+        {
             size_t sep = line.find(' ');
             if (sep != std::string::npos) {
                 int pt = std::stoi(line.substr(9, sep - 9));
@@ -508,7 +509,8 @@ bool RtspRequest::ParseBodyLine(const char *begin, const char *end)
                 }
             }
         }
-        else if (line.rfind("a=control:", 0) == 0 && currentMedia) {
+        else if (line.rfind("a=control:", 0) == 0 && currentMedia) 
+        {
             currentMedia->control = line.substr(10);
             sdp_->media_list_.push_back(*currentMedia);  // 填充完成后 push_back
             currentMedia.reset();                        // 准备下一 media
