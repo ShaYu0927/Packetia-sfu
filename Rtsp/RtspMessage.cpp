@@ -114,6 +114,7 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
         else if (state_ == kParseDone)
         {
             LOG_INFO("State: kParseDone. Parsing complete.");
+            state_ = RtspRequestParseState::kParseRequestLine;
             break;
         }
         else
@@ -205,17 +206,21 @@ int RtspRequest::BuildDescribeRes(std::shared_ptr<char> data, int size, const st
 int RtspRequest::BuildSetupRes(std::shared_ptr<char> data, int size, uint16_t rtp_port, uint16_t rtcp_port, MediaChannelId channel_id)
 {
     memset((void*)data.get(), 0, size);
+
+     std::stringstream randisss;
+    randisss << std::hex << (rand() & 0xFFFFFFFF);
+
     std::ostringstream oss;
     oss << "RTSP/1.0 200 OK\r\n";
     oss << "CSeq: " << this->GetCSeq() << "\r\n";
-    oss << "Session: " << session_id_ << "\r\n";
+    oss << "Session: " <<  randisss.str() << "\r\n";
     oss << "Transport: ";
 
     if (transport_mode_ == RTP_OVER_TCP) 
     {
         // RTP over TCP (interleaved方式)
         oss << "RTP/AVP/TCP;unicast;interleaved=" 
-            << (channel_id * 2) << "-" << (channel_id * 2 + 1) << "\r\n";\
+            << (channel_id * 2) << "-" << (channel_id * 2 + 1) << ";mode=record" << "\r\n";\
     }
     else if (transport_mode_ == RTP_OVER_UDP) 
     {
@@ -322,6 +327,7 @@ bool RtspRequest::ParseRequestLine(const char *begin, const char *end)
     if (method_ == Method::NONE)
         return false;
     method_str_ = method;
+    
     // LOG_INFO("Parsed method=[" + method_str_ + "], uri=[" + std::string(uri) + "], version=[" + std::string(version) + "]");
 
     if (strncmp(version, "RTSP/1.0", 8) == 0)
@@ -338,6 +344,13 @@ bool RtspRequest::ParseRequestLine(const char *begin, const char *end)
         uri_str = uri;
 
     LOG_INFO("URI without schema: [" + uri_str + "]");
+
+    if(method_ == Method::SETUP)
+    {
+        size_t pos = uri_str.rfind('/');
+        trackId = (pos != std::string::npos) ? uri_str.substr(pos + 1) : "";
+        LOG_INFO("Extracted trackId: [" + trackId + "]");
+    }
 
     if (uri_str.find(" ") != std::string::npos ||
         uri_str.find("\r") != std::string::npos ||

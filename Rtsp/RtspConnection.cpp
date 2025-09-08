@@ -225,13 +225,30 @@ void RtspConnection::HandleCmdANNOUNCE()
 */
 void RtspConnection::HandleCmdSetup() 
 {
+    auto controlTdx = rtsp_request_->GetControl();
     LOG_INFO("Handling SETUP request");
     if (!rtsp_) 
     {
         LOG_ERROR("RTSP context is null");
         return;
     }
-    int trackIdx = rtsp_request_->GetSessionId();  //这个需要根据control来判断
+    int trackIdx = -1;
+    LOG_INFO("rtsp_request_->sdp_->media_list_ size=" + std::to_string(rtsp_request_->sdp_->media_list_.size()));
+    for(auto &m : rtsp_request_->sdp_->media_list_)
+    {
+
+        std::string control = m.control; // "streamid=0"
+        size_t pos = control.find("streamid=");
+        if(pos != std::string::npos && controlTdx == control) 
+        {
+            std::string idxStr = control.substr(pos + 9); 
+            trackIdx = std::stoi(idxStr);                 
+            LOG_INFO("Found trackIdx=" + std::to_string(trackIdx));
+        }
+        break; // 找到就退出
+    }
+        
+    
     std::shared_ptr<char> res(new char[10240], std::default_delete<char[]>());
     int size = 0;
     MediaChannelId channel_id = rtsp_request_->GetSessionId();
@@ -321,6 +338,8 @@ void RtspConnection::HandleCmdSetup()
             return;
         }
     }
+
+    
     this->SendRtspMessage(res, size);
     media_session->AddClient(channel_id,rtp_connection_);
 

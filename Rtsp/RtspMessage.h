@@ -96,6 +96,7 @@ public:
     const std::string& GetRange() const { return range_; }
     const RTPTransportMode GetTransport() const;
     const int GetContentLength();
+    const std::string& GetControl() const { return trackId; }
     std::string GetRtspUSuffix() const;
     std::string GetCSeq() const
     {
@@ -107,6 +108,7 @@ public:
         return "";
     }
 
+   
     const uint16_t GetRtpChannel() const
     {
         return rtp_channel_;
@@ -163,8 +165,9 @@ private:
     Method method_;                                     //请求方法
     RtspRequestParseState state_;                       //解析状态
     std::string method_str_;                            //请求方法字符串
+    std::string trackId;                                // SETUP中的trackID
     Version version_;                                   //版本
-    MediaChannelId session_id_;                            //会话ID
+    MediaChannelId session_id_;                         //会话ID
     std::string content_type_;                          //内容类型
     std::string content_length_;                        //内容长度
     std::string user_agent_;                            //用户代理
