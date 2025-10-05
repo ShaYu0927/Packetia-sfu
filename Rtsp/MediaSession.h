@@ -72,6 +72,16 @@ private:
         std::condition_variable queue_cv;
         std::thread send_thread;
         std::atomic_bool running{true};
+
+        ~ClientSession() {
+        // 通知线程退出
+        running = false;
+        queue_cv.notify_all();
+
+        if (send_thread.joinable()) {
+            send_thread.join();
+        }
+    }
     };
 
     //缓存队列包
@@ -84,10 +94,10 @@ private:
     void DispatchRtpPacket(MediaChannelId channel_id, RtpPacketPtr pkt);
     void SendLoop(ClientSession* client);
 
-  
-
-private:
+    friend class MediaSessionManager; 
     MediaSessionId session_id_{0};
+private:
+    
     std::string suffix_;
     std::string sdp_;
 
@@ -105,4 +115,58 @@ private:
     std::string multicast_ip_;
     uint16_t multicast_port_[MAX_MEDIA_CHANNEL];
     std::atomic_bool has_new_client_;
+};
+
+
+class MediaSessionManager {
+public:
+    using Ptr = std::shared_ptr<MediaSession>;
+
+    static MediaSessionManager& Instance() {
+        static MediaSessionManager inst;
+        return inst;
+    }
+
+    std::string AddSession(MediaSession::Ptr session, const std::string& suffix) {
+        std::lock_guard<std::mutex> lock(mtx_);
+        std::string id = std::to_string(++last_id_);
+        session->session_id_ = last_id_; // 给 session 分配全局 ID
+        sessions_[id] = session;
+        suffix_map_[suffix] = session;
+        return id;
+    }
+
+    MediaSession::Ptr GetSessionById(const std::string& id) {
+        std::lock_guard<std::mutex> lock(mtx_);
+        auto it = sessions_.find(id);
+        return (it != sessions_.end()) ? it->second : nullptr;
+    }
+
+    MediaSession::Ptr GetSessionBySuffix(const std::string& suffix) {
+        std::lock_guard<std::mutex> lock(mtx_);
+        auto it = suffix_map_.find(suffix);
+        return (it != suffix_map_.end()) ? it->second : nullptr;
+    }
+
+    void RemoveSession(const std::string& id) {
+        std::lock_guard<std::mutex> lock(mtx_);
+        auto it = sessions_.find(id);
+        if (it != sessions_.end()) {
+            // 同时从 suffix_map_ 删除
+            for (auto sit = suffix_map_.begin(); sit != suffix_map_.end();) {
+                if (sit->second == it->second) {
+                    sit = suffix_map_.erase(sit);
+                } else {
+                    ++sit;
+                }
+            }
+            sessions_.erase(it);
+        }
+    }
+
+private:
+    std::mutex mtx_;
+    std::unordered_map<std::string, MediaSession::Ptr> sessions_;      // id -> session
+    std::unordered_map<std::string, MediaSession::Ptr> suffix_map_;    // suffix -> session
+    std::atomic_uint64_t last_id_{0};
 };

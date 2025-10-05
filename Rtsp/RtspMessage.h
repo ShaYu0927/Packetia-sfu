@@ -96,6 +96,7 @@ public:
     const std::string& GetRange() const { return range_; }
     const RTPTransportMode GetTransport() const;
     const int GetContentLength();
+    const int SetContentLength(int length);
     const std::string& GetControl() const { return trackId; }
     std::string GetRtspUSuffix() const;
     std::string GetCSeq() const
@@ -130,7 +131,7 @@ public:
 
     void Reset()
     {
-        method_ = Method::NONE;
+        //method_ = Method::NONE;
         state_ = RtspRequestParseState::kParseRequestLine;
         method_str_.clear();
         version_ = Version::RTSP_1_0;
@@ -154,7 +155,7 @@ public:
 
     int BuildOptionsRes(std::shared_ptr<char> data,int size);
     int BuildDescribeRes(std::shared_ptr<char> data, int size, const std::string& sdp);
-    int BuildSetupRes(std::shared_ptr<char> data, int size, uint16_t rtp_port, uint16_t rtcp_port, MediaChannelId channel_id);
+    int BuildSetupRes(std::shared_ptr<char> data, int size, uint16_t rtp_port, uint16_t rtcp_port, MediaChannelId channel_id,std::string session_id);
     int BuildNotFoundRes(std::shared_ptr<char> data,int size);
     int BuildServerErrorRes(std::shared_ptr<char> data, int size, const std::string& error_message);
     int BuildSetupMulticastRes(std::shared_ptr<char> data, int size, const char* multicast_ip, uint16_t port, uint32_t session_id);

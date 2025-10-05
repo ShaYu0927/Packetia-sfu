@@ -31,6 +31,16 @@ public:
 
 	}
 
+    void CloseSocket()
+    {
+        if(sockfd_ >= 0)
+        {
+            ::close(sockfd_);
+            sockfd_ = -1;
+        }
+    }
+
+
     void SetReadCallback(const EventCallback& cb)
     {
         readCallback_ = cb;
@@ -85,27 +95,36 @@ public:
     void HandleEvent(int events)
     {
         LOG_INFO("Channel::HandleEvent called on fd=" + std::to_string(sockfd_) + " events=" + std::to_string(events));
+
         if (events & (EVENT_PRI | EVENT_IN)) 
         {
-			readCallback_();
-		}
+            LOG_INFO("Channel fd=" + std::to_string(sockfd_) + " readable");
+            readCallback_();
+        }
 
         if(events & EVENT_OUT)
         {
+            LOG_INFO("Channel fd=" + std::to_string(sockfd_) + " writable");
             writeCallback_();
         }
 
         if(events & EVENT_HUP)
         {
+            LOG_ERROR("Channel fd=" + std::to_string(sockfd_) + " HUP detected, closing socket");
             close_callback_();
-			return ;
+            CloseSocket();
+            return;
         }
 
         if(events & EVENT_ERROR)
         {
+            LOG_ERROR("Channel fd=" + std::to_string(sockfd_) + " ERROR detected, closing socket");
             errorCallback_();
+            CloseSocket();
+            return;
         }
     }
+
 private:
     SOCKET sockfd_;
     int events_;

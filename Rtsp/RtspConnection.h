@@ -54,6 +54,7 @@ public:
     void HandleCmdDescribe();
     void HandleCmdANNOUNCE();
     void HandleCmdSetup();
+    void HandleCmdRecord();
     void HandleCmdPlay();
     void HandleCmdPause();
     void HandleCmdTeardown();

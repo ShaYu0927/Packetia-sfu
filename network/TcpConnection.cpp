@@ -142,7 +142,8 @@ void TcpConnection::HandleWrite()
     if (is_closed_) {
         return;
     }
-	
+	LOG_INFO("HandleWrite called, write_buffer empty? " + std::to_string(write_buffer_->IsEmpty()));
+
     std::lock_guard<std::mutex> lock(mutex_);  // 一次锁定
 
     int ret = write_buffer_->Send(channel_->GetSocket());
@@ -151,13 +152,18 @@ void TcpConnection::HandleWrite()
         return;
     }
 
-    if (write_buffer_->IsEmpty()) {
-        if (channel_->IsWriting()) {
+    if (write_buffer_->IsEmpty()) 
+    {
+        if (channel_->IsWriting()) 
+        {
             channel_->DisableWriting();
             task_scheduler_->UpdateChannel(channel_);
         }
-    } else {
-        if (!channel_->IsWriting()) {
+    } 
+    else 
+    {
+        if (!channel_->IsWriting()) 
+        {
             channel_->EnableWriting();
             task_scheduler_->UpdateChannel(channel_);
         }

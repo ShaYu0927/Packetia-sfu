@@ -5,11 +5,29 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
     LOG_INFO("ReadableBytes=" + std::to_string(buffer->ReadableBytes()));
 
     
-    if (buffer->Peek()[0] == '$') // 判断是否 RTP OVER TCP
+    if (buffer->Peek()[0] == '$') // 判断是 RTP 数据包
     {
-        method_ = Method::RTCP;
-        LOG_INFO("Detected RTP over TCP ('$' leading byte).");
-        return true;
+         LOG_INFO("Detected RTP over TCP ('$' leading byte). Skip RTSP parse.");
+
+        // 读取 channel 和数据长度
+        uint8_t channel = buffer->Peek()[1];
+        uint16_t length = (uint8_t(buffer->Peek()[2]) << 8) | uint8_t(buffer->Peek()[3]);
+
+        LOG_INFO("Interleaved packet: channel=" + std::to_string(channel) +
+                " length=" + std::to_string(length));
+
+        // 跳过 4 字节头 + length 数据
+        if (buffer->ReadableBytes() >= length + 4) 
+        {
+            buffer->Retrieve(length + 4);
+        } 
+        else 
+        {
+            LOG_INFO("Incomplete interleaved packet, waiting for more data.");
+            return false;
+        }
+
+        return false; // 表示这不是 RTSP 请求，直接返回
     }
     
 
@@ -99,14 +117,22 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
             //LOG_INFO("Peek first 20 bytes: [" + std::string(buffer->Peek(), std::min(20, buffer->ReadableBytes())) + "]");
 
             int content_len = GetContentLength();
+            LOG_INFO("Expecting body of length: " + std::to_string(content_len));
+            if (content_len == 0) 
+            {
+                state_ = kParseRequestLine;
+                break;
+            }
             if (content_len > 0 && buffer->ReadableBytes() >= content_len) {
                 ret = ParseBodyLine(buffer->Peek(), buffer->Peek() + content_len);
                 buffer->Retrieve(content_len);
+                SetContentLength(0); // Reset Content-Length after reading body
                 state_ = kParseDone;
             }
             else 
             {
                 LOG_INFO("Waiting for more data to complete body...");
+                state_ == kParseBody;
                 break;
             }
 
@@ -115,6 +141,7 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
         {
             LOG_INFO("State: kParseDone. Parsing complete.");
             state_ = RtspRequestParseState::kParseRequestLine;
+            //Reset();
             break;
         }
         else
@@ -155,6 +182,13 @@ const int RtspRequest::GetContentLength()
     {
         return std::stoi(iter->second.first);
     }
+    return 0;
+}
+
+const int RtspRequest::SetContentLength(int length)
+{
+    content_length_ = std::to_string(length);
+    header_line_param_["Content-Length"] = std::make_pair(content_length_, false);
     return 0;
 }
 
@@ -203,7 +237,7 @@ int RtspRequest::BuildDescribeRes(std::shared_ptr<char> data, int size, const st
     return static_cast<int>(res.size());
 }
 
-int RtspRequest::BuildSetupRes(std::shared_ptr<char> data, int size, uint16_t rtp_port, uint16_t rtcp_port, MediaChannelId channel_id)
+int RtspRequest::BuildSetupRes(std::shared_ptr<char> data, int size, uint16_t rtp_port, uint16_t rtcp_port, MediaChannelId channel_id,std::string session_id)
 {
     memset((void*)data.get(), 0, size);
 
@@ -234,6 +268,7 @@ int RtspRequest::BuildSetupRes(std::shared_ptr<char> data, int size, uint16_t rt
         // 其他传输方式
         oss << "RTP/AVP;unicast\r\n";
     }
+    oss << "\r\n"; 
     std::string res = oss.str();
     if (res.size() > size) {
         // buffer不够，返回错误
@@ -287,22 +322,29 @@ int RtspRequest::BuildANNOUNCERes(std::shared_ptr<char> data, int size)
     LOG_INFO("Building RTSP ANNOUNCE response with CSeq:" + this->GetCSeq());
 
     if (!data || size <= 0) return 0;
-    std::string body = sdp_->buildANNOUNCEBody();
+    //std::string body = sdp_->buildANNOUNCEBody();
 
     // 清空缓冲区（可选）
     memset(data.get(), 0, size);
 
     // snprintf 返回写入的字符数，不包括 '\0'
+    // int written = snprintf(data.get(), size,
+    //    "RTSP/1.0 200 OK\r\n"
+    //     "CSeq: %s\r\n"
+    //     "Content-Type: application/sdp\r\n"
+    //     "Content-Length: %zu\r\n"
+    //     "\r\n%s",
+    //     this->GetCSeq().c_str(),
+    //     body.size(),
+    //     body.c_str()
+    // );
     int written = snprintf(data.get(), size,
        "RTSP/1.0 200 OK\r\n"
         "CSeq: %s\r\n"
-        "Content-Type: application/sdp\r\n"
-        "Content-Length: %zu\r\n"
-        "\r\n%s",
-        this->GetCSeq().c_str(),
-        body.size(),
-        body.c_str()
+        "\r\n",
+        this->GetCSeq().c_str()
     );
+
 
     if (written < 0 || written >= size) {
         LOG_ERROR("Failed to build RTSP ANNOUNCE response or buffer too small");

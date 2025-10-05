@@ -254,17 +254,39 @@ void RtspConnection::HandleCmdSetup()
     MediaChannelId channel_id = rtsp_request_->GetSessionId();
     auto rtsp = rtsp_; // 避免 move 导致后续失效
 
-    auto media_session = rtsp->LookMediaSession(rtsp_request_->GetRtspUSuffix());
+    // auto media_session = rtsp->LookMediaSession(rtsp_request_->GetRtspUSuffix());
+    // if (!media_session) 
+    // {
+    //     LOG_INFO("Media session is created" + rtsp_request_->GetRtspUSuffix());
+    //     media_session = MediaSession::CreateNew(rtsp_request_->GetRtspUSuffix()); 
+    //     rtsp->AddMediaSession(media_session);
+    // }
+
+    // 管理session
+    std::string _sessionId;
+    std::string url = rtsp_request_->GetRtspUSuffix();
+    LOG_INFO("SETUP request for url=" + url);
+
+    auto media_session = MediaSessionManager::Instance().GetSessionBySuffix(url);
     if (!media_session) 
     {
-        LOG_INFO("Media session is created" + rtsp_request_->GetRtspUSuffix());
-        media_session = MediaSession::CreateNew(rtsp_request_->GetRtspUSuffix()); 
-        rtsp->AddMediaSession(media_session);
+        LOG_INFO("No existing MediaSession found for url=" + url + ", creating new one...");
+        media_session = MediaSession::CreateNew(url);
+
+        std::string session_id = MediaSessionManager::Instance().AddSession(media_session,url);
+        _sessionId = session_id;
+    } 
+    else 
+    {
+        _sessionId = media_session->GetId();
+        LOG_INFO("Found existing MediaSession. url=" + url + ", session_id=" + _sessionId);
     }
 
+    LOG_INFO("Assigned _sessionId=" + _sessionId);
+
     if (!rtp_connection_) 
-    {
-        rtp_connection_ = std::make_shared<RtpConnection>(shared_from_this());
+    { 
+        rtp_connection_ = std::make_shared<RtpConnection>(shared_from_this()); 
     }
 
     if(media_session->isMulticast())  //如果组包传输
@@ -302,6 +324,8 @@ void RtspConnection::HandleCmdSetup()
             LOG_INFO("RTP OVER TCP");
             uint16_t rtp_channel = rtsp_request_->GetRtpChannel();
             uint16_t rtcp_channel = rtsp_request_->GetRtcpChannel();
+            LOG_INFO("SETUP parsed channels: RTP channel=" + std::to_string(rtp_channel) +
+         ", RTCP channel=" + std::to_string(rtcp_channel));
             if (!rtp_connection_->SetupRtpOverTcp(channel_id, rtp_channel, rtcp_channel)) 
             {
                 LOG_ERROR("Failed to setup RTP over TCP for channel: " + std::to_string(channel_id));
@@ -310,7 +334,7 @@ void RtspConnection::HandleCmdSetup()
                 return;
             }
             //回复告诉客户端已经协商成功，端口
-            size = rtsp_request_->BuildSetupRes(res, 4096, rtp_channel, rtcp_channel, channel_id);
+            size = rtsp_request_->BuildSetupRes(res, 4096, rtp_channel, rtcp_channel, channel_id,_sessionId);
         }
         else if(rtsp_request_->GetTransport() == RTP_OVER_UDP)
         {
@@ -331,6 +355,7 @@ void RtspConnection::HandleCmdSetup()
             //     this->SendRtspMessage(res, size);
             //     return;
             // }
+            size = rtsp_request_->BuildSetupRes(res, 4096, 0, 1, channel_id,_sessionId);
         }
         else
         {
@@ -345,6 +370,17 @@ void RtspConnection::HandleCmdSetup()
 
     //对端口进行初始化
 
+}
+
+void RtspConnection::HandleCmdRecord()
+{
+    //track轨道中是否存在
+    std::cout << "record cmd" << std::endl;
+
+    //客户端的session 
+
+
+    // 返回RTP的info
 }
 
 /**
