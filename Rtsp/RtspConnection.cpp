@@ -122,6 +122,10 @@ bool RtspConnection::HandleRtspRequest(BufferReader &buffer)
             LOG_INFO("Handling ANNOUNCE request");
             HandleCmdANNOUNCE();
             break;
+        case RtspRequest::Method::RECORD:
+            LOG_INFO("Handling RECORD request");
+            HandleCmdRecord();
+            break;
         default:
             LOG_ERROR("Unsupported RTSP method: " + rtsp_request_->GetMethodString());
             return false;
@@ -375,7 +379,18 @@ void RtspConnection::HandleCmdSetup()
 void RtspConnection::HandleCmdRecord()
 {
     //track轨道中是否存在
-    std::cout << "record cmd" << std::endl;
+    std::string url = rtsp_request_->GetRtspUSuffix();
+    LOG_INFO("SETUP request for url=" + url);
+
+    auto media_session = MediaSessionManager::Instance().GetSessionBySuffix(url);
+    if (!media_session) 
+    {
+        LOG_INFO("No existing MediaSession found for url=" + url + ", creating new one...");
+        media_session = MediaSession::CreateNew(url);
+
+        std::string session_id = MediaSessionManager::Instance().AddSession(media_session,url);
+    } 
+
 
     //客户端的session 
 

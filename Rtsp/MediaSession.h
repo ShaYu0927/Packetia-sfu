@@ -64,8 +64,18 @@ public:
     }
 
 
+    /*
+        track info
+    */
+
+    bool AddTrack(const RtpTrackInfo& track_info);
+    bool GetTrackInfo(int client_fd, RtpTrackInfo& track_info, MediaChannelInfo& media_info);
+    bool SetTrackInfo(int client_fd, const RtpTrackInfo& track_info, const MediaChannelInfo& media_info);
+
+
 private:
-    struct ClientSession {
+    struct ClientSession 
+    {
         std::shared_ptr<RtpConnection> connection;
         std::deque<RtpPacketPtr> send_queue;
         std::mutex queue_mutex;
@@ -73,15 +83,16 @@ private:
         std::thread send_thread;
         std::atomic_bool running{true};
 
-        ~ClientSession() {
-        // 通知线程退出
-        running = false;
-        queue_cv.notify_all();
+        ~ClientSession() 
+        {
+            running = false;
+            queue_cv.notify_all();
 
-        if (send_thread.joinable()) {
-            send_thread.join();
+            if (send_thread.joinable()) 
+            {
+                send_thread.join();
+            }
         }
-    }
     };
 
     //缓存队列包
@@ -106,14 +117,17 @@ private:
 
     std::mutex clients_mutex_;
     std::map<int, std::unique_ptr<ClientSession>> clients_;
+    std::unordered_map<int, std::pair<RtpTrackInfo, MediaChannelInfo>> tracks_;  // client_fd -> (RtpTrackInfo, session info channel_id)
 
     std::atomic_bool running_{false};
 
     static std::atomic_uint64_t last_session_id_;
 
+    // 组播
     bool is_multicast_{false};
     std::string multicast_ip_;
     uint16_t multicast_port_[MAX_MEDIA_CHANNEL];
+    
     std::atomic_bool has_new_client_;
 };
 

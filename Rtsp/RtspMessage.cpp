@@ -254,7 +254,7 @@ int RtspRequest::BuildSetupRes(std::shared_ptr<char> data, int size, uint16_t rt
     {
         // RTP over TCP (interleaved方式)
         oss << "RTP/AVP/TCP;unicast;interleaved=" 
-            << (channel_id * 2) << "-" << (channel_id * 2 + 1) << ";mode=record" << "\r\n";\
+            << rtp_port << "-" << rtcp_port << ";mode=record" << "\r\n";\
     }
     else if (transport_mode_ == RTP_OVER_UDP) 
     {
@@ -487,7 +487,7 @@ bool RtspRequest::ParseHeaderLines(const char *begin, const char *end)
     }
 
     // 解析 Session
-    if ((method_ == Method::PLAY || method_ == Method::TEARDOWN) && line.find("Session:") == 0) 
+    if ((method_ == Method::PLAY || method_ == Method::TEARDOWN || method_ == Method::SETUP) && line.find("Session:") == 0) 
     {
         if (!ParseSessionId(line)) {
             LOG_ERROR("Failed to parse Session header");
@@ -602,6 +602,17 @@ bool RtspRequest::ParseCseq(const std::string &message)
 
 bool RtspRequest::ParseSessionId(const std::string &line)
 {
+    std::size_t pos = line.find("Session:");
+    if (pos != std::string::npos)
+    {
+        std::string session = line.substr(pos + 8);
+        session.erase(0, session.find_first_not_of(" \t\r\n")); // 去
+        session.erase(session.find_last_not_of(" \t\r\n") + 1); // 去除尾部空白
+        session_id_ = static_cast<MediaChannelId>(std::stoi(session)); 
+        header_line_param_["Session"] = std::make_pair(session_id_, 0);
+        LOG_INFO("Parsed Session ID: " + session_id_);
+        return true;
+    }
     return false;
 }
 
