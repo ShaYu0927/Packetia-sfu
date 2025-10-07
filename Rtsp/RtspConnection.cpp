@@ -236,35 +236,6 @@ void RtspConnection::HandleCmdSetup()
         LOG_ERROR("RTSP context is null");
         return;
     }
-    int trackIdx = -1;
-    LOG_INFO("rtsp_request_->sdp_->media_list_ size=" + std::to_string(rtsp_request_->sdp_->media_list_.size()));
-    for(auto &m : rtsp_request_->sdp_->media_list_)
-    {
-
-        std::string control = m.control; // "streamid=0"
-        size_t pos = control.find("streamid=");
-        if(pos != std::string::npos && controlTdx == control) 
-        {
-            std::string idxStr = control.substr(pos + 9); 
-            trackIdx = std::stoi(idxStr);                 
-            LOG_INFO("Found trackIdx=" + std::to_string(trackIdx));
-        }
-        break; // 找到就退出
-    }
-        
-    
-    std::shared_ptr<char> res(new char[10240], std::default_delete<char[]>());
-    int size = 0;
-    MediaChannelId channel_id = rtsp_request_->GetSessionId();
-    auto rtsp = rtsp_; // 避免 move 导致后续失效
-
-    // auto media_session = rtsp->LookMediaSession(rtsp_request_->GetRtspUSuffix());
-    // if (!media_session) 
-    // {
-    //     LOG_INFO("Media session is created" + rtsp_request_->GetRtspUSuffix());
-    //     media_session = MediaSession::CreateNew(rtsp_request_->GetRtspUSuffix()); 
-    //     rtsp->AddMediaSession(media_session);
-    // }
 
     // 管理session
     std::string _sessionId;
@@ -287,6 +258,32 @@ void RtspConnection::HandleCmdSetup()
     }
 
     LOG_INFO("Assigned _sessionId=" + _sessionId);
+
+    int trackIdx = -1;
+    LOG_INFO("rtsp_request_->sdp_->media_list_ size=" + std::to_string(rtsp_request_->sdp_->media_list_.size()));
+    for(auto &m : rtsp_request_->sdp_->media_list_)
+    {
+
+        std::string control = m.control; // "streamid=0"
+        size_t pos = control.find("streamid=");
+        if(pos != std::string::npos && controlTdx == control) 
+        {
+            std::string idxStr = control.substr(pos + 9); 
+            trackIdx = std::stoi(idxStr);                 
+            LOG_INFO("Found trackIdx=" + std::to_string(trackIdx));
+            // 创建轨道信息
+            media_session->AddTrack(m.media_type == "video" ? SdpTracker::TrackType::TrackVideo : SdpTracker::TrackType::TrackAudio,
+                                     m.codec_name, m.control);
+            break;
+        }
+        break; // 找到就退出
+    }
+        
+    
+    std::shared_ptr<char> res(new char[10240], std::default_delete<char[]>());
+    int size = 0;
+    MediaChannelId channel_id = rtsp_request_->GetSessionId();
+    auto rtsp = rtsp_; // 避免 move 导致后续失效
 
     if (!rtp_connection_) 
     { 
@@ -390,12 +387,23 @@ void RtspConnection::HandleCmdRecord()
 
         std::string session_id = MediaSessionManager::Instance().AddSession(media_session,url);
     } 
+   if (media_session->tracks_.empty()) 
+   {
+        LOG_DEBUG("No tracks in session, cannot RECORD");
+        return;
+    }
 
-
-    //客户端的session 
-
-
-    // 返回RTP的info
+    // 遍历 track 初始化 RTP
+    for (auto &track : media_session->tracks_) 
+    {
+        if (!track->_inited) 
+        {
+            //track->_ssrc = GenerateSSRC();
+            track->_seq = 0;
+            track->_time_stamp = 0;
+            track->_inited = true;
+        }
+    }
 }
 
 /**

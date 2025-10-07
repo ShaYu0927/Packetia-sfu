@@ -13,7 +13,11 @@
 
 #include "MediaSource.h"
 #include "Rtp.h"
+#include "Rtsp.h"
 #include "RtpConnection.h"
+
+#define MAX_TRACKS 5
+
 
 
 using MediaSourcePtr = std::shared_ptr<MediaSource>;
@@ -25,8 +29,9 @@ public:
     using Ptr = std::shared_ptr<MediaSession>;
     MediaSession() = default;
     static Ptr CreateNew(const std::string& suffix);
-
+    
     bool AddSource(MediaChannelId channel_id, MediaSourcePtr source);
+    bool AddTrack(SdpTracker::TrackType type, const std::string& codec, const std::string& control);
     void PushFrame(MediaChannelId channel_id, const AVFrame& frame);
     std::string GetSdpMessage(const std::string& ip, const std::string& session_name = "");
 
@@ -39,39 +44,37 @@ public:
     MediaSessionId GetId() const { return session_id_; }
     const std::string& GetRtspSuffix() const { return suffix_; }
 
-    MediaSessionId GetMediaChannelClockRate(MediaChannelId channel_id) const {
-        // 这里可以根据实际情况返回媒体通道的时钟频率
-        return 90000; // 默认值，实际应用中可能需要根据具体媒体类型返回不同的值
+    MediaSessionId GetMediaChannelClockRate(MediaChannelId channel_id) const 
+    {
+       
+        return 90000; 
     }
-    uint8_t GetMediaChannelPayloadType(MediaChannelId channel_id) const {
-        // 这里可以根据实际情况返回媒体通道的负载类型
-        return 96; // 默认值，实际应用中可能需要根据具体媒体类型返回不同的值
+    uint8_t GetMediaChannelPayloadType(MediaChannelId channel_id) const 
+    {
+        
+        return 96; 
     }
 
-    bool isMulticast() const {
+    bool isMulticast() const 
+    {
         return is_multicast_;
     }
 
-    std::string GetMulticastIp() const {
+    std::string GetMulticastIp() const 
+    {
         return multicast_ip_;
     }
 
-    uint16_t GetMulticastPort(MediaChannelId channel_id) const {
-        if (channel_id >= MAX_MEDIA_CHANNEL) {
+    uint16_t GetMulticastPort(MediaChannelId channel_id) const 
+    {
+        if (channel_id >= MAX_MEDIA_CHANNEL) 
+        {
             return 0; // Invalid channel
         }
         return multicast_port_[channel_id];
     }
 
-
-    /*
-        track info
-    */
-
-    bool AddTrack(const RtpTrackInfo& track_info);
-    bool GetTrackInfo(int client_fd, RtpTrackInfo& track_info, MediaChannelInfo& media_info);
-    bool SetTrackInfo(int client_fd, const RtpTrackInfo& track_info, const MediaChannelInfo& media_info);
-
+   
 
 private:
     struct ClientSession 
@@ -104,9 +107,11 @@ private:
     MediaSession(const std::string& suffix);
     void DispatchRtpPacket(MediaChannelId channel_id, RtpPacketPtr pkt);
     void SendLoop(ClientSession* client);
-
+public:
     friend class MediaSessionManager; 
     MediaSessionId session_id_{0};
+    std::vector<SdpTracker::Ptr> tracks_;
+
 private:
     
     std::string suffix_;
@@ -117,7 +122,7 @@ private:
 
     std::mutex clients_mutex_;
     std::map<int, std::unique_ptr<ClientSession>> clients_;
-    std::unordered_map<int, std::pair<RtpTrackInfo, MediaChannelInfo>> tracks_;  // client_fd -> (RtpTrackInfo, session info channel_id)
+    
 
     std::atomic_bool running_{false};
 

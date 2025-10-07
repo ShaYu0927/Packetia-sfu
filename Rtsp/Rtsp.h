@@ -6,13 +6,14 @@
 #include <sstream>
 #include <memory>
 #include <map>
-#include "MediaSession.h"
+
 #include "logger.h"
 
 #include "RtspMessage.h"
 
 
 class MediaSession;
+class SdpTracker;
 
 struct RtspUrlInfo
 {
@@ -22,7 +23,7 @@ struct RtspUrlInfo
 	std::string suffix;
 };
 
-class Rtsp : public std::enable_shared_from_this<Rtsp> , public MediaSession
+class Rtsp : public std::enable_shared_from_this<Rtsp>
 {
 public:
     Rtsp() : has_auth_info_(false) {}
@@ -49,40 +50,43 @@ public:
     void ParseRtspUrl(std::string url)
     {
         size_t pos = url.find("://");
-        if (pos != std::string::npos) {
+        if (pos != std::string::npos) 
+        {
             rtsp_url_info_.url = url.substr(pos + 3);
-        } else {
+        } 
+        else 
+        {
             rtsp_url_info_.url = url;
         }
 
         pos = rtsp_url_info_.url.find('/');
-        if (pos != std::string::npos) {
+        if (pos != std::string::npos) 
+        {
             rtsp_url_info_.suffix = rtsp_url_info_.url.substr(pos + 1);
             rtsp_url_info_.url = rtsp_url_info_.url.substr(0, pos);
-        } else {
+        } 
+        else 
+        {
             rtsp_url_info_.suffix.clear();
         }
 
         pos = rtsp_url_info_.url.find(':');
-        if (pos != std::string::npos) {
+        if (pos != std::string::npos) 
+        {
             rtsp_url_info_.ip = rtsp_url_info_.url.substr(0, pos);
             rtsp_url_info_.port = static_cast<uint16_t>(std::stoi(rtsp_url_info_.url.substr(pos + 1)));
-        } else {
+        } 
+        else 
+        {
             rtsp_url_info_.ip = rtsp_url_info_.url;
             rtsp_url_info_.port = 554; // Default RTSP port
         }
     }
 
 
-    virtual MediaSession::Ptr LookMediaSession(const std::string& suffix)
-    {
-        return nullptr; // Default implementation, should be overridden
-    }
-
-    virtual MediaSession::Ptr LookMediaSession(MediaSessionId sessionId)
-	{ return nullptr; }
-
-   bool AddMediaSession(const MediaSession::Ptr& session);
+    std::shared_ptr<MediaSession> LookMediaSession(const std::string& suffix);
+    std::shared_ptr<MediaSession> LookMediaSession(MediaSessionId sessionId);
+    bool AddMediaSession(const std::shared_ptr<MediaSession>& session);
 
     bool has_auth_info_;
 	std::string realm_;
@@ -90,7 +94,58 @@ public:
 	std::string password_;
 	std::string version_;
 	struct RtspUrlInfo rtsp_url_info_;
-    std::map<std::string, MediaSession::Ptr> media_sessions_; // Maps suffix to MediaSession
+    std::map<std::string, std::shared_ptr<MediaSession>> media_sessions_;
+};
+
+
+class SdpTracker {
+public:
+    typedef enum {
+        TrackInvalid = -1,
+        TrackVideo = 0,
+        TrackAudio,
+        TrackTitle,
+        TrackApplication,
+        TrackMax
+    } TrackType;
+
+    using Ptr = std::shared_ptr<SdpTracker>;
+
+    std::string _t;
+    std::string _b;
+    uint16_t _port;
+
+    float _duration = 0;
+    float _start = 0;
+    float _end = 0;
+
+    std::map<char, std::string> _other;
+    std::multimap<std::string, std::string> _attr;
+
+    std::string toString(uint16_t port = 0) const;
+    std::string getName() const;
+    std::string getControlUrl(const std::string &base_url) const; //a=control:trackID=1
+
+
+public:
+    int _pt = 0xff;
+    int _channel = 0;
+    int _samplerate = 0;
+    TrackType _type = TrackInvalid;
+    std::string _codec;
+    std::string _fmtp;
+    std::string _control;
+
+public:
+    bool _inited = false;
+    uint8_t _interleaved = 0;
+    uint16_t _seq = 0;
+    uint32_t _ssrc = 0;
+    uint32_t _time_stamp = 0;
+
+    SdpTracker() = default;
+    virtual ~SdpTracker() {}
+   
 };
 
 
@@ -154,60 +209,22 @@ public:
 
     virtual void Parse();
 
+    std::vector<SdpTracker::Ptr> tracks;
+
+    void AddTrack(const SdpTracker::Ptr& track) 
+    {
+        tracks.push_back(track);
+    }
+
+    SdpTracker::Ptr GetTrack(int index) const 
+    {
+        if (index < 0 || index >= (int)tracks.size())
+            return nullptr;
+        return tracks[index];
+    }
     std::string buildANNOUNCEBody();
 };
 
-class SdpTracker {
-public:
-    typedef enum {
-        TrackInvalid = -1,
-        TrackVideo = 0,
-        TrackAudio,
-        TrackTitle,
-        TrackApplication,
-        TrackMax
-    } TrackType;
-
-    using Ptr = std::shared_ptr<SdpTracker>;
-
-    std::string _t;
-    std::string _b;
-    uint16_t _port;
-
-    float _duration = 0;
-    float _start = 0;
-    float _end = 0;
-
-    std::map<char, std::string> _other;
-    std::multimap<std::string, std::string> _attr;
-
-    std::string toString(uint16_t port = 0) const;
-    std::string getName() const;
-    std::string getControlUrl(const std::string &base_url) const; //a=control:trackID=1
-
-
-public:
-    int _pt = 0xff;
-    int _channel = 0;
-    int _samplerate = 0;
-    TrackType _type = TrackInvalid;
-    std::string _codec;
-    std::string _fmtp;
-    std::string _control;
-
-public:
-    bool _inited = false;
-    uint8_t _interleaved = 0;
-    uint16_t _seq = 0;
-    uint32_t _ssrc = 0;
-    uint32_t _time_stamp = 0;
-
-    SdpTracker() = default;
-    virtual ~SdpTracker() {}
-
-   
-
-};
 
 
 class SdpParser 

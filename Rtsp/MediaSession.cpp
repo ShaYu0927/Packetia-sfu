@@ -28,6 +28,31 @@ bool MediaSession::AddSource(MediaChannelId channel_id, MediaSourcePtr source)
     return false;
 }
 
+bool MediaSession::AddTrack(SdpTracker::TrackType type, const std::string &codec, const std::string &control)
+{
+    auto track = std::make_shared<SdpTracker>();
+    track->_type = type;
+    track->_codec = codec;
+    track->_control = control;
+
+    if(type == SdpTracker::TrackVideo) track->_pt = 96;  
+    else if(type == SdpTracker::TrackAudio) track->_pt = 97;
+
+    track->_inited = true;
+    tracks_.push_back(track);
+    return true;
+}
+
+// bool MediaSession::AddTrack(SdpTracker::TrackType type, const std::string &codec, const std::string &control)
+// {
+//     auto track = std::make_shared<SdpTracker>();
+//     track->type = type;
+//     track->codec = codec;
+//     track->control = control;
+//     sdp->AddTrack(track);
+//     return true;
+// }
+
 void MediaSession::PushFrame(MediaChannelId channel_id, const AVFrame &frame)
 {
     if (channel_id >= media_sources_.size()) return;
@@ -59,7 +84,8 @@ void MediaSession::RemoveClient(int client_fd)
     {
         std::lock_guard<std::mutex> lock(clients_mutex_);
         auto iter = clients_.find(client_fd);
-        if (iter != clients_.end()) {
+        if (iter != clients_.end()) 
+        {
             client = std::move(iter->second);
             clients_.erase(iter);
         }
@@ -103,6 +129,7 @@ void MediaSession::Stop()
     clients_.clear();
 }
 
+
 MediaSession::MediaSession(const std::string &suffix)
     : suffix_(suffix)
 {
@@ -130,8 +157,6 @@ void MediaSession::SendLoop(ClientSession *client)
             lock.unlock();
 
           
-
-            lock.lock();
         }
     }
 }
