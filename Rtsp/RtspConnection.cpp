@@ -249,6 +249,8 @@ void RtspConnection::HandleCmdSetup()
         media_session = MediaSession::CreateNew(url);
 
         std::string session_id = MediaSessionManager::Instance().AddSession(media_session,url);
+        media_session->SetId(std::stoi(session_id));
+        LOG_INFO("Created new MediaSession with id=" + session_id + " for url=" + url);
         _sessionId = session_id;
     } 
     else 
@@ -346,16 +348,16 @@ void RtspConnection::HandleCmdSetup()
             rtp_connection_->local_rtcp_port_[trackIdx] = ptrPort.second;
             runLoopReceive(); //启动接收线程
 
-            // uint16_t rtp_channel = rtsp_request_->GetRtpChannel();
-            // uint16_t rtcp_channel = rtsp_request_->GetRtcpChannel();
+            uint16_t rtp_channel = rtsp_request_->GetRtpChannel();
+            uint16_t rtcp_channel = rtsp_request_->GetRtcpChannel();
 
-            // if (!rtp_connection_->SetupRtpOverUdp(channel_id, rtp_channel, rtcp_channel)) 
-            // {
-            //     LOG_ERROR("Failed to setup RTP over UDP for channel: " + std::to_string(channel_id));
-            //     size = rtsp_request_->BuildNotFoundRes(res, 4096);
-            //     this->SendRtspMessage(res, size);
-            //     return;
-            // }
+            if (!rtp_connection_->SetupRtpOverUdp(channel_id, rtp_channel, rtcp_channel)) 
+            {
+                LOG_ERROR("Failed to setup RTP over UDP for channel: " + std::to_string(channel_id));
+                size = rtsp_request_->BuildNotFoundRes(res, 4096);
+                this->SendRtspMessage(res, size);
+                return;
+            }
             size = rtsp_request_->BuildSetupRes(res, 4096, 0, 1, channel_id,_sessionId);
         }
         else
@@ -404,6 +406,11 @@ void RtspConnection::HandleCmdRecord()
             track->_inited = true;
         }
     }
+
+    LOG_INFO("Init RECORD for session: " + media_session->GetId());
+    std::shared_ptr<char> res(new char[2048], std::default_delete<char[]>());
+    int size = rtsp_request_->BuildRecordRes(res, 2048,std::to_string(session_id_));
+    this->SendRtspMessage(res, size);
 }
 
 /**

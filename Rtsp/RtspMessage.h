@@ -151,7 +151,7 @@ public:
         rtcp_port_ = 0;
         transport_mode_ = RTP_OVER_TCP;
     }
-
+    std::string GetGmtTimeString();
 
     int BuildOptionsRes(std::shared_ptr<char> data,int size);
     int BuildDescribeRes(std::shared_ptr<char> data, int size, const std::string& sdp);
@@ -160,7 +160,7 @@ public:
     int BuildServerErrorRes(std::shared_ptr<char> data, int size, const std::string& error_message);
     int BuildSetupMulticastRes(std::shared_ptr<char> data, int size, const char* multicast_ip, uint16_t port, uint32_t session_id);
     int BuildANNOUNCERes(std::shared_ptr<char> data, int size);
-
+    int BuildRecordRes(std::shared_ptr<char> data, int size,std::string session_id);
 
 private:
     Method method_;                                     //请求方法

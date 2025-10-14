@@ -42,6 +42,7 @@ public:
     void Stop();
 
     MediaSessionId GetId() const { return session_id_; }
+    void SetId(MediaSessionId id) { session_id_ = id; }
     const std::string& GetRtspSuffix() const { return suffix_; }
 
     MediaSessionId GetMediaChannelClockRate(MediaChannelId channel_id) const 

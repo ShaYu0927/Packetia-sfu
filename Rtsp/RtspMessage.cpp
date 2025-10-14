@@ -202,6 +202,16 @@ std::string RtspRequest::GetRtspUSuffix() const
     return "";
 }
 
+std::string RtspRequest::GetGmtTimeString()
+{
+    char buf[128];
+    time_t now = time(nullptr);
+    struct tm tm_now;
+    gmtime_r(&now, &tm_now);
+    strftime(buf, sizeof(buf), "%a, %d %b %Y %H:%M:%S GMT", &tm_now);
+    return buf;
+}
+
 int RtspRequest::BuildOptionsRes(std::shared_ptr<char> data, int size)
 {
     memset((void*)data.get(), 0, size);
@@ -352,6 +362,33 @@ int RtspRequest::BuildANNOUNCERes(std::shared_ptr<char> data, int size)
     }
 
     return written;  // 返回实际写入长度
+}
+
+/*
+    RTSP/1.0 200 OK
+    CSeq: 4
+    Session: 6b8b4567
+    Range: npt=0.000-
+    Date: Tue, 14 Oct 2025 13:21:16 GMT
+*/
+
+int RtspRequest::BuildRecordRes(std::shared_ptr<char> data, int size,std::string session_id)
+{
+    LOG_INFO("Building RTSP RECORD response with CSeq:" + this->GetCSeq());
+    if (!data || size <= 0) return 0;
+    memset(data.get(), 0, size);
+    snprintf(data.get(), size,
+        "RTSP/1.0 200 OK\r\n"
+        "CSeq: %s\r\n"
+        "Session: %s\r\n"
+        "Range: npt=0.000-\r\n"
+        "Date: %s\r\n"
+        "\r\n",
+        this->GetCSeq().c_str(),
+        session_id.c_str(),
+        this->GetGmtTimeString().c_str()
+    );
+    return (int)strlen(data.get());
 }
 
 bool RtspRequest::ParseRequestLine(const char *begin, const char *end)
