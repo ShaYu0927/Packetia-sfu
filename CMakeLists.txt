@@ -8,6 +8,9 @@ pkg_check_modules(FFMPEG REQUIRED libavcodec libavformat libavutil)
 set(PKG_CONFIG_PATH "${FFMPEG_ROOT}/lib/pkgconfig")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -g")
 
+# set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -pg")
+# set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -pg")
+
 
 # 源文件列表
 set(FILES
