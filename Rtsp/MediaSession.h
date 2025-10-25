@@ -184,6 +184,15 @@ public:
         }
     }
 
+    // 获取 track Ptr
+    SdpTracker::Ptr GetTrackBySessionAndIndex(const std::string& session_id, int track_index) {
+        auto session = GetSessionById(session_id);
+        if (session && track_index >= 0 && track_index < static_cast<int>(session->tracks_.size())) {
+            return session->tracks_[track_index];
+        }
+        return nullptr;
+    }
+
 private:
     std::mutex mtx_;
     std::unordered_map<std::string, MediaSession::Ptr> sessions_;      // id -> session

@@ -10,6 +10,8 @@
 #include "Media.h"
 #include "Rtsp.h"
 
+#include "RtpReceiver.h"
+
 class Sdp;
 
 

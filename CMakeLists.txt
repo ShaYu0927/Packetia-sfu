@@ -49,6 +49,8 @@ set(FILES
     Rtsp/RtpReceiver.h
     Rtsp/UdpServer.h
     Rtsp/UdpServer.cpp
+    Rtsp/RtpThreadPool.h
+    Rtsp/RtpThreadPool.cpp
     utils/ThreadSafeQueue.h
     utils/Time.cpp
     utils/Time.h

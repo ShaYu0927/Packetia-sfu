@@ -1,4 +1,5 @@
 #include "RtspMessage.h"
+#include "MediaSession.h"
 
 bool RtspRequest::ParseRequest(BufferReader *buffer)
 {
@@ -7,11 +8,22 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
     
     if (buffer->Peek()[0] == '$') // 判断是 RTP 数据包
     {
-         LOG_INFO("Detected RTP over TCP ('$' leading byte). Skip RTSP parse.");
+        LOG_INFO("Detected RTP over TCP ('$' leading byte). Skip RTSP parse.");
 
         // 读取 channel 和数据长度
         uint8_t channel = buffer->Peek()[1];
         uint16_t length = (uint8_t(buffer->Peek()[2]) << 8) | uint8_t(buffer->Peek()[3]);
+
+        // 获取track
+        auto trackPtr = MediaSessionManager::Instance().GetTrackByIndex(channel);
+        if(trackPtr)
+        {
+            LOG_INFO("Found track for channel: " + std::to_string(channel));
+        }
+        else
+        {
+            LOG_ERROR("No track found for channel: " + std::to_string(channel));
+        }
 
         LOG_INFO("Interleaved packet: channel=" + std::to_string(channel) +
                 " length=" + std::to_string(length));
@@ -20,12 +32,18 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
         if (buffer->ReadableBytes() >= length + 4) 
         {
             buffer->Retrieve(length + 4);
+
+            // 创建 RTP packet 
+            
         } 
         else 
         {
             LOG_INFO("Incomplete interleaved packet, waiting for more data.");
             return false;
         }
+
+        
+
 
         return false; // 表示这不是 RTSP 请求，直接返回
     }

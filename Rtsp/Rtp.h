@@ -248,7 +248,6 @@ public:
     RtpPacket() = default;
 private:
     
-
     // 用于创建 shared_ptr<RtpPacket>
     static Ptr alloc(size_t capacity);
 };

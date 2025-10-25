@@ -8,8 +8,8 @@
 #include <map>
 
 #include "logger.h"
-
 #include "RtspMessage.h"
+#include "Rtp.h"
 
 
 class MediaSession;
@@ -125,6 +125,8 @@ public:
     std::string toString(uint16_t port = 0) const;
     std::string getName() const;
     std::string getControlUrl(const std::string &base_url) const; //a=control:trackID=1
+
+     void inputRtp(uint8_t* data, size_t len, uint16_t seq);
 
 
 public:
