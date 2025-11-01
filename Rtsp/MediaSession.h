@@ -13,10 +13,19 @@
 
 #include "MediaSource.h"
 #include "Rtp.h"
-#include "Rtsp.h"
-#include "RtpConnection.h"
+#include "RtpTypes.h"
+
+
 
 #define MAX_TRACKS 5
+
+class RtpTrack;
+class RtpConnection;
+class SdpTracker;
+using RtpTrackPtr = std::shared_ptr<RtpTrack>;
+using RtpConnectionPtr = std::shared_ptr<RtpConnection>;
+using SdpTrackerPtr = std::shared_ptr<SdpTracker>;
+
 
 
 
@@ -31,7 +40,7 @@ public:
     static Ptr CreateNew(const std::string& suffix);
     
     bool AddSource(MediaChannelId channel_id, MediaSourcePtr source);
-    bool AddTrack(SdpTracker::TrackType type, const std::string& codec, const std::string& control);
+    bool AddTrack(TrackType type, const std::string& codec, const std::string& control);
     void PushFrame(MediaChannelId channel_id, const AVFrame& frame);
     std::string GetSdpMessage(const std::string& ip, const std::string& session_name = "");
 
@@ -111,7 +120,7 @@ private:
 public:
     friend class MediaSessionManager; 
     MediaSessionId session_id_{0};
-    std::vector<SdpTracker::Ptr> tracks_;
+    std::vector<SdpTrackerPtr> tracks_;
 
 private:
     
@@ -156,11 +165,18 @@ public:
         return id;
     }
 
+    void AddTrackChannel(uint8_t track_index, const std::shared_ptr<RtpTrack>& track) {
+        std::lock_guard<std::mutex> lock(mtx_);
+        _channel_to_track[track_index] = track;
+    }
+
     MediaSession::Ptr GetSessionById(const std::string& id) {
         std::lock_guard<std::mutex> lock(mtx_);
         auto it = sessions_.find(id);
         return (it != sessions_.end()) ? it->second : nullptr;
     }
+
+    RtpTrackPtr GetTrackByIndex(uint8_t track_index); 
 
     MediaSession::Ptr GetSessionBySuffix(const std::string& suffix) {
         std::lock_guard<std::mutex> lock(mtx_);
@@ -184,18 +200,13 @@ public:
         }
     }
 
-    // 获取 track Ptr
-    SdpTracker::Ptr GetTrackBySessionAndIndex(const std::string& session_id, int track_index) {
-        auto session = GetSessionById(session_id);
-        if (session && track_index >= 0 && track_index < static_cast<int>(session->tracks_.size())) {
-            return session->tracks_[track_index];
-        }
-        return nullptr;
-    }
+    // 获取 sdp tracker info
+    SdpTrackerPtr GetTrackBySessionAndIndex(const std::string& session_id, int track_index); 
 
 private:
     std::mutex mtx_;
     std::unordered_map<std::string, MediaSession::Ptr> sessions_;      // id -> session
     std::unordered_map<std::string, MediaSession::Ptr> suffix_map_;    // suffix -> session
+    std::unordered_map<uint8_t, std::shared_ptr<RtpTrack>> _channel_to_track; // track index -> track Ptr
     std::atomic_uint64_t last_id_{0};
 };

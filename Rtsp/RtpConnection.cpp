@@ -285,7 +285,7 @@ void RtpConnection::SetRtpHeader(MediaChannelId channel_id, RtpPacket &pkt)
 
 int RtpConnection::SentRtpPacket(MediaChannelId channel_id, RtpPacket pkt)
 {
-
+    return 0;
 }
 
 int RtpConnection::SendRtpOverTcp(MediaChannelId channel_id, RtpPacket pkt)

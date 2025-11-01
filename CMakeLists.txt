@@ -1,92 +1,17 @@
 cmake_minimum_required(VERSION 3.10)
 project(RtspServer)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_BUILD_TYPE Debug)
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(FFMPEG REQUIRED libavcodec libavformat libavutil)
 
-set(PKG_CONFIG_PATH "${FFMPEG_ROOT}/lib/pkgconfig")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -g")
-
-# set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -pg")
-# set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -pg")
-
-
-# 源文件列表
-set(FILES
-    log/logger.cpp
-    log/logger.h
-    log/KXY_Message.h
-    network/Socket.h
-    network/TcpSocket.cpp
-    network/TcpSocket.h
-    network/TcpServer.cpp
-    network/TcpServer.h
-    network/TcpConnection.cpp
-    network/TcpConnection.h
-    network/SocketUtil.cpp
-    network/SocketUtil.h
-    network/BufferWrite.h
-    network/BufferWrite.cpp
-    network/BufferRead.h
-    network/BufferRead.cpp
-    Rtsp/RtspServer.cpp
-    Rtsp/RtspServer.h
-    Rtsp/RtspMessage.cpp
-    Rtsp/RtspMessage.h
-    Rtsp/RtpConnection.cpp
-    Rtsp/RtpConnection.h
-    Rtsp/MediaSession.cpp
-    Rtsp/MediaSession.h
-    Rtsp/MediaSource.h
-    Rtsp/Rtp.h
-    Rtsp/Rtp.cpp
-    Rtsp/Rtsp.h
-    Rtsp/Rtsp.cpp
-    Rtsp/RtspConnection.cpp
-    Rtsp/RtspConnection.h
-    Rtsp/RtpReceiver.cpp
-    Rtsp/RtpReceiver.h
-    Rtsp/UdpServer.h
-    Rtsp/UdpServer.cpp
-    Rtsp/RtpThreadPool.h
-    Rtsp/RtpThreadPool.cpp
-    utils/ThreadSafeQueue.h
-    utils/Time.cpp
-    utils/Time.h
-    utils/Pip.h
-    utils/Pip.cpp
-    utils/RingBuffer.h
-    utils/MemoryManager.h
-    utils/MemoryManager.cpp
-    utils/TaskScheduler.h
-    utils/TaskScheduler.cpp
-    utils/SelectTaskScheduler.h
-    utils/SelectTaskScheduler.cpp
-    utils/EpollTaskScheduler.h
-    utils/EpollTaskScheduler.cpp
-    utils/Channel.h
-    utils/EventLoop.h
-    utils/EventLoop.cpp
-    utils/Acceptor.h
-    utils/Acceptor.cpp
-    Common/NtpStamp.h
-    Common/NtpStamp.cpp
-)
-
+# 地址消毒和调试
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -g -Wall -Wextra")
 
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(AVCODEC REQUIRED libavcodec)
-pkg_check_modules(AVFORMAT REQUIRED libavformat)
-pkg_check_modules(AVUTIL REQUIRED libavutil)
-pkg_check_modules(SWSCALE REQUIRED libswscale)
-pkg_check_modules(AVFILTER REQUIRED libavfilter)
-pkg_check_modules(AVDEVICE REQUIRED libavdevice)
-
-link_directories(${OUT_NETWORK})
+pkg_check_modules(FFMPEG REQUIRED libavcodec libavformat libavutil libswscale libavfilter libavdevice)
 
 include_directories(
-    "${FFMPEG_ROOT}/include"
+    ${FFMPEG_INCLUDE_DIRS}
     ${CMAKE_SOURCE_DIR}/utils
     ${CMAKE_SOURCE_DIR}/log
     ${CMAKE_SOURCE_DIR}/network
@@ -95,36 +20,76 @@ include_directories(
     
 )
 
-
-add_executable(FFmpegAAc main.cpp ${FILES})
-add_executable(tcp_client test/tcp_client.cpp)
-
-
 link_directories(
-    ${AVCODEC_LIBRARY_DIRS}
-    ${AVFORMAT_LIBRARY_DIRS}
-    ${AVUTIL_LIBRARY_DIRS}
-    ${SWSCALE_LIBRARY_DIRS}
-    ${AVFILTER_LIBRARY_DIRS}
-    ${AVDEVICE_LIBRARY_DIRS}
+    ${FFMPEG_LIBRARY_DIRS}
 )
 
-# 链接库
-target_link_libraries(FFmpegAAc
-    ${AVCODEC_LIBRARIES}
-    ${AVFORMAT_LIBRARIES}
-    ${AVUTIL_LIBRARIES}
-    ${SWSCALE_LIBRARIES}
-    ${AVFILTER_LIBRARIES}
-    ${AVDEVICE_LIBRARIES}
+add_library(network STATIC
+    network/TcpSocket.cpp
+    network/SocketUtil.cpp
+    network/BufferRead.cpp
+    network/BufferWrite.cpp
+    network/TcpServer.cpp
+    network/TcpConnection.cpp
+    utils/Acceptor.cpp
+)
+
+
+
+add_library(utils STATIC
+    utils/Time.cpp
+    utils/MemoryManager.cpp
+    utils/TaskScheduler.cpp
+    utils/SelectTaskScheduler.cpp
+    utils/EpollTaskScheduler.cpp
+    utils/EventLoop.cpp
+    utils/Acceptor.cpp
+    utils/Pip.cpp
+
+)
+
+
+add_library(rtp STATIC
+    Rtsp/Rtp.cpp
+    Rtsp/Rtp.h
+    Rtsp/RtpReceiver.cpp
+    Rtsp/RtpReceiver.h
+    Rtsp/RtpConnection.cpp
+    Rtsp/RtpConnection.h
+    Rtsp/RtpTypes.h
+)
+
+add_library(rtsp STATIC
+    Rtsp/Rtsp.cpp
+    Rtsp/Rtsp.h
+    Rtsp/RtspMessage.cpp
+    Rtsp/RtspMessage.h
+    Rtsp/RtspServer.cpp
+    Rtsp/RtspServer.h
+    Rtsp/MediaSession.cpp
+    Rtsp/MediaSession.h
+    Rtsp/MediaSource.h
+    Rtsp/RtspConnection.cpp
+    Rtsp/RtspConnection.h
+    Rtsp/UdpServer.cpp
+    Rtsp/UdpServer.h
+    Rtsp/RtpThreadPool.cpp
+    Rtsp/RtpThreadPool.h
+)
+
+target_link_libraries(rtsp rtp network utils pthread)
+
+
+add_executable(FFmpegAAc main.cpp)
+target_link_libraries(FFmpegAAc rtsp rtp utils
+    ${FFMPEG_LIBRARIES}
     pthread
     c
 )
 
 
-target_compile_options(tcp_client PRIVATE -Wall -Wextra -g)
+add_executable(tcp_client test/tcp_client.cpp)
 target_link_libraries(tcp_client pthread)
-
 
 enable_testing()
 add_test(NAME TcpClientTest COMMAND tcp_client)

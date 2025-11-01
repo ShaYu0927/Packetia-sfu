@@ -40,6 +40,6 @@ struct AVFrame
 	uint32_t timestamp;		  	     /* 时间戳 */                      
 };
 
-typedef uint32_t MediaSessionId;
+#define MediaSessionId uint32_t
 
 #endif // _MEDIA_H_

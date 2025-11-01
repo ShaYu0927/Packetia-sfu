@@ -313,8 +313,4 @@ bool Rtsp::AddMediaSession(const std::shared_ptr<MediaSession>& session)
     return true;
 }
 
-void SdpTracker::inputRtp(uint8_t *data, size_t len, uint16_t seq)
-{
-    auto rtp = RtpPacket::create(len);
-    rtp->setPayload(data, len);
-}
+

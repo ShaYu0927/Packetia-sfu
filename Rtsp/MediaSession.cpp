@@ -1,5 +1,8 @@
 #include "MediaSession.h"
 
+#include "Rtp.h"
+#include "RtspMessage.h"
+
 std::atomic_uint64_t MediaSession::last_session_id_{0};
 
 MediaSession::Ptr MediaSession::CreateNew(const std::string& suffix)
@@ -28,10 +31,10 @@ bool MediaSession::AddSource(MediaChannelId channel_id, MediaSourcePtr source)
     return false;
 }
 
-bool MediaSession::AddTrack(SdpTracker::TrackType type, const std::string &codec, const std::string &control)
+bool MediaSession::AddTrack(TrackType type, const std::string &codec, const std::string &control)
 {
     auto track = std::make_shared<SdpTracker>();
-    track->_type = type;
+    track->_type = static_cast<SdpTracker::TrackType>(type);
     track->_codec = codec;
     track->_control = control;
 
@@ -160,3 +163,20 @@ void MediaSession::SendLoop(ClientSession *client)
         }
     }
 }
+
+RtpTrackPtr MediaSessionManager::GetTrackByIndex(uint8_t track_index)
+{
+     std::lock_guard<std::mutex> lock(mtx_);
+     auto it = _channel_to_track.find(track_index);
+     return (it != _channel_to_track.end()) ? it->second : nullptr;
+}
+
+SdpTrackerPtr MediaSessionManager::GetTrackBySessionAndIndex(const std::string &session_id, int track_index)
+{
+    auto session = GetSessionById(session_id);
+    if (session && track_index >= 0 && track_index < static_cast<int>(session->tracks_.size())) {
+        return session->tracks_[track_index];
+    }
+    return nullptr;
+}
+

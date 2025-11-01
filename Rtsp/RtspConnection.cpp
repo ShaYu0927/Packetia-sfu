@@ -259,6 +259,9 @@ void RtspConnection::HandleCmdSetup()
         LOG_INFO("Found existing MediaSession. url=" + url + ", session_id=" + _sessionId);
     }
 
+    
+
+
     LOG_INFO("Assigned _sessionId=" + _sessionId);
 
     int trackIdx = -1;
@@ -273,9 +276,17 @@ void RtspConnection::HandleCmdSetup()
             std::string idxStr = control.substr(pos + 9); 
             trackIdx = std::stoi(idxStr);                 
             LOG_INFO("Found trackIdx=" + std::to_string(trackIdx));
-            // 创建轨道信息
-            media_session->AddTrack(m.media_type == "video" ? SdpTracker::TrackType::TrackVideo : SdpTracker::TrackType::TrackAudio,
-                                     m.codec_name, m.control);
+             media_session->AddTrack(
+                static_cast<TrackType>(
+                    m.media_type == "video" ? SdpTracker::TrackType::TrackVideo : SdpTracker::TrackType::TrackAudio
+                ),
+                m.codec_name,
+                m.control
+            );
+
+            
+            // MediaSessionManager::Instance().AddTrackChannel(track_index, track);
+
             break;
         }
         break; // 找到就退出

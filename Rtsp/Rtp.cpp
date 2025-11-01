@@ -4,13 +4,17 @@ RtpHeader::RtpHeader()
 {
 }
 
-RtpPacket::Ptr RtpPacket::create(size_t size) {
+RtpPacket::RtpPacket()
+{
+}
+
+RtpPacket::Ptr RtpPacket::create(size_t size)
+{
     auto pkt = std::make_shared<RtpPacket>();
     pkt->data = std::shared_ptr<uint8_t>(new uint8_t[size], std::default_delete<uint8_t[]>());
     pkt->size = 4;
     return pkt;
 }
-
 
 void RtpHeader::serialize(uint8_t *out) const
 {
@@ -99,9 +103,24 @@ size_t RtpPacket::getPayloadSize() const
 
 void RtpPacket::setPayload(const uint8_t *payload_data, size_t len)
 {
+
 }
 
 bool RtpPacket::getMarker() const
 {
     return false;
+}
+
+RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len)
+{
+}
+
+bool RtpVideoTracker::isKeyFrame(const RtpPacket::Ptr &pkt)
+{
+    return false;
+}
+
+
+RtpPacket::Ptr RtpAudioTracker::inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len)
+{
 }

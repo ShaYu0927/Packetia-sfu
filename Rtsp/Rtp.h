@@ -5,80 +5,9 @@
 #include <string>
 #include <variant>
 #include <vector>
+#include "RtpTypes.h"
+#include "RtpReceiver.h"
 
-#define RTP_HEADER_SIZE   	   12
-#define MAX_RTP_PAYLOAD_SIZE   1420
-#define RTP_MAX_PACKET_SIZE    (RTP_HEADER_SIZE + MAX_RTP_PAYLOAD_SIZE)
-#define RTP_VERSION			   2
-#define RTP_TCP_HEAD_SIZE	   4
-#define RTP_VPX_HEAD_SIZE	   1
-
-#define MAX_MEDIA_CHANNEL 16
-
-enum RTPTransportMode
-{
-    RTP_OVER_TCP = 0,
-    RTP_OVER_UDP,
-    RTP_OVER_MULTICAST,
-    RTP_OVER_HTTP,
-    RTP_OVER_FILE,
-    RTP_OVER_UNIX_DOMAIN_SOCKET,
-    RTP_OVER_SSL,
-    RTP_OVER_TLS,
-    RTP_OVER_WEBSOCKET,
-    RTP_OVER_QUIC,
-	RTP_OVER_UNKNOWN
-};
-
-enum TrackType
-{	
-	TrackInvalid = -1,
-	TrackVideo = 0,
-	TrackAudio,
-	TrackTitle,
-	TrackApplication,
-	TrackMax
-};
-
-
-enum class MediaTransportType {
-    TCP,
-    UDP,
-    UNKNOWN
-};
-
-// 每个 track 的信息
-typedef struct RtpTrackInfo {
-    int payload_type;       // RTP payload type，比如 96, 97
-    std::string codec;      // 编码类型，比如 H265, MPEG4-GENERIC
-    int clock_rate;         // 时钟频率，比如 90000, 44100
-    int channels;           // 音频通道数，视频为 0 或 1
-
-    std::string control;    // control:streamid=0
-    std::string fmtp;       // 原始的 fmtp 整串
-    std::string rtpmap;     // 原始的 rtpmap 整串
-
-    // H.265 专用
-    std::string vps;
-    std::string sps;
-    std::string pps;
-
-    // AAC 专用
-    std::string audio_config;  // config=1210
-}RtpTrackInfo;
-
-// 整个 SDP Session 信息
-struct RtspSessionDesc {
-    std::string version;    // v=0
-    std::string origin;     // o=...
-    std::string session_name; // s=...
-    std::string connection; // c=...
-    std::string timing;     // t=...
-
-    std::string tool;       // a=tool:libavformat...
-
-    std::vector<RtpTrackInfo> tracks; // 多个 track
-};
 
 
 class RtpHeader {
@@ -194,10 +123,99 @@ struct MediaChannelInfo {
     bool isRecord() const { return hasState(state, MediaSessionState::Record); }
 };
 
+template<typename Packet, typename Seq = uint16_t>
+class EnhancedPacketSortor {
+public:
+    using Callback = std::function<void(Seq seq, const Packet& pkt)>;
+
+    EnhancedPacketSortor(uint16_t max_gap = 1000, size_t max_cache = 50, uint32_t flush_timeout_ms = 100)
+        : _max_gap(max_gap), _max_cache(max_cache), _flush_timeout(flush_timeout_ms) {}
+
+    void setOnPacketSorted(Callback cb) {
+        _cb = std::move(cb);
+    }
+
+    void inputPacket(Seq seq, Packet pkt) {
+        auto now = std::chrono::steady_clock::now();
+
+        if (!_started) {
+            _next_seq = seq;
+            _last_flush_time = now;
+            _started = true;
+            emit(seq, pkt);
+            return;
+        }
+
+        // 强制 flush（时间间隔大于指定时间）
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - _last_flush_time).count() > _flush_timeout) {
+            flushBuffered();
+            _last_flush_time = now;
+        }
+
+        if (seq == _next_seq) {
+            emit(seq, pkt);
+            flushBuffered();
+        } else if (distance(seq, _next_seq) < _max_gap) {
+            _buffer[seq] = std::move(pkt);
+            if (_buffer.size() > _max_cache) {
+                ++_lost_count;
+                std::cout << "[PacketSortor] too much cache, force drop seq=" << _next_seq << std::endl;
+                ++_next_seq;
+                flushBuffered();
+            }
+        } else {
+            // 包太旧或太远，不缓存
+            ++_drop_count;
+        }
+    }
+
+    void flushBuffered() {
+        while (!_buffer.empty()) {
+            auto it = _buffer.find(_next_seq);
+            if (it == _buffer.end())
+                break;
+
+            emit(it->first, it->second);
+            _buffer.erase(it);
+        }
+    }
+
+    size_t getLostCount() const { return _lost_count; }
+    size_t getDropCount() const { return _drop_count; }
+
+private:
+    void emit(Seq seq, const Packet& pkt) {
+        if (_cb) {
+            _cb(seq, pkt);
+        }
+        ++_next_seq;
+    }
+
+    uint32_t distance(Seq a, Seq b) const {
+        return static_cast<uint16_t>(a - b); // 支持回绕
+    }
+
+private:
+    bool _started = false;
+    Seq _next_seq = 0;
+
+    std::map<Seq, Packet> _buffer;
+    Callback _cb;
+
+    uint16_t _max_gap;
+    size_t _max_cache;
+    uint32_t _flush_timeout; // milliseconds
+
+    size_t _lost_count = 0;
+    size_t _drop_count = 0;
+
+    std::chrono::steady_clock::time_point _last_flush_time;
+};
 
 class RtpPacket {
 public:
     using Ptr = std::shared_ptr<RtpPacket>;
+    RtpPacket();
 
     static constexpr int kRtpVersion = 2;
     static constexpr int kRtpHeaderSize = 12;
@@ -245,7 +263,7 @@ public:
     uint64_t ntp_stamp_ms = 0;
     int track_index = -1;
 
-    RtpPacket() = default;
+    
 private:
     
     // 用于创建 shared_ptr<RtpPacket>
@@ -253,4 +271,69 @@ private:
 };
 
 
+/*RTP 包的 payload 通常是 NALU 数据（即编码后的视频片段），分三种情况：
+
+类型	含义	特点
+单一 NAL 单元包 (Single NALU)	一个包 = 一整个 NALU	最常见（小片段）
+FU-A 分片 (Fragmentation Unit - A)	大帧被拆成多个包	需拼接重组
+STAP-A 聚合包 (Single-Time Aggregation Packet)	多个小 NALU 合并	很少见*/
+
+class RtpTrack : public EnhancedPacketSortor<RtpPacket::Ptr, uint16_t> {
+public:
+    using Ptr = std::shared_ptr<RtpTrack>;
+
+    RtpTrack(TrackType type, std::string codec, uint8_t payload_type,
+             uint32_t ssrc, uint32_t clock_rate, uint8_t channel_id = 0, bool disable_ntp = false)
+       : _type(type),
+        _codec(std::move(codec)),
+        _ssrc(ssrc),
+        _sample_rate(clock_rate),
+        _channel_id(channel_id),
+        _disable_ntp(disable_ntp),
+        _pt(payload_type) {}
+
+
+    RtpTrack() {};
+
+    uint32_t getSSRC() const { return _ssrc; }
+    uint8_t  getPayloadType() const { return _pt; }
+    TrackType getType() const { return _type; }
+
+    virtual RtpPacket::Ptr inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len) = 0;
+    void setNtpStamp(uint32_t rtp_stamp, uint64_t ntp_stamp_ms);
+    void setPayloadType(uint8_t pt) { _pt = pt; }
+
+protected:
+    virtual void onRtpSorted(RtpPacket::Ptr rtp) {}
+    virtual void onBeforeRtpSorted(const RtpPacket::Ptr &rtp) {}
+
+private:
+    TrackType _type;
+    std::string _codec;
+    uint32_t _ssrc = 0;
+    uint32_t _sample_rate = 0;
+    uint8_t _channel_id = 0;
+    bool _disable_ntp = false;
+    uint8_t _pt = 0xFF; //当前跟踪的有效载荷类型
+};
+
+
+
+class RtpVideoTracker : public RtpTrack
+{
+public:
+    using Ptr = std::shared_ptr<RtpVideoTracker>;
+    RtpPacket::Ptr inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len) override;
+
+private:
+    std::vector<RtpPacket::Ptr> cache_;
+    
+    bool isKeyFrame(const RtpPacket::Ptr& pkt);
+};
+
+class RtpAudioTracker : public RtpTrack
+{
+public:
+    RtpPacket::Ptr inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len) override;
+};
 #endif

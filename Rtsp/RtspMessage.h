@@ -5,12 +5,14 @@
 #include <array>
 #include <unordered_map>
 #include "BufferRead.h"
+
 #include "logger.h"
 #include "Rtp.h"
 #include "Media.h"
 #include "Rtsp.h"
 
 #include "RtpReceiver.h"
+
 
 class Sdp;
 
@@ -90,16 +92,15 @@ public:
     Method GetMethod() const { return method_; }
     const std::string& GetMethodString() const { return method_str_; }
     Version GetVersion() const { return version_; }
-    const MediaChannelId& GetSessionId() const { return session_id_; }
-    const std::string& GetContentType() const { return content_type_; }
-    const std::string& GetContentLength() const { return content_length_; }
-    const std::string& GetUserAgent() const { return user_agent_; }
-    const std::string& GetAccept() const { return accept_; }
-    const std::string& GetRange() const { return range_; }
-    const RTPTransportMode GetTransport() const;
+    const MediaChannelId& GetSessionId()  { return session_id_; }
+    const std::string& GetContentType()  { return content_type_; }
+    const std::string& GetUserAgent()  { return user_agent_; }
+    const std::string& GetAccept()  { return accept_; }
+    const std::string& GetRange()  { return range_; }
+    const RTPTransportMode GetTransport() ;
     const int GetContentLength();
     const int SetContentLength(int length);
-    const std::string& GetControl() const { return trackId; }
+    const std::string& GetControl()  { return trackId; }
     std::string GetRtspUSuffix() const;
     std::string GetCSeq() const
     {
@@ -112,21 +113,21 @@ public:
     }
 
    
-    const uint16_t GetRtpChannel() const
+    const uint16_t GetRtpChannel()
     {
         return rtp_channel_;
     }
 
-    const uint16_t GetRtcpChannel() const
+    const uint16_t GetRtcpChannel()
     {
         
         return rtcp_channel_;
     }
-    const uint16_t GetRtpPort() const
+    const uint16_t GetRtpPort()
     {
         return rtp_port_;
     }
-    const uint16_t GetRtcpPort() const
+    const uint16_t GetRtcpPort()
     {
         return rtcp_port_;
     }

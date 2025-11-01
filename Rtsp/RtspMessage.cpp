@@ -33,8 +33,25 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
         {
             buffer->Retrieve(length + 4);
 
-            // 创建 RTP packet 
-            
+            // 创建 RTP packet ,创建音轨，并填充数据
+            // auto rtpPacket = std::make_shared<RtpPacket>();
+            // auto rtpTracker = std::make_shared<RtpTrack>();
+
+            // if(!rtpPacket || !rtpTracker)
+            // {
+            //     LOG_ERROR("Failed to allocate RtpPacket.");
+            //     return false;
+            // }
+            //填充数据
+            // rtpPacket->data = std::shared_ptr<uint8_t>(new uint8_t[length], std::default_delete<uint8_t[]>());
+            // RtpPacket::Ptr rtp = rtpPacket;
+            // rtp->size = length;
+            // memcpy(rtp->data.get(), buffer->Peek() + 4, length);
+            // rtp->track_index = channel;
+            // rtpTracker->inputRtp(rtp);
+
+            LOG_INFO("RTP packet processed for channel: " + std::to_string(channel));
+            return true;
         } 
         else 
         {
@@ -43,8 +60,6 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
         }
 
         
-
-
         return false; // 表示这不是 RTSP 请求，直接返回
     }
     
@@ -175,7 +190,7 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
 
 
 
-const RTPTransportMode RtspRequest::GetTransport() const
+const RTPTransportMode RtspRequest::GetTransport()
 {
     if(transport_mode_ == RTP_OVER_TCP)
     {
