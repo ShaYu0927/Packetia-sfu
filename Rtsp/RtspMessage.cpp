@@ -31,9 +31,33 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
         // 跳过 4 字节头 + length 数据
         if (buffer->ReadableBytes() >= length + 4) 
         {
-            buffer->Retrieve(length + 4);
+            uint8_t channel = buffer->Peek()[1];
+            uint16_t length = (uint8_t(buffer->Peek()[2]) << 8) | uint8_t(buffer->Peek()[3]);
 
-            // 创建 RTP packet ,创建音轨，并填充数据
+            LOG_INFO("Processing RTP packet for channel: " + std::to_string(channel) +
+                     " with length: " + std::to_string(length));
+
+            auto tracker_ptr = MediaSessionManager::Instance().GetTrackByChnnel(channel);
+
+
+            if (tracker_ptr) 
+            {
+                LOG_INFO("Found tracker for channel: " + std::to_string(channel));
+                // 读取 RTP 数据
+                std::shared_ptr<uint8_t> rtp_data(new uint8_t[length], std::default_delete<uint8_t[]>());
+                memcpy(rtp_data.get(), buffer->Peek() + 4, length);
+
+                trackPtr->inputRtp(trackPtr->getType(), trackPtr->getSampleRate(), data.get(), length);
+
+                buffer->Retrieve(length + 4);
+            } 
+            else 
+            {
+                LOG_ERROR("No tracker found for channel: " + std::to_string(channel));
+            }
+
+
+            // 分发给Rtp模块进行处理
             // auto rtpPacket = std::make_shared<RtpPacket>();
             // auto rtpTracker = std::make_shared<RtpTrack>();
 
@@ -190,7 +214,7 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
 
 
 
-const RTPTransportMode RtspRequest::GetTransport()
+RTPTransportMode RtspRequest::GetTransport()
 {
     if(transport_mode_ == RTP_OVER_TCP)
     {
@@ -208,7 +232,7 @@ const RTPTransportMode RtspRequest::GetTransport()
 }
 
 //Content-Length: 561
-const int RtspRequest::GetContentLength()
+int RtspRequest::GetContentLength()
 {
     auto iter = header_line_param_.find("Content-Length");
     if (iter != header_line_param_.end())
@@ -218,7 +242,7 @@ const int RtspRequest::GetContentLength()
     return 0;
 }
 
-const int RtspRequest::SetContentLength(int length)
+int RtspRequest::SetContentLength(int length)
 {
     content_length_ = std::to_string(length);
     header_line_param_["Content-Length"] = std::make_pair(content_length_, false);

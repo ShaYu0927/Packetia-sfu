@@ -14,6 +14,13 @@
 
 class RtspServer;
 
+ std::shared_ptr<RtpTrack> createTrack(
+        TrackType type,
+        const std::string& codec_name,
+        int payload_type,
+        uint32_t clock_rate,
+        int track_index);
+
 
 class RtspConnection : public TcpConnection , public UDPServer 
 {

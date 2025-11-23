@@ -56,12 +56,10 @@ public:
 
     MediaSessionId GetMediaChannelClockRate(MediaChannelId channel_id) const 
     {
-       
         return 90000; 
     }
     uint8_t GetMediaChannelPayloadType(MediaChannelId channel_id) const 
     {
-        
         return 96; 
     }
 
@@ -202,6 +200,9 @@ public:
 
     // 获取 sdp tracker info
     SdpTrackerPtr GetTrackBySessionAndIndex(const std::string& session_id, int track_index); 
+
+    // 根据 channel_id 获取 tracker
+    std::shared_ptr<RtpTrack> GetTrackByChnnel(uint8_t channel);
 
 private:
     std::mutex mtx_;

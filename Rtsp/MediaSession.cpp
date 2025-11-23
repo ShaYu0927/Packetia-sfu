@@ -180,3 +180,12 @@ SdpTrackerPtr MediaSessionManager::GetTrackBySessionAndIndex(const std::string &
     return nullptr;
 }
 
+std::shared_ptr<RtpTrack> MediaSessionManager::GetTrackByChnnel(uint8_t channel)
+{
+    std::lock_guard<std::mutex> lock(mtx_);
+    auto it = _channel_to_track.find(channel);
+    if (it != _channel_to_track.end()) {
+        return it->second;
+    }
+    return nullptr;
+}

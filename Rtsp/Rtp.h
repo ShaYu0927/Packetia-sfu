@@ -9,6 +9,7 @@
 #include "RtpReceiver.h"
 
 
+class Sdp;
 
 class RtpHeader {
 
@@ -54,7 +55,6 @@ private:
     uint32_t _timestamp = 0;
     uint32_t _ssrc = 0;
 };
-
 
 
 struct RtpTransportTcp {
@@ -303,6 +303,7 @@ public:
     void setNtpStamp(uint32_t rtp_stamp, uint64_t ntp_stamp_ms);
     void setPayloadType(uint8_t pt) { _pt = pt; }
 
+   
 protected:
     virtual void onRtpSorted(RtpPacket::Ptr rtp) {}
     virtual void onBeforeRtpSorted(const RtpPacket::Ptr &rtp) {}
@@ -323,6 +324,15 @@ class RtpVideoTracker : public RtpTrack
 {
 public:
     using Ptr = std::shared_ptr<RtpVideoTracker>;
+     RtpVideoTracker(TrackType type,
+                    const std::string& codec,
+                    uint8_t payload_type,
+                    uint32_t ssrc,
+                    uint32_t clock_rate,
+                    uint8_t channel_id = 0,
+                    bool disable_ntp = false)
+        : RtpTrack(type, codec, payload_type, ssrc, clock_rate, channel_id, disable_ntp)
+    {}
     RtpPacket::Ptr inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len) override;
 
 private:
@@ -334,6 +344,15 @@ private:
 class RtpAudioTracker : public RtpTrack
 {
 public:
+    RtpAudioTracker(TrackType type,
+                    const std::string& codec,
+                    uint8_t payload_type,
+                    uint32_t ssrc,
+                    uint32_t clock_rate,
+                    uint8_t channel_id = 0,
+                    bool disable_ntp = false)
+        : RtpTrack(type, codec, payload_type, ssrc, clock_rate, channel_id, disable_ntp)
+    {}
     RtpPacket::Ptr inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len) override;
 };
 #endif

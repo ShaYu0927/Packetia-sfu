@@ -259,7 +259,7 @@ void RtspConnection::HandleCmdSetup()
         LOG_INFO("Found existing MediaSession. url=" + url + ", session_id=" + _sessionId);
     }
 
-    
+    //SSRC 是 RTP 包头第 9~12 字节，发送端写进去的，你只需要从 RTP 包中解析出来即可。
 
 
     LOG_INFO("Assigned _sessionId=" + _sessionId);
@@ -284,8 +284,20 @@ void RtspConnection::HandleCmdSetup()
                 m.control
             );
 
+            // 构造 SdpTracker 并添加到 MediaSessionManager
+            TrackType type = (m.media_type == "video")
+                ? TrackType::TrackVideo
+                : TrackType::TrackAudio;
+
+            auto track_ptr = createTrack(
+                type,
+                m.codec_name,
+                m.payload_type,
+                m.clock_rate,
+                trackIdx
+            );
             
-            // MediaSessionManager::Instance().AddTrackChannel(track_index, track);
+            MediaSessionManager::Instance().AddTrackChannel(trackIdx, track_ptr);
 
             break;
         }
@@ -532,3 +544,13 @@ bool RtspConnection::onRead(BufferReader &buffer)
     return true;
 }
 
+std::shared_ptr<RtpTrack> createTrack(TrackType type, const std::string &codec_name, int payload_type, uint32_t clock_rate, int track_index)
+{
+     if (type == TrackType::TrackVideo) {
+        return std::make_shared<RtpVideoTracker>(
+            type, codec_name, payload_type, 0, clock_rate, track_index);
+    }
+
+    return std::make_shared<RtpAudioTracker>(
+        type, codec_name, payload_type, 0, clock_rate, track_index);
+}

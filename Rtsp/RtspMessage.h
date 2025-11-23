@@ -97,10 +97,10 @@ public:
     const std::string& GetUserAgent()  { return user_agent_; }
     const std::string& GetAccept()  { return accept_; }
     const std::string& GetRange()  { return range_; }
-    const RTPTransportMode GetTransport() ;
-    const int GetContentLength();
-    const int SetContentLength(int length);
-    const std::string& GetControl()  { return trackId; }
+    RTPTransportMode GetTransport() ;
+    int GetContentLength();
+    int SetContentLength(int length);
+    std::string& GetControl()  { return trackId; }
     std::string GetRtspUSuffix() const;
     std::string GetCSeq() const
     {
