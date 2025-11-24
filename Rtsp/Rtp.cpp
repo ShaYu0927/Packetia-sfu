@@ -116,15 +116,65 @@ bool RtpPacket::getMarker() const
 
 RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len)
 {
+    // 解析 RTP 包
+    RtpPacket::Ptr pkt = RtpPacket::create(len);
+    memcpy(pkt->data.get(), ptr, len);
+    pkt->size = len;
+    pkt->type = type;
+    pkt->sample_rate = sample_rate;
+
+    // 当前是否为关键帧
+    if (isKeyFrame(pkt)) 
+    {
+        // 处理缓存的非关键帧
+
+    }
+
+
+    // 重新拼接视频帧
+
 }
 
 bool RtpVideoTracker::isKeyFrame(const RtpPacket::Ptr &pkt)
 {
+    if(!pkt || pkt->payload.empty())
+    {
+        return false;
+    }
+
+    uint8_t nal_unit_type = pkt->payload[0] & 0x1F;
+    if(nal_unit_type == 5) // IDR帧
+    {
+        return true;
+    }
+
+    // STAP-A类型(聚合包)，检查其中是否包含IDR帧
+    if(nal_unit_type == 24)
+    {
+        size_t offset = 1;
+        while(offset + 2 < pkt->payload.size())
+        {
+            uint16_t nalu_size = (pkt->payload[offset] << 8) | pkt->payload[offset + 1];
+            offset += 2;
+            if(offset + nalu_size > pkt->payload.size())
+            {
+                break;
+            }
+            uint8_t stap_nal_unit_type = pkt->payload[offset] & 0x1F;
+            if(stap_nal_unit_type == 5) // IDR帧
+            {
+                return true;
+            }
+            offset += nalu_size;
+        }
+    }
+
     return false;
 }
 
 
 RtpPacket::Ptr RtpAudioTracker::inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len)
 {
+
 }
 

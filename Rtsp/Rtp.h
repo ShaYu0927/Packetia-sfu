@@ -298,6 +298,7 @@ public:
     uint32_t getSSRC() const { return _ssrc; }
     uint8_t  getPayloadType() const { return _pt; }
     TrackType getType() const { return _type; }
+    uint32_t getSampleRate() const { return _sample_rate; }
 
     virtual RtpPacket::Ptr inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len) = 0;
     void setNtpStamp(uint32_t rtp_stamp, uint64_t ntp_stamp_ms);

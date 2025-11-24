@@ -47,7 +47,7 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
                 std::shared_ptr<uint8_t> rtp_data(new uint8_t[length], std::default_delete<uint8_t[]>());
                 memcpy(rtp_data.get(), buffer->Peek() + 4, length);
 
-                trackPtr->inputRtp(trackPtr->getType(), trackPtr->getSampleRate(), data.get(), length);
+                trackPtr->inputRtp(trackPtr->getType(), trackPtr->getSampleRate(), rtp_data.get(), length);
 
                 buffer->Retrieve(length + 4);
             } 
