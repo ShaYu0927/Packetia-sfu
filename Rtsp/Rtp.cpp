@@ -137,12 +137,15 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_
 
 bool RtpVideoTracker::isKeyFrame(const RtpPacket::Ptr &pkt)
 {
-    if(!pkt || pkt->payload.empty())
+    if(!pkt)
     {
         return false;
     }
 
-    uint8_t nal_unit_type = pkt->payload[0] & 0x1F;
+    uint8_t* d = pkt->data.get();
+    size_t data_size = pkt->size;
+
+    uint8_t nal_unit_type = d[0] & 0x1F;
     if(nal_unit_type == 5) // IDR帧
     {
         return true;
@@ -152,21 +155,23 @@ bool RtpVideoTracker::isKeyFrame(const RtpPacket::Ptr &pkt)
     if(nal_unit_type == 24)
     {
         size_t offset = 1;
-        while(offset + 2 < pkt->payload.size())
+        while (offset + 2 < data_size) 
         {
-            uint16_t nalu_size = (pkt->payload[offset] << 8) | pkt->payload[offset + 1];
+            uint16_t nalu_size = (d[offset] << 8) | d[offset + 1];
             offset += 2;
-            if(offset + nalu_size > pkt->payload.size())
-            {
+
+            if (offset + nalu_size > data_size) {
                 break;
             }
-            uint8_t stap_nal_unit_type = pkt->payload[offset] & 0x1F;
-            if(stap_nal_unit_type == 5) // IDR帧
-            {
+
+            uint8_t stap_nal_unit_type = d[offset] & 0x1F;
+            if (stap_nal_unit_type == 5) {
                 return true;
             }
+
             offset += nalu_size;
         }
+
     }
 
     return false;

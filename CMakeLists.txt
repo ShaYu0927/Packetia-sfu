@@ -17,6 +17,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/network
     ${CMAKE_SOURCE_DIR}/Rtsp
     ${CMAKE_SOURCE_DIR}/Common
+    ${CMAKE_SOURCE_DIR}/protocol/sip
     
 )
 
@@ -48,6 +49,15 @@ add_library(utils STATIC
 
 )
 
+add_library(sip STATIC
+    protocol/sip/sip.cpp
+    protocol/sip/sip.h
+    # protocol/sip/SipMessage.cpp
+    # protocol/sip/SipMessage.h
+    # protocol/sip/SipParser.cpp
+    # protocol/sip/SipParser.h
+)
+
 
 add_library(rtp STATIC
     Rtsp/Rtp.cpp
@@ -77,7 +87,7 @@ add_library(rtsp STATIC
     Rtsp/RtpThreadPool.h
 )
 
-target_link_libraries(rtsp rtp network utils pthread)
+target_link_libraries(rtsp rtp network utils pthread sip)
 
 
 add_executable(FFmpegAAc main.cpp)

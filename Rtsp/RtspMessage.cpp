@@ -9,30 +9,19 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
     if (buffer->Peek()[0] == '$') // 判断是 RTP 数据包
     {
         LOG_INFO("Detected RTP over TCP ('$' leading byte). Skip RTSP parse.");
-
-        // 读取 channel 和数据长度
-        uint8_t channel = buffer->Peek()[1];
-        uint16_t length = (uint8_t(buffer->Peek()[2]) << 8) | uint8_t(buffer->Peek()[3]);
-
-        // 获取track
-        auto trackPtr = MediaSessionManager::Instance().GetTrackByIndex(channel);
-        if(trackPtr)
-        {
-            LOG_INFO("Found track for channel: " + std::to_string(channel));
-        }
-        else
-        {
-            LOG_ERROR("No track found for channel: " + std::to_string(channel));
-        }
-
-        LOG_INFO("Interleaved packet: channel=" + std::to_string(channel) +
-                " length=" + std::to_string(length));
-
         // 跳过 4 字节头 + length 数据
         if (buffer->ReadableBytes() >= length + 4) 
         {
-            uint8_t channel = buffer->Peek()[1];
-            uint16_t length = (uint8_t(buffer->Peek()[2]) << 8) | uint8_t(buffer->Peek()[3]);
+            const char* tempData =  buffer->Peek();
+            if(p[0] != '$')
+            {
+                LOG_ERROR("Expected '$' at the start of interleaved packet.");
+                return false;
+            }
+
+            uint8_t channel = p[1];
+            uint16_t length = (p[2] << 8) | p[3];
+
 
             LOG_INFO("Processing RTP packet for channel: " + std::to_string(channel) +
                      " with length: " + std::to_string(length));
@@ -46,6 +35,9 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
                 // 读取 RTP 数据
                 std::shared_ptr<uint8_t> rtp_data(new uint8_t[length], std::default_delete<uint8_t[]>());
                 memcpy(rtp_data.get(), buffer->Peek() + 4, length);
+
+
+                //如果需要长期保存数据则必须复制；如果只是临时解析则可以直接用传入指针。
 
                 trackPtr->inputRtp(trackPtr->getType(), trackPtr->getSampleRate(), rtp_data.get(), length);
 
