@@ -189,3 +189,23 @@ std::shared_ptr<RtpTrack> MediaSessionManager::GetTrackByChnnel(uint8_t channel)
     }
     return nullptr;
 }
+
+int MediaSessionManager::GetTcpChannelByChannel(uint8_t channel)
+{
+    std::lock_guard<std::mutex> lock(mtx_);
+    for (const auto& [key, tracker] : _channel_to_tcp_tracker_) {
+        if (tracker.rtp == channel || tracker.rtcp == channel) {
+            return key; 
+        }
+    }
+    return -1; 
+}
+
+void MediaSessionManager::AddTcpChannelMapping(int tracker, const TcpChannel &tcp_channel)
+{
+    std::lock_guard<std::mutex> lock(mtx_);
+    LOG_INFO("Mapping TCP channels for index: " + std::to_string(tracker) +
+             " RTP channel=" + std::to_string(tcp_channel.rtp) +
+             " RTCP channel=" + std::to_string(tcp_channel.rtcp));
+    _channel_to_tcp_tracker_[tracker] = tcp_channel;
+}

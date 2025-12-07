@@ -16,7 +16,7 @@ typedef struct SipResponse {
     std::string reason_phrase;
     std::unordered_map<std::string, std::string> headers;
     std::string body;
-}
+};
 
 
 struct SipTransaction {

@@ -77,3 +77,10 @@ typedef struct RtspSessionDesc {
 }RtspSessionDesc;
 
 
+struct TcpChannel 
+{
+    uint8_t rtp;
+    uint8_t rtcp;
+};
+
+

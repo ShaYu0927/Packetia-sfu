@@ -3,43 +3,45 @@
 
 bool RtspRequest::ParseRequest(BufferReader *buffer)
 {
+    // 底层读取socket没有数据，需要切割
     LOG_INFO("ReadableBytes=" + std::to_string(buffer->ReadableBytes()));
-
-    
     if (buffer->Peek()[0] == '$') // 判断是 RTP 数据包
     {
         LOG_INFO("Detected RTP over TCP ('$' leading byte). Skip RTSP parse.");
+         const char* p = buffer->Peek();
+
+        uint8_t dollar = static_cast<uint8_t>(p[0]);
+        if (dollar != '$') {
+            LOG_ERROR("Expected '$' at the start of interleaved packet.");
+            return false;
+        }
+        
+        uint8_t channel = static_cast<uint8_t>(p[1]);  // 增加channel映射
+        auto tracker = MediaSessionManager::Instance().GetTcpChannelByChannel(channel);
+        LOG_INFO("Interleaved packet on channel: " + std::to_string(channel) +
+                 " mapped to tracker: " + std::to_string(tracker));
+        uint16_t length  = (static_cast<uint8_t>(p[2]) << 8) | static_cast<uint8_t>(p[3]);
         // 跳过 4 字节头 + length 数据
         if (buffer->ReadableBytes() >= length + 4) 
         {
-            const char* tempData =  buffer->Peek();
             if(p[0] != '$')
             {
                 LOG_ERROR("Expected '$' at the start of interleaved packet.");
                 return false;
             }
 
-            uint8_t channel = p[1];
-            uint16_t length = (p[2] << 8) | p[3];
-
-
             LOG_INFO("Processing RTP packet for channel: " + std::to_string(channel) +
                      " with length: " + std::to_string(length));
 
-            auto tracker_ptr = MediaSessionManager::Instance().GetTrackByChnnel(channel);
-
-
+            auto tracker_ptr = MediaSessionManager::Instance().GetTrackByChnnel(tracker);
             if (tracker_ptr) 
             {
-                LOG_INFO("Found tracker for channel: " + std::to_string(channel));
                 // 读取 RTP 数据
                 std::shared_ptr<uint8_t> rtp_data(new uint8_t[length], std::default_delete<uint8_t[]>());
                 memcpy(rtp_data.get(), buffer->Peek() + 4, length);
-
-
                 //如果需要长期保存数据则必须复制；如果只是临时解析则可以直接用传入指针。
 
-                trackPtr->inputRtp(trackPtr->getType(), trackPtr->getSampleRate(), rtp_data.get(), length);
+                tracker_ptr->inputRtp(tracker_ptr->getType(), tracker_ptr->getSampleRate(), rtp_data.get(), length);
 
                 buffer->Retrieve(length + 4);
             } 

@@ -163,8 +163,10 @@ public:
         return id;
     }
 
-    void AddTrackChannel(uint8_t track_index, const std::shared_ptr<RtpTrack>& track) {
+    void AddTrackChannel(uint8_t track_index, const std::shared_ptr<RtpTrack>& track) 
+    {
         std::lock_guard<std::mutex> lock(mtx_);
+        LOG_INFO("Registering track for index: " + std::to_string(track_index));
         _channel_to_track[track_index] = track;
     }
 
@@ -204,10 +206,16 @@ public:
     // 根据 channel_id 获取 tracker
     std::shared_ptr<RtpTrack> GetTrackByChnnel(uint8_t channel);
 
+    //  根据 channel_id 获取 TCP 通道信息
+    int GetTcpChannelByChannel(uint8_t channel);
+
+    void AddTcpChannelMapping(int tracker, const TcpChannel& tcp_channel);
+
 private:
     std::mutex mtx_;
     std::unordered_map<std::string, MediaSession::Ptr> sessions_;      // id -> session
     std::unordered_map<std::string, MediaSession::Ptr> suffix_map_;    // suffix -> session
     std::unordered_map<uint8_t, std::shared_ptr<RtpTrack>> _channel_to_track; // track index -> track Ptr
+    std::unordered_map<int, TcpChannel> _channel_to_tcp_tracker_;
     std::atomic_uint64_t last_id_{0};
 };

@@ -1,4 +1,5 @@
 #include "RtspConnection.h"
+#include "RtpTypes.h"
 
 RtspConnection::RtspConnection(std::shared_ptr<RtspServer> rtsp_server, TaskScheduler *task_scheduler, SOCKET sockfd)
     : TcpConnection(task_scheduler, sockfd)
@@ -271,6 +272,8 @@ void RtspConnection::HandleCmdSetup()
 
         std::string control = m.control; // "streamid=0"
         size_t pos = control.find("streamid=");
+        LOG_INFO("Processing media control AND controlIdx: " + control , controlTdx);
+        //The check controlTdx == control is a safety measure to prevent sending RTP/RTCP packets to the wrong track
         if(pos != std::string::npos && controlTdx == control) 
         {
             std::string idxStr = control.substr(pos + 9); 
@@ -298,10 +301,13 @@ void RtspConnection::HandleCmdSetup()
             );
             
             MediaSessionManager::Instance().AddTrackChannel(trackIdx, track_ptr);
-
-            break;
+            break; // 找到就退出
         }
-        break; // 找到就退出
+        else
+        {
+            LOG_ERROR("Control string mismatch or 'streamid=' not found in control: " + control);
+        }
+        
     }
         
     
@@ -352,6 +358,9 @@ void RtspConnection::HandleCmdSetup()
             uint16_t rtcp_channel = rtsp_request_->GetRtcpChannel();
             LOG_INFO("SETUP parsed channels: RTP channel=" + std::to_string(rtp_channel) +
          ", RTCP channel=" + std::to_string(rtcp_channel));
+            // 建立track与channel的映射关系
+            TcpChannel tcp_channel = { rtp_channel, rtcp_channel };
+            MediaSessionManager::Instance().AddTcpChannelMapping(trackIdx, tcp_channel);
             if (!rtp_connection_->SetupRtpOverTcp(channel_id, rtp_channel, rtcp_channel)) 
             {
                 LOG_ERROR("Failed to setup RTP over TCP for channel: " + std::to_string(channel_id));

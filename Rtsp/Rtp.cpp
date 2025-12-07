@@ -116,6 +116,11 @@ bool RtpPacket::getMarker() const
 
 RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len)
 {
+    if(len < RtpHeader::kSize || ptr == nullptr)
+    {
+        LOG_ERROR("RTP packet too small and ptr is nullptr, len=" + std::to_string(len));
+        return nullptr;
+    }
     // 解析 RTP 包
     RtpPacket::Ptr pkt = RtpPacket::create(len);
     memcpy(pkt->data.get(), ptr, len);
