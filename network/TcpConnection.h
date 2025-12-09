@@ -10,6 +10,7 @@
 #include "TaskScheduler.h"
 #include "BufferWrite.h"
 #include "BufferRead.h"
+#include "ProtocolParser.h"
 #include "logger.h"
 
 class TcpConnection : public std::enable_shared_from_this<TcpConnection>
@@ -89,6 +90,8 @@ protected:
     TaskScheduler *task_scheduler_;
     std::mutex mutex_;
     std::atomic_bool is_closed_;
+
+    std::shared_ptr<ProtocolParser> parser_;
 };
 
 

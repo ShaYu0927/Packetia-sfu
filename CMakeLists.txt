@@ -32,6 +32,7 @@ add_library(network STATIC
     network/BufferWrite.cpp
     network/TcpServer.cpp
     network/TcpConnection.cpp
+    network/ProtocolParser.cpp
     utils/Acceptor.cpp
 )
 
@@ -52,10 +53,10 @@ add_library(utils STATIC
 add_library(sip STATIC
     protocol/sip/sip.cpp
     protocol/sip/sip.h
-    # protocol/sip/SipMessage.cpp
-    # protocol/sip/SipMessage.h
-    # protocol/sip/SipParser.cpp
-    # protocol/sip/SipParser.h
+    protocol/sip/SipMessage.cpp
+    protocol/sip/SipMessage.h
+    protocol/sip/SipParse.cpp
+    protocol/sip/SipParse.h
 )
 
 

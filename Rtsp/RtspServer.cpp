@@ -16,12 +16,6 @@ TcpConnection::Ptr RtspServer:: OnConnect(SOCKET sockfd)
 {
     LOG_INFO("New RTSP connection established with sockfd: " + std::to_string(sockfd));
     auto conn = std::make_shared<RtspConnection>(shared_from_this(), event_loop_->GetTaskScheduler().get(), sockfd);
-    // conn->SetReadCallback([](TcpConnection::Ptr conn, BufferReader& buffer) {
-    //     std::string msg(buffer.Peek(), buffer.ReadableBytes());
-    //     std::cout << "[业务] 收到消息: " << msg << std::endl;
-    //     LOG_INFO("[业务] 收到消息: " + msg);
-    //     return true; // 返回false会关闭连接
-    // });
 
      conn->SetReadCallback([conn](TcpConnection::Ptr, BufferReader& buffer) {
         try {

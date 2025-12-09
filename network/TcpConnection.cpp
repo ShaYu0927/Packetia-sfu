@@ -122,18 +122,43 @@ void TcpConnection::HandleRead()
             LOG_INFO("Read returned: " + std::to_string(n));
     } while(n > 0);
 
-    if (n == 0) {
+    if (n == 0) 
+    {
         LOG_INFO("Peer closed connection");
         this->close();
         return;
-    } else if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-            LOG_ERROR("Read error");
+    } 
+    else if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) 
+    {
+        LOG_ERROR("Read error");
+        this->close();
+        return;
+    }
+
+    // 调用 RTSP 解析函数,先不改动 rtsp 相关逻辑
+    if (read_cb_) read_cb_(shared_from_this(), *read_buffer_);
+
+    if (!parser_) 
+    {
+        // parser_ = DetectProtocol(*read_buffer_, shared_from_this());
+        if (!parser_) 
+        {
+            LOG_ERROR("Unknown protocol, closing connection");
             this->close();
             return;
         }
+    }
 
-        // 调用 RTSP 解析函数
-        if (read_cb_) read_cb_(shared_from_this(), *read_buffer_);
+    if (parser_) 
+    {
+        if (!parser_->Parse(*read_buffer_)) 
+        {
+            LOG_ERROR("Protocol parsing failed, closing connection");
+            this->close();
+            return;
+        }
+    }
+    
 }
 
 
