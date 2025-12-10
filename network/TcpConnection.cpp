@@ -140,7 +140,7 @@ void TcpConnection::HandleRead()
 
     if (!parser_) 
     {
-        // parser_ = DetectProtocol(*read_buffer_, shared_from_this());
+        parser_ = protocol_detector_->Detect(*read_buffer_);
         if (!parser_) 
         {
             LOG_ERROR("Unknown protocol, closing connection");
@@ -149,15 +149,26 @@ void TcpConnection::HandleRead()
         }
     }
 
-    if (parser_) 
-    {
-        if (!parser_->Parse(*read_buffer_)) 
+   while(true)
+   {
+        auto parse_result = parser_->Parse(*read_buffer_);
+        if (parse_result == ParseResult::Error) 
         {
-            LOG_ERROR("Protocol parsing failed, closing connection");
+            LOG_ERROR("Parse error, closing connection");
             this->close();
             return;
         }
-    }
+
+        if(parse_result == ParseResult::NeedMoreData) 
+        {
+            return; // 需要更多数据，退出循环等待下一次读取
+        }
+        else if (parse_result == ParseResult::Ok)
+        {
+            // 成功解析一个完整包，继续循环解析剩余数据
+            continue;
+        }
+   }
     
 }
 

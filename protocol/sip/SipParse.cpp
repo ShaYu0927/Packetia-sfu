@@ -1,11 +1,7 @@
 #include "SipParse.h"
 
-bool SipParse::Parse(BufferReader &buffer)
+ParseResult SipParse::Parse(BufferReader &buffer)
 {
-    return false;
-}
-
-bool SipParse::CanHandle(BufferReader &buffer)
-{
-    return false;
+    LOG_INFO("SIP Parser invoked");
+    return ParseResult::NeedMoreData;
 }

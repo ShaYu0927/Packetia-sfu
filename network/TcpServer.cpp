@@ -4,6 +4,8 @@
 
 #include "TcpServer.h"
 
+#include "SipParse.h"
+
 
 TcpServer::TcpServer(EventLoop *event_loop)
     : event_loop_(event_loop)
@@ -14,6 +16,28 @@ TcpServer::TcpServer(EventLoop *event_loop)
     acceptor_->SetNewConnectionCallback([this](int sockfd) 
     {
         LOG_INFO("New connection accepted: sockfd = " + std::to_string(sockfd));
+        auto detector = std::make_shared<ProtocolDetector>();
+        // detector->Register({
+        //     "RTSP",
+        //     4,
+        //     [](const uint8_t* data, size_t size) {
+        //         const char* prefix = "RTSP";
+        //         return size >= 4 && std::equal(prefix, prefix + 4, reinterpret_cast<const char*>(data));
+        //     },
+        //     []() { return std::make_shared<RtspParse>(); }
+        // });
+
+        detector->Register({
+            "SIP",
+            3,
+            [](const uint8_t* data, size_t size) {
+                const char* prefix1 = "INV";
+                const char* prefix2 = "REG";
+                return size >= 3 && (std::equal(prefix1, prefix1 + 3, reinterpret_cast<const char*>(data)) ||
+                                     std::equal(prefix2, prefix2 + 3, reinterpret_cast<const char*>(data)));
+            },
+            []() { return std::make_shared<SipParse>(); }
+        });
         TcpConnection::Ptr conn = this->OnConnect(sockfd);
         if(conn)
         {
@@ -34,6 +58,9 @@ TcpServer::TcpServer(EventLoop *event_loop)
 					scheduler->AddTimer([this, socketfd]() {this->RemoveConnection(socketfd); return false; }, 100);
 				}   
             });
+
+             conn->SetProtocolDetector(detector);
+
 
         }
     });

@@ -63,6 +63,10 @@ public:
 	std::string GetIp() const
 	{ return SocketUtil::GetPeerIp(channel_->GetSocket()); }
 
+    void SetProtocolDetector(std::shared_ptr<ProtocolDetector> detector) {
+        protocol_detector_ = detector;
+    }
+
     void close();
 protected:
     virtual void HandleRead();
@@ -92,6 +96,7 @@ protected:
     std::atomic_bool is_closed_;
 
     std::shared_ptr<ProtocolParser> parser_;
+    std::shared_ptr<ProtocolDetector> protocol_detector_;
 };
 
 
