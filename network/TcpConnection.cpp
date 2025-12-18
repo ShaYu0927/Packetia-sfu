@@ -138,37 +138,37 @@ void TcpConnection::HandleRead()
     // 调用 RTSP 解析函数,先不改动 rtsp 相关逻辑
     if (read_cb_) read_cb_(shared_from_this(), *read_buffer_);
 
-    if (!parser_) 
-    {
-        parser_ = protocol_detector_->Detect(*read_buffer_);
-        if (!parser_) 
-        {
-            LOG_ERROR("Unknown protocol, closing connection");
-            this->close();
-            return;
-        }
-    }
+//     if (!parser_) 
+//     {
+//         parser_ = protocol_detector_->Detect(*read_buffer_);
+//         if (!parser_) 
+//         {
+//             LOG_ERROR("Unknown protocol, closing connection");
+//             this->close();
+//             return;
+//         }
+//     }
 
-   while(true)
-   {
-        auto parse_result = parser_->Parse(*read_buffer_);
-        if (parse_result == ParseResult::Error) 
-        {
-            LOG_ERROR("Parse error, closing connection");
-            this->close();
-            return;
-        }
+//    while(true)
+//    {
+//         auto parse_result = parser_->Parse(*read_buffer_);
+//         if (parse_result == ParseResult::Error) 
+//         {
+//             LOG_ERROR("Parse error, closing connection");
+//             this->close();
+//             return;
+//         }
 
-        if(parse_result == ParseResult::NeedMoreData) 
-        {
-            return; // 需要更多数据，退出循环等待下一次读取
-        }
-        else if (parse_result == ParseResult::Ok)
-        {
-            // 成功解析一个完整包，继续循环解析剩余数据
-            continue;
-        }
-   }
+//         if(parse_result == ParseResult::NeedMoreData) 
+//         {
+//             return; // 需要更多数据，退出循环等待下一次读取
+//         }
+//         else if (parse_result == ParseResult::Ok)
+//         {
+//             // 成功解析一个完整包，继续循环解析剩余数据
+//             continue;
+//         }
+//    }
     
 }
 

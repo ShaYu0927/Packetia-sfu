@@ -32,7 +32,7 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
 
             LOG_INFO("Processing RTP packet for channel: " + std::to_string(channel) +
                      " with length: " + std::to_string(length));
-
+            /* bug:tracker_ptr is null or already released */
             auto tracker_ptr = MediaSessionManager::Instance().GetTrackByChnnel(tracker);
             if (tracker_ptr) 
             {
@@ -40,7 +40,6 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
                 std::shared_ptr<uint8_t> rtp_data(new uint8_t[length], std::default_delete<uint8_t[]>());
                 memcpy(rtp_data.get(), buffer->Peek() + 4, length);
                 //如果需要长期保存数据则必须复制；如果只是临时解析则可以直接用传入指针。
-
                 tracker_ptr->inputRtp(tracker_ptr->getType(), tracker_ptr->getSampleRate(), rtp_data.get(), length);
 
                 buffer->Retrieve(length + 4);
