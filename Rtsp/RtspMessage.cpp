@@ -39,7 +39,7 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
                 // 读取 RTP 数据
                 std::shared_ptr<uint8_t> rtp_data(new uint8_t[length], std::default_delete<uint8_t[]>());
                 memcpy(rtp_data.get(), buffer->Peek() + 4, length);
-                //如果需要长期保存数据则必须复制；如果只是临时解析则可以直接用传入指针。
+        
                 tracker_ptr->inputRtp(tracker_ptr->getType(), tracker_ptr->getSampleRate(), rtp_data.get(), length);
 
                 buffer->Retrieve(length + 4);
@@ -48,24 +48,6 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
             {
                 LOG_ERROR("No tracker found for channel: " + std::to_string(channel));
             }
-
-
-            // 分发给Rtp模块进行处理
-            // auto rtpPacket = std::make_shared<RtpPacket>();
-            // auto rtpTracker = std::make_shared<RtpTrack>();
-
-            // if(!rtpPacket || !rtpTracker)
-            // {
-            //     LOG_ERROR("Failed to allocate RtpPacket.");
-            //     return false;
-            // }
-            //填充数据
-            // rtpPacket->data = std::shared_ptr<uint8_t>(new uint8_t[length], std::default_delete<uint8_t[]>());
-            // RtpPacket::Ptr rtp = rtpPacket;
-            // rtp->size = length;
-            // memcpy(rtp->data.get(), buffer->Peek() + 4, length);
-            // rtp->track_index = channel;
-            // rtpTracker->inputRtp(rtp);
 
             LOG_INFO("RTP packet processed for channel: " + std::to_string(channel));
             return true;

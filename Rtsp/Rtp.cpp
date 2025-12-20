@@ -11,13 +11,20 @@ RtpPacket::RtpPacket()
 {
 }
 
-RtpPacket::Ptr RtpPacket::create(size_t size)
+RtpPacket::Ptr RtpPacket::create(size_t capacity)
 {
     auto pkt = std::make_shared<RtpPacket>();
-    pkt->data = std::shared_ptr<uint8_t>(new uint8_t[size], std::default_delete<uint8_t[]>());
-    pkt->size = 4;
+
+    // pkt->data = std::shared_ptr<uint8_t>(
+    //     new uint8_t[capacity],
+    //     std::default_delete<uint8_t[]>()
+    // );
+
+    // pkt->size = 0;
     return pkt;
 }
+
+
 
 void RtpHeader::serialize(uint8_t *out) const
 {
@@ -121,23 +128,24 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_
         LOG_ERROR("RTP packet too small and ptr is nullptr, len=" + std::to_string(len));
         return nullptr;
     }
-    // 解析 RTP 包
-    RtpPacket::Ptr pkt = RtpPacket::create(len);
+    /* 解析 RTP 包 */
+    auto pkt = RtpPacket::create(len);
+    auto dst = pkt ? pkt->data.get() : nullptr;
+
+    LOG_INFO("pkt=" + std::to_string((uintptr_t)pkt.get()) +
+            " dst=" + std::to_string((uintptr_t)dst) +
+            " src=" + std::to_string((uintptr_t)ptr) +
+            " len=" + std::to_string(len));
+
+    if (!pkt || !dst) 
+    {
+        LOG_ERROR("create failed: pkt or pkt->data is null");
+        return nullptr;
+    }
     memcpy(pkt->data.get(), ptr, len);
     pkt->size = len;
     pkt->type = type;
     pkt->sample_rate = sample_rate;
-
-    // 当前是否为关键帧
-    if (isKeyFrame(pkt)) 
-    {
-        // 处理缓存的非关键帧
-
-    }
-
-
-    // 重新拼接视频帧
-
 }
 
 bool RtpVideoTracker::isKeyFrame(const RtpPacket::Ptr &pkt)
@@ -185,6 +193,10 @@ bool RtpVideoTracker::isKeyFrame(const RtpPacket::Ptr &pkt)
 
 RtpPacket::Ptr RtpAudioTracker::inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len)
 {
-
+    (void)type;
+    (void)sample_rate;
+    (void)ptr;
+    (void)len;
+    return nullptr;
 }
 

@@ -4,12 +4,19 @@ project(RtspServer)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_BUILD_TYPE Debug)
 
-# 设置 Debug 模式
-set(CMAKE_BUILD_TYPE Debug)
-
-# 添加 AddressSanitizer
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -fno-omit-frame-pointer -g -O1")
-set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address")
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+  add_compile_options(
+    -O0
+    -g3
+    -fno-omit-frame-pointer
+    -fno-optimize-sibling-calls
+    -fsanitize=address
+    -fsanitize-address-use-after-scope
+  )
+  add_link_options(
+    -fsanitize=address
+  )
+endif()
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(FFMPEG REQUIRED libavcodec libavformat libavutil libswscale libavfilter libavdevice)
