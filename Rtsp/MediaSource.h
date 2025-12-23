@@ -10,29 +10,40 @@
 
 class RtpPacket;
 
-class MediaSource
+class IPacketizer 
 {
 public:
-    using Ptr = std::unique_ptr<MediaSource>;
-    using SendFrameCallback = std::function<bool(MediaChannelId channel_id, std::shared_ptr<RtpPacket> pkt)>;
+    using OnRtp = std::function<void(const RtpRawPacket&)>;
+    virtual ~IPacketizer() = default;
+    virtual void SetOnRtp(OnRtp cb) = 0;
+    virtual bool InputFrame(const AVFrame& frame) = 0;
+    virtual const RtpTrackInfo& trackInfo() const = 0;
+};
 
-    MediaSource() = default;
+class MediaSource 
+{
+public:
+    using Ptr = std::shared_ptr<MediaSource>;
+    using OnRtp = std::function<void(MediaChannelId, const RtpRawPacket::Ptr&)>;
+
     virtual ~MediaSource() = default;
 
-    virtual MediaType GetMediaType() const { return media_type_; }
+    void SetOnRtp(OnRtp cb) { on_rtp_ = std::move(cb); }
 
     virtual std::string GetMediaDescription(uint16_t port=0) = 0;
-    virtual std::string GetAttribute()  = 0;
-    
-    virtual bool HanleFrame(MediaChannelId channel_id, const AVFrame &frame) = 0;
-    virtual uint32_t GetPayload() const { return payload_; }
-    virtual uint32_t GetClockRate() const { return clock_rate_; }
+    virtual std::string GetAttribute() = 0;
+
+    virtual bool HandleFrame(MediaChannelId channel_id, const AVFrame& frame) = 0;
 
 protected:
-    MediaType media_type_ = NONE;
-    uint32_t payload_ = 0;
-    uint32_t clock_rate_ = 0;
-    SendFrameCallback send_frame_callback_;
+    void emitRtp(MediaChannelId cid, const RtpRawPacket::Ptr& pkt) 
+    {
+        if (on_rtp_ && pkt) on_rtp_(cid, pkt);
+    }
+
+private:
+    OnRtp on_rtp_;
 };
+
 
 #endif // _MEDIASOURCE_H_

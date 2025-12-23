@@ -36,11 +36,10 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
             auto tracker_ptr = MediaSessionManager::Instance().GetTrackByChnnel(tracker);
             if (tracker_ptr) 
             {
-                // 读取 RTP 数据
-                std::shared_ptr<uint8_t> rtp_data(new uint8_t[length], std::default_delete<uint8_t[]>());
-                memcpy(rtp_data.get(), buffer->Peek() + 4, length);
-        
-                tracker_ptr->inputRtp(tracker_ptr->getType(), tracker_ptr->getSampleRate(), rtp_data.get(), length);
+                auto ptr = (uint8_t*)buffer->Peek() + 4;
+                static_assert(std::is_same_v<decltype(tracker_ptr), std::shared_ptr<RtpTrack>>,
+                    "tracker_ptr type mismatch");
+                tracker_ptr->inputRtp(tracker_ptr->getType(), tracker_ptr->getSampleRate(), ptr, length);
 
                 buffer->Retrieve(length + 4);
             } 

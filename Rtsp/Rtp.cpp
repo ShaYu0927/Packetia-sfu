@@ -11,16 +11,21 @@ RtpPacket::RtpPacket()
 {
 }
 
+RtpPacket::~RtpPacket()
+{
+    fprintf(stderr, "RtpPacket dtor this=%p\n", this);
+}
+
 RtpPacket::Ptr RtpPacket::create(size_t capacity)
 {
     auto pkt = std::make_shared<RtpPacket>();
 
-    // pkt->data = std::shared_ptr<uint8_t>(
-    //     new uint8_t[capacity],
-    //     std::default_delete<uint8_t[]>()
-    // );
+    pkt->data = std::shared_ptr<uint8_t>(
+        new uint8_t[capacity],
+        std::default_delete<uint8_t[]>()
+    );
 
-    // pkt->size = 0;
+    pkt->size = 0;
     return pkt;
 }
 
@@ -123,6 +128,11 @@ bool RtpPacket::getMarker() const
 
 RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len)
 {
+    if (!ptr || len < 12 || len > 2000) {
+        LOG_ERROR("bad rtp param");
+        abort();
+    }
+
     if(len < RtpHeader::kSize || ptr == nullptr)
     {
         LOG_ERROR("RTP packet too small and ptr is nullptr, len=" + std::to_string(len));
@@ -130,6 +140,7 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_
     }
     /* 解析 RTP 包 */
     auto pkt = RtpPacket::create(len);
+    printf("pkt use_count=%ld\n", (long)pkt.use_count());
     auto dst = pkt ? pkt->data.get() : nullptr;
 
     LOG_INFO("pkt=" + std::to_string((uintptr_t)pkt.get()) +
@@ -146,6 +157,7 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_
     pkt->size = len;
     pkt->type = type;
     pkt->sample_rate = sample_rate;
+    return pkt;
 }
 
 bool RtpVideoTracker::isKeyFrame(const RtpPacket::Ptr &pkt)

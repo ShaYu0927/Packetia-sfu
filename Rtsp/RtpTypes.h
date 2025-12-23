@@ -83,4 +83,21 @@ struct TcpChannel
     uint8_t rtcp;
 };
 
+struct RtpRawPacket 
+{
+    using Ptr = std::shared_ptr<RtpRawPacket>;
 
+    std::shared_ptr<uint8_t> data; 
+    size_t size = 0;
+
+
+    TrackType track = TrackInvalid;
+    uint32_t clock_rate = 90000;
+
+
+    uint32_t ssrc = 0;
+    uint16_t seq = 0;
+    uint32_t timestamp = 0;
+    uint8_t payload_type = 0;
+    bool marker = false;
+};

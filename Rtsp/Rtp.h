@@ -212,10 +212,12 @@ private:
     std::chrono::steady_clock::time_point _last_flush_time;
 };
 
-class RtpPacket {
+class RtpPacket : public std::enable_shared_from_this<RtpPacket>
+{
 public:
     using Ptr = std::shared_ptr<RtpPacket>;
     RtpPacket();
+    ~RtpPacket();
 
     static constexpr int kRtpVersion = 2;
     static constexpr int kRtpHeaderSize = 12;

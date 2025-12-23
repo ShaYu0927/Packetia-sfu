@@ -59,8 +59,7 @@ bool MediaSession::AddTrack(TrackType type, const std::string &codec, const std:
 void MediaSession::PushFrame(MediaChannelId channel_id, const AVFrame &frame)
 {
     if (channel_id >= media_sources_.size()) return;
-    if (media_sources_[channel_id])
-        media_sources_[channel_id]->HanleFrame(channel_id,frame);
+   
 }
 
 
