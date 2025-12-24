@@ -29,6 +29,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/Rtsp
     ${CMAKE_SOURCE_DIR}/Common
     ${CMAKE_SOURCE_DIR}/protocol/sip
+    ${CMAKE_SOURCE_DIR}/src/interleaved
     
 )
 
@@ -81,6 +82,8 @@ add_library(rtp STATIC
     Rtsp/RtpTypes.h
 )
 
+
+
 add_library(rtsp STATIC
     Rtsp/Rtsp.cpp
     Rtsp/Rtsp.h
@@ -97,6 +100,15 @@ add_library(rtsp STATIC
     Rtsp/UdpServer.h
     Rtsp/RtpThreadPool.cpp
     Rtsp/RtpThreadPool.h
+    Rtsp/RtpInterleaved.cpp
+)
+
+file(GLOB INTERLEAVED_SRCS
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/interleaved/*.cpp
+)
+
+add_library(Interleaved STATIC
+    ${INTERLEAVED_SRCS}
 )
 
 target_link_libraries(rtsp rtp network utils pthread sip)

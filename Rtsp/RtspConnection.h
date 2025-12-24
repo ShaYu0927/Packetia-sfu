@@ -11,6 +11,7 @@
 #include "Media.h"
 #include "logger.h"
 #include "UdpServer.h"
+#include "RtpInterleaved.h"
 
 class RtspServer;
 
@@ -98,6 +99,8 @@ private:
 
     std::shared_ptr<Channel>       rtp_channel_;        // rtp socket
 	std::shared_ptr<Channel>       rtcp_channels_[MAX_MEDIA_CHANNEL]; //rtcp socket
+
+    std::shared_ptr<RtpInterleaved> interleaved_handler_;
 };
 
 

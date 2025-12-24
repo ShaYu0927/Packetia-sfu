@@ -21,8 +21,7 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
         LOG_INFO("Interleaved packet on channel: " + std::to_string(channel) +
                  " mapped to tracker: " + std::to_string(tracker));
         uint16_t length  = (static_cast<uint8_t>(p[2]) << 8) | static_cast<uint8_t>(p[3]);
-        // 跳过 4 字节头 + length 数据
-        if (buffer->ReadableBytes() >= length + 4) 
+        if (buffer->ReadableBytes() >= length + 4)
         {
             if(p[0] != '$')
             {
@@ -32,23 +31,15 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
 
             LOG_INFO("Processing RTP packet for channel: " + std::to_string(channel) +
                      " with length: " + std::to_string(length));
-            /* bug:tracker_ptr is null or already released */
-            auto tracker_ptr = MediaSessionManager::Instance().GetTrackByChnnel(tracker);
-            if (tracker_ptr) 
-            {
-                auto ptr = (uint8_t*)buffer->Peek() + 4;
-                static_assert(std::is_same_v<decltype(tracker_ptr), std::shared_ptr<RtpTrack>>,
-                    "tracker_ptr type mismatch");
-                tracker_ptr->inputRtp(tracker_ptr->getType(), tracker_ptr->getSampleRate(), ptr, length);
 
-                buffer->Retrieve(length + 4);
-            } 
-            else 
-            {
-                LOG_ERROR("No tracker found for channel: " + std::to_string(channel));
-            }
+            // if(!handler_)
+            // {
+            //     LOG_ERROR("Interleaved handler not set. Cannot process RTP packet.");
+            //     return false;
+            // }
 
-            LOG_INFO("RTP packet processed for channel: " + std::to_string(channel));
+            
+            // handler_->onInterleaved(channel, (const uint8_t*)(p + 4), length);
             return true;
         } 
         else 

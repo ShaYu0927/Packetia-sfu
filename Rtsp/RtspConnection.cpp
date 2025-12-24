@@ -23,6 +23,9 @@ RtspConnection::RtspConnection(std::shared_ptr<RtspServer> rtsp_server, TaskSche
         return this->onClose();
     }); 
 
+    interleaved_handler_ = std::make_shared<RtpInterleaved>();
+    // rtsp_request_->SetInterleavedHandler(interleaved_handler_);
+
 }
 
 RtspConnection::~RtspConnection()

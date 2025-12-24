@@ -4,18 +4,17 @@
 #include <string>
 #include <array>
 #include <unordered_map>
-#include "BufferRead.h"
 
+
+#include "BufferRead.h"
 #include "logger.h"
 #include "Rtp.h"
 #include "Media.h"
 #include "Rtsp.h"
-
 #include "RtpReceiver.h"
 
 
 class Sdp;
-
 
 
 class RtspRequest
@@ -55,7 +54,6 @@ public:
     "RTSP/1.0 404 Not Found\r\n",
     "RTSP/1.0 400 Bad Request\r\n"
     };
-
 
 
     Method GetMethodString(const char* method)
@@ -206,9 +204,9 @@ private:
     std::unordered_map<std::string, std::pair<std::string, uint32_t>> header_line_param_;
 
 public:
+
+
     std::shared_ptr<Sdp> sdp_;
-
-
 };
 
 
