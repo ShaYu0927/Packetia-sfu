@@ -23,8 +23,6 @@ RtspConnection::RtspConnection(std::shared_ptr<RtspServer> rtsp_server, TaskSche
         return this->onClose();
     }); 
 
-    interleaved_handler_ = std::make_shared<RtpInterleaved>();
-    // rtsp_request_->SetInterleavedHandler(interleaved_handler_);
 
 }
 
@@ -76,7 +74,6 @@ bool RtspConnection::onClose()
 
 bool RtspConnection::HandleRtspRequest(BufferReader &buffer)
 {
-    LOG_INFO("RtspConnection::HandleRtspRequest called, sockfd: " + std::to_string(this->GetSocket()));
     if (buffer.ReadableBytes() <= 0)
     {
         LOG_ERROR("Buffer is empty or invalid");
@@ -85,7 +82,6 @@ bool RtspConnection::HandleRtspRequest(BufferReader &buffer)
     std::string str(buffer.Peek(), buffer.ReadableBytes());
 	if (str.find("rtsp") != std::string::npos || str.find("RTSP") != std::string::npos)
 	{
-        std::cout << std::endl;
 		LOG_INFO("Received RTSP request: " + str);
 	}
     LOG_INFO("Parsing RTSP request from buffer, size: " + std::to_string(buffer.ReadableBytes()));
@@ -530,31 +526,82 @@ void RtspConnection::SendRtspMessage(std::shared_ptr<char> data, uint32_t size)
 	return;
 }
 
-bool RtspConnection::onRead(BufferReader &buffer)
+/*
+    interleaved packets: Two interleaved packets are read out at once
+    Unpacking: An interleaved package needs to be read twice to be fully read
+    Interleaved: The $package and RTSP text appear simultaneously
+*/
+
+
+int RtspConnection::RtspConn_ConsumeInterleaved(BufferReader &buffer)
 {
-    LOG_INFO("RtspConnection::onRead called, sockfd: " + std::to_string(this->GetSocket()));
-    int size = buffer.ReadableBytes();
-    if (size <= 0)
+    if (buffer.ReadableBytes() < 4) return false;
+
+    const uint8_t* p = reinterpret_cast<const uint8_t*>(buffer.Peek());
+    if (p[0] != '$') return false;
+
+    uint8_t  ch  = p[1];
+    uint16_t len = (static_cast<uint16_t>(p[2]) << 8) | p[3];
+
+    if(buffer.ReadableBytes() < len + 4)
     {
         return false;
     }
 
-    if (mode_ == RTSP_SERVER) {
+    int rc = interleaved_.onInterleaved(ch, p + 4, len);
+    if(rc < 0)
+    {
+        LOG_INFO("RC handle falied");
+        return false;
+    }
+    buffer.Retrieve(len + 4); /* consumer buffer */
+    return true;
+}
 
-		if (!HandleRtspRequest(buffer))
+bool RtspConnection::onRead(BufferReader &buffer)
+{
+    int size = buffer.ReadableBytes();
+    if (size <= 0) return false;
+
+    if (mode_ == RTSP_SERVER)
+    {
+        /* 数据面：循环消费所有完整的 interleaved 包 */
+        while (RtspConn_ConsumeInterleaved(buffer)) 
         {
-			return false; 
-		}
-	}
-	else if (mode_ == RTSP_PUSHER) {
-		if (!HandleRtspResponse(buffer)) 
-        {           
-			return false;
-		}
-	}
+            continue;
+        }
+
+        if (buffer.ReadableBytes() == 0) 
+        {
+            return true;
+        }
+
+        /* 如果当前 buffer 开头是 '$'，说明是半包，等下次数据，不算错误 */
+        if (buffer.ReadableBytes() >= 1 &&
+            static_cast<unsigned char>(buffer.Peek()[0]) == '$')
+        {
+            return true;
+        }
+
+        
+
+        /* 控制面：处理 RTSP 文本（可能半包，HandleRtspRequest 应该能处理）*/
+        if (!HandleRtspRequest(buffer)) 
+        {
+            return false;
+        }
+    }
+    else if (mode_ == RTSP_PUSHER)
+    {
+        /* 推流端如果也可能收到 interleaved（视你的设计），同理也可先 consume */
+        if (!HandleRtspResponse(buffer)) {
+            return false;
+        }
+    }
 
     return true;
 }
+
 
 std::shared_ptr<RtpTrack> createTrack(TrackType type, const std::string &codec_name, int payload_type, uint32_t clock_rate, int track_index)
 {

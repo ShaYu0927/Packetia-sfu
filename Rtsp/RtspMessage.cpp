@@ -7,51 +7,9 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
     LOG_INFO("ReadableBytes=" + std::to_string(buffer->ReadableBytes()));
     if (buffer->Peek()[0] == '$') // 判断是 RTP 数据包
     {
-        LOG_INFO("Detected RTP over TCP ('$' leading byte). Skip RTSP parse.");
-         const char* p = buffer->Peek();
-
-        uint8_t dollar = static_cast<uint8_t>(p[0]);
-        if (dollar != '$') {
-            LOG_ERROR("Expected '$' at the start of interleaved packet.");
-            return false;
-        }
-        
-        uint8_t channel = static_cast<uint8_t>(p[1]);  // 增加channel映射
-        auto tracker = MediaSessionManager::Instance().GetTcpChannelByChannel(channel);
-        LOG_INFO("Interleaved packet on channel: " + std::to_string(channel) +
-                 " mapped to tracker: " + std::to_string(tracker));
-        uint16_t length  = (static_cast<uint8_t>(p[2]) << 8) | static_cast<uint8_t>(p[3]);
-        if (buffer->ReadableBytes() >= length + 4)
-        {
-            if(p[0] != '$')
-            {
-                LOG_ERROR("Expected '$' at the start of interleaved packet.");
-                return false;
-            }
-
-            LOG_INFO("Processing RTP packet for channel: " + std::to_string(channel) +
-                     " with length: " + std::to_string(length));
-
-            // if(!handler_)
-            // {
-            //     LOG_ERROR("Interleaved handler not set. Cannot process RTP packet.");
-            //     return false;
-            // }
-
-            
-            // handler_->onInterleaved(channel, (const uint8_t*)(p + 4), length);
-            return true;
-        } 
-        else 
-        {
-            LOG_INFO("Incomplete interleaved packet, waiting for more data.");
-            return false;
-        }
-
-        
+        LOG_INFO("this packet is't rtsp request");
         return false; // 表示这不是 RTSP 请求，直接返回
     }
-    
 
     bool ret = true;
     while (true)

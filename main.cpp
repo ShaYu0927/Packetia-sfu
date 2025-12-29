@@ -9,9 +9,12 @@ int main() {
     auto rtsp_server = std::make_shared<RtspServer>(event_loop.get());
 
     // 启动 RTSP 服务器，监听指定 IP 和端口
-    if (rtsp_server->Start("0.0.0.0", 554)) {
+    if (rtsp_server->Start("0.0.0.0", 554)) 
+    {
         std::cout << "RTSP Server started on port 554" << std::endl;
-    } else {
+    } 
+    else 
+    {
         std::cout << "RTSP Server start failed" << std::endl;
         return -1;
     }

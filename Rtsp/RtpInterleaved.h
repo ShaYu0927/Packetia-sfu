@@ -4,6 +4,7 @@
 #include "InterleavedDispatcher.h"
 #include "Rtp.h"
 
+#include <optional>
 #include <mutex>
 #include <unordered_map>
 #include <memory>
@@ -19,7 +20,6 @@ struct InterleavedBinding
 class InterleavedChannelMap
 {
 public:
-    // 在 SETUP 成功后调用
     void bind(uint8_t channel,
               std::weak_ptr<RtpTrack> track,
               bool is_rtcp)
@@ -28,14 +28,13 @@ public:
         map_[channel] = InterleavedBinding{std::move(track), is_rtcp};
     }
 
-    // 在 TEARDOWN / connection close 时调用
     void unbind(uint8_t channel)
     {
         std::lock_guard<std::mutex> lk(mtx_);
         map_.erase(channel);
     }
 
-    // interleaved handler 调用
+    
     std::optional<InterleavedBinding> get(uint8_t channel) const
     {
         std::lock_guard<std::mutex> lk(mtx_);
@@ -45,7 +44,7 @@ public:
         return it->second;
     }
 
-    // 可选：清空（连接关闭时）
+   
     void clear()
     {
         std::lock_guard<std::mutex> lk(mtx_);

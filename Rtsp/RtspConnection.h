@@ -69,6 +69,8 @@ public:
 
     void SendRtspMessage(std::shared_ptr<char> data, uint32_t size);
 
+    int RtspConn_ConsumeInterleaved(BufferReader& buffer);
+
 protected:
     friend class RtspServer; 
     friend class RtspMessage;
@@ -100,7 +102,8 @@ private:
     std::shared_ptr<Channel>       rtp_channel_;        // rtp socket
 	std::shared_ptr<Channel>       rtcp_channels_[MAX_MEDIA_CHANNEL]; //rtcp socket
 
-    std::shared_ptr<RtpInterleaved> interleaved_handler_;
+    RtpInterleaved interleaved_;    
+
 };
 
 
