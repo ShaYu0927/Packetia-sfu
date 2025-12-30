@@ -15,7 +15,7 @@
 
 class RtspServer;
 
- std::shared_ptr<RtpTrack> createTrack(
+std::shared_ptr<RtpTrack> createTrack(
         TrackType type,
         const std::string& codec_name,
         int payload_type,
@@ -81,6 +81,8 @@ protected:
     bool onWrite(BufferWirte& buffer);
     bool onClose();
 
+private:
+    int ParseStreamId(const std::string& control);
 
 
 private:

@@ -94,11 +94,15 @@ public:
 
     void HandleEvent(int events)
     {
+#if RTP_DEBUG
         LOG_INFO("Channel::HandleEvent called on fd=" + std::to_string(sockfd_) + " events=" + std::to_string(events));
+#endif
 
         if (events & (EVENT_PRI | EVENT_IN)) 
         {
+#if RTP_DEBUG
             LOG_INFO("Channel fd=" + std::to_string(sockfd_) + " readable");
+#endif
             readCallback_();
         }
 

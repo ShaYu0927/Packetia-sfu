@@ -92,7 +92,9 @@ void TcpConnection::HandleRead()
     int n = 0;
     do {
             n = read_buffer_->Read(channel_->GetSocket());
+#if RTP_DEBUG
             LOG_INFO("Read returned: " + std::to_string(n));
+#endif
     } while(n > 0);
 
     if (n == 0) 
@@ -148,10 +150,14 @@ void TcpConnection::HandleRead()
 
 void TcpConnection::HandleWrite()
 {
-    if (is_closed_) {
+    if (is_closed_) 
+    {
         return;
     }
-	LOG_INFO("HandleWrite called, write_buffer empty? " + std::to_string(write_buffer_->IsEmpty()));
+#if RTP_DEBUG
+    LOG_INFO("HandleWrite called, write_buffer empty? " + std::to_string(write_buffer_->IsEmpty()));
+#endif
+	
 
     std::lock_guard<std::mutex> lock(mutex_);  // 一次锁定
 

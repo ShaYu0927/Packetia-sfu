@@ -55,7 +55,9 @@ bool EpollTaskScheduler::HandleEvent(int timeout)
 	int num_events = -1;
     
     num_events = epoll_wait(epollfd_, events, 512, timeout);
+#if RTP_DEBUG
     LOG_INFO("epoll_wait returned " + std::to_string(num_events) + " events");
+#endif
     if(num_events < 0)  
     {
 		if(errno != EINTR) 
@@ -70,7 +72,9 @@ bool EpollTaskScheduler::HandleEvent(int timeout)
         {        
             auto fd = ((Channel *)events[i].data.ptr)->GetSocket();
             uint32_t ev = events[i].events;
+#if RTP_DEBUG
             LOG_INFO("Event on fd=" + std::to_string(fd) + " events=" + std::to_string(ev));
+#endif
 			((Channel *)events[i].data.ptr)->HandleEvent(events[i].events);
 		}
     }

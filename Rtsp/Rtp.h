@@ -11,7 +11,8 @@
 
 class Sdp;
 
-class RtpHeader {
+class RtpHeader 
+{
 
 public:
       static constexpr size_t kSize = 12;
@@ -57,17 +58,20 @@ private:
 };
 
 
-struct RtpTransportTcp {
+struct RtpTransportTcp 
+{
     uint16_t rtp_channel = 0;
     uint16_t rtcp_channel = 0;
 };
 
-struct RtpTransportUdp {
+struct RtpTransportUdp 
+{
     uint16_t rtp_port = 0;
     uint16_t rtcp_port = 0;
 };
 
-struct RtpTransportInfo {
+struct RtpTransportInfo 
+{
     MediaTransportType transport_type = MediaTransportType::UNKNOWN;
 
     struct {
@@ -82,27 +86,32 @@ struct RtpTransportInfo {
 };
 
 
-struct RtcpStats {
+struct RtcpStats 
+{
     uint64_t packet_count = 0;
     uint64_t octet_count = 0;
     uint64_t last_ntp_time = 0;
 };
 
-enum class MediaSessionState : uint8_t {
+enum class MediaSessionState : uint8_t 
+{
     Init   = 0,
     Setup  = 1,
     Play   = 2,
     Record = 4,
 };
 
-inline MediaSessionState operator|(MediaSessionState a, MediaSessionState b) {
+inline MediaSessionState operator|(MediaSessionState a, MediaSessionState b) 
+{
     return static_cast<MediaSessionState>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
 }
-inline bool hasState(MediaSessionState state, MediaSessionState flag) {
+inline bool hasState(MediaSessionState state, MediaSessionState flag) 
+{
     return (static_cast<uint8_t>(state) & static_cast<uint8_t>(flag)) != 0;
 }
 
-struct MediaChannelInfo {
+struct MediaChannelInfo 
+{
     RtpHeader rtp_header;
 
     RtpTransportInfo transport;
@@ -131,14 +140,16 @@ public:
     EnhancedPacketSortor(uint16_t max_gap = 1000, size_t max_cache = 50, uint32_t flush_timeout_ms = 100)
         : _max_gap(max_gap), _max_cache(max_cache), _flush_timeout(flush_timeout_ms) {}
 
-    void setOnPacketSorted(Callback cb) {
+    void setOnPacketSorted(Callback cb) 
+    {
         _cb = std::move(cb);
     }
 
     void inputPacket(Seq seq, Packet pkt) {
         auto now = std::chrono::steady_clock::now();
 
-        if (!_started) {
+        if (!_started) 
+        {
             _next_seq = seq;
             _last_flush_time = now;
             _started = true;
@@ -152,25 +163,33 @@ public:
             _last_flush_time = now;
         }
 
-        if (seq == _next_seq) {
+        if (seq == _next_seq) 
+        {
             emit(seq, pkt);
             flushBuffered();
-        } else if (distance(seq, _next_seq) < _max_gap) {
+        } 
+        else if (distance(seq, _next_seq) < _max_gap) 
+        {
             _buffer[seq] = std::move(pkt);
-            if (_buffer.size() > _max_cache) {
+            if (_buffer.size() > _max_cache) 
+            {
                 ++_lost_count;
                 std::cout << "[PacketSortor] too much cache, force drop seq=" << _next_seq << std::endl;
                 ++_next_seq;
                 flushBuffered();
             }
-        } else {
+        } 
+        else 
+        {
             // 包太旧或太远，不缓存
             ++_drop_count;
         }
     }
 
-    void flushBuffered() {
-        while (!_buffer.empty()) {
+    void flushBuffered() 
+    {
+        while (!_buffer.empty()) 
+        {
             auto it = _buffer.find(_next_seq);
             if (it == _buffer.end())
                 break;
@@ -184,14 +203,17 @@ public:
     size_t getDropCount() const { return _drop_count; }
 
 private:
-    void emit(Seq seq, const Packet& pkt) {
-        if (_cb) {
+    void emit(Seq seq, const Packet& pkt) 
+    {
+        if (_cb) 
+        {
             _cb(seq, pkt);
         }
         ++_next_seq;
     }
 
-    uint32_t distance(Seq a, Seq b) const {
+    uint32_t distance(Seq a, Seq b) const 
+    {
         return static_cast<uint16_t>(a - b); // 支持回绕
     }
 

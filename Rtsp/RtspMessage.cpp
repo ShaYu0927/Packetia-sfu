@@ -468,9 +468,14 @@ bool RtspRequest::ParseRequestLine(const char *begin, const char *end)
 bool RtspRequest::ParseHeaderLines(const char *begin, const char *end)
 {
     std::string line(begin, end);
-    LOG_INFO("Parsing RTSP header line: [" + line + "]");
 
-    if (line.empty()) {
+#if RTP_DEBUG
+            LOG_INFO("Parsing RTSP header line: [" + line + "]");
+#endif
+    
+
+    if (line.empty()) 
+    {
         LOG_INFO("Empty header line encountered");
         return false;
     }

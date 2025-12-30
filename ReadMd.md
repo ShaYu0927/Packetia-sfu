@@ -17,3 +17,46 @@ stability and correctness.
 ### Design Changes
 - Introduce a clear separation between media data plane and RTSP control plane
 - RTP/RTCP packets are now consumed at the connection read level
+
+# Version 0.3.0 – 2025-12-30
+## Highlights
+
+This release completes the RTSP-over-TCP interleaved media pipeline by
+introducing explicit channel-to-track binding and a codec-aware RTP track
+factory, enabling correct RTP/RTCP demultiplexing and per-track packet handling.
+
+## Improvements
+
+- Introduce RtpInterleaved channel map to dispatch interleaved RTP/RTCP packets
+by negotiated TCP channel
+
+- Bind RTP/RTCP interleaved channels to tracks during SETUP negotiation
+
+- Add createTrack() factory to construct codec-specific RTP tracks
+
+- Parse a=control:streamid=N safely via a dedicated ParseStreamId() helper
+
+- Improve RTP debug visibility with optional per-packet header logging
+
+- Generate compile_commands.json via CMake for accurate IDE tooling support
+
+## Bug Fixes
+
+- Fix incorrect use of track index as interleaved channel ID
+
+- Fix RTP/RTCP packets being routed without validated SETUP binding
+
+- Fix potential session/track mismatch during multi-track SETUP sequences
+
+- Fix undefined reference caused by missing function definitions at link time
+
+## Design Changes
+
+- Clearly separate RTSP control plane (request/response parsing)
+from media data plane (RTP/RTCP packet dispatch)
+
+- RtpTrack lifetime is now managed via shared_ptr, while interleaved dispatch
+uses weak_ptr to avoid ownership cycles
+
+- TCP interleaved channels are treated as connection-scoped identifiers,
+independent of media track indices

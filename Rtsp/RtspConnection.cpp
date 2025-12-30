@@ -72,6 +72,40 @@ bool RtspConnection::onClose()
     return true;
 }
 
+int RtspConnection::ParseStreamId(const std::string& control)
+{
+    // streamid=NUMBER
+    static const std::string kKey = "streamid=";
+
+    auto pos = control.find(kKey);
+    if (pos == std::string::npos) 
+    {
+        LOG_ERROR("ParseStreamId: no 'streamid=' in control=", control);
+        return -1;
+    }
+
+    std::string num = control.substr(pos + kKey.size());
+    if (num.empty()) 
+    {
+        LOG_ERROR("ParseStreamId: empty streamid in control=", control);
+        return -1;
+    }
+
+    try {
+        int idx = std::stoi(num);
+        if (idx < 0) {
+            LOG_ERROR("ParseStreamId: negative streamid=", idx);
+            return -1;
+        }
+        return idx;
+    }
+    catch (const std::exception& e) {
+        LOG_ERROR("ParseStreamId: invalid streamid=", num, " err=", e.what());
+        return -1;
+    }
+}
+
+
 bool RtspConnection::HandleRtspRequest(BufferReader &buffer)
 {
     if (buffer.ReadableBytes() <= 0)
@@ -227,184 +261,89 @@ void RtspConnection::HandleCmdANNOUNCE()
 /*
     处理客户端 SETUP 请求，根据传输模式（TCP/UDP/组播）为每个 track 建立对应的 RTP 通道，并构造符合 RTSP 标准的响应报文
 */
-void RtspConnection::HandleCmdSetup() 
+void RtspConnection::HandleCmdSetup()
 {
+    if (!rtsp_) { LOG_ERROR("RTSP context is null"); return; }
+
+    std::string url = rtsp_request_->GetRtspUSuffix();
     auto controlTdx = rtsp_request_->GetControl();
-    LOG_INFO("Handling SETUP request");
-    if (!rtsp_) 
+
+    auto media_session = MediaSessionManager::Instance().GetSessionBySuffix(url);
+    if (!media_session) {
+        media_session = MediaSession::CreateNew(url);
+        std::string sid = MediaSessionManager::Instance().AddSession(media_session, url);
+        media_session->SetId(std::stoi(sid));
+    }
+    std::string sessionId = std::to_string(media_session->GetId()); // 统一
+
+    int trackIdx = -1;
+    std::shared_ptr<RtpTrack> track_ptr;
+
+    // 1) 从 SDP 找到对应 track 并创建 track_ptr
+    bool found = false;
+    for (auto& m : rtsp_request_->sdp_->media_list_) 
     {
-        LOG_ERROR("RTSP context is null");
+        if (m.control == controlTdx) 
+        {
+            found = true;
+            trackIdx = ParseStreamId(m.control);
+            TrackType type = (m.media_type == "video") ? TrackType::TrackVideo : TrackType::TrackAudio;
+            track_ptr = createTrack(type, m.codec_name, m.payload_type, m.clock_rate, trackIdx );
+            MediaSessionManager::Instance().AddTrackChannel(trackIdx, track_ptr);
+            break;
+        }
+    }
+    if (!found || trackIdx < 0 || !track_ptr) 
+    {
+        LOG_ERROR("SETUP: track not found, control=", controlTdx);
+        // 回复 404/461
         return;
     }
 
-    // 管理session
-    std::string _sessionId;
-    std::string url = rtsp_request_->GetRtspUSuffix();
-    LOG_INFO("SETUP request for url=" + url);
+    if (!rtp_connection_) rtp_connection_ = std::make_shared<RtpConnection>(shared_from_this());
 
-    auto media_session = MediaSessionManager::Instance().GetSessionBySuffix(url);
-    if (!media_session) 
-    {
-        LOG_INFO("No existing MediaSession found for url=" + url + ", creating new one...");
-        media_session = MediaSession::CreateNew(url);
-
-        std::string session_id = MediaSessionManager::Instance().AddSession(media_session,url);
-        media_session->SetId(std::stoi(session_id));
-        LOG_INFO("Created new MediaSession with id=" + session_id + " for url=" + url);
-        _sessionId = session_id;
-    } 
-    else 
-    {
-        _sessionId = media_session->GetId();
-        LOG_INFO("Found existing MediaSession. url=" + url + ", session_id=" + _sessionId);
-    }
-
-    //SSRC 是 RTP 包头第 9~12 字节，发送端写进去的，你只需要从 RTP 包中解析出来即可。
-
-
-    LOG_INFO("Assigned _sessionId=" + _sessionId);
-
-    int trackIdx = -1;
-    LOG_INFO("rtsp_request_->sdp_->media_list_ size=" + std::to_string(rtsp_request_->sdp_->media_list_.size()));
-    for(auto &m : rtsp_request_->sdp_->media_list_)
-    {
-
-        std::string control = m.control; // "streamid=0"
-        size_t pos = control.find("streamid=");
-        LOG_INFO("Processing media control AND controlIdx: " + control , controlTdx);
-        //The check controlTdx == control is a safety measure to prevent sending RTP/RTCP packets to the wrong track
-        if(pos != std::string::npos && controlTdx == control) 
-        {
-            std::string idxStr = control.substr(pos + 9); 
-            trackIdx = std::stoi(idxStr);                 
-            LOG_INFO("Found trackIdx=" + std::to_string(trackIdx));
-             media_session->AddTrack(
-                static_cast<TrackType>(
-                    m.media_type == "video" ? SdpTracker::TrackType::TrackVideo : SdpTracker::TrackType::TrackAudio
-                ),
-                m.codec_name,
-                m.control
-            );
-
-            // 构造 SdpTracker 并添加到 MediaSessionManager
-            TrackType type = (m.media_type == "video")
-                ? TrackType::TrackVideo
-                : TrackType::TrackAudio;
-
-            auto track_ptr = createTrack(
-                type,
-                m.codec_name,
-                m.payload_type,
-                m.clock_rate,
-                trackIdx
-            );
-            
-            MediaSessionManager::Instance().AddTrackChannel(trackIdx, track_ptr);
-            break; // 找到就退出
-        }
-        else
-        {
-            LOG_ERROR("Control string mismatch or 'streamid=' not found in control: " + control);
-        }
-        
-    }
-        
-    
     std::shared_ptr<char> res(new char[10240], std::default_delete<char[]>());
     int size = 0;
     MediaChannelId channel_id = rtsp_request_->GetSessionId();
-    auto rtsp = rtsp_; // 避免 move 导致后续失效
 
-    if (!rtp_connection_) 
-    { 
-        rtp_connection_ = std::make_shared<RtpConnection>(shared_from_this()); 
-    }
-
-    if(media_session->isMulticast())  //如果组包传输
+    // 2) transport 分支
+    if (rtsp_request_->GetTransport() == RTP_OVER_TCP) 
     {
-        std::string multicast_ip = media_session->GetMulticastIp();
-        if(rtsp_request_->GetTransport() == RTP_OVER_MULTICAST)
+        uint16_t rtp_ch  = rtsp_request_->GetRtpChannel();
+        uint16_t rtcp_ch = rtsp_request_->GetRtcpChannel();
+
+        if (rtp_ch > 255 || rtcp_ch > 255 || rtp_ch == rtcp_ch) 
         {
-            uint16_t port = media_session->GetMulticastPort(channel_id);
-            auto session_id = rtp_connection_->GetRtpSessionId();
-            LOG_INFO("Setting up multicast RTP connection for channel: " + std::to_string(channel_id));
-            if (!rtp_connection_->SetupRtpOverMulticast(channel_id, multicast_ip, media_session->GetMulticastPort(channel_id))) 
-            {
-                LOG_ERROR("Failed to setup RTP over multicast for channel: " + std::to_string(channel_id));
-                size = rtsp_request_->BuildNotFoundRes(res, 4096);
-                this->SendRtspMessage(res, size);
-                return;
-            }
-            size = rtsp_request_->BuildSetupMulticastRes(res, 4096, multicast_ip.c_str(), port, session_id);
-        }
-        else
-        {
-            LOG_ERROR("Invalid transport type for multicast setup");
-            int size = rtsp_request_->BuildNotFoundRes(res, 4096);
-            this->SendRtspMessage(res, size);
-            LOG_ERROR("Invalid transport type for multicast setup");
+            LOG_ERROR("Invalid interleaved channels rtp=", rtp_ch, " rtcp=", rtcp_ch);
+            // 回复 461
             return;
         }
 
-    }
-    else
-    {
-        //判读是否是 TCP 传输 或者 UDP 传输
-        if(rtsp_request_->GetTransport() == RTP_OVER_TCP)
+        if (!rtp_connection_->SetupRtpOverTcp(channel_id, rtp_ch, rtcp_ch)) 
         {
-            LOG_INFO("RTP OVER TCP");
-            uint16_t rtp_channel = rtsp_request_->GetRtpChannel();
-            uint16_t rtcp_channel = rtsp_request_->GetRtcpChannel();
-            LOG_INFO("SETUP parsed channels: RTP channel=" + std::to_string(rtp_channel) +
-         ", RTCP channel=" + std::to_string(rtcp_channel));
-            // 建立track与channel的映射关系
-            TcpChannel tcp_channel = { rtp_channel, rtcp_channel };
-            MediaSessionManager::Instance().AddTcpChannelMapping(trackIdx, tcp_channel);
-            if (!rtp_connection_->SetupRtpOverTcp(channel_id, rtp_channel, rtcp_channel)) 
-            {
-                LOG_ERROR("Failed to setup RTP over TCP for channel: " + std::to_string(channel_id));
-                size = rtsp_request_->BuildNotFoundRes(res, 4096);
-                this->SendRtspMessage(res, size);
-                return;
-            }
-            //回复告诉客户端已经协商成功，端口
-            size = rtsp_request_->BuildSetupRes(res, 4096, rtp_channel, rtcp_channel, channel_id,_sessionId);
-        }
-        else if(rtsp_request_->GetTransport() == RTP_OVER_UDP)
-        {
-            LOG_INFO("RTP OVER UDP");
-            //分配UDP复用端口，RTP 5000, RTCP 5001，通过UDPserver 监听
-            auto ptrPort = UDPServer::allocatePair();
-            rtp_connection_->local_rtp_port_[trackIdx]  = ptrPort.first;
-            rtp_connection_->local_rtcp_port_[trackIdx] = ptrPort.second;
-            runLoopReceive(); //启动接收线程
-
-            uint16_t rtp_channel = rtsp_request_->GetRtpChannel();
-            uint16_t rtcp_channel = rtsp_request_->GetRtcpChannel();
-
-            if (!rtp_connection_->SetupRtpOverUdp(channel_id, rtp_channel, rtcp_channel)) 
-            {
-                LOG_ERROR("Failed to setup RTP over UDP for channel: " + std::to_string(channel_id));
-                size = rtsp_request_->BuildNotFoundRes(res, 4096);
-                this->SendRtspMessage(res, size);
-                return;
-            }
-            size = rtsp_request_->BuildSetupRes(res, 4096, 0, 1, channel_id,_sessionId);
-        }
-        else
-        {
-            LOG_ERROR("Unsupported transport mode for SETUP");
+            // 回复错误
             return;
         }
+
+        // 关键：channel -> track 绑定（用于接收端切包分发）
+        interleaved_.bind((uint8_t)rtp_ch,  track_ptr, false);
+        interleaved_.bind((uint8_t)rtcp_ch, track_ptr, true);
+
+        size = rtsp_request_->BuildSetupRes(res, 4096, rtp_ch, rtcp_ch, channel_id, sessionId);
+    }
+    else if (rtsp_request_->GetTransport() == RTP_OVER_UDP) {
+        // TODO: 这里建议按 client_port/server_port 语义重做
+       
+    }
+    else {
+        LOG_ERROR("Unsupported transport mode for SETUP");
+        return;
     }
 
-    
-    this->SendRtspMessage(res, size);
-    media_session->AddClient(channel_id,rtp_connection_);
-
-    //对端口进行初始化
-
+    SendRtspMessage(res, size);
+    media_session->AddClient(channel_id, rtp_connection_);
 }
+
 
 void RtspConnection::HandleCmdRecord()
 {
@@ -547,6 +486,7 @@ int RtspConnection::RtspConn_ConsumeInterleaved(BufferReader &buffer)
     {
         return false;
     }
+    LOG_INFO("Start handle data:", buffer.ReadableBytes());
 
     int rc = interleaved_.onInterleaved(ch, p + 4, len);
     if(rc < 0)
@@ -576,19 +516,19 @@ bool RtspConnection::onRead(BufferReader &buffer)
             return true;
         }
 
-        /* 如果当前 buffer 开头是 '$'，说明是半包，等下次数据，不算错误 */
-        if (buffer.ReadableBytes() >= 1 &&
-            static_cast<unsigned char>(buffer.Peek()[0]) == '$')
-        {
-            return true;
-        }
+        const uint8_t* p = reinterpret_cast<const uint8_t*>(buffer.Peek());
+        if (p[0] == '$') return true;
 
         
+        size_t before = buffer.ReadableBytes();
+        bool ok = HandleRtspRequest(buffer);
+        if (!ok) return false;
 
-        /* 控制面：处理 RTSP 文本（可能半包，HandleRtspRequest 应该能处理）*/
-        if (!HandleRtspRequest(buffer)) 
+        size_t after = buffer.ReadableBytes();
+        if (after == before) 
         {
-            return false;
+           /* part packet*/
+            return true;
         }
     }
     else if (mode_ == RTSP_PUSHER)

@@ -4,6 +4,8 @@ project(RtspServer)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_BUILD_TYPE Debug)
 
+add_compile_definitions(RTP_DEBUG=0)
+
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
   add_compile_options(
     -O0
@@ -80,6 +82,8 @@ add_library(rtp STATIC
     Rtsp/RtpConnection.cpp
     Rtsp/RtpConnection.h
     Rtsp/RtpTypes.h
+    Rtsp/RtspUtil.cpp
+    Rtsp/RtspUtil.h
 )
 
 
@@ -127,3 +131,12 @@ target_link_libraries(tcp_client pthread)
 
 enable_testing()
 add_test(NAME TcpClientTest COMMAND tcp_client)
+
+
+target_compile_definitions(FFmpegAAc PRIVATE RTP_DEBUG=1)
+
+# cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+# cmake --build build
+
+
+
