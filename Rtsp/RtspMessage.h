@@ -116,7 +116,6 @@ public:
     {
         return rtp_channel_;
     }
-
     const uint16_t GetRtcpChannel()
     {
         

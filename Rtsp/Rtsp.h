@@ -100,9 +100,11 @@ public:
 };
 
 
-class SdpTracker {
+class SdpTracker 
+{
 public:
-    typedef enum {
+    typedef enum 
+    {
         TrackInvalid = -1,
         TrackVideo = 0,
         TrackAudio,
@@ -121,6 +123,10 @@ public:
     float _start = 0;
     float _end = 0;
 
+
+
+
+
     std::map<char, std::string> _other;
     std::multimap<std::string, std::string> _attr;
 
@@ -135,6 +141,7 @@ public:
     int _pt = 0xff;
     int _channel = 0;
     int _samplerate = 0;
+    int _clock_rate ;
     TrackType _type = TrackInvalid;
     std::string _codec;
     std::string _fmtp;

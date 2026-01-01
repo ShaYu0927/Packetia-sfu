@@ -60,3 +60,25 @@ uses weak_ptr to avoid ownership cycles
 
 - TCP interleaved channels are treated as connection-scoped identifiers,
 independent of media track indices
+
+
+# Version 0.2.1 – 2026-01-01
+## Highlights
+
+- This release fixes RTSP RECORD failures caused by missing track registration during SETUP, and introduces an initial - - RTP-over-TCP interleaved processing pipeline that decouples network I/O from media processing.
+
+## Improvements
+
+- Register SDP tracks into MediaSession::tracks_ during SETUP to ensure RECORD operates on a fully initialized session
+
+- Add MediaSession::BindRtpTrack(trackIdx, track_ptr) to associate trackIdx -> RtpTrack for deterministic lookup during - - RECORD and media processing
+
+- Introduce an initial worker-based RTP input pipeline (PacketPool + WorkerPool) to offload heavy RTP processing from the connection read thread
+
+- Add structured logging for SETUP track matching (control/codec/pt/clock/trackIdx) and for RECORD session/track validation
+
+## Bug Fixes
+
+- Fix RTSP RECORD returning no response when MediaSession::tracks_ is empty (root cause: SETUP did not register tracks)
+
+- Fix incorrect/misleading logs in RECORD handler (e.g., printing “SETUP request” in RECORD path)

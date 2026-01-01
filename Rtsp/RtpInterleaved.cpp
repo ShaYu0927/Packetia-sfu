@@ -45,6 +45,14 @@ void RtpInterleaved::unbind(uint8_t ch)
 #endif
 }
 
+
+/*
+    Check the binding based on ch: get trackIdx/is_rtcp/tracker or RtpTrack
+    Apply for pool buffer
+    Copy the payload (copying is recommended at this stage)
+    Deliver to WorkerPool"
+
+*/
 int RtpInterleaved::onInterleaved(uint8_t channel, const uint8_t *payload, size_t length)
 {
 #if RTP_DEBUG

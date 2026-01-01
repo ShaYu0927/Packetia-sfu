@@ -40,7 +40,14 @@ public:
     static Ptr CreateNew(const std::string& suffix);
     
     bool AddSource(MediaChannelId channel_id, MediaSourcePtr source);
-    bool AddTrack(TrackType type, const std::string& codec, const std::string& control);
+
+    bool AddTrack(TrackType type,
+                        const std::string& codec,
+                        const std::string& control,
+                        int payload_type,
+                        int clock_rate);
+
+
     void PushFrame(MediaChannelId channel_id, const AVFrame& frame);
     std::string GetSdpMessage(const std::string& ip, const std::string& session_name = "");
 
@@ -51,7 +58,9 @@ public:
     void Stop();
 
     MediaSessionId GetId() const { return session_id_; }
+
     void SetId(MediaSessionId id) { session_id_ = id; }
+
     const std::string& GetRtspSuffix() const { return suffix_; }
 
     MediaSessionId GetMediaChannelClockRate(MediaChannelId channel_id) const 
@@ -82,7 +91,17 @@ public:
         return multicast_port_[channel_id];
     }
 
+    /*
+        Avoid session forcibly extending the track lifecycle
+    */
    
+    void BindRtpTrack(int trackIdx, const std::shared_ptr<RtpTrack>& track);
+
+    std::shared_ptr<RtpTrack> GetRtpTrack(int trackIdx) const;
+
+    /* Unbind the rtp tracker */
+    void UnbindRtpTrack(int trackIdx);
+
 
 private:
     struct ClientSession 
@@ -107,7 +126,8 @@ private:
     };
 
     //缓存队列包
-    struct PacketCache {
+    struct PacketCache 
+    {
         std::unordered_map<uint16_t, RtpPacketPtr> packets;
         std::mutex cache_mutex;
     };
@@ -140,12 +160,17 @@ private:
     bool is_multicast_{false};
     std::string multicast_ip_;
     uint16_t multicast_port_[MAX_MEDIA_CHANNEL];
-    
     std::atomic_bool has_new_client_;
+
+
+    mutable std::mutex track_mtx_;
+    std::unordered_map<int, std::weak_ptr<RtpTrack>> rtp_tracks_;
+    
 };
 
 
-class MediaSessionManager {
+class MediaSessionManager 
+{
 public:
     using Ptr = std::shared_ptr<MediaSession>;
 
@@ -154,7 +179,8 @@ public:
         return inst;
     }
 
-    std::string AddSession(MediaSession::Ptr session, const std::string& suffix) {
+    std::string AddSession(MediaSession::Ptr session, const std::string& suffix) 
+    {
         std::lock_guard<std::mutex> lock(mtx_);
         std::string id = std::to_string(++last_id_);
         session->session_id_ = last_id_; // 给 session 分配全局 ID
@@ -170,7 +196,8 @@ public:
         _channel_to_track[track_index] = track;
     }
 
-    MediaSession::Ptr GetSessionById(const std::string& id) {
+    MediaSession::Ptr GetSessionById(const std::string& id) 
+    {
         std::lock_guard<std::mutex> lock(mtx_);
         auto it = sessions_.find(id);
         return (it != sessions_.end()) ? it->second : nullptr;
@@ -178,21 +205,27 @@ public:
 
     RtpTrackPtr GetTrackByIndex(uint8_t track_index); 
 
-    MediaSession::Ptr GetSessionBySuffix(const std::string& suffix) {
+    MediaSession::Ptr GetSessionBySuffix(const std::string& suffix) 
+    {
         std::lock_guard<std::mutex> lock(mtx_);
         auto it = suffix_map_.find(suffix);
         return (it != suffix_map_.end()) ? it->second : nullptr;
     }
 
-    void RemoveSession(const std::string& id) {
+    void RemoveSession(const std::string& id) 
+    {
         std::lock_guard<std::mutex> lock(mtx_);
         auto it = sessions_.find(id);
         if (it != sessions_.end()) {
             // 同时从 suffix_map_ 删除
-            for (auto sit = suffix_map_.begin(); sit != suffix_map_.end();) {
-                if (sit->second == it->second) {
+            for (auto sit = suffix_map_.begin(); sit != suffix_map_.end();) 
+            {
+                if (sit->second == it->second) 
+                {
                     sit = suffix_map_.erase(sit);
-                } else {
+                } 
+                else 
+                {
                     ++sit;
                 }
             }

@@ -31,20 +31,44 @@ bool MediaSession::AddSource(MediaChannelId channel_id, MediaSourcePtr source)
     return false;
 }
 
-bool MediaSession::AddTrack(TrackType type, const std::string &codec, const std::string &control)
+bool MediaSession::AddTrack(TrackType type,
+                            const std::string& codec,
+                            const std::string& control,
+                            int payload_type,
+                            int clock_rate)
 {
+    
+    for (auto& t : tracks_) 
+    {
+        if (t->_control == control) 
+        {
+            // 可选择更新 codec/pt/clock_rate
+            t->_codec = codec;
+            t->_pt = payload_type;
+            t->_clock_rate = clock_rate;
+            return true;
+        }
+    }
+
     auto track = std::make_shared<SdpTracker>();
     track->_type = static_cast<SdpTracker::TrackType>(type);
     track->_codec = codec;
     track->_control = control;
+    track->_pt = payload_type;
+    track->_clock_rate = clock_rate;
 
-    if(type == SdpTracker::TrackVideo) track->_pt = 96;  
-    else if(type == SdpTracker::TrackAudio) track->_pt = 97;
-
-    track->_inited = true;
+    track->_inited = false;   
     tracks_.push_back(track);
+
+    LOG_INFO("AddTrack: type=" + std::to_string((int)type) +
+             " control=" + control +
+             " codec=" + codec +
+             " pt=" + std::to_string(payload_type) +
+             " clock=" + std::to_string(clock_rate) +
+             " total=" + std::to_string(tracks_.size()));
     return true;
 }
+
 
 // bool MediaSession::AddTrack(SdpTracker::TrackType type, const std::string &codec, const std::string &control)
 // {
@@ -59,7 +83,6 @@ bool MediaSession::AddTrack(TrackType type, const std::string &codec, const std:
 void MediaSession::PushFrame(MediaChannelId channel_id, const AVFrame &frame)
 {
     if (channel_id >= media_sources_.size()) return;
-   
 }
 
 
@@ -106,12 +129,15 @@ void MediaSession::Start()
 {
     running_ = true;
     std::lock_guard<std::mutex> lock(clients_mutex_);
-    for (auto &client : clients_) {
-        if (!client.second->send_thread.joinable()) {
+    for (auto &client : clients_) 
+    {
+        if (!client.second->send_thread.joinable()) 
+        {
             client.second->send_thread = std::thread(&MediaSession::SendLoop, this, client.second.get());
         }
     }
-    if (clients_.empty()) {
+    if (clients_.empty()) 
+    {
         LOG_ERROR("No clients connected to the media session.");
         return;
     }
@@ -122,7 +148,8 @@ void MediaSession::Stop()
 {
     running_ = false;
     std::lock_guard<std::mutex> lock(clients_mutex_);
-    for (auto &client : clients_) {
+    for (auto &client : clients_) 
+    {
         client.second->running = false;
         client.second->queue_cv.notify_one();
         if (client.second->send_thread.joinable())
@@ -131,6 +158,38 @@ void MediaSession::Stop()
     clients_.clear();
 }
 
+void MediaSession::BindRtpTrack(int trackIdx, const std::shared_ptr<RtpTrack> &track)
+{
+    if(!track)
+    {
+        LOG_ERROR("BindRtpTrack: null track, idx=" + std::to_string(trackIdx));
+        return;
+    }
+    std::lock_guard<std::mutex> lk(track_mtx_);
+    rtp_tracks_[trackIdx] = track;
+
+
+    LOG_INFO("BindRtpTrack: session=" + std::to_string(session_id_) +
+             " idx=" + std::to_string(trackIdx) +
+             " track_ptr=" + std::to_string(reinterpret_cast<uintptr_t>(track.get())));
+}
+
+std::shared_ptr<RtpTrack> MediaSession::GetRtpTrack(int trackIdx) const
+{
+    std::lock_guard<std::mutex> lk(track_mtx_);
+    auto it = rtp_tracks_.find(trackIdx);
+    if(it == rtp_tracks_.end()) return nullptr;
+    return it->second.lock();
+}
+
+void MediaSession::UnbindRtpTrack(int trackIdx)
+{
+    std::lock_guard<std::mutex> lk(track_mtx_);
+    rtp_tracks_.erase(trackIdx);
+
+    LOG_INFO("UnbindRtpTrack: session=" + std::to_string(session_id_) +
+             " idx=" + std::to_string(trackIdx));
+}
 
 MediaSession::MediaSession(const std::string &suffix)
     : suffix_(suffix)
@@ -157,8 +216,6 @@ void MediaSession::SendLoop(ClientSession *client)
             auto pkt = client->send_queue.front();
             client->send_queue.pop_front();
             lock.unlock();
-
-          
         }
     }
 }
@@ -173,7 +230,8 @@ RtpTrackPtr MediaSessionManager::GetTrackByIndex(uint8_t track_index)
 SdpTrackerPtr MediaSessionManager::GetTrackBySessionAndIndex(const std::string &session_id, int track_index)
 {
     auto session = GetSessionById(session_id);
-    if (session && track_index >= 0 && track_index < static_cast<int>(session->tracks_.size())) {
+    if (session && track_index >= 0 && track_index < static_cast<int>(session->tracks_.size())) 
+    {
         return session->tracks_[track_index];
     }
     return nullptr;
@@ -183,7 +241,8 @@ std::shared_ptr<RtpTrack> MediaSessionManager::GetTrackByChnnel(uint8_t channel)
 {
     std::lock_guard<std::mutex> lock(mtx_);
     auto it = _channel_to_track.find(channel);
-    if (it != _channel_to_track.end()) {
+    if (it != _channel_to_track.end()) 
+    {
         return it->second;
     }
     return nullptr;
@@ -192,8 +251,10 @@ std::shared_ptr<RtpTrack> MediaSessionManager::GetTrackByChnnel(uint8_t channel)
 int MediaSessionManager::GetTcpChannelByChannel(uint8_t channel)
 {
     std::lock_guard<std::mutex> lock(mtx_);
-    for (const auto& [key, tracker] : _channel_to_tcp_tracker_) {
-        if (tracker.rtp == channel || tracker.rtcp == channel) {
+    for (const auto& [key, tracker] : _channel_to_tcp_tracker_) 
+    {
+        if (tracker.rtp == channel || tracker.rtcp == channel) 
+        {
             return key; 
         }
     }

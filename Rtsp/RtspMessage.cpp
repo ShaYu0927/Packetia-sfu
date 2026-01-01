@@ -656,22 +656,27 @@ bool RtspRequest::ParseAccept(std::string &message)
 bool RtspRequest::ParseTransport(const std::string &header) {
     std::istringstream iss(header);
     std::string line;
-    while (std::getline(iss, line)) {
+    while (std::getline(iss, line)) 
+    {
         // 移除行尾 \r
-        if (!line.empty() && line.back() == '\r') {
+        if (!line.empty() && line.back() == '\r') 
+        {
             line.pop_back();
         }
 
-        if (line.find("Transport:") != std::string::npos) {
+        if (line.find("Transport:") != std::string::npos) 
+        {
             LOG_INFO("Parsing Transport line: " + line);
 
             // 判断 TCP
-            if (line.find("interleaved=") != std::string::npos) {
+            if (line.find("interleaved=") != std::string::npos) 
+            {
                 // RTP over TCP
                 size_t pos = line.find("interleaved=");
                 std::string channels = line.substr(pos + strlen("interleaved="));
                 auto dash = channels.find('-');
-                if (dash != std::string::npos) {
+                if (dash != std::string::npos) 
+                {
                     uint16_t rtp_channel = static_cast<uint16_t>(std::stoi(channels.substr(0, dash)));
                     uint16_t rtcp_channel = static_cast<uint16_t>(std::stoi(channels.substr(dash + 1)));
 
@@ -684,11 +689,13 @@ bool RtspRequest::ParseTransport(const std::string &header) {
                 }
             }
             // 判断 UDP
-            else if (line.find("client_port=") != std::string::npos) {
+            else if (line.find("client_port=") != std::string::npos) 
+            {
                 size_t port_pos = line.find("client_port=");
                 std::string ports = line.substr(port_pos + strlen("client_port="));
                 auto dash = ports.find('-');
-                if (dash != std::string::npos) {
+                if (dash != std::string::npos) 
+                {
                     uint16_t rtp_port = static_cast<uint16_t>(std::stoi(ports.substr(0, dash)));
                     uint16_t rtcp_port = static_cast<uint16_t>(std::stoi(ports.substr(dash + 1)));
 

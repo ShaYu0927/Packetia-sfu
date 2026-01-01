@@ -261,6 +261,7 @@ void RtspConnection::HandleCmdANNOUNCE()
 /*
     处理客户端 SETUP 请求，根据传输模式（TCP/UDP/组播）为每个 track 建立对应的 RTP 通道，并构造符合 RTSP 标准的响应报文
 */
+
 void RtspConnection::HandleCmdSetup()
 {
     if (!rtsp_) { LOG_ERROR("RTSP context is null"); return; }
@@ -269,17 +270,19 @@ void RtspConnection::HandleCmdSetup()
     auto controlTdx = rtsp_request_->GetControl();
 
     auto media_session = MediaSessionManager::Instance().GetSessionBySuffix(url);
-    if (!media_session) {
+    if (!media_session) 
+    {
         media_session = MediaSession::CreateNew(url);
         std::string sid = MediaSessionManager::Instance().AddSession(media_session, url);
         media_session->SetId(std::stoi(sid));
     }
-    std::string sessionId = std::to_string(media_session->GetId()); // 统一
+    std::string sessionId = std::to_string(media_session->GetId()); 
+    LOG_INFO("sessionId:" + sessionId);
 
     int trackIdx = -1;
     std::shared_ptr<RtpTrack> track_ptr;
 
-    // 1) 从 SDP 找到对应 track 并创建 track_ptr
+   
     bool found = false;
     for (auto& m : rtsp_request_->sdp_->media_list_) 
     {
@@ -289,7 +292,12 @@ void RtspConnection::HandleCmdSetup()
             trackIdx = ParseStreamId(m.control);
             TrackType type = (m.media_type == "video") ? TrackType::TrackVideo : TrackType::TrackAudio;
             track_ptr = createTrack(type, m.codec_name, m.payload_type, m.clock_rate, trackIdx );
+            media_session->AddTrack(type, m.codec_name, m.control /*control*/,
+                        m.payload_type, m.clock_rate);
             MediaSessionManager::Instance().AddTrackChannel(trackIdx, track_ptr);
+
+            /* bind the sending entity to the session */
+            media_session->BindRtpTrack(trackIdx, track_ptr);
             break;
         }
     }
@@ -306,7 +314,7 @@ void RtspConnection::HandleCmdSetup()
     int size = 0;
     MediaChannelId channel_id = rtsp_request_->GetSessionId();
 
-    // 2) transport 分支
+    //
     if (rtsp_request_->GetTransport() == RTP_OVER_TCP) 
     {
         uint16_t rtp_ch  = rtsp_request_->GetRtpChannel();
@@ -331,11 +339,13 @@ void RtspConnection::HandleCmdSetup()
 
         size = rtsp_request_->BuildSetupRes(res, 4096, rtp_ch, rtcp_ch, channel_id, sessionId);
     }
-    else if (rtsp_request_->GetTransport() == RTP_OVER_UDP) {
+    else if (rtsp_request_->GetTransport() == RTP_OVER_UDP) 
+    {
         // TODO: 这里建议按 client_port/server_port 语义重做
        
     }
-    else {
+    else 
+    {
         LOG_ERROR("Unsupported transport mode for SETUP");
         return;
     }
@@ -344,23 +354,21 @@ void RtspConnection::HandleCmdSetup()
     media_session->AddClient(channel_id, rtp_connection_);
 }
 
-
 void RtspConnection::HandleCmdRecord()
 {
     //track轨道中是否存在
     std::string url = rtsp_request_->GetRtspUSuffix();
-    LOG_INFO("SETUP request for url=" + url);
+    LOG_INFO("RECORD request for url=" + url);
 
     auto media_session = MediaSessionManager::Instance().GetSessionBySuffix(url);
     if (!media_session) 
     {
         LOG_INFO("No existing MediaSession found for url=" + url + ", creating new one...");
-        media_session = MediaSession::CreateNew(url);
-
-        std::string session_id = MediaSessionManager::Instance().AddSession(media_session,url);
-    } 
-   if (media_session->tracks_.empty()) 
-   {
+        return;
+    }
+   
+    if (media_session->tracks_.empty()) 
+    {
         LOG_DEBUG("No tracks in session, cannot RECORD");
         return;
     }
@@ -379,13 +387,15 @@ void RtspConnection::HandleCmdRecord()
 
     // 启动 RTP OVER TCP 推送线程
 
-    
 
     LOG_INFO("Init RECORD for session: " + media_session->GetId());
     std::shared_ptr<char> res(new char[2048], std::default_delete<char[]>());
     int size = rtsp_request_->BuildRecordRes(res, 2048,std::to_string(session_id_));
     this->SendRtspMessage(res, size);
 }
+
+
+
 
 /**
  *  确认 Session ID 是否存在且有效。需要保证多个track都注册不同的session ID。
