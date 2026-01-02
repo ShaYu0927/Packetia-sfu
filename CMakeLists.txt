@@ -58,6 +58,9 @@ add_library(utils STATIC
     utils/TaskScheduler.cpp
     utils/SelectTaskScheduler.cpp
     utils/EpollTaskScheduler.cpp
+    utils/ShardedWorkerPool.cpp
+    utils/PacketPool.cpp
+    utils/ShardedWorkerPool.h
     utils/EventLoop.cpp
     utils/Acceptor.cpp
     utils/Pip.cpp

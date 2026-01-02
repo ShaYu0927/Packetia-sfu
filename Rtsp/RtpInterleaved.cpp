@@ -1,4 +1,5 @@
 #include "RtpInterleaved.h"
+#include "MediaSession.h"
 
 static inline uint16_t ReadE16(const uint8_t* p)
 {
@@ -51,16 +52,19 @@ void RtpInterleaved::unbind(uint8_t ch)
     Apply for pool buffer
     Copy the payload (copying is recommended at this stage)
     Deliver to WorkerPool"
-
 */
 int RtpInterleaved::onInterleaved(uint8_t channel, const uint8_t *payload, size_t length)
 {
 #if RTP_DEBUG
     HexDumpPrefix(payload,length);
 #endif
+    auto bindingOpt = map_.get(channel);  
+    if (!bindingOpt) return -ENOENT;
 
+    auto track = bindingOpt->track.lock();
+    if (!track) return -EPIPE; // 说明 track 已释放/TEARDOWN
 
-
+    
     
     return 0;
 }

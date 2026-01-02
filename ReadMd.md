@@ -82,3 +82,24 @@ independent of media track indices
 - Fix RTSP RECORD returning no response when MediaSession::tracks_ is empty (root cause: SETUP did not register tracks)
 
 - Fix incorrect/misleading logs in RECORD handler (e.g., printing “SETUP request” in RECORD path)
+
+# Version 0.3.0 – 2026-01-02
+## Highlights
+
+- This release introduces a reusable real-time packet delivery framework for RTP/RTCP processing. It adds a fixed-capacity PacketPool for deterministic memory management and a dedicated SPSC RtpRingBuffer (with RTCP priority) to decouple I/O from media processing, improving stability under load.
+
+## Improvements
+
+- Add PacketPool (object/memory pool) to provide fixed-capacity packet buffers and avoid frequent heap allocations in the RTP data path
+
+- Add RtpRingBuffer built on SPSC rings, supporting separate RTP/RTCP queues with RTCP-first dequeue policy
+
+- Refactor interleaved RTP ingestion to a “copy + enqueue” model, simplifying the read thread responsibilities and reducing lifetime hazards
+
+- Introduce queue/pool observability hooks (queue depth, dropped/exhausted counters) to facilitate load testing and tuning
+
+## Bug Fixes
+
+- Fix potential lifetime issues when dispatching interleaved RTP/RTCP across threads by avoiding raw pointer ownership leaks and centralizing buffer release
+
+- Resolve const-correct locking issue in PacketPool by making internal mutex mutable (enables thread-safe const observers such as size()/stats())

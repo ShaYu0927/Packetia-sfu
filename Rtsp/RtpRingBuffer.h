@@ -1,197 +1,193 @@
-// rtp_input_workers.h
-#pragma once
-#include <atomic>
-#include <condition_variable>
+#ifndef _RTP_RING_BUFFER_H_
+#define _RTP_RING_BUFFER_H_
+
 #include <cstdint>
-#include <functional>
-#include <memory>
-#include <mutex>
-#include <queue>
-#include <thread>
-#include <unordered_map>
-#include <vector>
+#include <cstddef>
+#include <array>
+#include <atomic>
+#include <utility>
 
-// --- 简单 Packet 和 PacketPool ---
-struct Packet 
+struct RtpWorkJob
 {
-    uint8_t* data = nullptr;        // 指向 payload 起始（不含 $... 4 字节）
-    uint16_t length = 0;
-    uint8_t channel = 0;
-    // 当 packet->own_memory == true 时，data 指向 pool 分配的内存，需要释放回 pool
-    bool own_memory = false;
-    std::shared_ptr<void> owner_ref; // 用于持有外部 buffer（zero-copy 情况），防止早释放
+    std::uint64_t key = 0;
+    std::uint32_t type = 0;           // 0=RTP, 1=RTCP
+    void*         payload = nullptr;  // Packet*
+    std::size_t   payload_len = 0;
+    std::uint64_t enqueue_ts = 0;     // 可选：外部填充
 };
 
-class PacketPool 
+typedef struct RtpQueueStats
 {
-public:
-    PacketPool(size_t buf_size, size_t pool_size) : _buf_size(buf_size) 
-    {
-        for (size_t i = 0; i < pool_size; ++i) {
-            auto mem = new uint8_t[buf_size];
-            _free_buffers.push(mem);
-        }
-    }
-    ~PacketPool() 
-    {
-        while (!_free_buffers.empty()) 
-        {
-            delete[] _free_buffers.front();
-            _free_buffers.pop();
-        }
-    }
+    std::uint64_t pushed = 0;
+    std::uint64_t popped = 0;
+    std::uint64_t dropped = 0;
+    std::uint32_t max_depth_seen = 0;
+    std::uint16_t rtp = 0;
+    std::uint16_t rtcp = 0;
+}RtpQueueStats;
 
-    // 获取一个内存块（可能返回 nullptr）
-    uint8_t* acquire() 
-    {
-        std::lock_guard<std::mutex> lk(_mtx);
-        if (_free_buffers.empty()) return nullptr;
-        uint8_t* p = _free_buffers.front();
-        _free_buffers.pop();
-        return p;
-    }
-    void release(uint8_t* p) 
-    {
-        if (!p) return;
-        std::lock_guard<std::mutex> lk(_mtx);
-        _free_buffers.push(p);
-    }
-    size_t bufferSize() const { return _buf_size; }
 
-private:
-    size_t _buf_size;
-    std::mutex _mtx;
-    std::queue<uint8_t*> _free_buffers;
+
+
+
+enum : std::uint32_t 
+{
+    RTP_JOB_RTP  = 0,
+    RTP_JOB_RTCP = 1,
 };
 
-// --- 简单线程安全队列（worker queue） ---
-template<typename T>
-class TSQueue {
-public:
-    void push(T v) {
-        {
-            std::lock_guard<std::mutex> lk(_mtx);
-            _q.push(std::move(v));
-        }
-        _cv.notify_one();
-    }
-    bool pop(T &out) {
-        std::unique_lock<std::mutex> lk(_mtx);
-        _cv.wait(lk, [&](){ return !_q.empty() || _stop; });
-        if (_q.empty()) return false;
-        out = std::move(_q.front()); _q.pop();
-        return true;
-    }
-    void notify_stop() {
-        {
-            std::lock_guard<std::mutex> lk(_mtx);
-            _stop = true;
-        }
-        _cv.notify_all();
-    }
-private:
-    std::queue<T> _q;
-    std::mutex _mtx;
-    std::condition_variable _cv;
-    bool _stop = false;
-};
-
-// --- Worker: 负责处理 packet（拼帧/分发到 tracker） ---
-class ITracker 
+template<typename T, std::size_t CapacityPow2>
+class SpscRing
 {
 public:
-    virtual ~ITracker() = default;
-    // 必须实现：如果需要长期保存 data，应复制；若仅临时解析，可直接访问 data 指针
-    virtual void inputRtp(uint8_t mediaType, uint32_t sampleRate, const uint8_t* data, uint16_t len) = 0;
+    static_assert(CapacityPow2 >= 2, "Capacity must be >= 2");
+    static_assert((CapacityPow2 & (CapacityPow2 - 1)) == 0,
+                  "CapacityPow2 must be power of two");
+
+    SpscRing() = default;
+
+    SpscRing(const SpscRing&) = delete;
+    SpscRing& operator=(const SpscRing&) = delete;
+
+    bool push(T&& item);
+    bool pop(T& out);
+    std::uint32_t approx_size() const;
+    const RtpQueueStats& stats() const;
+
+    void reset_stats();
+
+private:
+    static constexpr std::uint32_t mask_ = static_cast<std::uint32_t>(CapacityPow2 - 1);
+
+    std::array<T, CapacityPow2> buf_{};
+    std::atomic<std::uint32_t> read_{0};
+    std::atomic<std::uint32_t> write_{0};
+    RtpQueueStats st_{};
+
 };
 
-class Worker {
+#endif /* _RTP_RING_BUFFER_H_ */
+
+template <typename T, std::size_t CapacityPow2>
+inline bool SpscRing<T, CapacityPow2>::push(T &&item)
+{
+    const std::uint32_t w = write_.load(std::memory_order_relaxed);
+    const std::uint32_t r = read_.load(std::memory_order_acquire);
+
+    if (((w + 1) & mask_) == (r & mask_))
+    {
+        // full
+        st_.dropped++;
+        return false;
+    }
+
+    buf_[w & mask_] = std::move(item);
+    write_.store(w + 1, std::memory_order_release);
+
+    st_.pushed++;
+    const std::uint32_t depth = static_cast<std::uint32_t>(w + 1 - r);
+    if (depth > st_.max_depth_seen) st_.max_depth_seen = depth;
+    return true;
+}
+
+template <typename T, std::size_t CapacityPow2>
+inline bool SpscRing<T, CapacityPow2>::pop(T &out)
+{
+    const std::uint32_t r = read_.load(std::memory_order_relaxed);
+    const std::uint32_t w = write_.load(std::memory_order_acquire);
+
+    if (r == w) return false; // empty
+
+    out = std::move(buf_[r & mask_]);
+    read_.store(r + 1, std::memory_order_release);
+    st_.popped++;
+    return true;
+}
+
+template <typename T, std::size_t CapacityPow2>
+inline std::uint32_t SpscRing<T, CapacityPow2>::approx_size() const
+{
+    const std::uint32_t r = read_.load(std::memory_order_acquire);
+    const std::uint32_t w = write_.load(std::memory_order_acquire);
+    return static_cast<std::uint32_t>(w - r);
+}
+
+template <typename T, std::size_t CapacityPow2>
+inline const RtpQueueStats &SpscRing<T, CapacityPow2>::stats() const
+{
+    return st_;
+}
+
+template <typename T, std::size_t CapacityPow2>
+inline void SpscRing<T, CapacityPow2>::reset_stats()
+{
+    st_ = RtpQueueStats{};
+}
+
+
+
+/*
+ * RTP 专用双队列：
+ * - RTCP 高优先级队列（建议容量小一些）
+ * - RTP  普通队列（容量大一些）
+ *
+ * 消费顺序：
+ *   try_pop(): 先 RTCP 后 RTP
+ *
+ * 上层建议：
+ * - IO/生产者线程根据 is_rtcp 决定 push 到哪个队列
+ * - Worker/消费者线程循环 try_pop
+ */
+template<std::size_t RtpCapPow2, std::size_t RtcpCapPow2>
+class RtpRingBuffer
+{
 public:
-    Worker(PacketPool &pool) : _pool(pool), _running(true) 
+    struct Stats
     {
-        _thread = std::thread([this]{ this->run(); });
-    }
-    ~Worker() 
+        typename SpscRing<RtpWorkJob, RtpCapPow2>::Stats  rtp;
+        typename SpscRing<RtpWorkJob, RtcpCapPow2>::Stats rtcp;
+    };
+
+    // push RTP：满时返回 false（上层负责 drop + release Packet）
+    bool push_rtp(RtpWorkJob&& job)
     {
-        _running = false;
-        _queue.notify_stop();
-        if (_thread.joinable()) _thread.join();
+        job.type = RTP_JOB_RTP;
+        return rtp_.push(std::move(job));
     }
 
-    void post(Packet pkt) 
+    // push RTCP：满时返回 false（上层负责 drop + release Packet）
+    bool push_rtcp(RtpWorkJob&& job)
     {
-        _queue.push(std::move(pkt));
+        job.type = RTP_JOB_RTCP;
+        return rtcp_.push(std::move(job));
     }
 
-    // 注册或查询 channel -> tracker (你可改成从 MediaSessionManager 查询)
-    void registerTracker(uint8_t channel, std::shared_ptr<ITracker> tracker) 
+    // 优先弹出 RTCP，其次 RTP
+    bool try_pop(RtpWorkJob& out)
     {
-        std::lock_guard<std::mutex> lk(_track_mtx);
-        _trackers[channel] = tracker;
+        if (rtcp_.pop(out)) return true;
+        return rtp_.pop(out);
+    }
+
+    std::uint32_t approx_rtp_size() const { return rtp_.approx_size(); }
+    std::uint32_t approx_rtcp_size() const { return rtcp_.approx_size(); }
+
+    RtpQueueStats stats() const
+    {
+        RtpQueueStats s;
+        s.rtp  = rtp_.stats();
+        s.rtcp = rtcp_.stats();
+        return s;
+    }
+
+    void reset_stats()
+    {
+        rtp_.reset_stats();
+        rtcp_.reset_stats();
     }
 
 private:
-    void run() 
-    {
-        while (_running) 
-        {
-            Packet pkt;
-            if (!_queue.pop(pkt)) break;
-            // 找 tracker
-            std::shared_ptr<ITracker> tr;
-            {
-                std::lock_guard<std::mutex> lk(_track_mtx);
-                auto it = _trackers.find(pkt.channel);
-                if (it != _trackers.end()) tr = it->second;
-            }
-            if (!tr) {
-                // 没找到 tracker，丢弃
-                if (pkt.own_memory) _pool.release(pkt.data);
-                continue;
-            }
-
-            // 直接调用 tracker
-            tr->inputRtp(/*mediaType*/0, /*sampleRate*/90000, pkt.data, pkt.length);
-
-            // 释放内存（如果我们 own）
-            if (pkt.own_memory) _pool.release(pkt.data);
-        }
-    }
-
-    PacketPool &_pool;
-    TSQueue<Packet> _queue;
-    std::atomic<bool> _running;
-    std::thread _thread;
-    std::mutex _track_mtx;
-    std::unordered_map<uint8_t, std::shared_ptr<ITracker>> _trackers;
+    SpscRing<RtpWorkJob, RtpCapPow2>  rtp_;
+    SpscRing<RtpWorkJob, RtcpCapPow2> rtcp_;
 };
-
-// --- WorkerPool: hash 分流，保证同一 channel 落到同一 worker ---
-class WorkerPool {
-public:
-    WorkerPool(size_t worker_count, PacketPool &pool) 
-    {
-        for (size_t i=0;i<worker_count;++i) 
-        {
-            _workers.emplace_back(std::make_unique<Worker>(pool));
-        }
-    }
-    void postPacket(uint8_t channel, Packet pkt) 
-    {
-        size_t idx = channel % _workers.size();
-        _workers[idx]->post(std::move(pkt));
-    }
-    // 如果你想把 tracker 注册到特定 worker（保持 channel 对应），可以：
-    void registerTracker(uint8_t channel, std::shared_ptr<ITracker> tr) 
-    {
-        size_t idx = channel % _workers.size();
-        _workers[idx]->registerTracker(channel, tr);
-    }
-
-private:
-    std::vector<std::unique_ptr<Worker>> _workers;
-};
-
-
-
 
