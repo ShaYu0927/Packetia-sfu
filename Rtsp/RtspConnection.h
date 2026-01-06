@@ -12,6 +12,7 @@
 #include "logger.h"
 #include "UdpServer.h"
 #include "RtpInterleaved.h"
+#include "PacketPool.h"
 
 class RtspServer;
 
@@ -23,10 +24,14 @@ std::shared_ptr<RtpTrack> createTrack(
         int track_index);
 
 
-class RtspConnection : public TcpConnection , public UDPServer 
+class RtspConnection : public TcpConnection , public UDPServer
 {
 public:
     using Ptr = std::shared_ptr<RtspConnection>;
+
+    static std::shared_ptr<RtspConnection> Create(std::shared_ptr<RtspServer> rtsp_server,
+                                                  TaskScheduler* task_scheduler,
+                                                  SOCKET sockfd);
 
     enum ConnectionMode
     {
@@ -45,8 +50,8 @@ public:
     };
 
 
-    RtspConnection(std::shared_ptr<RtspServer> rtsp_server, TaskScheduler *task_scheduler, SOCKET sockfd);
     virtual ~RtspConnection();
+    void InitCallbacks();
 
     ConnectionType GetConnectionType() const override { return ConnectionType::Rtsp; }
 
@@ -84,6 +89,10 @@ protected:
 private:
     int ParseStreamId(const std::string& control);
 
+    RtspConnection(std::shared_ptr<RtspServer> rtsp_server,
+                   TaskScheduler* task_scheduler,
+                   SOCKET sockfd);
+
 
 private:
     bool active_ = false;
@@ -101,10 +110,11 @@ private:
     std::unique_ptr<RtspResponse> read_buffer_;
 
 
-    std::shared_ptr<Channel>       rtp_channel_;        // rtp socket
-	std::shared_ptr<Channel>       rtcp_channels_[MAX_MEDIA_CHANNEL]; //rtcp socket
+    std::shared_ptr<Channel>       rtp_channel_;                        // rtp socket
+	std::shared_ptr<Channel>       rtcp_channels_[MAX_MEDIA_CHANNEL];   //rtcp socket
 
-    RtpInterleaved interleaved_;    
+    RtpInterleaved interleaved_;
+    std::unique_ptr<PacketPool> packet_pool_;    
 
 };
 

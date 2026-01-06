@@ -50,6 +50,8 @@ public:
 
     void Send(std::shared_ptr<char> data, uint32_t size);
 	void Send(const char *data, uint32_t size);
+    void Start();
+
 
     bool IsClosed() const 
 	{ return is_closed_; }

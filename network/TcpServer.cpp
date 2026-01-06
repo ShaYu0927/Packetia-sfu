@@ -16,15 +16,6 @@ TcpServer::TcpServer(EventLoop *event_loop)
     {
         LOG_INFO("New connection accepted: sockfd = " + std::to_string(sockfd));
         auto detector = std::make_shared<ProtocolDetector>();
-        // detector->Register({
-        //     "RTSP",
-        //     4,
-        //     [](const uint8_t* data, size_t size) {
-        //         const char* prefix = "RTSP";
-        //         return size >= 4 && std::equal(prefix, prefix + 4, reinterpret_cast<const char*>(data));
-        //     },
-        //     []() { return std::make_shared<RtspParse>(); }
-        // });
 
         detector->Register({
             "SIP",
@@ -38,6 +29,7 @@ TcpServer::TcpServer(EventLoop *event_loop)
             []() { return std::make_shared<SipParse>(); }
         });
         TcpConnection::Ptr conn = this->OnConnect(sockfd);
+        
         if(conn)
         {
             this->AddConnection(sockfd, conn);
@@ -114,7 +106,9 @@ void TcpServer::Stop()
 
 TcpConnection::Ptr TcpServer::OnConnect(SOCKET sockfd)
 {
-    return std::make_shared<TcpConnection>(event_loop_->GetTaskScheduler().get(), sockfd);
+    auto conn = std::make_shared<TcpConnection>(event_loop_->GetTaskScheduler().get(), sockfd);
+    conn->Start();              
+    return conn;
 }
 
 void TcpServer::AddConnection(SOCKET sockfd, TcpConnection::Ptr tcp_conn)

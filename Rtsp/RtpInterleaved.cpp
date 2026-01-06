@@ -1,6 +1,7 @@
 #include "RtpInterleaved.h"
 #include "MediaSession.h"
 
+
 static inline uint16_t ReadE16(const uint8_t* p)
 {
     return (uint16_t(p[0] << 8) | uint16_t(p[1]));
@@ -62,9 +63,34 @@ int RtpInterleaved::onInterleaved(uint8_t channel, const uint8_t *payload, size_
     if (!bindingOpt) return -ENOENT;
 
     auto track = bindingOpt->track.lock();
-    if (!track) return -EPIPE; // 说明 track 已释放/TEARDOWN
+    if (!track) return -EPIPE;
 
+    /* strcpy the buffer   Apply for a block of memory */
+    auto Mem = pool_->acquire();
+
+    if (!Mem) return -ENOMEM;
+    if (length > Mem->cap)
+    {
+        pool_->release(Mem);
+        LOG_ERROR("RtpInterleaved::onInterleaved: payload length exceeds packet capacity");
+        return -EMSGSIZE;
+    }
+
+    if(length > rtp_limits::kMaxPacketBytes)
+    {
+        pool_->release(Mem);
+        LOG_ERROR("RtpInterleaved::onInterleaved: payload length exceeds max RTP packet size");
+        return -EMSGSIZE;
+    }
+
+    // copy payload into the acquired buffer
+    std::memcpy(Mem->data, payload, length);
+    Mem->len = static_cast<uint16_t>(length);
+    Mem->flags = bindingOpt->is_rtcp ? 1 : 0; 
+    Mem->enqueue_ts = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());    // current time in ms
+    Mem->recv_ts = Mem->enqueue_ts; // for simplicity, use the same timestamp
     
-    
+
     return 0;
 }

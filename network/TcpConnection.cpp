@@ -11,19 +11,19 @@ TcpConnection::TcpConnection(TaskScheduler *task_scheduler, SOCKET sockfd)
 	, channel_(new Channel(sockfd))
 {
     is_closed_ = false;
-    channel_->SetReadCallback([this]() { this->HandleRead(); });
-	channel_->SetWriteCallback([this]() { this->HandleWrite(); });
-	channel_->SetCloseCallback([this]() { this->HandleClose(); });
-	channel_->SetErrorCallback([this]() { this->HandleError(); });
+    // channel_->SetReadCallback([this]() { this->HandleRead(); });
+	// channel_->SetWriteCallback([this]() { this->HandleWrite(); });
+	// channel_->SetCloseCallback([this]() { this->HandleClose(); });
+	// channel_->SetErrorCallback([this]() { this->HandleError(); });
 
     SocketUtil::SetNonBlock(sockfd);
 	SocketUtil::SetSendBufSize(sockfd, 100 * 1024);
 	SocketUtil::SetKeepAlive(sockfd);
 
-    channel_->EnableReading();
-    LOG_INFO("Channel EnableReading called. sockfd=" + std::to_string(sockfd));
-    task_scheduler_->UpdateChannel(channel_);
-    LOG_INFO("Channel updated in task scheduler. sockfd=" + std::to_string(sockfd));
+    // channel_->EnableReading();
+    // LOG_INFO("Channel EnableReading called. sockfd=" + std::to_string(sockfd));
+    // task_scheduler_->UpdateChannel(channel_);
+    // LOG_INFO("Channel updated in task scheduler. sockfd=" + std::to_string(sockfd));
 }
 
 TcpConnection::~TcpConnection()
@@ -66,6 +66,28 @@ void TcpConnection::Send(const char *data, uint32_t size)
 
 		this->HandleWrite();
 	}
+}
+
+void TcpConnection::Start()
+{
+    std::weak_ptr<TcpConnection> weak_self = shared_from_this();
+
+    channel_->SetReadCallback([weak_self]() {
+        if (auto self = weak_self.lock()) self->HandleRead();
+    });
+    channel_->SetWriteCallback([weak_self]() {
+        if (auto self = weak_self.lock()) self->HandleWrite();
+    });
+    channel_->SetCloseCallback([weak_self]() {
+        if (auto self = weak_self.lock()) self->HandleClose();
+    });
+    channel_->SetErrorCallback([weak_self]() {
+        if (auto self = weak_self.lock()) self->HandleError();
+    });
+
+    channel_->EnableReading();
+    task_scheduler_->UpdateChannel(channel_);
+    LOG_INFO("Channel registered. sockfd=" + std::to_string(channel_->GetSocket()));
 }
 
 void TcpConnection::close()

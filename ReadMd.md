@@ -103,3 +103,15 @@ independent of media track indices
 - Fix potential lifetime issues when dispatching interleaved RTP/RTCP across threads by avoiding raw pointer ownership leaks and centralizing buffer release
 
 - Resolve const-correct locking issue in PacketPool by making internal mutex mutable (enables thread-safe const observers such as size()/stats())
+
+
+# Version 0.3.1 – 2026-01-06
+## refactor(network): fix connection lifetime issues and introduce factory-based initialization
+
+- Introduce two-phase initialization for TcpConnection (construct + Start)
+- Move channel registration and event enabling out of constructors
+- Add factory method RtspConnection::Create to enforce correct init order
+- Replace raw `this` captures in callbacks with weak_ptr to prevent UAF
+- Eliminate bad_weak_ptr caused by shared_from_this in constructors
+- Unify RTSP connection creation through server OnConnect factory path
+- Improve disconnect handling to avoid delayed callback accessing destroyed server

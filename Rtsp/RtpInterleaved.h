@@ -3,6 +3,8 @@
 
 #include "InterleavedDispatcher.h"
 #include "Rtp.h"
+#include "PacketPool.h"
+#include "RtpTypes.h"
 
 #include <optional>
 #include <mutex>
@@ -68,8 +70,11 @@ public:
                       const uint8_t* payload,
                       size_t length);
 
+    void SetPacketPool(PacketPool* pool) { pool_ = pool; }
+
 private:
     InterleavedChannelMap map_;
+    PacketPool* pool_ = nullptr;
 };
 
 

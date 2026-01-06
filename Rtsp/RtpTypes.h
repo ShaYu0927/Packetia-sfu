@@ -101,3 +101,17 @@ struct RtpRawPacket
     uint8_t payload_type = 0;
     bool marker = false;
 };
+
+namespace rtp_limits 
+{
+
+    // max Rtp size
+    static constexpr std::size_t kMaxPayloadBytes = 1200;
+
+    // RTP fixed header = 12 bytes (不含 CSRC/extension)
+    static constexpr std::size_t kMinHeaderBytes  = 12;
+
+    // 允许的最大 RTP 包长度（header + payload）
+    static constexpr std::size_t kMaxPacketBytes  = kMinHeaderBytes + kMaxPayloadBytes;
+
+}

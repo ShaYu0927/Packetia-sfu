@@ -9,25 +9,50 @@ RtspConnection::RtspConnection(std::shared_ptr<RtspServer> rtsp_server, TaskSche
     ,sdp_(std::make_unique<Sdp>())
     ,read_buffer_(std::make_unique<RtspResponse>())
     ,rtsp_(std::make_shared<Rtsp>())
+    ,packet_pool_(std::make_unique<PacketPool>(2048, 1000))
 {
     // Initialize the connection
     LOG_INFO("RtspConnection created with sockfd: " + std::to_string(sockfd));
     active_ = true;
 
-    //初始化 RTP 与 Rtcp 通道
-    this->SetReadCallback([this](std::shared_ptr<TcpConnection> conn, BufferReader &buffer) -> bool {
-        return this->onRead(buffer);
-    });
+    // InitCallbacks();
 
-    this->SetCloseCallback([this](std::shared_ptr<TcpConnection> conn) -> bool{
-        return this->onClose();
-    }); 
+    interleaved_.SetPacketPool(packet_pool_.get());
 
 
 }
 
+std::shared_ptr<RtspConnection> RtspConnection::Create(std::shared_ptr<RtspServer> rtsp_server, TaskScheduler *task_scheduler, SOCKET sockfd)
+{
+    auto conn = std::shared_ptr<RtspConnection>(new RtspConnection(rtsp_server, task_scheduler, sockfd));
+
+    conn->InitCallbacks();
+    conn->Start();
+
+    return conn;
+}
+
 RtspConnection::~RtspConnection()
 {
+}
+
+void RtspConnection::InitCallbacks()
+{
+    std::weak_ptr<RtspConnection> weak_self =
+    std::static_pointer_cast<RtspConnection>(TcpConnection::shared_from_this());
+
+
+    this->SetReadCallback([weak_self](std::shared_ptr<TcpConnection>, BufferReader& buffer) -> bool {
+        auto self = weak_self.lock();
+        if (!self) return false;          // 对象已释放，直接忽略
+        return self->onRead(buffer);
+    });
+
+    this->SetCloseCallback([weak_self](std::shared_ptr<TcpConnection>) -> bool {
+        auto self = weak_self.lock();
+        if (!self) return false;
+        return self->onClose();
+    });
 }
 
 /*    回复服务器支持的操作 SETUP、PLAY、PAUSE、TEARDOWN
