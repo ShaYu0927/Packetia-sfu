@@ -11,6 +11,7 @@
 #include <atomic>
 #include <functional>
 
+#include "PacketPool.h"
 
 typedef struct WorkJob 
 {
@@ -98,4 +99,26 @@ private:
 
 };
 
+
+class WorkerService final 
+{
+public:
+    static int create_pool(const std::string& name,
+                           std::size_t worker_count,
+                           std::shared_ptr<IJobHandler> handler,
+                           std::size_t max_queue_len = 2048,
+                           ShardedWorkerPool::DropPolicy drop = ShardedWorkerPool::DropPolicy::DropHead);
+
+    static void destroy_pool(const std::string& name, bool drain);
+
+    static int post(const std::string& name, WorkJob&& job);
+
+    static bool exists(const std::string& name);
+
+private:
+    WorkerService() = delete;
+
+    static std::mutex mtx_;
+    static std::unordered_map<std::string, std::unique_ptr<ShardedWorkerPool>> pools_;
+};
 #endif

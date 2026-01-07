@@ -115,3 +115,59 @@ independent of media track indices
 - Eliminate bad_weak_ptr caused by shared_from_this in constructors
 - Unify RTSP connection creation through server OnConnect factory path
 - Improve disconnect handling to avoid delayed callback accessing destroyed server
+
+
+# Version 0.3.2 – 2026-01-07
+
+
+## Architecture Changes
+
+- Introduce a generic ShardedWorkerPool with key-based sharding to guarantee
+per-key ordering while allowing parallel execution across workers.
+
+- Add a pluggable IJobHandler interface, enabling different subsystems
+(RTP, RTCP, media processing, future non-RTSP tasks) to reuse the same worker pool.
+
+- Refactor RTP processing into a clear producer → dispatcher → consumer model:
+
+- IO thread: framing and minimal copy only
+
+- Worker threads: RTP/RTCP consumption and track-level processing
+
+- Decouple RTP consumption logic from RTSP, making the worker service reusable
+by other modules.
+
+## RTP / RTSP Improvements
+
+- Implement a clean RTSP over TCP interleaved handling model:
+
+- Strict $ <channel> <length> <payload> framing
+
+- Robust handling of sticky packets and fragmented frames
+
+- Add explicit channel → track binding established during RTSP SETUP.
+
+- Ensure RTP/RTCP packets are never parsed by the RTSP control parser.
+
+- Move all heavy RTP processing out of IO threads to worker threads.
+
+## Worker & Scheduling
+
+- Add queue depth limits and drop policies (DropHead / DropTail) to protect
+the system under load.
+
+- Guarantee in-order processing for the same track_id via consistent sharding.
+
+- Provide safe shutdown semantics with optional queue draining.
+
+- Improve statistics collection for enqueue, dequeue, drops, and max queue depth.
+
+## Memory & Stability
+
+- Centralize packet lifetime management via PacketPool.
+
+- Ensure all dropped or unbound jobs properly release packet memory.
+
+- Eliminate potential memory leaks when queues overflow or tracks are unbound.
+
+- Improve defensive checks for invalid channels and oversized RTP packets.

@@ -1,5 +1,6 @@
 #include "RtpInterleaved.h"
 #include "MediaSession.h"
+#include "RtpThreadPool.h"
 
 
 static inline uint16_t ReadE16(const uint8_t* p)
@@ -89,8 +90,19 @@ int RtpInterleaved::onInterleaved(uint8_t channel, const uint8_t *payload, size_
     Mem->flags = bindingOpt->is_rtcp ? 1 : 0; 
     Mem->enqueue_ts = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count());    // current time in ms
-    Mem->recv_ts = Mem->enqueue_ts; // for simplicity, use the same timestamp
+    Mem->recv_ts = Mem->enqueue_ts; 
+    
     
 
+    auto rtp_handler = std::make_shared<RtpJobHandler>();
+    WorkerService::create_pool("media", 4, rtp_handler, 4096, ShardedWorkerPool::DropPolicy::DropHead);
+
+    WorkJob job;
+    job.key = static_cast<uint64_t>(track->getSSRC());
+    job.type = bindingOpt->is_rtcp ? 1 : 0; //
+    job.payload = static_cast<void*>(Mem);
+    job.payload_len = length;
+    job.enqueue_ts = Mem->enqueue_ts;
+    WorkerService::post("media", std::move(job));
     return 0;
 }
