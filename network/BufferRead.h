@@ -59,14 +59,17 @@ public:
 
     void Retrieve(size_t len) 
     {
-		if (len <= ReadableBytes()) {
+		if (len <= ReadableBytes()) 
+		{
 			reader_index_ += len;
-			if(reader_index_ == writer_index_) {
+			if(reader_index_ == writer_index_) 
+			{
 				reader_index_ = 0;
 				writer_index_ = 0;
 			}
 		}
-		else {
+		else 
+		{
 			RetrieveAll();
 		}
 	}

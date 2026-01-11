@@ -1,6 +1,7 @@
 #include "RtspConnection.h"
 #include "RtpTypes.h"
 
+
 RtspConnection::RtspConnection(std::shared_ptr<RtspServer> rtsp_server, TaskScheduler *task_scheduler, SOCKET sockfd)
     : TcpConnection(task_scheduler, sockfd)
     , rtsp_server_(rtsp_server)
@@ -15,9 +16,23 @@ RtspConnection::RtspConnection(std::shared_ptr<RtspServer> rtsp_server, TaskSche
     LOG_INFO("RtspConnection created with sockfd: " + std::to_string(sockfd));
     active_ = true;
 
-    // InitCallbacks();
-
     interleaved_.SetPacketPool(packet_pool_.get());
+
+    auto rtp_handler_ = std::make_shared<RtpJobHandler>(packet_pool_.get());
+   
+
+    media_pool_ = WorkerService::get_pool("media");
+    if (!media_pool_) 
+    {
+        WorkerService::create_pool(
+            "media", 4, rtp_handler_, 4096,
+            ShardedWorkerPool::DropPolicy::DropHead);
+        media_pool_ = WorkerService::get_pool("media");
+
+    }
+
+
+    
 
 
 }
@@ -411,7 +426,7 @@ void RtspConnection::HandleCmdRecord()
     }
 
     // 启动 RTP OVER TCP 推送线程
-
+    
 
     LOG_INFO("Init RECORD for session: " + media_session->GetId());
     std::shared_ptr<char> res(new char[2048], std::default_delete<char[]>());
@@ -524,6 +539,7 @@ int RtspConnection::RtspConn_ConsumeInterleaved(BufferReader &buffer)
     LOG_INFO("Start handle data:", buffer.ReadableBytes());
 
     int rc = interleaved_.onInterleaved(ch, p + 4, len);
+    LOG_INFO("End handle data result:", rc);
     if(rc < 0)
     {
         LOG_INFO("RC handle falied");

@@ -13,6 +13,8 @@
 #include "UdpServer.h"
 #include "RtpInterleaved.h"
 #include "PacketPool.h"
+#include "RtpThreadPool.h"
+#include "ShardedWorkerPool.h"
 
 class RtspServer;
 
@@ -114,7 +116,8 @@ private:
 	std::shared_ptr<Channel>       rtcp_channels_[MAX_MEDIA_CHANNEL];   //rtcp socket
 
     RtpInterleaved interleaved_;
-    std::unique_ptr<PacketPool> packet_pool_;    
+    std::unique_ptr<PacketPool> packet_pool_;
+    ShardedWorkerPool* media_pool_ = nullptr;    
 
 };
 

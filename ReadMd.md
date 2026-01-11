@@ -171,3 +171,30 @@ the system under load.
 - Eliminate potential memory leaks when queues overflow or tracks are unbound.
 
 - Improve defensive checks for invalid channels and oversized RTP packets.
+
+# Version 0.3.3 – 2026-01-11
+## fix(workerpool): fix PacketPool leak by restoring job-based release chain
+
+Fix a critical memory leak where PacketPool objects were never released
+after being consumed by ShardedWorkerPool workers.
+
+Root cause:
+- Packet ownership was lost during job dispatch.
+- job.deleter() was invoked, but Packet::owner was null, so PacketPool::release()
+  was never called.
+- Additionally, job drop paths (queue full, post failure, DropHead) were
+  not releasing payloads, causing pool exhaustion.
+
+This patch:
+- Restores a strict ownership chain: Packet -> WorkJob -> deleter -> PacketPool
+- Ensures all failure / drop paths in ShardedWorkerPool::post() call job.deleter()
+- Guarantees that every Packet acquired from PacketPool is eventually released
+  exactly once.
+
+After this change:
+- PacketPool stats (acquired / released) remain balanced under load
+- PacketPool no longer exhausts under sustained RTP traffic
+- WorkerPool becomes memory-safe under backpressure and drops
+
+This fixes frequent RTSP/RTP failures (-12) caused by pool exhaustion.
+

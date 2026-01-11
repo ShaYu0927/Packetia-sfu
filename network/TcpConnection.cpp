@@ -111,29 +111,52 @@ void TcpConnection::close()
 
 void TcpConnection::HandleRead()
 {
-    int n = 0;
-    do {
-            n = read_buffer_->Read(channel_->GetSocket());
-#if RTP_DEBUG
-            LOG_INFO("Read returned: " + std::to_string(n));
-#endif
-    } while(n > 0);
+    bool peer_closed = false;
 
-    if (n == 0) 
+    while (true) 
     {
-        LOG_INFO("Peer closed connection");
-        this->close();
-        return;
-    } 
-    else if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) 
+        int n = read_buffer_->Read(channel_->GetSocket());
+
+#if RTP_DEBUG
+        LOG_INFO("Read returned: " + std::to_string(n));
+#endif
+
+        if (n > 0) 
+        {
+            continue; 
+        }
+
+        if (n == 0)
+        {
+            
+            peer_closed = true;
+            break;
+        }
+
+        // n < 0
+        if (errno == EAGAIN || errno == EWOULDBLOCK) 
+        {
+            
+            break;
+        }
+
+        LOG_ERROR("Read error, errno=" + std::to_string(errno));
+        peer_closed = true;
+        break;
+    }
+
+    
+    if (read_cb_) 
     {
-        LOG_ERROR("Read error");
+        read_cb_(shared_from_this(), *read_buffer_);
+    }
+
+    if (peer_closed) 
+    {
+        LOG_INFO("Peer closed connection (or fatal read error)");
         this->close();
         return;
     }
-
-    // 调用 RTSP 解析函数,先不改动 rtsp 相关逻辑
-    if (read_cb_) read_cb_(shared_from_this(), *read_buffer_);
 
 //     if (!parser_) 
 //     {

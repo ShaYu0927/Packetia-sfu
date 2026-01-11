@@ -11,7 +11,8 @@ RtpConnection::RtpConnection(std::weak_ptr<TcpConnection> rtsp_connection)
 
     media_channels_.resize(MAX_MEDIA_CHANNEL);
 
-    for (int i = 0; i < MAX_MEDIA_CHANNEL; ++i) {
+    for (int i = 0; i < MAX_MEDIA_CHANNEL; ++i) 
+    {
         // 初始化端口号为偶数，rtcp 为 rtp+1
         uint16_t base_port = port_dist(gen) & 0xFFFE;
         local_rtp_port_[i] = base_port;
@@ -61,7 +62,8 @@ void RtpConnection::SetPlayLoadType(MediaChannelId channel_id, uint8_t payload_t
 bool RtpConnection::SetupRtpOverTcp(MediaChannelId channel_id, uint16_t rtp_channel, uint16_t rtcp_channel)
 {
     auto conn = rtsp_connection_.lock();
-    if (!conn) {
+    if (!conn) 
+    {
         return false; // RTSP connection lost
     }
 

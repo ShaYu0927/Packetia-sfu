@@ -77,12 +77,12 @@ int RtpInterleaved::onInterleaved(uint8_t channel, const uint8_t *payload, size_
         return -EMSGSIZE;
     }
 
-    if(length > rtp_limits::kMaxPacketBytes)
-    {
-        pool_->release(Mem);
-        LOG_ERROR("RtpInterleaved::onInterleaved: payload length exceeds max RTP packet size");
-        return -EMSGSIZE;
-    }
+    // if(length > rtp_limits::kMaxPacketBytes)
+    // {
+    //     pool_->release(Mem);
+    //     LOG_ERROR("RtpInterleaved::onInterleaved: payload length exceeds max RTP packet size");
+    //     return -EMSGSIZE;
+    // }
 
     // copy payload into the acquired buffer
     std::memcpy(Mem->data, payload, length);
@@ -94,15 +94,25 @@ int RtpInterleaved::onInterleaved(uint8_t channel, const uint8_t *payload, size_
     
     
 
-    auto rtp_handler = std::make_shared<RtpJobHandler>();
-    WorkerService::create_pool("media", 4, rtp_handler, 4096, ShardedWorkerPool::DropPolicy::DropHead);
-
     WorkJob job;
     job.key = static_cast<uint64_t>(track->getSSRC());
     job.type = bindingOpt->is_rtcp ? 1 : 0; //
     job.payload = static_cast<void*>(Mem);
     job.payload_len = length;
     job.enqueue_ts = Mem->enqueue_ts;
-    WorkerService::post("media", std::move(job));
+
+    
+    job.deleter = [](WorkJob& j) {
+        Packet* p = static_cast<Packet*>(j.payload);
+        WorkerService::realse(p);
+    };
+
+    int ret = WorkerService::post("media", std::move(job));
+    if(ret < 0)
+    {
+        WorkerService::realse(Mem);
+        LOG_ERROR("RtpInterleaved::onInterleaved: failed to post job to worker pool");
+        return ret;
+    }
     return 0;
 }

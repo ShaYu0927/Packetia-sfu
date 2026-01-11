@@ -5,16 +5,31 @@
 #include <mutex>
 #include <cstdint>
 
+
+class PacketPool;
 struct Packet
 {
-    uint8_t*  data;
-    uint16_t  len;
-    uint16_t  cap;
+    PacketPool* owner = nullptr;   
+    uint16_t    len   = 0;
+    uint16_t    cap   = 0;
 
-    uint8_t   flags;        // RTP / RTCP / retrans / keyframe?
-    uint64_t  recv_ts;      // socket 收到时间
-    uint64_t  enqueue_ts;   // 入 ring 时间
+    uint8_t     flags = 0;
+    uint64_t    recv_ts = 0;
+    uint64_t    enqueue_ts = 0;
+
+    uint8_t*    data = nullptr;    // 指向 storage.data()
+    std::vector<uint8_t> storage;  // 固定大小，不在每次 acquire/release 分配
+
+    inline void reset()
+    {
+        len = 0;
+        flags = 0;
+        recv_ts = 0;
+        enqueue_ts = 0;
+        
+    }
 };
+
 
 class PacketPool
 {
@@ -24,10 +39,8 @@ public:
 
     ~PacketPool();
 
-    // 获取一个 Packet；失败返回 nullptr（上层直接丢包）
     Packet* acquire();
 
-    // 归还 Packet（必须来自 acquire）
     void release(Packet* pkt);
 
     // 观测
@@ -39,6 +52,7 @@ public:
         uint64_t acquired = 0;
         uint64_t released = 0;
         uint64_t exhausted = 0;
+        uint64_t bad_release = 0;
     };
     Stats stats() const;
 

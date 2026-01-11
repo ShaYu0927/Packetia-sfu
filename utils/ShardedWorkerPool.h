@@ -13,6 +13,7 @@
 
 #include "PacketPool.h"
 
+
 typedef struct WorkJob 
 {
     uint64_t key;                // 用于分片/串行（例如 track_id / session_id / stream_id）
@@ -20,6 +21,8 @@ typedef struct WorkJob
     void*    payload;            // 业务指针（或 std::variant）
     size_t   payload_len;        // 业务长度（可选）
     uint64_t enqueue_ts;         // 观测
+
+    std::function<void(WorkJob&)>  deleter; 
 }WorkJob;
 
 
@@ -55,6 +58,7 @@ public:
                std::shared_ptr<IJobHandler> handler,
                std::size_t max_queue_len = 4096,
                DropPolicy drop = DropPolicy::DropHead);
+
 
     ThreadStats Status() const
     {
@@ -114,6 +118,10 @@ public:
     static int post(const std::string& name, WorkJob&& job);
 
     static bool exists(const std::string& name);
+
+    static ShardedWorkerPool* get_pool(const std::string& name);
+
+    static void realse(Packet* p);
 
 private:
     WorkerService() = delete;
