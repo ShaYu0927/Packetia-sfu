@@ -54,6 +54,8 @@ void RtpInterleaved::unbind(uint8_t ch)
     Apply for pool buffer
     Copy the payload (copying is recommended at this stage)
     Deliver to WorkerPool"
+    Transport: RTP/AVP/TCP;interleaved=X-Y
+    $ <channel:1B> <length:2B big-endian> <payload:length bytes>
 */
 int RtpInterleaved::onInterleaved(uint8_t channel, const uint8_t *payload, size_t length)
 {
@@ -95,7 +97,7 @@ int RtpInterleaved::onInterleaved(uint8_t channel, const uint8_t *payload, size_
     
 
     WorkJob job;
-    job.key = static_cast<uint64_t>(track->getSSRC());
+    job.key = channel;
     job.type = bindingOpt->is_rtcp ? 1 : 0; //
     job.payload = static_cast<void*>(Mem);
     job.payload_len = length;

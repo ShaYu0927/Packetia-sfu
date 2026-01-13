@@ -1,5 +1,6 @@
 #include "RtspConnection.h"
 #include "RtpTypes.h"
+#include "logger.h"
 
 
 RtspConnection::RtspConnection(std::shared_ptr<RtspServer> rtsp_server, TaskScheduler *task_scheduler, SOCKET sockfd)
@@ -354,7 +355,6 @@ void RtspConnection::HandleCmdSetup()
     int size = 0;
     MediaChannelId channel_id = rtsp_request_->GetSessionId();
 
-    //
     if (rtsp_request_->GetTransport() == RTP_OVER_TCP) 
     {
         uint16_t rtp_ch  = rtsp_request_->GetRtpChannel();
@@ -363,19 +363,19 @@ void RtspConnection::HandleCmdSetup()
         if (rtp_ch > 255 || rtcp_ch > 255 || rtp_ch == rtcp_ch) 
         {
             LOG_ERROR("Invalid interleaved channels rtp=", rtp_ch, " rtcp=", rtcp_ch);
-            // 回复 461
             return;
         }
 
         if (!rtp_connection_->SetupRtpOverTcp(channel_id, rtp_ch, rtcp_ch)) 
         {
-            // 回复错误
             return;
         }
 
         // 关键：channel -> track 绑定（用于接收端切包分发）
         interleaved_.bind((uint8_t)rtp_ch,  track_ptr, false);
         interleaved_.bind((uint8_t)rtcp_ch, track_ptr, true);
+        
+
 
         size = rtsp_request_->BuildSetupRes(res, 4096, rtp_ch, rtcp_ch, channel_id, sessionId);
     }
@@ -521,7 +521,7 @@ void RtspConnection::SendRtspMessage(std::shared_ptr<char> data, uint32_t size)
     Interleaved: The $package and RTSP text appear simultaneously
 */
 
-
+/* $ <channel:1B> <length:2B big-endian> <payload:length bytes> */
 int RtspConnection::RtspConn_ConsumeInterleaved(BufferReader &buffer)
 {
     if (buffer.ReadableBytes() < 4) return false;
@@ -542,6 +542,7 @@ int RtspConnection::RtspConn_ConsumeInterleaved(BufferReader &buffer)
     LOG_INFO("End handle data result:", rc);
     if(rc < 0)
     {
+        buffer.Retrieve(len + 4);
         LOG_INFO("RC handle falied");
         return false;
     }

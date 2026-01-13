@@ -198,3 +198,15 @@ After this change:
 
 This fixes frequent RTSP/RTP failures (-12) caused by pool exhaustion.
 
+
+# Version 0.3.3 - 2026-01-13
+## feature: implement RTSP TCP interleaved demux and RTP worker dispatch
+
+- Add RTSP interleaved ($) frame parsing in RtspConnection
+- Bind interleaved channel to RtpTrack during SETUP (RTP/RTCP)
+- Deliver interleaved RTP/RTCP payloads to media WorkerPool
+- Use track-based key for per-track serial processing
+- Integrate PacketPool for RTP payload buffering
+
+tips:I'm tired today, going to rest and then continue studying BBR and Gerrit
+This establishes the complete TCP → channel → track → worker RTP pipeline.
