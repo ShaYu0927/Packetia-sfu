@@ -9,6 +9,19 @@
 #include <mutex>        
 #include <thread>       
 #include <condition_variable> 
+#include <shared_mutex>  
+
+
+struct JobReleaserGuard 
+{
+    WorkJob &job;
+    bool active{true};
+    ~JobReleaserGuard() 
+    {
+        if (active && job.deleter) job.deleter(job);
+    }
+};
+
 
 class RtpJobHandler : public IJobHandler
 {
@@ -27,6 +40,7 @@ private:
 
    
     std::mutex mtx_;
+    std::shared_mutex shared_mtx_;
     std::unordered_map<std::uint64_t, std::weak_ptr<RtpTrack>> tracks_;
 };
 

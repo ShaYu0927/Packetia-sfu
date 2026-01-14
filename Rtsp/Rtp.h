@@ -305,7 +305,8 @@ private:
 FU-A 分片 (Fragmentation Unit - A)	大帧被拆成多个包	需拼接重组
 STAP-A 聚合包 (Single-Time Aggregation Packet)	多个小 NALU 合并	很少见*/
 
-class RtpTrack : public EnhancedPacketSortor<RtpPacket::Ptr, uint16_t> {
+class RtpTrack : public EnhancedPacketSortor<RtpPacket::Ptr, uint16_t> 
+{
 public:
     using Ptr = std::shared_ptr<RtpTrack>;
 

@@ -210,3 +210,17 @@ This fixes frequent RTSP/RTP failures (-12) caused by pool exhaustion.
 
 tips:I'm tired today, going to rest and then continue studying BBR and Gerrit
 This establishes the complete TCP → channel → track → worker RTP pipeline.
+
+
+# Version 0.3.4 - 2026-01-14
+## fix: optimize RTP track map locking and reduce log noise
+
+- Replace std::mutex with std::shared_mutex for RtpJobHandler track map
+  to improve concurrency under high RTP load (read-heavy scenario)
+- Use shared_lock for track lookup and unique_lock for track insert/erase
+- Downgrade excessive ERROR logs to WARN for normal track teardown and race cases
+- Improve log context to include key and payload length for easier troubleshooting
+
+tips: I’m just figuring out how to complete my own RTP pipeline, mainly by following ZLMediaKit’s design.
+This change avoids unnecessary lock contention in RTP worker threads
+and prevents log flooding during track lifecycle transitions.
