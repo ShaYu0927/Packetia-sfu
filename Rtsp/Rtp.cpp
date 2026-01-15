@@ -1,80 +1,17 @@
 #include "Rtp.h"
 #include "Rtsp.h"
 
-
-
-RtpHeader::RtpHeader()
-{
-}
-
 RtpPacket::RtpPacket()
 {
 }
 
 RtpPacket::~RtpPacket()
 {
-    fprintf(stderr, "RtpPacket dtor this=%p\n", this);
 }
 
-RtpPacket::Ptr RtpPacket::create(size_t capacity)
+std::shared_ptr<RtpPacket> RtpPacket::create(size_t capacity)
 {
-    auto pkt = std::make_shared<RtpPacket>();
-
-    pkt->data = std::shared_ptr<uint8_t>(
-        new uint8_t[capacity],
-        std::default_delete<uint8_t[]>()
-    );
-
-    pkt->size = 0;
-    return pkt;
-}
-
-
-
-void RtpHeader::serialize(uint8_t *out) const
-{
-}
-
-uint8_t RtpHeader::getVersion() const
-{
-    return 0;
-}
-
-void RtpHeader::setVersion(uint8_t ver)
-{
-}
-
-uint8_t RtpHeader::getPayloadType() const
-{
-    return 0;
-}
-
-void RtpHeader::setPayloadType(uint8_t pt)
-{
-}
-
-
-
-void RtpHeader::setMarker(bool marker)
-{
-}
-
-uint16_t RtpHeader::getSequence() const
-{
-    return 0;
-}
-
-void RtpHeader::setSequence(uint16_t seq)
-{
-}
-
-uint32_t RtpHeader::getTimestamp() const
-{
-    return 0;
-}
-
-void RtpHeader::setTimestamp(uint32_t ts)
-{
+    return Ptr();
 }
 
 void RtpPacket::setSeq(uint16_t seq)
@@ -96,15 +33,6 @@ uint64_t RtpPacket::getStampMS(bool ntp) const
     return 0;
 }
 
-uint32_t RtpHeader::getSSRC() const
-{
-    return 0;
-}
-
-void RtpHeader::setSSRC(uint32_t ssrc)
-{
-
-}
 
 uint8_t *RtpPacket::getPayload()
 {
@@ -128,9 +56,16 @@ bool RtpPacket::getMarker() const
 
 RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len)
 {
-    if (!ptr || len < 12 || len > 2000) {
+    if (!ptr || len < 12) 
+    {
         LOG_ERROR("bad rtp param");
         abort();
+    }
+
+    if (sample_rate <= 0) 
+    {
+        LOG_ERROR("drop rtp: bad sample_rate=0");
+        return nullptr;
     }
 
     if(len < RtpHeader::kSize || ptr == nullptr)
@@ -138,6 +73,64 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_
         LOG_ERROR("RTP packet too small and ptr is nullptr, len=" + std::to_string(len));
         return nullptr;
     }
+
+    /* Header alloc */
+    auto *w = reinterpret_cast<RtpWireHeader*>(ptr);
+    uint8_t v = w->vpxcc >> 6;
+    if (v != 2) 
+    {
+        LOG_ERROR("drop rtp: bad version=" + std::to_string((int)v));
+        return nullptr;
+    }
+
+    bool x  = (w->vpxcc & 0x10) != 0;
+    bool p  = (w->vpxcc & 0x20) != 0; 
+    uint8_t cc = (w->vpxcc & 0x0F);
+
+    uint8_t pt = (w->mpt & 0x7F);
+    uint16_t seq = ntohs(w->seq);
+    uint32_t ts = ntohl(w->ts);
+    uint32_t ssrc = ntohl(w->ssrc);
+
+    /* classify + lock PT/SSRC */
+    size_t header_len = 12 + 4u * cc;
+    if (len < header_len) 
+    {
+        LOG_ERROR("drop rtp: len < csrc header_len, len=" + std::to_string(len));
+        return nullptr;
+    }
+
+
+    if (x) 
+    {
+        // extension header: 16-bit profile + 16-bit length(words)
+        if (len < header_len + 4) 
+        {
+            LOG_ERROR("drop rtp: ext header too small");
+            return nullptr;
+        }
+        const uint8_t *ext = ptr + header_len;
+        uint16_t ext_words = (uint16_t(ext[2]) << 8) | uint16_t(ext[3]);
+        size_t ext_len = 4 + size_t(ext_words) * 4;
+        if (len < header_len + ext_len) 
+        {
+            LOG_ERROR("drop rtp: ext data truncated");
+            return nullptr;
+        }
+        header_len += ext_len;
+    }
+
+    /* padding 如果你要严格处理：payload_end = len - ptr[len-1] */
+    if (p) 
+    {
+        uint8_t pad = ptr[len - 1];
+        if (pad == 0 || pad > len) 
+        {
+            LOG_ERROR("drop rtp: bad padding=" + std::to_string(pad));
+            return nullptr;
+        }
+    }
+
     /* 解析 RTP 包 */
     auto pkt = RtpPacket::create(len);
     printf("pkt use_count=%ld\n", (long)pkt.use_count());
@@ -156,7 +149,14 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_
     memcpy(pkt->data.get(), ptr, len);
     pkt->size = len;
     pkt->type = type;
+
+    /* timerate */
     pkt->sample_rate = sample_rate;
+
+    /* record pkt */
+
+
+
     return pkt;
 }
 
@@ -185,12 +185,14 @@ bool RtpVideoTracker::isKeyFrame(const RtpPacket::Ptr &pkt)
             uint16_t nalu_size = (d[offset] << 8) | d[offset + 1];
             offset += 2;
 
-            if (offset + nalu_size > data_size) {
+            if (offset + nalu_size > data_size) 
+            {
                 break;
             }
 
             uint8_t stap_nal_unit_type = d[offset] & 0x1F;
-            if (stap_nal_unit_type == 5) {
+            if (stap_nal_unit_type == 5) 
+            {
                 return true;
             }
 
@@ -212,3 +214,70 @@ RtpPacket::Ptr RtpAudioTracker::inputRtp(TrackType type, int sample_rate, uint8_
     return nullptr;
 }
 
+RtpHeader::RtpHeader()
+{
+
+}
+
+RtpHeader::~RtpHeader()
+{
+
+}
+
+void RtpHeader::serialize(uint8_t *out) const
+{
+}
+
+uint8_t RtpHeader::getVersion() const
+{
+    return 0;
+}
+
+void RtpHeader::setVersion(uint8_t ver)
+{
+}
+
+uint8_t RtpHeader::getPayloadType() const
+{
+    return 0;
+}
+
+void RtpHeader::setPayloadType(uint8_t pt)
+{
+}
+
+bool RtpHeader::getMarker() const
+{
+    return false;
+}
+
+void RtpHeader::setMarker(bool marker)
+{
+}
+
+uint16_t RtpHeader::getSequence() const
+{
+    return 0;
+}
+
+void RtpHeader::setSequence(uint16_t seq)
+{
+}
+
+uint32_t RtpHeader::getTimestamp() const
+{
+    return 0;
+}
+
+void RtpHeader::setTimestamp(uint32_t ts)
+{
+}
+
+uint32_t RtpHeader::getSSRC() const
+{
+    return 0;
+}
+
+void RtpHeader::setSSRC(uint32_t ssrc)
+{
+}

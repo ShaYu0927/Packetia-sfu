@@ -224,3 +224,18 @@ This establishes the complete TCP → channel → track → worker RTP pipeline.
 tips: I’m just figuring out how to complete my own RTP pipeline, mainly by following ZLMediaKit’s design.
 This change avoids unnecessary lock contention in RTP worker threads
 and prevents log flooding during track lifecycle transitions.
+
+# Version 0.3.5 - 2026-01- 15
+## feat(rtsp/rtp): introduce RTP wire header parsing and packet reorder pipeline
+
+- Add RtpWireHeader to correctly parse RTP wire-format headers (RFC3550)
+- Separate RTP wire header from logical RtpHeader to avoid ABI/layout bugs
+- Refactor RtpVideoTracker::inputRtp to parse PT/SSRC/SEQ/Timestamp from wire header
+- Integrate EnhancedPacketSortor to handle RTP reordering and wrap-around
+- Prepare hooks for PT/SSRC locking and NTP-based timestamp conversion
+- Lay groundwork for TCP-interleaved and UDP unified RTP input pipeline
+
+tips: I'm just learn how to work jitter buffer
+
+This change fixes incorrect RTP header parsing, prevents random seq/pt/ssrc
+misinterpretation, and enables stable real-time packet reordering.

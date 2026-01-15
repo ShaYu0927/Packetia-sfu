@@ -9,24 +9,46 @@
 #include "RtpReceiver.h"
 
 
-
-
-
-
 class Sdp;
+
+#pragma pack(push,1)
+struct RtpWireHeader 
+{
+    uint8_t vpxcc;
+    uint8_t mpt;
+    uint16_t seq;
+    uint32_t ts;
+    uint32_t ssrc;
+};
+#pragma pack(pop)
+
+static_assert(sizeof(RtpWireHeader) == 12);
+
+
+/*
+
+      0                   1                   2                   3
+    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    |V=2|P|X|  CC   |M|     PT      |       sequence number         |
+    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    |                           timestamp                           |
+    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    |           synchronization source (SSRC) identifier            |
+    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+*/
 
 class RtpHeader 
 {
 
 public:
-      static constexpr size_t kSize = 12;
+    static constexpr size_t kSize = 12;
 
     RtpHeader();
+    ~RtpHeader();
 
-    // 序列化 RTP 头部到 buffer（12字节）
     void serialize(uint8_t* out) const;
 
-    // Getter & Setter（主机字节序）
     uint8_t getVersion() const;
     void setVersion(uint8_t ver);
 
@@ -247,10 +269,10 @@ public:
     static constexpr int kRtpVersion = 2;
     static constexpr int kRtpHeaderSize = 12;
     static constexpr int kRtpTcpHeaderSize = 4;
-    static constexpr int kRtpMaxSize = 1500;  // 可以根据 MTU 设定
+    static constexpr int kRtpMaxSize = 1500;  
 
-    // 创建一个 RTP 包并分配内存
-    static Ptr create(size_t capacity = kRtpMaxSize);
+
+    static std::shared_ptr<RtpPacket> create(size_t capacity = kRtpMaxSize);
 
     // RTP header 解析相关
     uint16_t getSeq() const;
@@ -298,12 +320,14 @@ private:
 };
 
 
-/*RTP 包的 payload 通常是 NALU 数据（即编码后的视频片段），分三种情况：
+/*
+    RTP 包的 payload 通常是 NALU 数据（即编码后的视频片段），分三种情况：
 
-类型	含义	特点
-单一 NAL 单元包 (Single NALU)	一个包 = 一整个 NALU	最常见（小片段）
-FU-A 分片 (Fragmentation Unit - A)	大帧被拆成多个包	需拼接重组
-STAP-A 聚合包 (Single-Time Aggregation Packet)	多个小 NALU 合并	很少见*/
+    类型	含义	特点
+    单一 NAL 单元包 (Single NALU)	一个包 = 一整个 NALU	最常见（小片段）
+    FU-A 分片 (Fragmentation Unit - A)	大帧被拆成多个包	需拼接重组
+    STAP-A 聚合包 (Single-Time Aggregation Packet)	多个小 NALU 合并	很少见
+*/
 
 class RtpTrack : public EnhancedPacketSortor<RtpPacket::Ptr, uint16_t> 
 {
