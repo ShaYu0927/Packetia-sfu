@@ -333,12 +333,16 @@ void RtspConnection::HandleCmdSetup()
             trackIdx = ParseStreamId(m.control);
             TrackType type = (m.media_type == "video") ? TrackType::TrackVideo : TrackType::TrackAudio;
             track_ptr = createTrack(type, m.codec_name, m.payload_type, m.clock_rate, trackIdx );
+
             media_session->AddTrack(type, m.codec_name, m.control /*control*/,
                         m.payload_type, m.clock_rate);
             MediaSessionManager::Instance().AddTrackChannel(trackIdx, track_ptr);
 
             /* bind the sending entity to the session */
             media_session->BindRtpTrack(trackIdx, track_ptr);
+
+            
+
             break;
         }
     }
@@ -374,9 +378,10 @@ void RtspConnection::HandleCmdSetup()
         // 关键：channel -> track 绑定（用于接收端切包分发）
         interleaved_.bind((uint8_t)rtp_ch,  track_ptr, false);
         interleaved_.bind((uint8_t)rtcp_ch, track_ptr, true);
+
+
+
         
-
-
         size = rtsp_request_->BuildSetupRes(res, 4096, rtp_ch, rtcp_ch, channel_id, sessionId);
     }
     else if (rtsp_request_->GetTransport() == RTP_OVER_UDP) 
@@ -532,13 +537,22 @@ int RtspConnection::RtspConn_ConsumeInterleaved(BufferReader &buffer)
     uint8_t  ch  = p[1];
     uint16_t len = (static_cast<uint16_t>(p[2]) << 8) | p[3];
 
+//    LOG_INFO("interleaved hdr:",
+//          "b0=", (int)p[0],
+//          "b1(ch)=", (int)p[1],
+//          "b2=", (int)p[2],
+//          "b3=", (int)p[3],
+//          "readable=", buffer.ReadableBytes());
+//     LOG_INFO("interleaved parsed:", "ch=", (int)ch, "len=", (int)len);
+
+
     if(buffer.ReadableBytes() < len + 4)
     {
         return false;
     }
     LOG_INFO("Start handle data:", buffer.ReadableBytes());
 
-    int rc = interleaved_.onInterleaved(ch, p + 4, len);
+    int rc = interleaved_.onInterleaved((int)ch, p + 4, len);
     LOG_INFO("End handle data result:", rc);
     if(rc < 0)
     {

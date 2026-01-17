@@ -11,6 +11,7 @@
 #include <atomic>
 #include <functional>
 
+#include "Rtp.h"
 #include "PacketPool.h"
 
 
@@ -21,7 +22,7 @@ typedef struct WorkJob
     void*    payload;            // 业务指针（或 std::variant）
     size_t   payload_len;        // 业务长度（可选）
     uint64_t enqueue_ts;         // 观测
-
+    std::weak_ptr<RtpTrack> track;
     std::function<void(WorkJob&)>  deleter; 
 }WorkJob;
 

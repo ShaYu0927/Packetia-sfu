@@ -35,7 +35,7 @@ Packet* PacketPool::acquire()
     if (free_.empty())
     {
         stats_.exhausted++;
-        LOG_ERROR("PacketPool exhausted: free=%zu acquired=%lu released=%lu exhausted=%lu",
+        LOG_ERROR("PacketPool exhausted: free= acquired= released= exhausted=",
           free_.size(), stats_.acquired, stats_.released, stats_.exhausted);
         return nullptr;
     }
@@ -45,13 +45,13 @@ Packet* PacketPool::acquire()
 
     if (p->owner != this) 
     {
-        LOG_ERROR("PacketPool corruption: pkt=%p owner=%p this=%p", p, p->owner, this);
+        LOG_ERROR("PacketPool corruption: pkt= owner= this=", p, p->owner, this);
         return nullptr;
     }
 
     stats_.acquired++;
     p->reset();
-    LOG_INFO("acquire pkt=%p owner=%p this=%p", p, p->owner, this);
+    LOG_INFO("acquire pkt= owner= this=", p, p->owner, this);
     return p;
 }
 

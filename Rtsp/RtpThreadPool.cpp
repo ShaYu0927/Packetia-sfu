@@ -16,6 +16,14 @@ void RtpJobHandler::unbind(std::uint64_t key)
 
 void RtpJobHandler::handle(WorkJob &&job)
 {
+    auto track = job.track.lock();
+    if (!track) 
+    {
+        LOG_ERROR("RtpJobHandler::handle: track expired");
+        if (job.deleter) job.deleter(job);
+        return;
+    }
+
     auto *mem = static_cast<uint8_t *>(job.payload);
     size_t len = job.payload_len;
 
@@ -25,48 +33,20 @@ void RtpJobHandler::handle(WorkJob &&job)
         return;
     }
 
-    std::shared_ptr<RtpTrack> track;
-    {
-        std::shared_lock<std::shared_mutex> lk(shared_mtx_);
-        auto it = tracks_.find(job.key);
-        if (it != tracks_.end())
-        {
-            track = it->second.lock();
-            if (!track)
-            {
-                tracks_.erase(it);
-                LOG_ERROR("RtpJobHandler::handle: track expired, key=", job.key, ", len=", len);
-                return;
-            }
-        }
-    }
-
-    if(!track)
-    {
-        // track 过期：需要写锁清理
-        {
-            std::unique_lock<std::shared_mutex> lk(shared_mtx_);
-            auto it = tracks_.find(job.key);
-            if (it != tracks_.end() && it->second.expired()) 
-            {
-                tracks_.erase(it);
-            }
-        }
-        LOG_ERROR("RtpJobHandler::handle: no track bound for key=", job.key);
-        return;
-    }
-
     int rc = 0;
     const bool is_rtcp = (job.type == 1);
-    if(is_rtcp)
+    if (is_rtcp) 
     {
-        // rc = track->onRtpPacket(mem->data, mem->len, mem->recv_ts);
+        if (job.deleter) job.deleter(job);
+        return;
     }
     
     const auto pt = track->getType();
     const auto sr = track->getSampleRate();
     
     RtpPacket::Ptr rtp_pkt = track->inputRtp(pt, sr, mem, len);
+
+    if (job.deleter) job.deleter(job);
 
     (void)rc;
 }

@@ -1,6 +1,7 @@
 #include "RtpInterleaved.h"
 #include "MediaSession.h"
 #include "RtpThreadPool.h"
+#include "MediaSession.h"
 
 
 static inline uint16_t ReadE16(const uint8_t* p)
@@ -93,16 +94,24 @@ int RtpInterleaved::onInterleaved(uint8_t channel, const uint8_t *payload, size_
     Mem->enqueue_ts = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count());    // current time in ms
     Mem->recv_ts = Mem->enqueue_ts; 
-    
-    
 
+
+    auto w = bindingOpt->track;
+    if (w.expired()) 
+    {
+        LOG_ERROR("track expired", (int)channel);
+        WorkerService::realse(Mem);
+        return -1;
+    }
+
+    
     WorkJob job;
     job.key = channel;
     job.type = bindingOpt->is_rtcp ? 1 : 0; //
     job.payload = static_cast<void*>(Mem);
     job.payload_len = length;
     job.enqueue_ts = Mem->enqueue_ts;
-
+    job.track = std::move(w);
     
     job.deleter = [](WorkJob& j) {
         Packet* p = static_cast<Packet*>(j.payload);

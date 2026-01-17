@@ -239,3 +239,14 @@ tips: I'm just learn how to work jitter buffer
 
 This change fixes incorrect RTP header parsing, prevents random seq/pt/ssrc
 misinterpretation, and enables stable real-time packet reordering.
+
+# Version 0.3.6 - 2026-01- 16
+## refactor(rtsp): rework RTP over TCP interleaved dispatch and job handling
+
+- Introduce channel-to-track binding for RTP/RTCP interleaved streams
+- Pass weak_ptr<RtpTrack> through WorkJob instead of relying on handler-side maps
+- Clarify ownership and lifetime between interleaved parser and worker threads
+- Prepare worker path for safe RTP packet processing
+
+Note:
+Further investigation is required for packet lifetime and use-after-free issues.

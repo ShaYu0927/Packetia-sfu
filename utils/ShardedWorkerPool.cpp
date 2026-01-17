@@ -64,12 +64,12 @@ int ShardedWorkerPool::post(WorkJob &&job)
         return -1;
     }
     
-    if (job.key == 0)
-    {
-        LOG_ERROR("post job with key=0, drop");
-        safe_release_job(job);
-        return -1;
-    }
+    // if (job.key == 0)
+    // {
+    //     LOG_ERROR("post job with key=0, drop");
+    //     safe_release_job(job);
+    //     return -1;
+    // }
 
     auto idx = shard_index(job.key);
     Worker& w = *workers_[idx];
