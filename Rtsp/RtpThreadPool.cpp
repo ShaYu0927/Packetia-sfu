@@ -24,29 +24,26 @@ void RtpJobHandler::handle(WorkJob &&job)
         return;
     }
 
-    auto *mem = static_cast<uint8_t *>(job.payload);
-    size_t len = job.payload_len;
-
-    if(len == 0 || mem == nullptr)
+    Packet* pkt = static_cast<Packet*>(job.payload);
+    if (!pkt || !pkt->data || pkt->len == 0) 
     {
-        LOG_ERROR("RtpJobHandler::handle: invalid job payload");
+        LOG_ERROR("RtpJobHandler::handle: invalid packet");
         return;
     }
+    
+    const uint8_t* mem = pkt->data;
+    size_t len = pkt->len;
 
     int rc = 0;
-    const bool is_rtcp = (job.type == 1);
+    const bool is_rtcp = (job.type == 1) || (pkt->flags == 1);
     if (is_rtcp) 
     {
         if (job.deleter) job.deleter(job);
         return;
     }
     
+    
     const auto pt = track->getType();
     const auto sr = track->getSampleRate();
-    
-    RtpPacket::Ptr rtp_pkt = track->inputRtp(pt, sr, mem, len);
-
-    if (job.deleter) job.deleter(job);
-
-    (void)rc;
+    (void)track->inputRtp(pt, sr, const_cast<uint8_t*>(mem), len);
 }

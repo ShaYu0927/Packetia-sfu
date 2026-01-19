@@ -250,3 +250,13 @@ misinterpretation, and enables stable real-time packet reordering.
 
 Note:
 Further investigation is required for packet lifetime and use-after-free issues.
+
+# Version 0.3.7 - 2026 - 01 - 19
+## fix: resolve RTP packet lifetime issues in worker pool
+
+- Fix heap-use-after-free caused by incorrect ownership of RTP packet memory
+- Ensure Packet lifetime is managed consistently across worker threads
+- Clarify WorkJob payload semantics (Packet* vs raw buffer)
+- Avoid double-free by unifying packet release responsibility
+- Improve robustness of RtpJobHandler::handle under concurrent execution
+

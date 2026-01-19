@@ -59,8 +59,6 @@ void PacketPool::release(Packet* pkt)
 {
     if (!pkt) return;
 
-    if (!pkt) return;
-
     std::lock_guard<std::mutex> lk(mtx_);
 
     if (pkt->owner != this)

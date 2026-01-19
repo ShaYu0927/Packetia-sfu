@@ -8,6 +8,7 @@
 #include <iostream>
 #include <sstream>
 #include <cstdio>
+#include <mutex>
 
 
 // 提取文件名，不带路径
@@ -55,6 +56,7 @@ class Logger
 private:
     std::ofstream of_;
     int minlevel_;
+    std::mutex mtx_; 
 
 public:
     enum Level 
@@ -65,7 +67,8 @@ public:
         ERR   = LOG_LEVEL_ERR
     };
 
-    Logger(const int level, const std::string& logfile) : minlevel_(level) {
+    Logger(const int level, const std::string& logfile) : minlevel_(level) 
+    {
         this->of_.open(logfile.c_str(), std::ios_base::out | std::ios_base::app);
         assert(this->of_.is_open() && "Failed to open log file");
     }
@@ -82,6 +85,8 @@ public:
     void Write(const std::string& codefile, int codeline, int level, const Args&... args) 
     {
         if (level < minlevel_) return;
+
+        std::lock_guard<std::mutex> lk(mtx_);
 
         time_t sectime = time(NULL);
         tm tmtime;
@@ -116,10 +121,7 @@ public:
 
         std::string log_line = oss.str();
 
-        // 输出到文件
         of_ << log_line << std::endl;
-
-        // 同时输出到终端
         std::cout << log_line << std::endl;
     }
 };

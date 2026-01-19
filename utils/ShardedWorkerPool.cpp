@@ -169,8 +169,12 @@ void ShardedWorkerPool::worker_loop(Worker &w, std::size_t idx)
         
         if (job.deleter)
         {
+            auto deleter = job.deleter;
+            auto payload = job.payload;
             handler_->handle(std::move(job));
-            job.deleter(job);
+            WorkJob tmp{};
+            tmp.payload = payload;
+            deleter(tmp);
         }
         else
         {

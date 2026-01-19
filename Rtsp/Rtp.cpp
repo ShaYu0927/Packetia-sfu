@@ -154,9 +154,6 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_
     pkt->sample_rate = sample_rate;
 
     /* record pkt */
-
-
-
     return pkt;
 }
 
