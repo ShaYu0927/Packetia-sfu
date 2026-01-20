@@ -6,6 +6,8 @@ set(CMAKE_BUILD_TYPE Debug)
 
 add_compile_definitions(RTP_DEBUG=0)
 
+
+
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
   add_compile_options(
     -O0
@@ -119,6 +121,9 @@ add_library(Interleaved STATIC
 )
 
 target_link_libraries(rtsp rtp network utils pthread sip)
+
+enable_testing()
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/Rtsp/Test)
 
 
 add_executable(FFmpegAAc main.cpp)

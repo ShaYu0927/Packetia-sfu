@@ -11,7 +11,16 @@ RtpPacket::~RtpPacket()
 
 std::shared_ptr<RtpPacket> RtpPacket::create(size_t capacity)
 {
-    return Ptr();
+    if (capacity == 0) 
+    {
+        return nullptr;
+    }
+
+    auto pkt = std::make_shared<RtpPacket>();
+    pkt->capacity = capacity;
+    pkt->data = std::shared_ptr<uint8_t[]>(new uint8_t[capacity](), std::default_delete<uint8_t[]>());
+
+    return pkt;
 }
 
 void RtpPacket::setSeq(uint16_t seq)
@@ -133,7 +142,6 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_
 
     /* 解析 RTP 包 */
     auto pkt = RtpPacket::create(len);
-    printf("pkt use_count=%ld\n", (long)pkt.use_count());
     auto dst = pkt ? pkt->data.get() : nullptr;
 
     LOG_INFO("pkt=" + std::to_string((uintptr_t)pkt.get()) +
@@ -149,11 +157,8 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_
     memcpy(pkt->data.get(), ptr, len);
     pkt->size = len;
     pkt->type = type;
-
-    /* timerate */
     pkt->sample_rate = sample_rate;
 
-    /* record pkt */
     return pkt;
 }
 
@@ -278,3 +283,5 @@ uint32_t RtpHeader::getSSRC() const
 void RtpHeader::setSSRC(uint32_t ssrc)
 {
 }
+
+

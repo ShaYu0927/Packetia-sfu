@@ -260,3 +260,10 @@ Further investigation is required for packet lifetime and use-after-free issues.
 - Avoid double-free by unifying packet release responsibility
 - Improve robustness of RtpJobHandler::handle under concurrent execution
 
+# Version 0.3.8 - 2026-01-20
+## rtp: wire RTP parsing into worker → track pipeline
+- Add RTP raw packet handling in RtpJobHandler
+- Parse and validate RTP headers before track processing
+- Construct RtpPacket from raw bytes and hand off to RtpTrack
+- Prepare track-level pipeline for ordered RTP processing
+- Lay groundwork for jitter buffer and depacketizer integration

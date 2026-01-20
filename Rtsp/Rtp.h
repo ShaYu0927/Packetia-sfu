@@ -274,7 +274,7 @@ public:
 
     static std::shared_ptr<RtpPacket> create(size_t capacity = kRtpMaxSize);
 
-    // RTP header 解析相关
+
     uint16_t getSeq() const;
     void setSeq(uint16_t seq);
 
@@ -286,13 +286,11 @@ public:
     uint32_t getSSRC() const;
     void setSSRC(uint32_t ssrc);
 
-    uint8_t* getPayload();                 // 指向负载起始
-    size_t getPayloadSize() const;        // 返回负载长度
+    uint8_t* getPayload();                 
+    size_t getPayloadSize() const;        
 
-    // 设置负载数据
     void setPayload(const uint8_t* payload_data, size_t len);
 
-    // 设置 marker bit
     void setMarker(bool val);
     bool getMarker() const;
 
@@ -302,21 +300,17 @@ public:
     void setVersion(uint8_t version);
     uint8_t getVersion() const;
 
-    // 原始 RTP 包数据
-    std::shared_ptr<uint8_t> data;
-    size_t size = 0;       // 实际使用的长度
+     
 
-    // 业务层拓展字段
-    TrackType type = TrackInvalid;
-    uint32_t sample_rate = 90000;
-    uint64_t ntp_stamp_ms = 0;
-    int track_index = -1;
+public:
+    TrackType type          = TrackInvalid;
+    uint32_t sample_rate    = 90000;
+    uint64_t ntp_stamp_ms   = 0;
+    int track_index         = -1;
+    std::shared_ptr<uint8_t[]> data;
+    size_t capacity = 0;  
+    size_t size = 0;
 
-    
-private:
-    
-    // 用于创建 shared_ptr<RtpPacket>
-    static Ptr alloc(size_t capacity);
 };
 
 
@@ -355,6 +349,9 @@ public:
     virtual RtpPacket::Ptr inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len) = 0;
     void setNtpStamp(uint32_t rtp_stamp, uint64_t ntp_stamp_ms);
     void setPayloadType(uint8_t pt) { _pt = pt; }
+
+    /* input raw packet */
+    void RtpTrack::inputRawRtp(const uint8_t* ptr, size_t len);
 
    
 protected:

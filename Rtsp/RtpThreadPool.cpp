@@ -45,5 +45,13 @@ void RtpJobHandler::handle(WorkJob &&job)
     
     const auto pt = track->getType();
     const auto sr = track->getSampleRate();
-    (void)track->inputRtp(pt, sr, const_cast<uint8_t*>(mem), len);
+    auto RtpPkt = track->inputRtp(pt, sr, const_cast<uint8_t*>(mem), len);
+
+    if (job.deleter) job.deleter(job);
+
+    if (!RtpPkt) 
+    {
+        return;
+    }
+    // track->inputPacket(rtp);
 }

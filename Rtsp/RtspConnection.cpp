@@ -553,11 +553,10 @@ int RtspConnection::RtspConn_ConsumeInterleaved(BufferReader &buffer)
     LOG_INFO("Start handle data:", buffer.ReadableBytes());
 
     int rc = interleaved_.onInterleaved((int)ch, p + 4, len);
-    LOG_INFO("End handle data result:", rc);
+    
     if(rc < 0)
     {
-        buffer.Retrieve(len + 4);
-        LOG_INFO("RC handle falied");
+        LOG_INFO("End handle data result:", rc);
         return false;
     }
     buffer.Retrieve(len + 4); /* consumer buffer */
