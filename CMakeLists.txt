@@ -33,6 +33,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/Rtsp
     ${CMAKE_SOURCE_DIR}/Common
     ${CMAKE_SOURCE_DIR}/protocol/sip
+    ${CMAKE_SOURCE_DIR}/protocol/Rtcp
     ${CMAKE_SOURCE_DIR}/src/interleaved
     
 )
@@ -78,6 +79,9 @@ add_library(sip STATIC
     protocol/sip/SipParse.h
 )
 
+add_library(Rtcp STATIC
+    protocol/Rtcp/Rtcp.cpp
+)
 
 add_library(rtp STATIC
     Rtsp/Rtp.cpp
@@ -120,14 +124,14 @@ add_library(Interleaved STATIC
     ${INTERLEAVED_SRCS}
 )
 
-target_link_libraries(rtsp rtp network utils pthread sip)
+target_link_libraries(rtsp rtp network utils pthread sip Rtcp)
 
 enable_testing()
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/Rtsp/Test)
 
 
 add_executable(FFmpegAAc main.cpp)
-target_link_libraries(FFmpegAAc rtsp rtp utils
+target_link_libraries(FFmpegAAc rtsp rtp utils Rtcp
     ${FFMPEG_LIBRARIES}
     pthread
     c

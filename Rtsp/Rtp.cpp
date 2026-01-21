@@ -63,6 +63,11 @@ bool RtpPacket::getMarker() const
     return false;
 }
 
+uint16_t RtpPacket::getSeq() const
+{
+    return 0;
+}
+
 RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len)
 {
     if (!ptr || len < 12) 
@@ -159,7 +164,33 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_
     pkt->type = type;
     pkt->sample_rate = sample_rate;
 
+    uint16_t sequence = pkt->getSeq();
+
+    onBeforeRtpSorted(pkt);
+
+    EnhancedPacketSortor<RtpPacket::Ptr, uint16_t>::inputPacket(sequence,pkt);
+
     return pkt;
+}
+/* 缓存 NALU */
+void RtpVideoTracker::onRtpSorted(RtpPacket::Ptr rtp)
+{
+    if(!rtp)
+    {
+        return;
+    }
+
+    /* invalid NALs */
+
+
+    /* cacel NALS*/
+
+
+    /* notify frame */
+    // if (rtp->marker) 
+    // {
+    //     emitFrame(); 
+    // }
 }
 
 bool RtpVideoTracker::isKeyFrame(const RtpPacket::Ptr &pkt)

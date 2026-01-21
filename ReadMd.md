@@ -267,3 +267,12 @@ Further investigation is required for packet lifetime and use-after-free issues.
 - Construct RtpPacket from raw bytes and hand off to RtpTrack
 - Prepare track-level pipeline for ordered RTP processing
 - Lay groundwork for jitter buffer and depacketizer integration
+
+
+# Version 0.3.9 - 2026-01-21
+## refactor: add RTCP packet type enums and feedback definitions
+- Define RTCP packet type enums (SR/RR/SDES/BYE/APP/RTPFB/PSFB/XR)
+- Add SDES item type definitions per RFC3550
+- Add RTPFB/PSFB feedback type enums (NACK/PLI/FIR/REMB, etc.)
+- Use strongly-typed enum class with protocol-aligned values
+- Prepare groundwork for RTCP parsing and statistics handling

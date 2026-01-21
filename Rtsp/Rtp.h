@@ -170,7 +170,8 @@ public:
         _cb = std::move(cb);
     }
 
-    void inputPacket(Seq seq, Packet pkt) {
+    void inputPacket(Seq seq, Packet pkt) 
+    {
         auto now = std::chrono::steady_clock::now();
 
         if (!_started) 
@@ -183,7 +184,8 @@ public:
         }
 
         // 强制 flush（时间间隔大于指定时间）
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - _last_flush_time).count() > _flush_timeout) {
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - _last_flush_time).count() > _flush_timeout) 
+        {
             flushBuffered();
             _last_flush_time = now;
         }
@@ -300,6 +302,7 @@ public:
     void setVersion(uint8_t version);
     uint8_t getVersion() const;
 
+
      
 
 public:
@@ -336,10 +339,15 @@ public:
         _sample_rate(clock_rate),
         _channel_id(channel_id),
         _disable_ntp(disable_ntp),
-        _pt(payload_type) {}
+        _pt(payload_type) 
+        {
+            setOnPacketSorted(
+                [this](uint16_t seq, const RtpPacket::Ptr& pkt) {
+                    this->onRtpSorted(pkt);
+                }
+            );
+        }
 
-
-    RtpTrack() {};
 
     uint32_t getSSRC() const { return _ssrc; }
     uint8_t  getPayloadType() const { return _pt; }
@@ -350,8 +358,6 @@ public:
     void setNtpStamp(uint32_t rtp_stamp, uint64_t ntp_stamp_ms);
     void setPayloadType(uint8_t pt) { _pt = pt; }
 
-    /* input raw packet */
-    void RtpTrack::inputRawRtp(const uint8_t* ptr, size_t len);
 
    
 protected:
@@ -384,6 +390,9 @@ public:
         : RtpTrack(type, codec, payload_type, ssrc, clock_rate, channel_id, disable_ntp)
     {}
     RtpPacket::Ptr inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len) override;
+
+protected:
+    void onRtpSorted(RtpPacket::Ptr rtp) override;
 
 private:
     std::vector<RtpPacket::Ptr> cache_;
