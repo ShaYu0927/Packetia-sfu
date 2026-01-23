@@ -1,5 +1,8 @@
 #include "RtpThreadPool.h"
 
+#include <variant>
+#include <memory>
+#include <utility>
 
 
 void RtpJobHandler::bind(std::uint64_t key, std::weak_ptr<RtpTrack> track)
@@ -23,25 +26,38 @@ void RtpJobHandler::handle(WorkJob &&job)
         if (job.deleter) job.deleter(job);
         return;
     }
+    const uint8_t* mem = nullptr;
+    size_t len = 0;
+    bool is_rtcp = false;
 
-    Packet* pkt = static_cast<Packet*>(job.payload);
-    if (!pkt || !pkt->data || pkt->len == 0) 
+
+    if (auto sp = std::get_if<std::shared_ptr<Packet>>(&job.payload)) 
     {
-        LOG_ERROR("RtpJobHandler::handle: invalid packet");
+        const auto& pkt_sp = *sp;
+        if (!pkt_sp) 
+        {
+            return;
+        }
+        mem = pkt_sp->data;
+        len = pkt_sp->len;
+        is_rtcp = (pkt_sp->flags & 0x1) != 0;  
+    }
+    else if (auto pp = std::get_if<std::pair<unsigned char*, size_t>>(&job.payload)) 
+    {
+        mem = pp->first;
+        len = pp->second;
+        is_rtcp = (job.type == 1);
+    }
+    else
+    {
         return;
     }
-    
-    const uint8_t* mem = pkt->data;
-    size_t len = pkt->len;
 
-    int rc = 0;
-    const bool is_rtcp = (job.type == 1) || (pkt->flags == 1);
-    if (is_rtcp) 
-    {
-        if (job.deleter) job.deleter(job);
+
+    if (!mem || len < 12) 
+    { 
         return;
     }
-    
     
     const auto pt = track->getType();
     const auto sr = track->getSampleRate();

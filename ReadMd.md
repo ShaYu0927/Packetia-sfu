@@ -276,3 +276,11 @@ Further investigation is required for packet lifetime and use-after-free issues.
 - Add RTPFB/PSFB feedback type enums (NACK/PLI/FIR/REMB, etc.)
 - Use strongly-typed enum class with protocol-aligned values
 - Prepare groundwork for RTCP parsing and statistics handling
+
+
+# Version 0.4.0 - 2026-01-23
+## refactor: rework RTP job payload model and fix abort caused by invalid length'
+- Replace void* payload with std::variant
+- Use shared_ptr<Packet> for safe cross-thread ownership
+- Remove unsafe static_cast paths
+- Fix len=0 propagation to inputRtp()

@@ -67,7 +67,8 @@ bool RtpConnection::SetupRtpOverTcp(MediaChannelId channel_id, uint16_t rtp_chan
         return false; // RTSP connection lost
     }
 
-    if (channel_id >= media_channels_.size()) {
+    if (channel_id >= media_channels_.size()) 
+    {
         return false; // Invalid channel
     }
 

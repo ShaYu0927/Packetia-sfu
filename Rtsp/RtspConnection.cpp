@@ -550,8 +550,6 @@ int RtspConnection::RtspConn_ConsumeInterleaved(BufferReader &buffer)
     {
         return false;
     }
-    LOG_INFO("Start handle data:", buffer.ReadableBytes());
-
     int rc = interleaved_.onInterleaved((int)ch, p + 4, len);
     
     if(rc < 0)

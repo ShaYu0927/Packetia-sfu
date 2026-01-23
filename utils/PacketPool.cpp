@@ -51,7 +51,10 @@ Packet* PacketPool::acquire()
 
     stats_.acquired++;
     p->reset();
+
+#if RTP_DEBUG
     LOG_INFO("acquire pkt= owner= this=", p, p->owner, this);
+#endif
     return p;
 }
 

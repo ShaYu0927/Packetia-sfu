@@ -44,7 +44,8 @@ static std::vector<uint8_t> make_rtp_packet(
     size_t header_len = 12 + 4u * cc;
 
     size_t ext_len = 0;
-    if (x) {
+    if (x) 
+    {
         // ext header: profile(2B) + length(2B) + data(words*4)
         ext_len = 4 + size_t(ext_words) * 4;
     }
@@ -78,7 +79,8 @@ static std::vector<uint8_t> make_rtp_packet(
     write_u32_be(&pkt[8], ssrc);
 
     // CSRC list
-    for (uint8_t i = 0; i < cc; ++i) {
+    for (uint8_t i = 0; i < cc; ++i) 
+    {
         write_u32_be(&pkt[12 + 4u * i], 0x11111111u + i);
     }
 

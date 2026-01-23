@@ -14,14 +14,15 @@
 #include "Rtp.h"
 #include "PacketPool.h"
 
+using Payload = std::variant<std::monostate, std::pair<uint8_t*, size_t>, std::shared_ptr<Packet>>;
 
 typedef struct WorkJob 
 {
-    uint64_t key;                // 用于分片/串行（例如 track_id / session_id / stream_id）
-    uint32_t type;               // 任务类型（可选）
-    void*    payload;            // 业务指针（或 std::variant）
-    size_t   payload_len;        // 业务长度（可选）
-    uint64_t enqueue_ts;         // 观测
+    uint64_t key;                
+    uint32_t type;               
+    Payload  payload;            
+    size_t   payload_len;       
+    uint64_t enqueue_ts;         
     std::weak_ptr<RtpTrack> track;
     std::function<void(WorkJob&)>  deleter; 
 }WorkJob;

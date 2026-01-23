@@ -73,7 +73,7 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_
     if (!ptr || len < 12) 
     {
         LOG_ERROR("bad rtp param");
-        abort();
+        return nullptr;
     }
 
     if (sample_rate <= 0) 

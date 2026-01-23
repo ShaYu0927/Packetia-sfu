@@ -51,6 +51,43 @@ void AppendToStream(std::ostringstream& oss, const T& val, const Args&... args)
 #define LOGGER_MIN_LEVEL LOG_LEVEL_INFO   // 默认 INFO
 #endif
 
+#include <variant>
+#include <utility>
+#include <memory>
+#include <type_traits>
+
+
+template <typename T>
+struct is_shared_ptr : std::false_type {};
+
+template <typename T>
+struct is_shared_ptr<std::shared_ptr<T>> : std::true_type {};
+
+template <typename T>
+inline constexpr bool is_shared_ptr_v = is_shared_ptr<T>::value;
+
+template <class... Ts>
+std::string ToString(const std::variant<Ts...>& v) {
+    std::ostringstream oss;
+    std::visit([&](auto&& x) {
+        using X = std::decay_t<decltype(x)>;
+        if constexpr (std::is_same_v<X, std::monostate>) {
+            oss << "monostate";
+        } else if constexpr (std::is_same_v<X, std::pair<unsigned char*, size_t>> ||
+                             std::is_same_v<X, std::pair<uint8_t*, size_t>>) {
+            oss << "bytes(ptr=" << (void*)x.first << ", len=" << x.second << ")";
+        } else if constexpr (is_shared_ptr_v<X>) {
+            // 不依赖 T 的定义：只打印地址/引用计数
+            oss << "shared_ptr(ptr=" << (void*)x.get() << ", use_count=" << x.use_count() << ")";
+        } else {
+            oss << "<variant-alternative>";
+        }
+    }, v);
+    return oss.str();
+}
+
+
+
 class Logger 
 {
 private:
