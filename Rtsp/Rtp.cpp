@@ -180,17 +180,38 @@ void RtpVideoTracker::onRtpSorted(RtpPacket::Ptr rtp)
         return;
     }
 
-    /* invalid NALs */
+    const uint16_t seq = rtp->getSeq();
+    const uint8_t* payload = rtp->getPayload();     
+    size_t payload_len = rtp->getPayloadSize();     
+    if (!payload || payload_len < 1) return;
 
-
-    /* cacel NALS*/
-
-
-    /* notify frame */
-    // if (rtp->marker) 
+    // const uint32_t ts = rtp->getTimestamp();        
+    const bool marker = rtp->getMarker();
+    
+    // if (!has_ts_) 
     // {
-    //     emitFrame(); 
+    //     has_ts_ = true;
+    //     cur_ts_ = ts;
+    // } 
+    // else if (ts != cur_ts_) 
+    // {
+    //     emitFrameIfAny(true);
+    //     cur_ts_ = ts;
     // }
+
+    const uint8_t nal0 = payload[0];
+    const uint8_t nal_type = nal0 & 0x1F;
+
+    if (nal_type >= 1 && nal_type <= 23) 
+    {
+        append_start_code(nalu_buf_);
+        nalu_buf_.insert(nalu_buf_.end(), payload, payload + payload_len);
+    }
+}
+
+inline void RtpVideoTracker::append_start_code(std::vector<uint8_t> &out)
+{
+    out.insert(out.end(), {0,0,0,1});
 }
 
 bool RtpVideoTracker::isKeyFrame(const RtpPacket::Ptr &pkt)
@@ -208,9 +229,7 @@ bool RtpVideoTracker::isKeyFrame(const RtpPacket::Ptr &pkt)
     {
         return true;
     }
-
-    // STAP-A类型(聚合包)，检查其中是否包含IDR帧
-    if(nal_unit_type == 24)
+    else if(nal_unit_type == 24)  /* // STAP-A类型(聚合包)，检查其中是否包含IDR帧 */
     {
         size_t offset = 1;
         while (offset + 2 < data_size) 
@@ -232,6 +251,29 @@ bool RtpVideoTracker::isKeyFrame(const RtpPacket::Ptr &pkt)
             offset += nalu_size;
         }
 
+    }
+    else if (nal_unit_type == 28)
+    {
+        if (data_size < 2) return;
+
+        const uint8_t fu_ind = d[0];      // F|NRI|28
+        const uint8_t fu_hdr = d[1];      // S|E|R|type
+        const bool S = (fu_hdr & 0x80) != 0;
+        const bool E = (fu_hdr & 0x40) != 0;
+        const uint8_t orig_type = fu_hdr & 0x1F;
+
+        const uint8_t F = fu_ind & 0x80;
+        const uint8_t NRI = fu_ind & 0x60;
+        const uint8_t reconstructed_nal = F | NRI | orig_type;
+
+        const uint8_t* frag = d + 2;
+        const size_t frag_len = *d - 2;
+    }
+
+
+    if(pkt->marker)
+    {
+        /*notfy*/
     }
 
     return false;

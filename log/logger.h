@@ -11,7 +11,6 @@
 #include <mutex>
 
 
-// 提取文件名，不带路径
 inline std::string GetFileName(const std::string& filepath) 
 {
     size_t pos = filepath.find_last_of("/\\");
@@ -19,7 +18,7 @@ inline std::string GetFileName(const std::string& filepath)
     return filepath.substr(pos + 1);
 }
 
-// 辅助把任意类型转字符串
+
 template<typename T>
 std::string ToString(const T& val) 
 {
@@ -28,7 +27,7 @@ std::string ToString(const T& val)
     return oss.str();
 }
 
-// 辅助把多个参数拼成一个字符串，中间空格分隔
+
 template<typename T>
 void AppendToStream(std::ostringstream& oss, const T& val) 
 {
@@ -67,19 +66,28 @@ template <typename T>
 inline constexpr bool is_shared_ptr_v = is_shared_ptr<T>::value;
 
 template <class... Ts>
-std::string ToString(const std::variant<Ts...>& v) {
+std::string ToString(const std::variant<Ts...>& v) 
+{
     std::ostringstream oss;
-    std::visit([&](auto&& x) {
+    std::visit([&](auto&& x) 
+    {
         using X = std::decay_t<decltype(x)>;
-        if constexpr (std::is_same_v<X, std::monostate>) {
+        if constexpr (std::is_same_v<X, std::monostate>) 
+        {
             oss << "monostate";
-        } else if constexpr (std::is_same_v<X, std::pair<unsigned char*, size_t>> ||
-                             std::is_same_v<X, std::pair<uint8_t*, size_t>>) {
+        } 
+        else if constexpr (std::is_same_v<X, std::pair<unsigned char*, size_t>> ||
+                             std::is_same_v<X, std::pair<uint8_t*, size_t>>) 
+                             {
             oss << "bytes(ptr=" << (void*)x.first << ", len=" << x.second << ")";
-        } else if constexpr (is_shared_ptr_v<X>) {
+        } 
+        else if constexpr (is_shared_ptr_v<X>) 
+        {
             // 不依赖 T 的定义：只打印地址/引用计数
             oss << "shared_ptr(ptr=" << (void*)x.get() << ", use_count=" << x.use_count() << ")";
-        } else {
+        } 
+        else 
+        {
             oss << "<variant-alternative>";
         }
     }, v);
@@ -163,7 +171,7 @@ public:
     }
 };
 
-// 全局Logger单例（你可以根据需要改成局部或者更灵活）
+
 inline Logger& GlobalLogger() 
 {
     static Logger logger(LOGGER_MIN_LEVEL, "app.log");

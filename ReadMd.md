@@ -284,3 +284,12 @@ Further investigation is required for packet lifetime and use-after-free issues.
 - Use shared_ptr<Packet> for safe cross-thread ownership
 - Remove unsafe static_cast paths
 - Fix len=0 propagation to inputRtp()
+
+# Version 0.4.1 - 2026-01-27
+## feat(rtp): implement RTP parsing, jitter buffering and H264 depacketization
+
+- Improve RTP header parsing and validation
+- Integrate jitter buffer for packet reordering
+- Implement ordered RTP callback
+- Support H264 Single / STAP-A / FU-A depacketization
+- Output Annex-B formatted frames

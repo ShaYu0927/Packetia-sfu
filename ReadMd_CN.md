@@ -35,3 +35,14 @@
 - 提升RTP接收处理链路的健壮性与可维护性
 
 ---
+背景：
+推进RTP接收链路，实现从裸RTP包解析 → jitter缓存 → 顺序输出 → H264 NALU组帧，
+为后续解码、转发和录制打通稳定基础链路。
+
+feat(rtp): 实现RTP解析+jitter排序+H264 NALU组帧
+
+- 完成 RTP 头解析与参数校验
+- 接入 EnhancedPacketSortor 实现 jitter buffer
+- 新增 onRtpSorted，按序输出 RTP
+- 支持 H264 单包 / STAP-A / FU-A 组帧
+- 输出 AnnexB 格式帧数据

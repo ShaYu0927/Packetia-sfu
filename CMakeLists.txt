@@ -22,8 +22,13 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
   )
 endif()
 
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(FFMPEG REQUIRED libavcodec libavformat libavutil libswscale libavfilter libavdevice)
+if (NOT WIN32)
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(FFMPEG REQUIRED libavcodec libavformat libavutil libswscale libavfilter libavdevice)
+else()
+
+endif()
+
 
 include_directories(
     ${FFMPEG_INCLUDE_DIRS}
@@ -144,6 +149,7 @@ target_link_libraries(tcp_client pthread)
 enable_testing()
 add_test(NAME TcpClientTest COMMAND tcp_client)
 
+target_compile_options(FFmpegAAc PRIVATE -H)
 
 target_compile_definitions(FFmpegAAc PRIVATE RTP_DEBUG=1)
 

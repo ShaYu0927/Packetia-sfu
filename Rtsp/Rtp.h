@@ -313,6 +313,13 @@ public:
     std::shared_ptr<uint8_t[]> data;
     size_t capacity = 0;  
     size_t size = 0;
+    uint16_t hdr_len;
+    uint16_t payload_off;
+    uint32_t payload_len;
+    bool marker;
+    uint8_t pt;
+    uint32_t ts;
+    uint32_t ssrc;
 
 };
 
@@ -396,6 +403,13 @@ protected:
 
 private:
     std::vector<RtpPacket::Ptr> cache_;
+    std::vector<uint8_t> nalu_buf_;
+    uint32_t cur_ts_ = 0;
+    bool has_ts_ = false;
+    bool assembling_fu_ = false;
+    uint8_t fu_nal_type_ = 0;
+
+    static inline void append_start_code(std::vector<uint8_t>& out);
     
     bool isKeyFrame(const RtpPacket::Ptr& pkt);
 };

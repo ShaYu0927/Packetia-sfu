@@ -2,6 +2,8 @@
 
 #include "BufferRead.h"
 
+#include <functional>
+
 enum class ParseResult {
     Ok,
     NeedMoreData,

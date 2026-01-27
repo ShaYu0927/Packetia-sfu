@@ -23,7 +23,6 @@
 #define INVALID_SOCKET  (-1)
 #define SOCKET_ERROR    (-1)
 
-
 #elif defined(WIN32) || defined(_WIN32) 
 #define FD_SETSIZE      1024
 #define WIN32_LEAN_AND_MEAN
