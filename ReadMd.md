@@ -293,3 +293,10 @@ Further investigation is required for packet lifetime and use-after-free issues.
 - Implement ordered RTP callback
 - Support H264 Single / STAP-A / FU-A depacketization
 - Output Annex-B formatted frames
+
+# DEBUG - 2026-01-28
+## debug: verify RTP pipeline end-to-end and locate PacketPool exhaustion path
+
+- Verified full RTP flow from worker dispatch to RtpVideoTracker::onRtpSorted
+- Confirmed callback and sorting stages are correctly triggered
+- Identified potential lifetime and caching issues causing PacketPool exhaustion

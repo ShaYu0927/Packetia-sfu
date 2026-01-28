@@ -28,8 +28,6 @@ typedef struct RtpQueueStats
 
 
 
-
-
 enum : std::uint32_t 
 {
     RTP_JOB_RTP  = 0,

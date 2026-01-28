@@ -149,10 +149,10 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_
     auto pkt = RtpPacket::create(len);
     auto dst = pkt ? pkt->data.get() : nullptr;
 
-    LOG_INFO("pkt=" + std::to_string((uintptr_t)pkt.get()) +
-            " dst=" + std::to_string((uintptr_t)dst) +
-            " src=" + std::to_string((uintptr_t)ptr) +
-            " len=" + std::to_string(len));
+    // LOG_INFO("pkt=" + std::to_string((uintptr_t)pkt.get()) +
+    //         " dst=" + std::to_string((uintptr_t)dst) +
+    //         " src=" + std::to_string((uintptr_t)ptr) +
+    //         " len=" + std::to_string(len));
 
     if (!pkt || !dst) 
     {
@@ -177,8 +177,13 @@ void RtpVideoTracker::onRtpSorted(RtpPacket::Ptr rtp)
 {
     if(!rtp)
     {
+        LOG_ERROR("error rtp");
         return;
     }
+    LOG_ERROR("VIDEO_SORTED: null rtp, cnt=", " this=", (void*)this);
+    uint8_t h = rtp->data[0];
+    LOG_DEBUG("RTP payload[0]=0x");
+    
 
     const uint16_t seq = rtp->getSeq();
     const uint8_t* payload = rtp->getPayload();     
@@ -254,7 +259,7 @@ bool RtpVideoTracker::isKeyFrame(const RtpPacket::Ptr &pkt)
     }
     else if (nal_unit_type == 28)
     {
-        if (data_size < 2) return;
+        if (data_size < 2) return false;
 
         const uint8_t fu_ind = d[0];      // F|NRI|28
         const uint8_t fu_hdr = d[1];      // S|E|R|type

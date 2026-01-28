@@ -101,13 +101,15 @@ int ShardedWorkerPool::post(WorkJob &&job)
                 return -1;
             }
         }
-
+#if RTP_DEBUG
         printf("[Worker %zu] q=%zu enq=%lu drop=%lu max=%lu\n",
                 idx,
                 w.q.size(),
                 w.st.dequeued,
                 w.st.dropped,
                 w.st.max_depth_seen);
+
+#endif
 
          w.q.emplace_back(std::move(job));
          w.st.enqueued++;
@@ -148,7 +150,6 @@ std::size_t ShardedWorkerPool::shard_index(std::uint64_t key) const
 
 void ShardedWorkerPool::worker_loop(Worker &w, std::size_t idx)
 {
-   
     while (w.running.load())
     {
         WorkJob job;
@@ -166,21 +167,7 @@ void ShardedWorkerPool::worker_loop(Worker &w, std::size_t idx)
             w.st.dequeued++;
         }
 
-        
-        if (job.deleter)
-        {
-            auto deleter = job.deleter;
-            auto payload = job.payload;
-            handler_->handle(std::move(job));
-            WorkJob tmp{};
-            tmp.payload = payload;
-            deleter(tmp);
-        }
-        else
-        {
-            LOG_ERROR("job without deleter, key=%lu payload=%p", job.key, job.payload);
-        }
-        
+        handler_->handle(std::move(job));
     }
 
       

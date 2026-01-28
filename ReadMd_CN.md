@@ -46,3 +46,11 @@ feat(rtp): 实现RTP解析+jitter排序+H264 NALU组帧
 - 新增 onRtpSorted，按序输出 RTP
 - 支持 H264 单包 / STAP-A / FU-A 组帧
 - 输出 AnnexB 格式帧数据
+
+---
+debug: 验证 RTP pipeline 全链路，定位 PacketPool exhausted 根因方向
+
+- 使用 gdb 逐级确认 RTP 包从 worker 投递至 RtpVideoTracker::onRtpSorted
+- 打通 inputRtp -> sortor -> emit -> callback -> video tracker 处理链路
+- 明确回调正常触发，排除链路中断问题
+- 为后续修复排序缓存与 PacketPool 回收问题提供依据

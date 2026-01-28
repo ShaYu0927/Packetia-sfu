@@ -174,6 +174,7 @@ public:
     {
         auto now = std::chrono::steady_clock::now();
 
+
         if (!_started) 
         {
             _next_seq = seq;
