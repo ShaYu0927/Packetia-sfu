@@ -2,3 +2,8 @@
 .vscode/
 build/
 cmake-build-debug/
+.clangd/
+compile_commands.json
+GPATH
+GRTAGS
+GTAGS

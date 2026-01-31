@@ -2,7 +2,7 @@
 // Created by roots on 2024/9/12.
 //
 
-#include "Time.h"
+#include "TimeUtil.h"
 
 
 TimeId TimeQueue::AddTimer(const TimeEvent& event, uint32_t msec)
@@ -11,7 +11,7 @@ TimeId TimeQueue::AddTimer(const TimeEvent& event, uint32_t msec)
     int64_t timeOut = GetTimeNow();
     TimeId timer_id = ++last_timer_id_;
 
-    auto timer = std::make_shared<Time>(event, msec);
+    auto timer = std::make_shared<TimeUtil>(event, msec);
     timer->SetEventCallback(event);
     time_map_.emplace(timer_id, timer);
     event_.emplace(std::pair<int64_t, TimeId>(timeOut + msec, timer_id), std::move(timer));

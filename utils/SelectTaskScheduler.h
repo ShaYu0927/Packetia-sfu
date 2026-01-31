@@ -1,11 +1,20 @@
 #ifndef _SELEC_TASK_SCHEDULER_H_
 #define _SELEC_TASK_SCHEDULER_H_
 
-#include <sys/select.h>
-#include <sys/time.h>
-#include <sys/types.h>
-#include <unistd.h>
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+  #include <sys/select.h>
+  #include <sys/time.h>
+  #include <unistd.h>
+#endif
+
 #include <forward_list>
+#include <utility>   
+#include <memory>    
+
+
 
 #include "./Socket.h"
 #include "TaskScheduler.h"

@@ -19,15 +19,19 @@ using namespace std::chrono;
 typedef uint32_t TimeId;
 typedef std::function<bool(void)> TimeEvent;
 
-class Time {
+class TimeUtil
+{
 public:
-    Time(const TimeEvent& event, uint32_t msec)
+    TimeUtil(const TimeEvent& event, uint32_t msec)
     :event_callback_ (event), interval_(msec)
     {
         if (msec == 0) {
             interval_ = 1;
         }
     }
+
+    ~TimeUtil() {}
+
 
     static void sleep(uint32_t msec)
     {
@@ -65,8 +69,7 @@ public:
         is_reapte_ = false;
     }
 
-    ~Time() {}
-
+    
     void SetNextTimeout(int64_t time_point)
     {
         next_timeout_ = time_point + interval_;
@@ -98,13 +101,13 @@ public:
     void HandleTimerEvent();
 
 private:
-    friend class Time;
+    friend class TimeUtil;
     int64_t GetTimeNow();
 
 
     std::mutex mutex_;
-    std::unordered_map<TimeId, std::shared_ptr<Time>> time_map_;
-    std::map<std::pair<int64_t, TimeId>,std::shared_ptr<Time>> event_;
+    std::unordered_map<TimeId, std::shared_ptr<TimeUtil>> time_map_;
+    std::map<std::pair<int64_t, TimeId>,std::shared_ptr<TimeUtil>> event_;
     uint32_t last_timer_id_ = 0;
 
 };

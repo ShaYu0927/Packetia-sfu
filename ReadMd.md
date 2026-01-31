@@ -300,3 +300,15 @@ Further investigation is required for packet lifetime and use-after-free issues.
 - Verified full RTP flow from worker dispatch to RtpVideoTracker::onRtpSorted
 - Confirmed callback and sorting stages are correctly triggered
 - Identified potential lifetime and caching issues causing PacketPool exhaustion
+
+# Docs - 2026-01-31
+## docs: add RTCP XR (RFC 3611) protocol and SDP signaling notes
+- Document RTCP XR common header (PT=207) and packet structure
+- Describe the XR report block model and usage scenarios
+- Clarify sequence-number–based reporting for Duplicate RLE and Packet Receipt Times blocks
+- Explain RTT measurement using Receiver Reference Time (BT=4) and DLRR (BT=5)
+- Add SDP a=rtcp-xr signaling rules, distinguishing unilateral and collaborative parameters
+- Clarify Offer/Answer behavior and bandwidth considerations for XR usage
+
+This change only updates protocol documentation and design notes, without affecting
+existing RTP/RTCP data path logic.

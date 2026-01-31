@@ -64,7 +64,7 @@ bool SelectTaskScheduler::HandleEvent(int timeout)
         {
             timeout = 10;
         }
-        Time::sleep(timeout);
+        TimeUtil::sleep(timeout);
         return true;
     }
 

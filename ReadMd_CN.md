@@ -54,3 +54,12 @@ debug: 验证 RTP pipeline 全链路，定位 PacketPool exhausted 根因方向
 - 打通 inputRtp -> sortor -> emit -> callback -> video tracker 处理链路
 - 明确回调正常触发，排除链路中断问题
 - 为后续修复排序缓存与 PacketPool 回收问题提供依据
+
+- 补充 RTCP XR（PT=207）公共头及包体结构说明
+- 整理 XR Report Block 的基本模型与工作方式
+- 重点说明基于 RTP sequence number 的 Duplicate RLE 与 Packet Receipt Times 报告机制
+- 补充 Receiver Reference Time（BT=4）与 DLRR（BT=5）配合实现 RTT 测量的协议逻辑
+- 增加 a=rtcp-xr SDP 信令说明，区分单边型与协作型 XR 参数
+- 明确 XR 在 Offer/Answer 场景下的使用规则与带宽约束语义
+
+本次修改仅涉及协议文档与设计说明，不影响现有 RTP/RTCP 数据路径逻辑。

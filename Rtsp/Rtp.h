@@ -6,8 +6,11 @@
 #include <variant>
 #include <vector>
 #include "RtpTypes.h"
-#include "RtpReceiver.h"
+#include <functional>
+#include <map>
+#include <chrono>
 
+#include "logger.h"
 
 class Sdp;
 
@@ -202,7 +205,7 @@ public:
             if (_buffer.size() > _max_cache) 
             {
                 ++_lost_count;
-                std::cout << "[PacketSortor] too much cache, force drop seq=" << _next_seq << std::endl;
+                LOG_INFO("[PacketSortor] too much cache, force drop seq=", _next_seq);
                 ++_next_seq;
                 flushBuffered();
             }
@@ -321,6 +324,7 @@ public:
     uint8_t pt;
     uint32_t ts;
     uint32_t ssrc;
+    uint32_t seq_;
 
 };
 

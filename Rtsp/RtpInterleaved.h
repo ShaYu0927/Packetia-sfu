@@ -10,6 +10,7 @@
 #include <mutex>
 #include <unordered_map>
 #include <memory>
+#include <cstring>
 
 class RtpTrack; 
 

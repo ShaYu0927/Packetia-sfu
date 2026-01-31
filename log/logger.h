@@ -56,6 +56,8 @@ void AppendToStream(std::ostringstream& oss, const T& val, const Args&... args)
 #include <type_traits>
 
 
+
+
 template <typename T>
 struct is_shared_ptr : std::false_type {};
 

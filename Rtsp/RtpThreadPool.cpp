@@ -53,7 +53,6 @@ void RtpJobHandler::handle(WorkJob &&job)
         return;
     }
 
-
     if (!mem || len < 12) 
     { 
         return;
@@ -61,13 +60,21 @@ void RtpJobHandler::handle(WorkJob &&job)
     
     const auto pt = track->getType();
     const auto sr = track->getSampleRate();
-    auto RtpPkt = track->inputRtp(pt, sr, const_cast<uint8_t*>(mem), len);
-
+    if(!is_rtcp)
+    {
+        auto RtpPkt = track->inputRtp(pt, sr, const_cast<uint8_t*>(mem), len);
+        if (!RtpPkt) 
+        {
+            return;
+        }
+    }
+    else
+    {
+        
+    }
+   
     if (job.deleter) job.deleter(job);
 
-    if (!RtpPkt) 
-    {
-        return;
-    }
+    
     // track->inputPacket(rtp);
 }

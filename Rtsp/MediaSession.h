@@ -10,7 +10,6 @@
 #include <condition_variable>
 #include <thread>
 #include <atomic>
-
 #include "MediaSource.h"
 #include "Rtp.h"
 #include "RtpTypes.h"

@@ -58,10 +58,15 @@ add_library(network STATIC
     utils/Acceptor.cpp
 )
 
+add_library(LOGGER STATIC
+    log/logger.h
+    log/logger.cpp
+)
+
 
 
 add_library(utils STATIC
-    utils/Time.cpp
+    utils/TimeUtil.cpp
     utils/MemoryManager.cpp
     utils/TaskScheduler.cpp
     utils/SelectTaskScheduler.cpp
@@ -129,14 +134,14 @@ add_library(Interleaved STATIC
     ${INTERLEAVED_SRCS}
 )
 
-target_link_libraries(rtsp rtp network utils pthread sip Rtcp)
+target_link_libraries(rtsp rtp network utils pthread sip Rtcp LOGGER)
 
 enable_testing()
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/Rtsp/Test)
 
 
 add_executable(FFmpegAAc main.cpp)
-target_link_libraries(FFmpegAAc rtsp rtp utils Rtcp
+target_link_libraries(FFmpegAAc rtsp rtp utils Rtcp LOGGER
     ${FFMPEG_LIBRARIES}
     pthread
     c

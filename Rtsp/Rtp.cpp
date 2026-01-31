@@ -65,7 +65,7 @@ bool RtpPacket::getMarker() const
 
 uint16_t RtpPacket::getSeq() const
 {
-    return 0;
+    return seq_;
 }
 
 RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len)
@@ -149,10 +149,13 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_
     auto pkt = RtpPacket::create(len);
     auto dst = pkt ? pkt->data.get() : nullptr;
 
-    // LOG_INFO("pkt=" + std::to_string((uintptr_t)pkt.get()) +
-    //         " dst=" + std::to_string((uintptr_t)dst) +
-    //         " src=" + std::to_string((uintptr_t)ptr) +
-    //         " len=" + std::to_string(len));
+#if RTP_DEBUG
+
+    LOG_INFO("pkt=" + std::to_string((uintptr_t)pkt.get()) +
+            " dst=" + std::to_string((uintptr_t)dst) +
+            " src=" + std::to_string((uintptr_t)ptr) +
+            " len=" + std::to_string(len));
+#endif
 
     if (!pkt || !dst) 
     {
@@ -163,6 +166,10 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_
     pkt->size = len;
     pkt->type = type;
     pkt->sample_rate = sample_rate;
+    pkt->pt = pt;
+    pkt->ssrc = ssrc;
+    pkt->seq_ = seq;
+    
 
     uint16_t sequence = pkt->getSeq();
 
@@ -180,10 +187,6 @@ void RtpVideoTracker::onRtpSorted(RtpPacket::Ptr rtp)
         LOG_ERROR("error rtp");
         return;
     }
-    LOG_ERROR("VIDEO_SORTED: null rtp, cnt=", " this=", (void*)this);
-    uint8_t h = rtp->data[0];
-    LOG_DEBUG("RTP payload[0]=0x");
-    
 
     const uint16_t seq = rtp->getSeq();
     const uint8_t* payload = rtp->getPayload();     
