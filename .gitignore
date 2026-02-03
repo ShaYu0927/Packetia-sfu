@@ -3,6 +3,7 @@
 build/
 cmake-build-debug/
 .clangd/
+doc/
 compile_commands.json
 GTAGS
 GRTAGS
