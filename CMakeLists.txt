@@ -1,11 +1,10 @@
 cmake_minimum_required(VERSION 3.10)
-project(RtspServer)
+project(Packetia)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_BUILD_TYPE Debug)
 
 add_compile_definitions(RTP_DEBUG=0)
-
 
 
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
