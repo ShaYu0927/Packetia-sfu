@@ -39,6 +39,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/protocol/sip
     ${CMAKE_SOURCE_DIR}/protocol/Rtcp
     ${CMAKE_SOURCE_DIR}/src/interleaved
+    ${CMAKE_SOURCE_DIR}/Room
     
 )
 
@@ -129,18 +130,27 @@ file(GLOB INTERLEAVED_SRCS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/interleaved/*.cpp
 )
 
+file(GLOB ROOM_SRC
+    ${CMAKE_CURRENT_SOURCE_DIR}/Room/*.cpp
+)
+
 add_library(Interleaved STATIC
     ${INTERLEAVED_SRCS}
 )
 
-target_link_libraries(rtsp rtp network utils pthread sip Rtcp LOGGER)
+add_library(ROOM_LIB STATIC
+    ${ROOM_SRC}
+)
+
+
+target_link_libraries(rtsp rtp network utils pthread sip Rtcp LOGGER ROOM_LIB)
 
 enable_testing()
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/Rtsp/Test)
 
 
-add_executable(FFmpegAAc main.cpp)
-target_link_libraries(FFmpegAAc rtsp rtp utils Rtcp LOGGER
+add_executable(Packetia main.cpp)
+target_link_libraries(Packetia rtsp rtp utils Rtcp LOGGER ROOM_LIB
     ${FFMPEG_LIBRARIES}
     pthread
     c
@@ -153,9 +163,9 @@ target_link_libraries(tcp_client pthread)
 enable_testing()
 add_test(NAME TcpClientTest COMMAND tcp_client)
 
-target_compile_options(FFmpegAAc PRIVATE -H)
+target_compile_options(Packetia PRIVATE -H)
 
-target_compile_definitions(FFmpegAAc PRIVATE RTP_DEBUG=1)
+target_compile_definitions(Packetia PRIVATE RTP_DEBUG=1)
 
 # cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 # cmake --build build

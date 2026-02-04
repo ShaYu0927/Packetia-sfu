@@ -312,3 +312,9 @@ Further investigation is required for packet lifetime and use-after-free issues.
 
 This change only updates protocol documentation and design notes, without affecting
 existing RTP/RTCP data path logic.
+
+# ROOM:20260204
+## feat: introduce ClientSession for per-client send handling
+
+- Isolate per-client RTP send queue and state into ClientSession
+- Prepare MediaSession for SFU-style multi-subscriber forwarding

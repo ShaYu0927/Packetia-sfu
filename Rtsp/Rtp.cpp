@@ -106,14 +106,13 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_
     uint32_t ts = ntohl(w->ts);
     uint32_t ssrc = ntohl(w->ssrc);
 
-    /* classify + lock PT/SSRC */
+    /* classify + lock PT/SSRC <RFC 3550> */
     size_t header_len = 12 + 4u * cc;
     if (len < header_len) 
     {
         LOG_ERROR("drop rtp: len < csrc header_len, len=" + std::to_string(len));
         return nullptr;
     }
-
 
     if (x) 
     {
@@ -179,7 +178,7 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_
 
     return pkt;
 }
-/* 缓存 NALU */
+/* 缓存 NALU  转发 */
 void RtpVideoTracker::onRtpSorted(RtpPacket::Ptr rtp)
 {
     if(!rtp)

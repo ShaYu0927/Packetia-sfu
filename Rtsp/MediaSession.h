@@ -83,10 +83,6 @@ public:
 
     uint16_t GetMulticastPort(MediaChannelId channel_id) const 
     {
-        if (channel_id >= MAX_MEDIA_CHANNEL) 
-        {
-            return 0; // Invalid channel
-        }
         return multicast_port_[channel_id];
     }
 
@@ -140,7 +136,6 @@ public:
     std::vector<SdpTrackerPtr> tracks_;
 
 private:
-    
     std::string suffix_;
     std::string sdp_;
 
@@ -152,7 +147,6 @@ private:
     
 
     std::atomic_bool running_{false};
-
     static std::atomic_uint64_t last_session_id_;
 
     // 组播
@@ -164,7 +158,13 @@ private:
 
     mutable std::mutex track_mtx_;
     std::unordered_map<int, std::weak_ptr<RtpTrack>> rtp_tracks_;
-    
+
+    /* 订阅关系：trackIdx -> subscribers fds */
+    std::unordered_map<int, std::vector<int>> subs_by_track_;
+    std::unordered_map<uint32_t, int> ssrc_to_track_;
+    std::mutex route_mtx_;
+
+    int publisher_fd_{-1};    
 };
 
 
