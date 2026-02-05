@@ -13,7 +13,7 @@
 #include "MediaSource.h"
 #include "Rtp.h"
 #include "RtpTypes.h"
-
+#include "Rtsp.h"
 
 
 #define MAX_TRACKS 5
@@ -24,9 +24,6 @@ class SdpTracker;
 using RtpTrackPtr = std::shared_ptr<RtpTrack>;
 using RtpConnectionPtr = std::shared_ptr<RtpConnection>;
 using SdpTrackerPtr = std::shared_ptr<SdpTracker>;
-
-
-
 
 using MediaSourcePtr = std::shared_ptr<MediaSource>;
 using RtpPacketPtr = std::shared_ptr<RtpPacket>;
@@ -89,7 +86,6 @@ public:
     /*
         Avoid session forcibly extending the track lifecycle
     */
-   
     void BindRtpTrack(int trackIdx, const std::shared_ptr<RtpTrack>& track);
 
     std::shared_ptr<RtpTrack> GetRtpTrack(int trackIdx) const;

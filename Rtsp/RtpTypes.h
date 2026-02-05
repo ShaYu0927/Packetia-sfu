@@ -1,6 +1,16 @@
 #pragma once
 
 
+#include <bits/stdint-uintn.h>
+#include <string>
+#include <unistd.h>
+#include <vector>
+#include <array>
+#include <memory>
+
+#include "Socket.h"
+
+
 #define RTP_HEADER_SIZE   	   12
 #define MAX_RTP_PAYLOAD_SIZE   1420
 #define RTP_MAX_PACKET_SIZE    (RTP_HEADER_SIZE + MAX_RTP_PAYLOAD_SIZE)
@@ -9,6 +19,30 @@
 #define RTP_VPX_HEAD_SIZE	   1
 
 #define MAX_MEDIA_CHANNEL 16
+
+typedef struct UniqueFd 
+{
+    int fd{-1};
+    ~UniqueFd(){ if(fd>=0) ::close(fd); }
+    UniqueFd() = default;
+    explicit UniqueFd(int f):fd(f){}
+    UniqueFd(const UniqueFd&) = delete;
+    UniqueFd& operator=(const UniqueFd&) = delete;
+    UniqueFd(UniqueFd&& o) noexcept : fd(o.fd) { o.fd=-1; }
+    UniqueFd& operator=(UniqueFd&& o) noexcept { std::swap(fd,o.fd); return *this; }
+}UniqueFd;
+
+struct ChannelTransport 
+{
+    uint16_t local_rtp_port{0}, local_rtcp_port{0};
+    UniqueFd rtp_fd, rtcp_fd;
+    sockaddr_storage peer_rtp{}, peer_rtcp{};
+    uint32_t clock_rate{90000};
+    uint8_t  payload_type{96};
+    bool ready{false};
+};
+
+
 
 typedef enum RTPTransportMode
 {
@@ -36,15 +70,17 @@ enum TrackType
 };
 
 
-enum class MediaTransportType {
+enum class MediaTransportType 
+{
     TCP,
     UDP,
     UNKNOWN
 };
 
 
-// 每个 track 的信息
-typedef struct RtpTrackInfo {
+/* track Info */
+typedef struct RtpTrackInfo 
+{
     int payload_type;       // RTP payload type，比如 96, 97
     std::string codec;      // 编码类型，比如 H265, MPEG4-GENERIC
     int clock_rate;         // 时钟频率，比如 90000, 44100
@@ -54,17 +90,18 @@ typedef struct RtpTrackInfo {
     std::string fmtp;       // 原始的 fmtp 整串
     std::string rtpmap;     // 原始的 rtpmap 整串
 
-    // H.265 专用
+    // H.265 
     std::string vps;
     std::string sps;
     std::string pps;
 
-    // AAC 专用
+    // AAC 
     std::string audio_config;  // config=1210
 }RtpTrackInfo;
 
 // 整个 SDP Session 信息
-typedef struct RtspSessionDesc {
+typedef struct RtspSessionDesc 
+{
     std::string version;    // v=0
     std::string origin;     // o=...
     std::string session_name; // s=...

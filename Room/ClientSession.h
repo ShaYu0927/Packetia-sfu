@@ -15,15 +15,15 @@ public:
     virtual void Stop() = 0;
 };
 
-class ClientSession : public ISession
+class RClientSession : public ISession
 {
 public:
-    using Ptr = std::shared_ptr<ClientSession>;
+    using Ptr = std::shared_ptr<RClientSession>;
 
-    explicit ClientSession(std::shared_ptr<RtpConnection> conn)
+    explicit RClientSession(std::shared_ptr<RtpConnection> conn)
         : connection_(std::move(conn)) {}
 
-    ~ClientSession() override;
+    ~RClientSession() override;
 
     void Start() override;
 

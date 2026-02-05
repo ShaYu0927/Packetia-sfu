@@ -9,6 +9,13 @@
 #include "Media.h"
 
 
+/*
+    UDP/TCP socket 管理（收/发）
+    基础封包发送（Sendto / TCP interleaved）
+    端口、对端地址、传输模式维护
+    连接生命周期（close / teardown）
+*/
+
 class RtspConnection;
 
 class RtpConnection
@@ -21,16 +28,12 @@ public:
     { return (uint32_t)((size_t)(this)); }
 
     void SetClockrate(MediaChannelId channel_id, uint32_t clock_rate);
-
     void SetPlayLoadType(MediaChannelId channel_id, uint8_t payload_type);
-
     bool SetupRtpOverTcp(MediaChannelId channel_id, uint16_t rtp_channel, uint16_t rtcp_channel);
     bool SetupRtpOverUdp(MediaChannelId channel_id, uint16_t rtp_port, uint16_t rtcp_port);
     bool SetupRtpOverMulticast(MediaChannelId channel_id, const std::string& ip, uint16_t port);
 
     void SetFrameType(uint8_t frame_type);
-    
-
     uint16_t GetLocalRtpPort(MediaChannelId channel_id) const 
     {
         return local_rtp_port_[channel_id];
@@ -39,14 +42,9 @@ public:
     {
         return local_rtcp_port_[channel_id];
     }
-
     int StartSendRTP(uint32_t timestamp);
     int StartSendRTCP();
-
     RTPTransportMode GetTransport() const { return transport_mode_; }
-
-
-
 
 private:
     friend class RtspConnection;
@@ -73,6 +71,8 @@ private:
 
     int rtpfd_[MAX_MEDIA_CHANNEL];
     int rtcpfd_[MAX_MEDIA_CHANNEL];
+
+    std::array<ChannelTransport, MAX_MEDIA_CHANNEL> ch_{};
 
 
     struct sockaddr_in peer_addr_;

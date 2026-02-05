@@ -318,3 +318,14 @@ existing RTP/RTCP data path logic.
 
 - Isolate per-client RTP send queue and state into ClientSession
 - Prepare MediaSession for SFU-style multi-subscriber forwarding
+
+# RoomVersion:0.0.1: 2026-02-05
+## feat: add basic SFU room
+
+- Introduce Room module to manage participants and provide basic conference routing.
+
+- Add participant join/leave management and broadcast forwarding logic.
+
+- Each incoming RTP packet is forwarded to all other participants (N-1 fanout).
+
+- Prepare foundation for future subscribe-based routing / simulcast / SVC.

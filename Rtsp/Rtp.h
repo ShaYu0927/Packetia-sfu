@@ -113,7 +113,6 @@ struct RtpTransportInfo
     } udp;
 };
 
-
 struct RtcpStats 
 {
     uint64_t packet_count = 0;

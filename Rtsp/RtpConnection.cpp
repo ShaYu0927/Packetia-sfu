@@ -53,11 +53,6 @@ void RtpConnection::SetClockrate(MediaChannelId channel_id, uint32_t clock_rate)
 void RtpConnection::SetPlayLoadType(MediaChannelId channel_id, uint8_t payload_type)
 {
 }
-/*
-    SETUP rtsp://xxx/stream/trackID=0 RTSP/1.0
-    Transport: RTP/AVP/TCP;unicast;interleaved=0-1
-
-*/
 
 bool RtpConnection::SetupRtpOverTcp(MediaChannelId channel_id, uint16_t rtp_channel, uint16_t rtcp_channel)
 {
@@ -249,37 +244,27 @@ void RtpConnection::SetFrameType(uint8_t frameType)
     }
 }
 
-int RtpConnection::StartSendRTP(uint32_t timestamp)
-{
-    return 0;
-}
-
-int RtpConnection::StartSendRTCP()
-{
-    return 0;
-}
-
 void RtpConnection::SetRtpHeader(MediaChannelId channel_id, RtpPacket &pkt)
 {
     auto& channel = media_channels_[channel_id];
 
-    // 若未播放或未录制或尚未有关键帧，丢弃
-    if (!(channel.isPlay() || channel.isRecord()) || !has_key_frame_) {
+    if (!(channel.isPlay() || channel.isRecord()) || !has_key_frame_) 
+    {
         pkt.size = 0;
         pkt.data.reset();
         return;
     }
 
-    // 设置 RTP header
     channel.rtp_header.setMarker(pkt.getMarker());
     channel.rtp_header.setTimestamp(pkt.getStamp());
     channel.rtp_header.setSequence(channel.rtp_sequence++);
 
-    // 将 RTP header 序列化为网络字节序并写入 packet 前部
-    if (pkt.data && pkt.size >= RtpHeader::kSize) {
+    if (pkt.data && pkt.size >= RtpHeader::kSize) 
+    {
         channel.rtp_header.serialize(pkt.data.get());
-    } else {
-        // 安全检查不通过，丢弃
+    } 
+    else 
+    {
         pkt.size = 0;
         pkt.data.reset();
     }
