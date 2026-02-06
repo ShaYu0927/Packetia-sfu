@@ -148,7 +148,7 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_
     auto pkt = RtpPacket::create(len);
     auto dst = pkt ? pkt->data.get() : nullptr;
 
-#if RTP_DEBUG
+#if 0
 
     LOG_INFO("pkt=" + std::to_string((uintptr_t)pkt.get()) +
             " dst=" + std::to_string((uintptr_t)dst) +

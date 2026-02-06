@@ -329,3 +329,11 @@ existing RTP/RTCP data path logic.
 - Each incoming RTP packet is forwarded to all other participants (N-1 fanout).
 
 - Prepare foundation for future subscribe-based routing / simulcast / SVC.
+
+# 2026-02-06
+## feat(rtsp/rtp): add RTP packet sorting logs and improve debug tracing
+- Add detailed debug logs for RTP sorting pipeline (EnhancedPacketSortor)
+- Print seq/next_seq/buffer state to verify jitter-buffer reorder behavior
+- Add gdb breakpoint tracing points for emit() / inputRtp() call path
+- Improve packet dump helper to validate RTP header correctness
+- Facilitate troubleshooting for RTP packet payload/ts/seq parsing issues

@@ -88,13 +88,12 @@ int RtpInterleaved::onInterleaved(uint8_t channel, const uint8_t *payload, size_
         std::chrono::steady_clock::now().time_since_epoch()).count());    // current time in ms
     Mem->recv_ts = Mem->enqueue_ts; 
     
-    std::shared_ptr<Packet> pkt_sp(Mem, [](Packet* p){
-        if(p && p->owner)
-        {
-            p->reset();
-            WorkerService::realse(p);
-        }
+    auto pkt_sp = std::shared_ptr<Packet>(Mem, [pool=pool_](Packet* p){
+        if (!p) return;
+        p->reset();
+        pool->release(p);
     });
+
     
     auto w = bindingOpt->track;
     if (w.expired()) 
@@ -117,7 +116,6 @@ int RtpInterleaved::onInterleaved(uint8_t channel, const uint8_t *payload, size_
     int ret = WorkerService::post("media", std::move(job));
     if(ret < 0)
     {
-        WorkerService::realse(Mem);
         LOG_ERROR("RtpInterleaved::onInterleaved: failed to post job to worker pool");
         return ret;
     }

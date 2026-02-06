@@ -432,8 +432,6 @@ void RtspConnection::HandleCmdRecord()
 
     // 启动 RTP OVER TCP 推送线程
     
-
-    LOG_INFO("Init RECORD for session: " + media_session->GetId());
     std::shared_ptr<char> res(new char[2048], std::default_delete<char[]>());
     int size = rtsp_request_->BuildRecordRes(res, 2048,std::to_string(session_id_));
     this->SendRtspMessage(res, size);

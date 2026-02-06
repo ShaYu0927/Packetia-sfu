@@ -8,19 +8,27 @@ set(CMAKE_BUILD_TYPE Debug)
 add_compile_definitions(RTP_DEBUG=0)
 
 
+option(ENABLE_ASAN "Enable AddressSanitizer" OFF)
+
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
   add_compile_options(
     -O0
     -g3
     -fno-omit-frame-pointer
     -fno-optimize-sibling-calls
-    -fsanitize=address
-    -fsanitize-address-use-after-scope
   )
-  add_link_options(
-    -fsanitize=address
-  )
+
+  if (ENABLE_ASAN)
+    add_compile_options(
+      -fsanitize=address
+      -fsanitize-address-use-after-scope
+    )
+    add_link_options(
+      -fsanitize=address
+    )
+  endif()
 endif()
+
 
 if (NOT WIN32)
   find_package(PkgConfig REQUIRED)

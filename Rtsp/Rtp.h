@@ -175,8 +175,13 @@ public:
     void inputPacket(Seq seq, Packet pkt) 
     {
         auto now = std::chrono::steady_clock::now();
-
-
+        LOG_INFO("[Sort] in seq=", seq,
+            " next=", _next_seq,
+            " pkt_ptr=", (uintptr_t)(pkt ? pkt.get() : nullptr),
+            " pkt.seq_=", (pkt ? pkt->seq_ : 0),
+            " ts=", (pkt ? pkt->ts : 0),
+            " payload_len=", (pkt ? pkt->payload_len : 0),
+            " buf=", _buffer.size());
         if (!_started) 
         {
             _next_seq = seq;
@@ -186,7 +191,6 @@ public:
             return;
         }
 
-        // 强制 flush（时间间隔大于指定时间）
         if (std::chrono::duration_cast<std::chrono::milliseconds>(now - _last_flush_time).count() > _flush_timeout) 
         {
             flushBuffered();
