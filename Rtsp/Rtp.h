@@ -9,7 +9,6 @@
 #include <functional>
 #include <map>
 #include <chrono>
-
 #include "logger.h"
 
 class Sdp;
@@ -175,13 +174,17 @@ public:
     void inputPacket(Seq seq, Packet pkt) 
     {
         auto now = std::chrono::steady_clock::now();
+#if RTP_DEBUG
         LOG_INFO("[Sort] in seq=", seq,
-            " next=", _next_seq,
-            " pkt_ptr=", (uintptr_t)(pkt ? pkt.get() : nullptr),
-            " pkt.seq_=", (pkt ? pkt->seq_ : 0),
-            " ts=", (pkt ? pkt->ts : 0),
-            " payload_len=", (pkt ? pkt->payload_len : 0),
-            " buf=", _buffer.size());
+        " next=", _next_seq,
+        " obj=", (void*)(pkt ? pkt.get() : nullptr),
+        " use_count=", (pkt ? pkt.use_count() : 0),
+        " pkt.seq_=", (pkt ? pkt->seq_ : 0),
+        " ts=", (pkt ? pkt->ts : 0),
+        " payload_len=", (pkt ? pkt->size : 0));
+#endif
+
+
         if (!_started) 
         {
             _next_seq = seq;
@@ -215,7 +218,6 @@ public:
         } 
         else 
         {
-            // 包太旧或太远，不缓存
             ++_drop_count;
         }
     }
@@ -239,6 +241,14 @@ public:
 private:
     void emit(Seq seq, const Packet& pkt) 
     {
+#if RTP_DEBUG
+        LOG_INFO("[Emitter] emit begin: seq=", seq,
+            " next_seq=", _next_seq,
+            " cb=", (void*)(_cb ? (void*)1 : nullptr),
+            " sp_addr=", (void*)&pkt,
+            " obj=", (void*)(pkt ? pkt.get() : nullptr),
+            " use_count=", (pkt ? pkt.use_count() : 0));
+#endif
         if (_cb) 
         {
             _cb(seq, pkt);

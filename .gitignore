@@ -8,3 +8,15 @@ compile_commands.json
 GTAGS
 GRTAGS
 GPATH
+
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+CTestTestfile.cmake
+*.cmake
+
+test_rtp_input
+
+build/
+out/

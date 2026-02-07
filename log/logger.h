@@ -1,6 +1,7 @@
 #ifndef LOGGER_H_
 #define LOGGER_H_
 
+#include <condition_variable>
 #include <string>
 #include <fstream>
 #include <cassert>
@@ -9,6 +10,14 @@
 #include <sstream>
 #include <cstdio>
 #include <mutex>
+#include <variant>
+#include <utility>
+#include <memory>
+#include <type_traits>
+#include <atomic>
+#include <deque>
+#include <thread>
+
 
 
 inline std::string GetFileName(const std::string& filepath) 
@@ -50,150 +59,178 @@ void AppendToStream(std::ostringstream& oss, const T& val, const Args&... args)
 #define LOGGER_MIN_LEVEL LOG_LEVEL_INFO   // 默认 INFO
 #endif
 
-#include <variant>
-#include <utility>
-#include <memory>
-#include <type_traits>
 
 
-
-
-template <typename T>
-struct is_shared_ptr : std::false_type {};
-
-template <typename T>
-struct is_shared_ptr<std::shared_ptr<T>> : std::true_type {};
-
-template <typename T>
-inline constexpr bool is_shared_ptr_v = is_shared_ptr<T>::value;
-
-template <class... Ts>
-std::string ToString(const std::variant<Ts...>& v) 
+class ILogger 
 {
-    std::ostringstream oss;
-    std::visit([&](auto&& x) 
-    {
-        using X = std::decay_t<decltype(x)>;
-        if constexpr (std::is_same_v<X, std::monostate>) 
-        {
-            oss << "monostate";
-        } 
-        else if constexpr (std::is_same_v<X, std::pair<unsigned char*, size_t>> ||
-                             std::is_same_v<X, std::pair<uint8_t*, size_t>>) 
-                             {
-            oss << "bytes(ptr=" << (void*)x.first << ", len=" << x.second << ")";
-        } 
-        else if constexpr (is_shared_ptr_v<X>) 
-        {
-            // 不依赖 T 的定义：只打印地址/引用计数
-            oss << "shared_ptr(ptr=" << (void*)x.get() << ", use_count=" << x.use_count() << ")";
-        } 
-        else 
-        {
-            oss << "<variant-alternative>";
-        }
-    }, v);
-    return oss.str();
-}
-
-
-
-class Logger 
-{
-private:
-    std::ofstream of_;
-    int minlevel_;
-    std::mutex mtx_; 
-
 public:
-    enum Level 
-    {
-        TRACE = LOG_LEVEL_TRACE,
-        DEBUG = LOG_LEVEL_DEBUG,
-        INFO  = LOG_LEVEL_INFO,
-        ERR   = LOG_LEVEL_ERR
-    };
+    enum Level { TRACE=0, DEBUG=1, INFO=2, ERR=3 };
+    virtual ~ILogger() = default;
 
-    Logger(const int level, const std::string& logfile) : minlevel_(level) 
-    {
-        this->of_.open(logfile.c_str(), std::ios_base::out | std::ios_base::app);
-        assert(this->of_.is_open() && "Failed to open log file");
-    }
+    virtual void set_min_level(int level) = 0;
+    virtual int  min_level() const = 0;
 
-    ~Logger() 
+    virtual void log(const char* file, int line, int level, std::string&& msg) = 0;
+    virtual void flush() = 0;
+};
+
+
+class BaseLogger : public ILogger {
+protected:
+    std::atomic<int> minlevel_{LOG_LEVEL_INFO};
+
+    static const char* level_str(int level) 
     {
-        if (this->of_.is_open()) 
+        switch (level) 
         {
-            this->of_.close();
+            case DEBUG: return "DEBUG";
+            case INFO:  return "INFO";
+            case ERR:   return "ERROR";
+            default:    return "UNKNOWN";
         }
     }
 
-    template<typename... Args>
-    void Write(const std::string& codefile, int codeline, int level, const Args&... args) 
+    static std::string now_str() 
     {
-        if (level < minlevel_) return;
-
-        std::lock_guard<std::mutex> lk(mtx_);
-
-        time_t sectime = time(NULL);
+        time_t sectime = time(nullptr);
         tm tmtime;
-
-#ifdef _WIN32
-#if _MSC_VER < 1600
-        tmtime = *localtime(&sectime);
-#else
+    #ifdef _WIN32
         localtime_s(&tmtime, &sectime);
-#endif
-#else
+    #else
         localtime_r(&sectime, &tmtime);
-#endif
-
-        char time_buf[20];
-        snprintf(time_buf, sizeof(time_buf), "%04d-%02d-%02d %02d:%02d:%02d",
+    #endif
+        char buf[20];
+        snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d",
             tmtime.tm_year + 1900, tmtime.tm_mon + 1, tmtime.tm_mday,
             tmtime.tm_hour, tmtime.tm_min, tmtime.tm_sec);
+        return buf;
+    }
 
-        const char* level_str = nullptr;
-        switch (level) {
-        case DEBUG: level_str = "DEBUG"; break;
-        case INFO:  level_str = "INFO";  break;
-        case ERR:   level_str = "ERROR"; break;
-        default:    level_str = "UNKNOWN"; break;
-        }
+    // 派生类实现：真正写到哪里
+    virtual void sink(std::string&& line) = 0;
+
+public:
+    void set_min_level(int level) override { minlevel_.store(level, std::memory_order_relaxed); }
+    int  min_level() const override { return minlevel_.load(std::memory_order_relaxed); }
+
+    template<typename... Args>
+    void Write(const char* file, int line, int level, const Args&... args) 
+    {
+        if (level < min_level()) return;
 
         std::ostringstream oss;
-        oss << time_buf << " [" << level_str << "]: [" << GetFileName(codefile) << ":" << codeline << "] ";
-
+        oss << now_str() << " [" << level_str(level) << "]: ["
+            << GetFileName(file) << ":" << line << "] ";
         AppendToStream(oss, args...);
 
-        std::string log_line = oss.str();
+        sink(oss.str());
+    }
 
-        of_ << log_line << std::endl;
-        std::cout << log_line << std::endl;
+    // ILogger::log：用于接收外部已格式化的字符串
+    void log(const char* file, int line, int level, std::string&& msg) override 
+    {
+        if (level < min_level()) return;
+        std::ostringstream oss;
+        oss << now_str() << " [" << level_str(level) << "]: ["
+            << GetFileName(file) << ":" << line << "] " << msg;
+        sink(oss.str());
     }
 };
 
 
-inline Logger& GlobalLogger() 
+
+
+class AsyncFileLogger : public BaseLogger 
 {
-    static Logger logger(LOGGER_MIN_LEVEL, "app.log");
+    std::ofstream of_;
+    std::mutex mtx_;
+    std::condition_variable cv_;
+    std::deque<std::string> q_;
+    std::thread worker_;
+    std::atomic<bool> stop_{false};
+    size_t max_queue_ = 100000;
+    bool to_console_ = true;
+
+    void worker_loop() 
+    {
+        std::unique_lock<std::mutex> lk(mtx_);
+        while (!stop_.load() || !q_.empty()) 
+        {
+            cv_.wait(lk, [&]{ return stop_.load() || !q_.empty(); });
+
+            std::deque<std::string> local;
+            local.swap(q_);
+            lk.unlock();
+
+            for (auto& s : local) 
+            {
+                of_ << s << '\n';
+                if (to_console_) std::cout << s << '\n';
+            }
+            of_.flush();
+
+            lk.lock();
+        }
+    }
+
+protected:
+    void sink(std::string&& line) override 
+    {
+        {
+            std::lock_guard<std::mutex> lk(mtx_);
+            if (q_.size() >= max_queue_) q_.pop_front(); // 满了丢最旧
+            q_.push_back(std::move(line));
+        }
+        cv_.notify_one();
+    }
+
+public:
+    AsyncFileLogger(const std::string& logfile, bool to_console=true)
+        : to_console_(to_console)
+    {
+        of_.open(logfile.c_str(), std::ios_base::out | std::ios_base::app);
+        assert(of_.is_open());
+        worker_ = std::thread([this]{ worker_loop(); });
+    }
+
+    ~AsyncFileLogger() override 
+    {
+        stop_.store(true);
+        cv_.notify_all();
+        if (worker_.joinable()) worker_.join();
+        if (of_.is_open()) of_.close();
+    }
+
+    void flush() override 
+    {
+        std::unique_lock<std::mutex> lk(mtx_);
+        cv_.wait_for(lk, std::chrono::milliseconds(200), [&]{ return q_.empty(); });
+        of_.flush();
+    }
+};
+
+
+
+inline BaseLogger& GlobalLogger() 
+{
+    static AsyncFileLogger logger("app.log", /*to_console=*/true);
     return logger;
 }
 
-// 宏定义
 #if LOGGER_MIN_LEVEL <= LOG_LEVEL_DEBUG
-#define LOG_DEBUG(...) GlobalLogger().Write(__FILE__, __LINE__, Logger::DEBUG, __VA_ARGS__)
+#define LOG_DEBUG(...) GlobalLogger().Write(__FILE__, __LINE__, BaseLogger::DEBUG, __VA_ARGS__)
 #else
 #define LOG_DEBUG(...) ((void)0)
 #endif
 
 #if LOGGER_MIN_LEVEL <= LOG_LEVEL_INFO
-#define LOG_INFO(...)  GlobalLogger().Write(__FILE__, __LINE__, Logger::INFO,  __VA_ARGS__)
+#define LOG_INFO(...)  GlobalLogger().Write(__FILE__, __LINE__, BaseLogger::INFO,  __VA_ARGS__)
 #else
 #define LOG_INFO(...)  ((void)0)
 #endif
 
-#define LOG_ERROR(...) GlobalLogger().Write(__FILE__, __LINE__, Logger::ERR, __VA_ARGS__)
+#define LOG_ERROR(...) GlobalLogger().Write(__FILE__, __LINE__, BaseLogger::ERR, __VA_ARGS__)
+
 
 #endif // LOGGER_H_
 

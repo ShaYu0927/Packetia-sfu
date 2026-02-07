@@ -1,5 +1,6 @@
 #include "Rtp.h"
 #include "Rtsp.h"
+#include <string>
 
 RtpPacket::RtpPacket()
 {
@@ -148,7 +149,13 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_
     auto pkt = RtpPacket::create(len);
     auto dst = pkt ? pkt->data.get() : nullptr;
 
-#if 0
+    LOG_INFO("[inputRtp] after create: seq=", seq,
+         " pkt_obj=", (void*)pkt.get(),
+         " data_ptr=", (void*)pkt->data.get(),
+         " use_count=", pkt.use_count(),
+         " len=", len);
+
+#if RTP_DEBUG
 
     LOG_INFO("pkt=" + std::to_string((uintptr_t)pkt.get()) +
             " dst=" + std::to_string((uintptr_t)dst) +
@@ -169,18 +176,19 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_
     pkt->ssrc = ssrc;
     pkt->seq_ = seq;
     
-
     uint16_t sequence = pkt->getSeq();
-
-    onBeforeRtpSorted(pkt);
-
     EnhancedPacketSortor<RtpPacket::Ptr, uint16_t>::inputPacket(sequence,pkt);
 
     return pkt;
 }
-/* 缓存 NALU  转发 */
+
 void RtpVideoTracker::onRtpSorted(RtpPacket::Ptr rtp)
 {
+
+#if RTP_DEBUG
+    LOG_INFO("[RtpSorted] seq= " + std::to_string(rtp->seq_) + " payload_len= " + std::to_string(rtp->size));
+#endif
+
     if(!rtp)
     {
         LOG_ERROR("error rtp");
@@ -285,7 +293,6 @@ bool RtpVideoTracker::isKeyFrame(const RtpPacket::Ptr &pkt)
 
     return false;
 }
-
 
 RtpPacket::Ptr RtpAudioTracker::inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len)
 {
