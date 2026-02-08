@@ -17,8 +17,8 @@ struct Packet
     uint64_t    recv_ts = 0;
     uint64_t    enqueue_ts = 0;
 
-    uint8_t*    data = nullptr;    // 指向 storage.data()
-    std::vector<uint8_t> storage;  // 固定大小，不在每次 acquire/release 分配
+    uint8_t*    data = nullptr;    
+    std::vector<uint8_t> storage;  
 
     inline void reset()
     {
@@ -43,7 +43,6 @@ public:
 
     void release(Packet* pkt);
 
-    // 观测
     std::size_t capacity() const { return capacity_; }
     std::size_t size() const;
 

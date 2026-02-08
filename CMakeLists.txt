@@ -72,6 +72,13 @@ add_library(LOGGER STATIC
     log/logger.cpp
 )
 
+add_library(CALLBACKEMITTER STATIC
+    Common/CallbackEmitter/CallbackEmitter.h
+    Common/CallbackEmitter/CallbackEmitter.cpp
+    Common/CallbackEmitter/SourceBase.cpp
+    Common/CallbackEmitter/SourceBase.h
+)
+
 
 
 add_library(utils STATIC
@@ -143,6 +150,8 @@ file(GLOB ROOM_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/Room/*.cpp
 )
 
+
+
 add_library(Interleaved STATIC
     ${INTERLEAVED_SRCS}
 )
@@ -152,7 +161,9 @@ add_library(ROOM_LIB STATIC
 )
 
 
-target_link_libraries(rtsp rtp network utils pthread sip Rtcp LOGGER ROOM_LIB)
+target_link_libraries(rtsp rtp network utils pthread sip Rtcp LOGGER ROOM_LIB 
+    CALLBACKEMITTER
+)
 
 enable_testing()
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/Rtsp/Test)
@@ -163,6 +174,7 @@ target_link_libraries(Packetia rtsp rtp utils Rtcp LOGGER ROOM_LIB
     ${FFMPEG_LIBRARIES}
     pthread
     c
+    CALLBACKEMITTER
 )
 
 
