@@ -160,14 +160,13 @@ public:
 
 
 /*
-     v=0                              # SDP 协议版本
+    v=0                              # SDP 协议版本
     o=- 0 0 IN IP4 192.168.0.1       # 会话发起者（用户名、session id、版本号、网络类型、地址类型、地址）
     s=SessionName                    # 会话名称
     c=IN IP4 192.168.0.1             # 连接信息
     t=0 0                            # 时间信息
     m=video 5004 RTP/AVP 96          # 媒体描述（如视频）
     a=rtpmap:96 H264/90000           # 媒体属性（编码方式）
-
 
 */
 class Sdp : public std::enable_shared_from_this<Sdp> // SDP (Session Description Protocol) class
@@ -234,8 +233,6 @@ public:
     }
     std::string buildANNOUNCEBody();
 };
-
-
 
 class SdpParser 
 {

@@ -342,3 +342,12 @@ existing RTP/RTCP data path logic.
 - Provide subscribe/cancel mechanism to manage listener lifecycle
 - Introduce SourceBase<T> abstraction to expose publish/subscribe pattern for stream modules
 - Prepare foundation for RTP/frame fan-out and modular pipeline extension
+
+# Version 0.4.3 -  2026-02-09
+## Add Depacketizer module and start H264 RTP frame reassembly
+
+- Introduced a new Depacketizer module and defined a unified interface (input() / hasFrame() / popFrame()) for frame-level reconstruction based on sorted RTP packets.
+- Added initial H264Depacketizer class skeleton, preparing the architecture for future codec extensions (H265/VP8, etc.).
+- Completed RTP packet metadata filling after parsing, including ts/marker/version/padding/extension/cc/hdr_len/payload_off/payload_len, ensuring downstream depacketization can rely on correct header/payload boundaries.
+- Improved RTP header parsing to correctly handle CSRC and header extensions, with additional validation for padding scenarios.
+- Added debug logs for RtpSorted output to verify sequence continuity and payload size variations, confirming correct behavior before implementing FU-A/STAP-A reassembly logic.

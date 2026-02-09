@@ -7,26 +7,31 @@
 #include <unistd.h>
 #include <sstream>
 
-class RtspClient {
+class RtspClient 
+{
 public:
     RtspClient(const char* ip, int port)
         : server_ip(ip), server_port(port), cseq(1), session_id("") {}
 
-    bool connect_server() {
+    bool connect_server() 
+    {
         sock = socket(AF_INET, SOCK_STREAM, 0);
-        if (sock < 0) {
+        if (sock < 0) 
+        {
             std::cerr << "Socket creation failed\n";
             return false;
         }
         sockaddr_in server_addr{};
         server_addr.sin_family = AF_INET;
         server_addr.sin_port = htons(server_port);
-        if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) <= 0) {
+        if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) <= 0) 
+        {
             std::cerr << "Invalid address\n";
             close(sock);
             return false;
         }
-        if (connect(sock, (sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        if (connect(sock, (sockaddr*)&server_addr, sizeof(server_addr)) < 0) 
+        {
             std::cerr << "Connection failed\n";
             close(sock);
             return false;
@@ -34,27 +39,32 @@ public:
         return true;
     }
 
-    bool send_request(const std::string& request) {
+    bool send_request(const std::string& request) 
+    {
         ssize_t sent = send(sock, request.c_str(), request.size(), 0);
         return sent == (ssize_t)request.size();
     }
 
-    bool receive_response(std::string& response) {
+    bool receive_response(std::string& response) 
+    {
         char buffer[4096] = {0};
         ssize_t received = recv(sock, buffer, sizeof(buffer) - 1, 0);
-        if (received > 0) {
+        if (received > 0) 
+        {
             response.assign(buffer, received);
             return true;
         }
         return false;
     }
 
-    void close_connection() {
+    void close_connection() 
+    {
         if (sock >= 0) close(sock);
         sock = -1;
     }
 
-    void run(const std::string& rtsp_url) {
+    void run(const std::string& rtsp_url) 
+    {
         if (!connect_server()) return;
 
         // 1. OPTIONS
@@ -62,9 +72,12 @@ public:
         std::cout << "Sending OPTIONS:\n" << options_req << std::endl;
         send_request(options_req);
         std::string response;
-        if (receive_response(response)) {
+        if (receive_response(response)) 
+        {
             std::cout << "Received OPTIONS response:\n" << response << std::endl;
-        } else {
+        } 
+        else 
+        {
             std::cerr << "Failed to receive OPTIONS response\n";
             close_connection();
             return;
@@ -74,9 +87,12 @@ public:
         std::string describe_req = build_describe(rtsp_url);
         std::cout << "Sending DESCRIBE:\n" << describe_req << std::endl;
         send_request(describe_req);
-        if (receive_response(response)) {
+        if (receive_response(response)) 
+        {
             std::cout << "Received DESCRIBE response:\n" << response << std::endl;
-        } else {
+        } 
+        else 
+        {
             std::cerr << "Failed to receive DESCRIBE response\n";
             close_connection();
             return;
@@ -86,11 +102,14 @@ public:
         std::string setup_req = build_setup(rtsp_url);
         std::cout << "Sending SETUP:\n" << setup_req << std::endl;
         send_request(setup_req);
-        if (receive_response(response)) {
+        if (receive_response(response)) 
+        {
             std::cout << "Received SETUP response:\n" << response << std::endl;
             // 解析 Session ID
             parse_session(response);
-        } else {
+        } 
+        else 
+        {
             std::cerr << "Failed to receive SETUP response\n";
             close_connection();
             return;
@@ -100,9 +119,12 @@ public:
         std::string play_req = build_play(rtsp_url);
         std::cout << "Sending PLAY:\n" << play_req << std::endl;
         send_request(play_req);
-        if (receive_response(response)) {
+        if (receive_response(response)) 
+        {
             std::cout << "Received PLAY response:\n" << response << std::endl;
-        } else {
+        } 
+        else 
+        {
             std::cerr << "Failed to receive PLAY response\n";
         }
 

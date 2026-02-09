@@ -69,6 +69,7 @@ uint16_t RtpPacket::getSeq() const
     return seq_;
 }
 
+
 RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len)
 {
     if (!ptr || len < 12) 
@@ -106,9 +107,8 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_
     uint16_t seq = ntohs(w->seq);
     uint32_t ts = ntohl(w->ts);
     uint32_t ssrc = ntohl(w->ssrc);
-
-    /* classify + lock PT/SSRC <RFC 3550> */
     size_t header_len = 12 + 4u * cc;
+
     if (len < header_len) 
     {
         LOG_ERROR("drop rtp: len < csrc header_len, len=" + std::to_string(len));
@@ -134,7 +134,7 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_
         header_len += ext_len;
     }
 
-    /* padding 如果你要严格处理：payload_end = len - ptr[len-1] */
+    /* padding: payload_end = len - ptr[len-1] */
     if (p) 
     {
         uint8_t pad = ptr[len - 1];
@@ -149,11 +149,13 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_
     auto pkt = RtpPacket::create(len);
     auto dst = pkt ? pkt->data.get() : nullptr;
 
+#if RTP_DEBUG
     LOG_INFO("[inputRtp] after create: seq=", seq,
          " pkt_obj=", (void*)pkt.get(),
          " data_ptr=", (void*)pkt->data.get(),
          " use_count=", pkt.use_count(),
          " len=", len);
+#endif
 
 #if RTP_DEBUG
 
@@ -175,17 +177,27 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_
     pkt->pt = pt;
     pkt->ssrc = ssrc;
     pkt->seq_ = seq;
+    pkt->ts = ts;
+    pkt->version = v;
+    pkt->padding = p;
+    pkt->extension = x;
+    pkt->cc = cc;
+    pkt->csrc_count = cc;
+    pkt->hdr_len = header_len;
+    pkt->payload_off = header_len;
+    pkt->payload_len = len - header_len;
+    pkt->recv_time_ms = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
     
     uint16_t sequence = pkt->getSeq();
     EnhancedPacketSortor<RtpPacket::Ptr, uint16_t>::inputPacket(sequence,pkt);
-
     return pkt;
 }
 
 void RtpVideoTracker::onRtpSorted(RtpPacket::Ptr rtp)
 {
 
-#if RTP_DEBUG
+#if 1
     LOG_INFO("[RtpSorted] seq= " + std::to_string(rtp->seq_) + " payload_len= " + std::to_string(rtp->size));
 #endif
 

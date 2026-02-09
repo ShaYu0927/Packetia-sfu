@@ -11,6 +11,12 @@
 #include <chrono>
 #include "logger.h"
 
+/*
+    https://www.rfc-editor.org/rfc/rfc3550.pdf
+*/
+
+
+
 class Sdp;
 
 #pragma pack(push,1)
@@ -318,10 +324,7 @@ public:
 
     void setVersion(uint8_t version);
     uint8_t getVersion() const;
-
-
-     
-
+    
 public:
     TrackType type          = TrackInvalid;
     uint32_t sample_rate    = 90000;
@@ -338,7 +341,13 @@ public:
     uint32_t ts;
     uint32_t ssrc;
     uint32_t seq_;
-
+    uint8_t version;
+    bool padding;
+    bool extension;
+    uint8_t cc;
+    uint8_t csrc_count;
+    std::array<uint32_t, 15> csrc;
+    uint32_t recv_time_ms;
 };
 
 

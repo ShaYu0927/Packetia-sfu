@@ -58,7 +58,6 @@ protected:
 
 private:
     SignalCOW<Item> sig_;
-
 };
 
 
