@@ -3,7 +3,8 @@
 #include "ProtocolParser.h"
 #include "logger.h"
 
-class SipParse : public ProtocolParser {
+class SipParse : public ProtocolParser 
+{
 public:
     virtual ~SipParse() {}
 

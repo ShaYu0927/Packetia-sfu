@@ -3,13 +3,16 @@
 
 #include "Depacketizer.h"
 
+#include <cstddef>
 #include <vector>
 #include <cstdint>
+
+
 
 class H264Depacketizer : public Depacketizer 
 {
 public:
-    bool input(const Ptr& pkt) override;
+    bool input(const RtpView& pkt) override;
     bool hasFrame() const override;
     std::vector<uint8_t> popFrame() override;
 
@@ -21,9 +24,11 @@ private:
     uint32_t cur_ssrc_ = 0;
     uint32_t cur_ts_ = 0;
 
-    bool have_last_seq_ = false;
-    uint16_t last_seq_ = 0;
-
+    bool have_last_seq_  = false;
+    uint16_t last_seq_   = 0;
+    bool has_ts          = false;
+    bool assembling_fu_  = false;
+    uint8_t fu_nal_type_ = 0;
     bool fu_in_progress_ = false;
 
 

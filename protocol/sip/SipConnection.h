@@ -1,14 +1,15 @@
 #pragma once
 
-#include "network/TcpConnection.h"
+#include "TcpConnection.h"
 #include "SipMessage.h"
-
+#include "TcpServer.h"
 #include <memory.h>
 
-class SipConnection : public TcpConnection{
+class SipConnection : public TcpConnection
+{
 
 public:
-    SipConnection(SipServer* server, TaskScheduler* scheduler, SOCKET fd);
+    SipConnection(TcpServer* server, TaskScheduler* scheduler, SOCKET fd);
     ~SipConnection();
 
 

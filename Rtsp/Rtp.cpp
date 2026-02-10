@@ -26,42 +26,47 @@ std::shared_ptr<RtpPacket> RtpPacket::create(size_t capacity)
 
 void RtpPacket::setSeq(uint16_t seq)
 {
-
+    seq_ = seq;
 }
 
 uint32_t RtpPacket::getStamp() const
 {
-    return 0;
+    return recv_time_ms;
 }
 
-void RtpPacket::setStamp(uint32_t ts)
-{
-}
 
 uint64_t RtpPacket::getStampMS(bool ntp) const
 {
-    return 0;
+    return ntp_stamp_ms;
 }
 
 
 uint8_t *RtpPacket::getPayload()
 {
-    return nullptr;
+    return data.get();
 }
 
 size_t RtpPacket::getPayloadSize() const
 {
-    return size_t();
+    return data ? size : 0;
 }
 
 void RtpPacket::setPayload(const uint8_t *payload_data, size_t len)
 {
-
+    if (payload_data && len > 0 && len <= capacity) 
+    {
+        memcpy(data.get(), payload_data, len);
+        size = len;
+    } 
+    else 
+    {
+        size = 0;
+    }
 }
 
 bool RtpPacket::getMarker() const
 {
-    return false;
+    return marker;
 }
 
 uint16_t RtpPacket::getSeq() const
@@ -207,33 +212,14 @@ void RtpVideoTracker::onRtpSorted(RtpPacket::Ptr rtp)
         return;
     }
 
-    const uint16_t seq = rtp->getSeq();
-    const uint8_t* payload = rtp->getPayload();     
-    size_t payload_len = rtp->getPayloadSize();     
-    if (!payload || payload_len < 1) return;
+    RtpView v;
+    v.seq = rtp->getSeq();
+    v.ts = rtp->getStamp();
+    v.marker = rtp->getMarker();
+    v.payload = rtp->getPayload();
+    v.payload_len = rtp->getPayloadSize();
 
-    // const uint32_t ts = rtp->getTimestamp();        
-    const bool marker = rtp->getMarker();
-    
-    // if (!has_ts_) 
-    // {
-    //     has_ts_ = true;
-    //     cur_ts_ = ts;
-    // } 
-    // else if (ts != cur_ts_) 
-    // {
-    //     emitFrameIfAny(true);
-    //     cur_ts_ = ts;
-    // }
-
-    const uint8_t nal0 = payload[0];
-    const uint8_t nal_type = nal0 & 0x1F;
-
-    if (nal_type >= 1 && nal_type <= 23) 
-    {
-        append_start_code(nalu_buf_);
-        nalu_buf_.insert(nalu_buf_.end(), payload, payload + payload_len);
-    }
+    depacketizer_->input(v);
 }
 
 inline void RtpVideoTracker::append_start_code(std::vector<uint8_t> &out)
@@ -315,15 +301,6 @@ RtpPacket::Ptr RtpAudioTracker::inputRtp(TrackType type, int sample_rate, uint8_
     return nullptr;
 }
 
-RtpHeader::RtpHeader()
-{
-
-}
-
-RtpHeader::~RtpHeader()
-{
-
-}
 
 void RtpHeader::serialize(uint8_t *out) const
 {
@@ -331,56 +308,52 @@ void RtpHeader::serialize(uint8_t *out) const
 
 uint8_t RtpHeader::getVersion() const
 {
-    return 0;
+    return _version;
 }
 
 void RtpHeader::setVersion(uint8_t ver)
 {
+    _version = ver;
 }
 
 uint8_t RtpHeader::getPayloadType() const
 {
-    return 0;
+    return _payload_type;
 }
 
 void RtpHeader::setPayloadType(uint8_t pt)
 {
+    _payload_type = pt;
 }
 
 bool RtpHeader::getMarker() const
 {
-    return false;
+    return _marker;
 }
 
 void RtpHeader::setMarker(bool marker)
 {
+    _marker = marker;
 }
 
 uint16_t RtpHeader::getSequence() const
 {
-    return 0;
+    return _seq;
 }
 
 void RtpHeader::setSequence(uint16_t seq)
 {
-}
-
-uint32_t RtpHeader::getTimestamp() const
-{
-    return 0;
-}
-
-void RtpHeader::setTimestamp(uint32_t ts)
-{
+    _seq = seq;
 }
 
 uint32_t RtpHeader::getSSRC() const
 {
-    return 0;
+    return _ssrc;
 }
 
 void RtpHeader::setSSRC(uint32_t ssrc)
 {
+    _ssrc = ssrc;
 }
 
 

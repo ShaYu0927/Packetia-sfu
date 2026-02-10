@@ -49,6 +49,8 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/protocol/Rtcp
     ${CMAKE_SOURCE_DIR}/src/interleaved
     ${CMAKE_SOURCE_DIR}/Room
+    ${CMAKE_SOURCE_DIR}/Common/CallbackEmitter
+    ${CMAKE_SOURCE_DIR}/Common/Depacketizer
     
 )
 
@@ -72,11 +74,14 @@ add_library(LOGGER STATIC
     log/logger.cpp
 )
 
-add_library(CALLBACKEMITTER STATIC
+add_library(COMMON STATIC
     Common/CallbackEmitter/CallbackEmitter.h
     Common/CallbackEmitter/CallbackEmitter.cpp
     Common/CallbackEmitter/SourceBase.cpp
     Common/CallbackEmitter/SourceBase.h
+    Common/Depacketizer/Depacketizer.h
+    Common/Depacketizer/H264Depacketizer.h
+    Common/Depacketizer/H264Depacketizer.cpp
 )
 
 
@@ -162,7 +167,7 @@ add_library(ROOM_LIB STATIC
 
 
 target_link_libraries(rtsp rtp network utils pthread sip Rtcp LOGGER ROOM_LIB 
-    CALLBACKEMITTER
+    COMMON
 )
 
 enable_testing()
@@ -174,7 +179,7 @@ target_link_libraries(Packetia rtsp rtp utils Rtcp LOGGER ROOM_LIB
     ${FFMPEG_LIBRARIES}
     pthread
     c
-    CALLBACKEMITTER
+    COMMON
 )
 
 

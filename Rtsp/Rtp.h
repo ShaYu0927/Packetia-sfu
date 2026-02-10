@@ -9,7 +9,11 @@
 #include <functional>
 #include <map>
 #include <chrono>
+
+
 #include "logger.h"
+#include "H264Depacketizer.h"
+
 
 /*
     https://www.rfc-editor.org/rfc/rfc3550.pdf
@@ -52,8 +56,8 @@ class RtpHeader
 public:
     static constexpr size_t kSize = 12;
 
-    RtpHeader();
-    ~RtpHeader();
+    RtpHeader() {}
+    ~RtpHeader() {}
 
     void serialize(uint8_t* out) const;
 
@@ -75,8 +79,7 @@ public:
     uint32_t getSSRC() const;
     void setSSRC(uint32_t ssrc);
 
-	uint16_t pt;  // 负载类型
-
+	  
 private:
     uint8_t _version = 2;
     bool _padding = false;
@@ -89,6 +92,7 @@ private:
     uint16_t _seq = 0;
     uint32_t _timestamp = 0;
     uint32_t _ssrc = 0;
+    uint16_t pt;
 };
 
 struct RtpTransportTcp 
@@ -422,7 +426,16 @@ public:
                     uint8_t channel_id = 0,
                     bool disable_ntp = false)
         : RtpTrack(type, codec, payload_type, ssrc, clock_rate, channel_id, disable_ntp)
-    {}
+    {
+        if (codec == "H264" || codec == "h264") 
+        {
+            depacketizer_ = std::make_unique<H264Depacketizer>();
+        } 
+        else 
+        {
+            depacketizer_.reset(); 
+        }
+    }
     RtpPacket::Ptr inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len) override;
 
 protected:
@@ -439,6 +452,7 @@ private:
     static inline void append_start_code(std::vector<uint8_t>& out);
     
     bool isKeyFrame(const RtpPacket::Ptr& pkt);
+    std::unique_ptr<H264Depacketizer> depacketizer_;
 };
 
 class RtpAudioTracker : public RtpTrack

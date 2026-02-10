@@ -3,24 +3,28 @@
 #include <string>
 #include <unordered_map>
 
-typedef struct SipRequest {
+typedef struct SipRequest 
+{
     std::string method;
     std::string uri;
     std::unordered_map<std::string, std::string> headers;
     std::string body;
-};
+}SipRequest;
 
 
-typedef struct SipResponse {
+typedef struct SipResponse 
+{
     int status_code;
     std::string reason_phrase;
     std::unordered_map<std::string, std::string> headers;
     std::string body;
-};
+}SipResponse;
 
 
-struct SipTransaction {
-    enum State {
+struct SipTransaction 
+{
+    enum State 
+    {
         Trying,
         Proceeding,
         Completed,
