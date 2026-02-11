@@ -13,6 +13,7 @@ struct RtpView
     bool marker = false;
     const uint8_t* payload = nullptr;
     size_t payload_len = 0;
+    uint32_t ssrc = 0;
     bool valid() const { return payload && payload_len; }
 };
 

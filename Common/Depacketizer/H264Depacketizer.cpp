@@ -1,5 +1,7 @@
 #include "H264Depacketizer.h"
 #include "Rtp.h"    
+#include "logger.h"
+#include <bits/stdint-uintn.h>
 
 
 
@@ -10,30 +12,69 @@ bool H264Depacketizer::input(const RtpView& pkt)
     const uint8_t* payload = pkt.payload;
     size_t payload_len = pkt.payload_len;
 
-    if(!has_ts)
+
+    const uint32_t ts  = pkt.ts;
+    const uint16_t seq = pkt.seq;
+    const bool marker  = pkt.marker;
+    const uint32_t ssrc = pkt.ssrc;
+
+    if(!started_  || pkt.ts != cur_ts_ || pkt.ssrc != cur_ssrc_)
     {
-        has_ts = true;
-        if(pkt.ts != cur_ts_)
-        {
-            reset_stream(pkt.ts, pkt.ts);
-        }
+        LOG_INFO("Starting new stream: ssrc=%u, ts=%u", ssrc, ts);
+        reset_stream(pkt.ts, pkt.ts);
+        started_ = true;
+        cur_ssrc_ = ssrc;
+        cur_ts_ = ts;
+        have_last_seq_ = false;
     }
-    else if (pkt.ts != cur_ts_)
+
+
+    if(ts != cur_ts_)
     {
-        if (!au_.empty()) 
+        LOG_INFO("New timestamp: %u (current %u), flush current frame", ts, cur_ts_);
+        if (!flush_frame())
         {
-            flush_frame();
-            au_.clear();
+            LOG_ERROR("Failed to flush frame for ts %u", cur_ts_);
+            reset_stream(ssrc, ts);
+            return false;
         }
-        cur_ts_ = pkt.ts;
-        assembling_fu_ = false;
+        cur_ts_ = ts;
+    }
+
+    if(have_last_seq_ && !seq_contiguous(last_seq_, seq))
+    {
+        LOG_INFO("Non-contiguous RTP sequence: last %u, current %u", last_seq_, seq);
+        reset_stream(ssrc, ts);
+        return false;
+    }
+
+    last_seq_ = seq;
+    have_last_seq_ = true;
+
+    const uint8_t nalhdr = payload[0];
+    const uint8_t type = nal_type(nalhdr);
+
+    LOG_INFO("Received RTP packet: ssrc=%u, ts=%u, seq=%u, marker=%d, payload_len=%zu, nal_type=%u",
+             ssrc, ts, seq, marker, payload_len, type);
+
+    /* sigle NAL 1 ~ 23 */
+    if(type >= 1 && type <= 23)
+    {
+        return handle_single_nal(payload, payload_len);
+    }
+    else if(type == 24) /* STAP-A */
+    {
+        return handle_stap_a(payload, payload_len);
+    }
+    else if(type == 28) /* FU-A */
+    {
+        return handle_fu_a(payload, payload_len);
     }
     else
     {
-        reset_stream(pkt.ts, pkt.ts);
+        LOG_ERROR("Unsupported NAL type: %u", type);
+        return false;
     }
-
-    fu_nal_type_ = payload[0] & 0x1F;
 
     return true;
 }
@@ -46,4 +87,111 @@ bool H264Depacketizer::hasFrame() const
 std::vector<uint8_t> H264Depacketizer::popFrame()
 {
     return {};
+}
+
+
+bool H264Depacketizer::handle_single_nal(const uint8_t* p, size_t n)
+{
+    append_start_code(au_);
+    append_bytes(au_, p, n);
+    if(maker_received_)
+    {
+        if (!flush_frame())
+        {
+            LOG_ERROR("Failed to flush frame for ts %u", cur_ts_);
+            reset_stream(cur_ssrc_, cur_ts_);
+            return false;
+        }
+    }
+    return true;
+}
+bool H264Depacketizer::handle_stap_a(const uint8_t* p, size_t n)
+{
+    size_t off = 1;
+    while (off + 2 <= n)
+    {
+        uint16_t nal_size = (p[off] << 8) | p[off + 1];
+
+        if(nal_size == 0)
+        {
+           continue;
+        }
+
+        off += 2;
+        if (off + nal_size > n)
+        {
+            LOG_ERROR("STAP-A NAL size exceeds payload: nal_size=%u, remaining=%zu", nal_size, n - off);
+            return false;
+        }
+        append_start_code(au_);
+        append_bytes(au_, p + off, nal_size);
+        off += nal_size;
+
+    }
+
+    if(maker_received_)
+    {
+        if (!flush_frame())
+        {
+            LOG_ERROR("Failed to flush frame for ts %u", cur_ts_);
+            reset_stream(cur_ssrc_, cur_ts_);
+            return false;
+        }
+    }
+    return true;
+}
+
+bool H264Depacketizer::handle_fu_a(const uint8_t* p, size_t n)
+{
+    if (n < 2)
+    {
+        LOG_ERROR("FU-A payload too small: %zu", n);
+        return false;
+    }
+
+    const uint8_t fu_indicator = p[0];
+    const uint8_t fu_header    = p[1];
+    bool start_bit = (fu_header & 0x80) != 0;
+    bool end_bit   = (fu_header & 0x40) != 0;
+
+   
+    const uint8_t fu_type = (fu_header & 0x1F);
+    const uint8_t nri = (fu_indicator & 0x60);
+    const uint8_t fbit= (fu_indicator & 0x80);
+    uint8_t nal_type = fu_header & 0x1F;
+
+    const uint8_t reconstructed_nal = static_cast<uint8_t>(fbit | nri | fu_type);
+    const uint8_t* fu_payload = p + 2;
+    const size_t fu_payload_len = n - 2;
+
+    if (start_bit)
+    {
+        if (fu_in_progress_)
+        {
+            LOG_INFO("Start bit received while FU already in progress, resetting AU state");
+            reset_au_state();
+        }
+        fu_nal_type_ = nal_type;
+        append_start_code(au_);
+        uint8_t nal_hdr = (fu_indicator & 0xE0) | nal_type;
+        au_.push_back(nal_hdr);
+        append_bytes(au_, p + 2, n - 2);
+        fu_in_progress_ = true;
+    }
+    else
+    {
+        if (!fu_in_progress_)
+        {
+            LOG_INFO("Non-start FU-A packet received without FU in progress, ignoring");
+            return false;
+        }
+        if (nal_type != fu_nal_type_)
+        {
+            LOG_INFO("NAL type mismatch in FU-A packet: expected %u, got %u", fu_nal_type_, nal_type);
+            reset_au_state();
+            return false;
+        }
+        append_bytes(au_, p + 2, n - 2);
+    }
+    return true;
 }
