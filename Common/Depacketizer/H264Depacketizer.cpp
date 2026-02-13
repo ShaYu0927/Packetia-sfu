@@ -79,6 +79,17 @@ bool H264Depacketizer::input(const RtpView& pkt)
     return true;
 }
 
+bool H264Depacketizer::flush_frame()
+{
+    return true;
+}
+
+void H264Depacketizer::reset_stream(uint32_t ssrc, uint32_t ts)
+{
+
+}
+
+
 bool H264Depacketizer::hasFrame() const
 {
     return false;
@@ -92,6 +103,7 @@ std::vector<uint8_t> H264Depacketizer::popFrame()
 
 bool H264Depacketizer::handle_single_nal(const uint8_t* p, size_t n)
 {
+    iVideoFrame f;
     append_start_code(au_);
     append_bytes(au_, p, n);
     if(maker_received_)
@@ -102,11 +114,18 @@ bool H264Depacketizer::handle_single_nal(const uint8_t* p, size_t n)
             reset_stream(cur_ssrc_, cur_ts_);
             return false;
         }
+        iVideoFrame f;
+        f.ssrc = cur_ssrc_;
+        f.ts   = cur_ts_;
+        f.annexb = std::move(au_); 
+        au_.clear();               
     }
+    frameSource.publish(std::move(f));
     return true;
 }
 bool H264Depacketizer::handle_stap_a(const uint8_t* p, size_t n)
 {
+    iVideoFrame f;
     size_t off = 1;
     while (off + 2 <= n)
     {
@@ -126,7 +145,6 @@ bool H264Depacketizer::handle_stap_a(const uint8_t* p, size_t n)
         append_start_code(au_);
         append_bytes(au_, p + off, nal_size);
         off += nal_size;
-
     }
 
     if(maker_received_)
@@ -137,12 +155,19 @@ bool H264Depacketizer::handle_stap_a(const uint8_t* p, size_t n)
             reset_stream(cur_ssrc_, cur_ts_);
             return false;
         }
+        iVideoFrame f;
+        f.ssrc = cur_ssrc_;
+        f.ts   = cur_ts_;
+        f.annexb = std::move(au_); 
+        au_.clear();               
     }
+    frameSource.publish(std::move(f));
     return true;
 }
 
 bool H264Depacketizer::handle_fu_a(const uint8_t* p, size_t n)
 {
+    iVideoFrame f;
     if (n < 2)
     {
         LOG_ERROR("FU-A payload too small: %zu", n);
@@ -193,5 +218,10 @@ bool H264Depacketizer::handle_fu_a(const uint8_t* p, size_t n)
         }
         append_bytes(au_, p + 2, n - 2);
     }
+    f.ssrc = cur_ssrc_;
+    f.ts   = cur_ts_;
+    f.annexb = std::move(au_); 
+    au_.clear();
+    frameSource.publish(std::move(f));               
     return true;
 }

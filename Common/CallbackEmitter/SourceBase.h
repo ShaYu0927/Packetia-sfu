@@ -46,6 +46,15 @@ public:
         return sig_.size();
     }
 
+    void publish(const Item& v) 
+    {
+        publishImpl(v);
+    }
+    void publish(Item&& v) 
+    {
+        publishImpl(std::move(v));
+    }
+
 protected:
     void publishImpl(const Item& v) override 
     {

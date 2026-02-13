@@ -8,6 +8,7 @@ target_link_libraries(test_rtp_input
         utils
         network
         pthread
+        COMMON
 )
 
 target_include_directories(test_rtp_input PRIVATE

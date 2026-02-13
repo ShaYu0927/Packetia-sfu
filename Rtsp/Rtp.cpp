@@ -356,4 +356,9 @@ void RtpHeader::setSSRC(uint32_t ssrc)
     _ssrc = ssrc;
 }
 
+void RtpHeader::setTimestamp(uint32_t ts)
+{
+
+}
+
 

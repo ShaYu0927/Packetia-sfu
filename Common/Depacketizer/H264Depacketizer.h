@@ -8,12 +8,16 @@
 #include <cstdint>
 
 #include "logger.h"
+#include "SourceBase.h"
 
 
 
 class H264Depacketizer : public Depacketizer 
 {
 public:
+    H264Depacketizer() = default;
+    virtual ~H264Depacketizer() = default;
+
     bool input(const RtpView& pkt) override;
     bool hasFrame() const override;
     std::vector<uint8_t> popFrame() override;
@@ -34,6 +38,10 @@ private:
     bool fu_in_progress_ = false;
     bool au_ready_ = false;
     bool maker_received_ = false;
+
+    SourceCOW<iVideoFrame> frameSource;
+
+
 
 
 private:
@@ -71,6 +79,8 @@ private:
     {
         return static_cast<uint16_t>(prev + 1) == cur;
     }
+
+    
 };
 
 

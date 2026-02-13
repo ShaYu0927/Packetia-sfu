@@ -3,7 +3,10 @@ project(Packetia)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_BUILD_TYPE Debug)
+
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
+endif()
 
 add_compile_definitions(RTP_DEBUG=0)
 
@@ -11,7 +14,7 @@ add_compile_definitions(RTP_DEBUG=0)
 option(ENABLE_ASAN "Enable AddressSanitizer" OFF)
 
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
-  add_compile_options(
+   add_compile_options(
     -O0
     -g3
     -fno-omit-frame-pointer
@@ -33,6 +36,9 @@ endif()
 if (NOT WIN32)
   find_package(PkgConfig REQUIRED)
   pkg_check_modules(FFMPEG REQUIRED libavcodec libavformat libavutil libswscale libavfilter libavdevice)
+
+  add_compile_options(-fno-omit-frame-pointer)
+  add_compile_options(-fno-optimize-sibling-calls)
 else()
 
 endif()

@@ -17,6 +17,13 @@ struct RtpView
     bool valid() const { return payload && payload_len; }
 };
 
+struct iVideoFrame
+{
+    uint32_t ssrc = 0;
+    uint32_t ts = 0;
+    std::vector<uint8_t> annexb;
+};
+
 class Depacketizer 
 {
 public:
