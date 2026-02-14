@@ -139,12 +139,12 @@ typedef struct _rtcp_rr_t // receiver report
 typedef struct _rtcp_rb_t // report block
 {
 	uint32_t ssrc;
-	uint32_t fraction:8; // fraction lost
+	uint32_t fraction:8; 	// fraction lost
 	uint32_t cumulative:24; // cumulative number of packets lost
-	uint32_t exthsn; // extended highest sequence number received
-	uint32_t jitter; // interarrival jitter
-	uint32_t lsr; // last SR
-	uint32_t dlsr; // delay since last SR
+	uint32_t exthsn; 		// extended highest sequence number received
+	uint32_t jitter; 		// interarrival jitter
+	uint32_t lsr; 			// last SR
+	uint32_t dlsr; 			// delay since last SR
 } rtcp_rb_t;
 
 
@@ -174,7 +174,7 @@ typedef struct _rtcp_app_t
 // Slice Loss Indication (SLI)
 typedef struct _rtcp_sli_t
 {
-	uint32_t first : 13; // The macroblock (MB) address of the first lost macroblock.
+	uint32_t first : 13;  // The macroblock (MB) address of the first lost macroblock.
 	uint32_t number : 13; // The number of lost macroblocks, in scan order
 	uint32_t picture_id : 6;
 } rtcp_sli_t;

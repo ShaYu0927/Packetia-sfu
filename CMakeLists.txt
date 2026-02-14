@@ -118,6 +118,11 @@ add_library(sip STATIC
 
 add_library(Rtcp STATIC
     protocol/Rtcp/Rtcp.cpp
+    protocol/Rtcp/Rtcp.h
+    protocol/Rtcp/RtcpContext.cpp
+    protocol/Rtcp/RtcpContext.h
+    protocol/Rtcp/RtcpReciver.h
+    protocol/Rtcp/RtcpReciver.cpp
 )
 
 add_library(rtp STATIC
