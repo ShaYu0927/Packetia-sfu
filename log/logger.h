@@ -99,7 +99,7 @@ protected:
     #else
         localtime_r(&sectime, &tmtime);
     #endif
-        char buf[20];
+        char buf[1024];
         snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d",
             tmtime.tm_year + 1900, tmtime.tm_mon + 1, tmtime.tm_mday,
             tmtime.tm_hour, tmtime.tm_min, tmtime.tm_sec);

@@ -170,7 +170,7 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_
             " len=" + std::to_string(len));
 #endif
 
-    if (!pkt || !dst) 
+    if (!pkt || !dst)
     {
         LOG_ERROR("create failed: pkt or pkt->data is null");
         return nullptr;
@@ -199,13 +199,13 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_
     return pkt;
 }
 
+void RtpVideoTracker::inputRtcp(const uint8_t* ptr, size_t len)
+{
+    rtcp_packet_->OnRtcpPacket(ptr,len);
+}
+
 void RtpVideoTracker::onRtpSorted(RtpPacket::Ptr rtp)
 {
-
-#if 1
-    LOG_INFO("[RtpSorted] seq= " + std::to_string(rtp->seq_) + " payload_len= " + std::to_string(rtp->size));
-#endif
-
     if(!rtp)
     {
         LOG_ERROR("error rtp");
@@ -222,9 +222,17 @@ void RtpVideoTracker::onRtpSorted(RtpPacket::Ptr rtp)
     depacketizer_->input(v);
 }
 
-inline void RtpVideoTracker::append_start_code(std::vector<uint8_t> &out)
+void RtpVideoTracker::OnReceiverReport(uint32_t sender_ssrc, const std::vector<rtcpx::RrBlock>& blocks)
 {
-    out.insert(out.end(), {0,0,0,1});
+
+}
+void RtpVideoTracker::OnPli(uint32_t media_ssrc)
+{
+
+}
+void RtpVideoTracker::OnNack(uint32_t media_ssrc, const std::vector<uint16_t>& missing_seq)
+{
+
 }
 
 bool RtpVideoTracker::isKeyFrame(const RtpPacket::Ptr &pkt)
@@ -250,20 +258,19 @@ bool RtpVideoTracker::isKeyFrame(const RtpPacket::Ptr &pkt)
             uint16_t nalu_size = (d[offset] << 8) | d[offset + 1];
             offset += 2;
 
-            if (offset + nalu_size > data_size) 
+            if (offset + nalu_size > data_size)
             {
                 break;
             }
 
             uint8_t stap_nal_unit_type = d[offset] & 0x1F;
-            if (stap_nal_unit_type == 5) 
+            if (stap_nal_unit_type == 5)
             {
                 return true;
             }
 
             offset += nalu_size;
         }
-
     }
     else if (nal_unit_type == 28)
     {
@@ -283,12 +290,10 @@ bool RtpVideoTracker::isKeyFrame(const RtpPacket::Ptr &pkt)
         const size_t frag_len = *d - 2;
     }
 
-
     if(pkt->marker)
     {
         /*notfy*/
     }
-
     return false;
 }
 

@@ -13,6 +13,7 @@
 
 #include "logger.h"
 #include "H264Depacketizer.h"
+#include "RtcpReciver.h"
 
 
 /*
@@ -393,6 +394,8 @@ public:
     uint32_t getSampleRate() const { return _sample_rate; }
 
     virtual RtpPacket::Ptr inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len) = 0;
+    virtual void inputRtcp(const uint8_t* ptr, size_t len) = 0;
+
     void setNtpStamp(uint32_t rtp_stamp, uint64_t ntp_stamp_ms);
     void setPayloadType(uint8_t pt) { _pt = pt; }
 
@@ -414,7 +417,7 @@ private:
 
 
 
-class RtpVideoTracker : public RtpTrack
+class RtpVideoTracker : public RtpTrack, public rtcpx::IRtcpObserver
 {
 public:
     using Ptr = std::shared_ptr<RtpVideoTracker>;
@@ -430,6 +433,7 @@ public:
         if (codec == "H264" || codec == "h264") 
         {
             depacketizer_ = std::make_unique<H264Depacketizer>();
+            rtcp_packet_ = std::make_unique<rtcpx::RtcpReceiverImpl>(this);
         } 
         else 
         {
@@ -438,8 +442,13 @@ public:
     }
     RtpPacket::Ptr inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len) override;
 
+
 protected:
     void onRtpSorted(RtpPacket::Ptr rtp) override;
+    void inputRtcp(const uint8_t* ptr, size_t len) override;
+    void OnReceiverReport(uint32_t sender_ssrc, const std::vector<rtcpx::RrBlock>& blocks) override;
+    void OnPli(uint32_t media_ssrc) override;
+    void OnNack(uint32_t media_ssrc, const std::vector<uint16_t>& missing_seq) override;
 
 private:
     std::vector<RtpPacket::Ptr> cache_;
@@ -453,6 +462,7 @@ private:
     
     bool isKeyFrame(const RtpPacket::Ptr& pkt);
     std::unique_ptr<H264Depacketizer> depacketizer_;
+    std::unique_ptr<rtcpx::RtcpReceiverImpl> rtcp_packet_;
 };
 
 class RtpAudioTracker : public RtpTrack
@@ -468,5 +478,7 @@ public:
         : RtpTrack(type, codec, payload_type, ssrc, clock_rate, channel_id, disable_ntp)
     {}
     RtpPacket::Ptr inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len) override;
+
+    virtual void inputRtcp(const uint8_t* ptr, size_t len) override { (void)ptr; (void)len; }
 };
 #endif

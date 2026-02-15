@@ -5,6 +5,7 @@ add_executable(test_rtp_input
 target_link_libraries(test_rtp_input
     PRIVATE
         rtp
+        rtsp
         utils
         network
         pthread

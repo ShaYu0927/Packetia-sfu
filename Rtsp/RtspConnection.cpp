@@ -434,8 +434,6 @@ void RtspConnection::HandleCmdRecord()
 }
 
 
-
-
 /**
  *  确认 Session ID 是否存在且有效。需要保证多个track都注册不同的session ID。
     确认客户端是否已经做过 SETUP。
@@ -531,15 +529,6 @@ int RtspConnection::RtspConn_ConsumeInterleaved(BufferReader &buffer)
     uint8_t  ch  = p[1];
     uint16_t len = (static_cast<uint16_t>(p[2]) << 8) | p[3];
 
-//    LOG_INFO("interleaved hdr:",
-//          "b0=", (int)p[0],
-//          "b1(ch)=", (int)p[1],
-//          "b2=", (int)p[2],
-//          "b3=", (int)p[3],
-//          "readable=", buffer.ReadableBytes());
-//     LOG_INFO("interleaved parsed:", "ch=", (int)ch, "len=", (int)len);
-
-
     if(buffer.ReadableBytes() < len + 4)
     {
         return false;
@@ -563,12 +552,12 @@ bool RtspConnection::onRead(BufferReader &buffer)
     if (mode_ == RTSP_SERVER)
     {
         /* 数据面：循环消费所有完整的 interleaved 包 */
-        while (RtspConn_ConsumeInterleaved(buffer)) 
+        while (RtspConn_ConsumeInterleaved(buffer))
         {
             continue;
         }
 
-        if (buffer.ReadableBytes() == 0) 
+        if (buffer.ReadableBytes() == 0)
         {
             return true;
         }
@@ -582,7 +571,7 @@ bool RtspConnection::onRead(BufferReader &buffer)
         if (!ok) return false;
 
         size_t after = buffer.ReadableBytes();
-        if (after == before) 
+        if (after == before)
         {
            /* part packet*/
             return true;
@@ -591,7 +580,8 @@ bool RtspConnection::onRead(BufferReader &buffer)
     else if (mode_ == RTSP_PUSHER)
     {
         /* 推流端如果也可能收到 interleaved（视你的设计），同理也可先 consume */
-        if (!HandleRtspResponse(buffer)) {
+        if (!HandleRtspResponse(buffer))
+        {
             return false;
         }
     }

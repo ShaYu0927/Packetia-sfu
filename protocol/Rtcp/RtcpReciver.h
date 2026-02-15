@@ -9,8 +9,8 @@ namespace rtcpx
 class RtcpReceiverImpl : public rtcpx::IRtcpReceiver
 {
 public:
-    RtcpReceiverImpl(rtcpx::IRtcpObserver* observer);
-    ~RtcpReceiverImpl() override;
+    explicit RtcpReceiverImpl(rtcpx::IRtcpObserver* observer);
+    ~RtcpReceiverImpl();
 
     bool OnRtcpPacket(const uint8_t* data, size_t len) override;
 

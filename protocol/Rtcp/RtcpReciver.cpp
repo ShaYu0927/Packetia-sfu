@@ -1,5 +1,10 @@
 #include "RtcpReciver.h"
 
+rtcpx::RtcpReceiverImpl::RtcpReceiverImpl(rtcpx::IRtcpObserver* observer)
+    : observer_(observer) {}
+
+rtcpx::RtcpReceiverImpl::~RtcpReceiverImpl() = default;
+
 bool rtcpx::RtcpReceiverImpl::OnRtcpPacket(const uint8_t* data, size_t len)
 {
     if (!data || len < 4) return false;

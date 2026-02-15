@@ -63,7 +63,7 @@ int RtpInterleaved::onInterleaved(uint8_t channel, const uint8_t *payload, size_
 #if RTP_DEBUG
     HexDumpPrefix(payload,length);
 #endif
-    auto bindingOpt = map_.get(channel);  
+    auto bindingOpt = map_.get(channel);
     if (!bindingOpt) return -ENOENT;
 
     auto track = bindingOpt->track.lock();
@@ -86,7 +86,7 @@ int RtpInterleaved::onInterleaved(uint8_t channel, const uint8_t *payload, size_
     Mem->flags = bindingOpt->is_rtcp ? 1 : 0; 
     Mem->enqueue_ts = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count());    // current time in ms
-    Mem->recv_ts = Mem->enqueue_ts; 
+    Mem->recv_ts = Mem->enqueue_ts;
     
     auto pkt_sp = std::shared_ptr<Packet>(Mem, [pool=pool_](Packet* p){
         if (!p) return;

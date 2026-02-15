@@ -1,5 +1,6 @@
 #include "RtspMessage.h"
 #include "MediaSession.h"
+#include <string>
 
 bool RtspRequest::ParseRequest(BufferReader *buffer)
 {
@@ -112,7 +113,7 @@ bool RtspRequest::ParseRequest(BufferReader *buffer)
             else 
             {
                 LOG_INFO("Waiting for more data to complete body...");
-                state_ == kParseBody;
+                state_ = kParseBody;
                 break;
             }
 
@@ -275,9 +276,9 @@ int RtspRequest::BuildNotFoundRes(std::shared_ptr<char> data, int size)
     memset((void*)data.get(), 0, size);
 	snprintf((char*)data.get(), size,
 			"RTSP/1.0 404 Stream Not Found\r\n"
-			"CSeq: %u\r\n"
+			"CSeq: %s\r\n"
 			"\r\n",
-			this->GetCSeq());
+			this->GetCSeq().c_str());
 
 	return (int)strlen(data.get());
 }
@@ -632,7 +633,7 @@ bool RtspRequest::ParseSessionId(const std::string &line)
         session.erase(session.find_last_not_of(" \t\r\n") + 1); // 去除尾部空白
         session_id_ = static_cast<MediaChannelId>(std::stoi(session)); 
         header_line_param_["Session"] = std::make_pair(session_id_, 0);
-        LOG_INFO("Parsed Session ID: " + session_id_);
+        LOG_INFO("Parsed Session ID: " + std::to_string(session_id_));
         return true;
     }
     return false;

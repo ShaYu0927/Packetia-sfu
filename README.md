@@ -360,3 +360,12 @@ existing RTP/RTCP data path logic.
 - Confirmed RTSP interleaved transport behavior where RTP and RTCP share the same TCP socket, and identified channel-based demux logic (interleaved=RTP-RTCP mapping).
 - Prepared media pipeline integration points for routing interleaved RTCP payloads into the RTCP receiver, enabling future support for RR/NACK/PLI feedback handling.
 - Reviewed RtspConnection initialization flow and verified worker pool (media) and packet pool integration to support upcoming RTCP parsing and retransmission work.
+
+
+# Version 0.4.5- 2026-02-15
+## Title: Add RTCP receiver integration and fix build/link issues in RTP track
+- Introduced RTCP handling interface (inputRtcp) in RtpTrack and implemented RTCP callback mechanism via IRtcpObserver.
+- Integrated RtcpReceiverImpl into RtpVideoTracker to support parsing RTCP packets (RR/NACK/PLI events reserved).
+- Fixed namespace and constructor signature mismatch for RtcpReceiverImpl (rtcpx::IRtcpObserver*) to resolve undefined reference issues.
+- Updated CMake build linkage to ensure RTCP implementation is correctly compiled and linked for unit tests.
+Improved RTSP/RTP module structure preparing for future RTCP feedback processing and keyframe request support.
