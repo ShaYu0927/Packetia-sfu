@@ -2,6 +2,7 @@
 #include "Rtp.h"    
 #include "logger.h"
 #include <bits/stdint-uintn.h>
+#include <string>
 
 
 
@@ -20,7 +21,7 @@ bool H264Depacketizer::input(const RtpView& pkt)
 
     if(!started_  || pkt.ts != cur_ts_ || pkt.ssrc != cur_ssrc_)
     {
-        LOG_INFO("Starting new stream: ssrc=%u, ts=%u", ssrc, ts);
+        LOG_INFO("Starting new stream: ssrc=" + std::to_string(ssrc) + "ts=" + std::to_string(ts));
         reset_stream(pkt.ts, pkt.ts);
         started_ = true;
         cur_ssrc_ = ssrc;
@@ -31,7 +32,8 @@ bool H264Depacketizer::input(const RtpView& pkt)
 
     if(ts != cur_ts_)
     {
-        LOG_INFO("New timestamp: %u (current %u), flush current frame", ts, cur_ts_);
+          LOG_INFO(std::string("[H264Depack][TS_SWITCH] from=") + std::to_string(cur_ts_) +
+             " to=" + std::to_string(ts) + " -> flush");
         if (!flush_frame())
         {
             LOG_ERROR("Failed to flush frame for ts %u", cur_ts_);
@@ -43,7 +45,9 @@ bool H264Depacketizer::input(const RtpView& pkt)
 
     if(have_last_seq_ && !seq_contiguous(last_seq_, seq))
     {
-        LOG_INFO("Non-contiguous RTP sequence: last %u, current %u", last_seq_, seq);
+        LOG_INFO(std::string("[H264Depack][SEQ_GAP]") +
+                 " got=" + std::to_string(seq) +
+                 " last=" + std::to_string(last_seq_));
         reset_stream(ssrc, ts);
         return false;
     }
@@ -54,8 +58,12 @@ bool H264Depacketizer::input(const RtpView& pkt)
     const uint8_t nalhdr = payload[0];
     const uint8_t type = nal_type(nalhdr);
 
-    LOG_INFO("Received RTP packet: ssrc=%u, ts=%u, seq=%u, marker=%d, payload_len=%zu, nal_type=%u",
-             ssrc, ts, seq, marker, payload_len, type);
+   LOG_INFO("Received RTP packet: ssrc=" + std::to_string(ssrc) +
+         ", ts=" + std::to_string(ts) +
+         ", seq=" + std::to_string(seq) +
+         ", marker=" + std::to_string(marker) +
+         ", payload_len=" + std::to_string(payload_len) +
+         ", nal_type=" + std::to_string(type));
 
     /* sigle NAL 1 ~ 23 */
     if(type >= 1 && type <= 23)
@@ -72,7 +80,7 @@ bool H264Depacketizer::input(const RtpView& pkt)
     }
     else
     {
-        LOG_ERROR("Unsupported NAL type: %u", type);
+        LOG_ERROR("Unsupported NAL type:", std::to_string(type));
         return false;
     }
 

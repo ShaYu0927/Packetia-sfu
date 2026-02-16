@@ -15,6 +15,7 @@ TimeId TimeQueue::AddTimer(const TimeEvent& event, uint32_t msec)
     timer->SetEventCallback(event);
     time_map_.emplace(timer_id, timer);
     event_.emplace(std::pair<int64_t, TimeId>(timeOut + msec, timer_id), std::move(timer));
+    return timer_id;
 }
 void TimeQueue::RemoveTimer(TimeId id)
 {

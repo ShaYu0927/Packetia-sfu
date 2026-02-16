@@ -2,6 +2,15 @@
 #include "Rtsp.h"
 #include <string>
 
+static inline std::string hex8(uint8_t v)
+{
+    const char* H = "0123456789ABCDEF";
+    std::string s = "00";
+    s[0] = H[v >> 4];
+    s[1] = H[v & 0x0F];
+    return s;
+}
+
 RtpPacket::RtpPacket()
 {
 }
@@ -122,7 +131,6 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_
 
     if (x) 
     {
-        // extension header: 16-bit profile + 16-bit length(words)
         if (len < header_len + 4) 
         {
             LOG_ERROR("drop rtp: ext header too small");
@@ -162,12 +170,20 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_
          " len=", len);
 #endif
 
-#if RTP_DEBUG
+#if 1
 
-    LOG_INFO("pkt=" + std::to_string((uintptr_t)pkt.get()) +
-            " dst=" + std::to_string((uintptr_t)dst) +
-            " src=" + std::to_string((uintptr_t)ptr) +
-            " len=" + std::to_string(len));
+    LOG_INFO(std::string("[RTP] hdr v=") + std::to_string((int)v) +
+         " pt=" + std::to_string((int)pt) +
+         " m=" + std::to_string((int)((w->mpt & 0x80) != 0)) +
+         " seq=" + std::to_string(seq) +
+         " ts=" + std::to_string(ts) +
+         " ssrc=" + std::to_string(ssrc) +
+         " cc=" + std::to_string((int)cc) +
+         " x=" + std::to_string((int)x) +
+         " p=" + std::to_string((int)p) +
+         " hdr_len=" + std::to_string(header_len) +
+         " total_len=" + std::to_string(len) +
+         " payload_len=" + std::to_string(len - header_len));
 #endif
 
     if (!pkt || !dst)
@@ -179,6 +195,7 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_
     pkt->size = len;
     pkt->type = type;
     pkt->sample_rate = sample_rate;
+    pkt->marker = (w->mpt & 0x80) != 0;
     pkt->pt = pt;
     pkt->ssrc = ssrc;
     pkt->seq_ = seq;
@@ -201,26 +218,59 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_
 
 void RtpVideoTracker::inputRtcp(const uint8_t* ptr, size_t len)
 {
+    uint8_t v  = (ptr[0] >> 6) & 0x03;
+    uint8_t p  = (ptr[0] >> 5) & 0x01;
+    uint8_t rc = (ptr[0] & 0x1F);
+    uint8_t pt = ptr[1];
+    uint16_t length_words = (ptr[2] << 8) | ptr[3];
+    size_t pkt_len = (length_words + 1) * 4;
+
+    LOG_INFO("[RtpVideoTracker] inputRtcp: len= v= p= rc= pt= length_words= pkt_len=",
+         len, v, p, rc, pt, length_words, pkt_len);
     rtcp_packet_->OnRtcpPacket(ptr,len);
 }
 
 void RtpVideoTracker::onRtpSorted(RtpPacket::Ptr rtp)
 {
-    if(!rtp)
+    if (!rtp) 
     {
         LOG_ERROR("error rtp");
         return;
     }
 
+
+    uint8_t* base = rtp->data.get();
+    size_t off = rtp->payload_off;
+    size_t paylen = rtp->payload_len;
+
+    uint8_t b0 = base ? base[0] : 0;
+    uint8_t p0 = (base && off < rtp->size) ? base[off] : 0;
+    uint8_t nal_type = p0 & 0x1F;
+
+    LOG_INFO(std::string("[onRtpSorted] seq=") + std::to_string(rtp->seq_) +
+             " ts=" + std::to_string(rtp->ts) +
+             " ssrc=" + std::to_string(rtp->ssrc) +
+             " m=" + std::to_string((int)rtp->getMarker()) +
+             " size=" + std::to_string(rtp->size) +
+             " hdr_len=" + std::to_string(rtp->hdr_len) +
+             " payload_off=" + std::to_string(off) +
+             " payload_len=" + std::to_string(paylen) +
+             " base0=0x" + hex8(b0) +
+             " pay0=0x" + hex8(p0) +
+             " nal_type=" + std::to_string((int)nal_type));
+
     RtpView v;
     v.seq = rtp->getSeq();
     v.ts = rtp->getStamp();
+    v.ssrc = rtp->ssrc;                  
     v.marker = rtp->getMarker();
-    v.payload = rtp->getPayload();
-    v.payload_len = rtp->getPayloadSize();
+
+    v.payload = base + off;
+    v.payload_len = paylen;
 
     depacketizer_->input(v);
 }
+
 
 void RtpVideoTracker::OnReceiverReport(uint32_t sender_ssrc, const std::vector<rtcpx::RrBlock>& blocks)
 {
