@@ -18,19 +18,12 @@ EventLoop::~EventLoop()
 
 std::shared_ptr<TaskScheduler> EventLoop::GetTaskScheduler()
 {
-	std::lock_guard<std::mutex> locker(mutex_);
-	if (task_schedulers_.size() == 1) {
-		return task_schedulers_.at(0);	
-	}
-	else
-	{
-		auto iter = task_schedulers_.at(index_);
-		index_++;
-		if (index_ >= task_schedulers_.size()) {
-			index_ = 1;
-		}
-	}
-    return std::shared_ptr<TaskScheduler>();
+    std::lock_guard<std::mutex> locker(mutex_);
+    if (task_schedulers_.empty()) return {};
+
+    auto ts = task_schedulers_[index_ % task_schedulers_.size()];
+    index_++;
+    return ts;
 }
 
 bool EventLoop::AddTriggerEvent(TriggerEvent callback)
@@ -91,7 +84,8 @@ void EventLoop::Loop()
         std::shared_ptr<TaskScheduler> task_scheduler = std::make_shared<EpollTaskScheduler>(index_++);
         task_schedulers_.push_back(task_scheduler);
         std::shared_ptr<std::thread> thread = std::make_shared<std::thread>([task_scheduler]{
-            while (true) {
+            while (true) 
+			{
             	task_scheduler->HandleEvent(10000); // 持续轮询
         	}
         });

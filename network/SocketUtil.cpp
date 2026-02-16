@@ -18,14 +18,13 @@ bool SocketUtil::Bind(int sockfd, std::string ip, uint16_t port)
 }
 void SocketUtil::SetNonBlock(int fd)
 {
-     int flags = fcntl(fd, F_GETFL, 0);
+    int flags = fcntl(fd, F_GETFL, 0);
     if (flags == -1)
         flags = 0;
     fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 }
 void SocketUtil::SetBlock(int fd, int write_timeout)
 {
-    //设置套接字 fd 为非阻塞模式。非阻塞模式意味着读写操作不会阻塞当前线程，如果没有数据可用，操作会立即返回，而不是等待
     int flags = fcntl(fd, F_GETFL, 0);
     fcntl(fd, F_SETFL, flags&(~O_NONBLOCK));
 
@@ -33,7 +32,6 @@ void SocketUtil::SetBlock(int fd, int write_timeout)
     {
         struct timeval tv = {write_timeout/1000, (write_timeout%1000)*1000};
         setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, (char *)&tv, sizeof(unsigned long));
-
     }
 }
 void SocketUtil::SetReuseAddr(int fd)
@@ -48,7 +46,7 @@ void SocketUtil::SetReusePort(int sockfd)
     setsockopt(sockfd, SOL_SOCKET, SO_REUSEPORT, (const char*)&on, sizeof(on));
 #endif
 }
-//禁用 Nagle 算法
+
 void SocketUtil::SetNoDelay(int sockfd)
 {
 #ifdef TCP_NODELAY
@@ -56,7 +54,7 @@ void SocketUtil::SetNoDelay(int sockfd)
     int ret = setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, (char *)&on, sizeof(on));
 #endif
 }
-//设置保持活动选项
+
 void SocketUtil::SetKeepAlive(int sockfd)
 {
     int on = 1;

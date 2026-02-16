@@ -16,5 +16,4 @@ public:
 private:
     std::unique_ptr<SipRequest> sip_request_;
     std::unique_ptr<SipResponse> sip_response_;
-
 };

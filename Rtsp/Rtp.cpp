@@ -21,7 +21,7 @@ RtpPacket::~RtpPacket()
 
 std::shared_ptr<RtpPacket> RtpPacket::create(size_t capacity)
 {
-    if (capacity == 0) 
+    if (capacity == 0)
     {
         return nullptr;
     }
@@ -86,7 +86,7 @@ uint16_t RtpPacket::getSeq() const
 
 RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len)
 {
-    if (!ptr || len < 12) 
+    if (!ptr || len < 12)
     {
         LOG_ERROR("bad rtp param");
         return nullptr;
@@ -114,7 +114,7 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_
     }
 
     bool x  = (w->vpxcc & 0x10) != 0;
-    bool p  = (w->vpxcc & 0x20) != 0; 
+    bool p  = (w->vpxcc & 0x20) != 0;
     uint8_t cc = (w->vpxcc & 0x0F);
 
     uint8_t pt = (w->mpt & 0x7F);
@@ -129,7 +129,7 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_
         return nullptr;
     }
 
-    if (x) 
+    if (x)
     {
         if (len < header_len + 4) 
         {

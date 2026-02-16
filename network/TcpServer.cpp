@@ -33,18 +33,19 @@ TcpServer::TcpServer(EventLoop *event_loop)
         if(conn)
         {
             this->AddConnection(sockfd, conn);
-            if (dynamic_cast<RtspConnection*>(conn.get()) == nullptr) 
+            if (dynamic_cast<RtspConnection*>(conn.get()) == nullptr)
             {
                 conn->SetReadCallback([](TcpConnection::Ptr conn, BufferReader& buffer) {
-                    std::string msg(buffer.Peek(), buffer.ReadableBytes());
-                    LOG_INFO("[业务] 收到消息: " + msg);
+                    constexpr size_t kMaxPreview = 256;
+                    size_t n = buffer.ReadableBytes();
+                    size_t preview_n = std::min(n, kMaxPreview);
+                    buffer.Retrieve(n);
                     return true;
                     });
             }
             conn->SetDisconnectCallback([this](TcpConnection::Ptr conn){
                 auto scheduler = conn->GetTaskScheduler();
                 int socketfd = conn->GetSocket();
-                //用于管理异步任务和定时任务
                 if (!scheduler->AddTriggerEvent([this, socketfd] {this->RemoveConnection(socketfd); })) {
 					scheduler->AddTimer([this, socketfd]() {this->RemoveConnection(socketfd); return false; }, 100);
 				}   
@@ -106,7 +107,8 @@ void TcpServer::Stop()
 
 TcpConnection::Ptr TcpServer::OnConnect(SOCKET sockfd)
 {
-    auto conn = std::make_shared<TcpConnection>(event_loop_->GetTaskScheduler().get(), sockfd);
+    auto ts = event_loop_->GetTaskScheduler().get();
+    auto conn = std::make_shared<TcpConnection>(ts, sockfd);
     conn->Start();              
     return conn;
 }

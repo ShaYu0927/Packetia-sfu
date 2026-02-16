@@ -70,6 +70,7 @@ add_library(network STATIC
     network/BufferRead.cpp
     network/BufferWrite.cpp
     network/TcpServer.cpp
+    network/TcpSession.cpp
     network/TcpConnection.cpp
     network/ProtocolParser.cpp
     utils/Acceptor.cpp

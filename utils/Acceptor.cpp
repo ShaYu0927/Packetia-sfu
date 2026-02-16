@@ -57,20 +57,17 @@ void Acceptor::Close()
 
 void Acceptor::OnAccept()
 {
-    std::lock_guard<std::mutex> locker(mutex_);
-    int sockfd = tcp_socket_->Accept();
-    LOG_INFO("OnAccept called, accept fd: " + std::to_string(sockfd));
-    if(sockfd > 0)
+    while (true) 
     {
-        
-        if (new_connection_callback_) 
+        int sockfd = tcp_socket_->Accept();
+        if (sockfd > 0) 
         {
-            LOG_INFO("OnAccept success, connfd: " + std::to_string(sockfd));
-            new_connection_callback_(sockfd);
+            if (new_connection_callback_) new_connection_callback_(sockfd);
+            else SocketUtil::Close(sockfd);
+            continue;
         }
-        else
-        {
-            SocketUtil::Close(sockfd);
-        }
+        if (errno == EAGAIN || errno == EWOULDBLOCK) break;
+        LOG_ERROR("accept failed, errno=" + std::to_string(errno));
+        break; 
     }
 }

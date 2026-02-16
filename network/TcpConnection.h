@@ -30,6 +30,11 @@ public:
     using ConnectionCallback = std::function<void(std::shared_ptr<TcpConnection> conn)>;
     using HighWaterMarkCallback = std::function<void(std::shared_ptr<TcpConnection> conn, size_t len)>;
 
+    using BytesCallback = std::function<void(std::shared_ptr<TcpConnection>,
+                                        const uint8_t*, size_t)>;
+    using SessionCloseCallback = std::function<void(int reason)>;
+
+
     TcpConnection(TaskScheduler *task_scheduler, SOCKET sockfd);
     virtual ~TcpConnection();
 
@@ -46,8 +51,11 @@ public:
     void SetDisconnectCallback(const DisconnectCallback& cb)
 	{ disconnect_callback_ = cb; }
 
-    void Disconnect();
 
+    void SetBytesCallback(BytesCallback cb) { bytes_cb_ = std::move(cb); }
+    void SetCloseCallback(SessionCloseCallback cb) { sess_close_cb_ = std::move(cb); }
+
+    void Disconnect();
     void Send(std::shared_ptr<char> data, uint32_t size);
 	void Send(const char *data, uint32_t size);
     void Start();
@@ -76,11 +84,9 @@ protected:
 	virtual void HandleClose();
 	virtual void HandleError();	
 
-    
-
 
     std::unique_ptr<BufferReader> read_buffer_;
-	std::unique_ptr<BufferWirte> write_buffer_;
+	std::unique_ptr<BufferWirte>  write_buffer_;
 
     DisconnectCallback disconnect_callback_;
     MessageCallback message_callback_;
@@ -91,6 +97,9 @@ protected:
     ConnectionCallback connection_callback_;
     HighWaterMarkCallback high_water_mark_callback_;
 
+
+    BytesCallback bytes_cb_;
+    SessionCloseCallback sess_close_cb_;
 
     std::shared_ptr<Channel> channel_;
     TaskScheduler *task_scheduler_;

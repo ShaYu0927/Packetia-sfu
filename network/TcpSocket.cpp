@@ -3,6 +3,7 @@
 //
 
 #include "TcpSocket.h"
+#include "SocketUtil.h"
 
 
 TcpSocket::TcpSocket(int m_socket)
@@ -53,13 +54,18 @@ int TcpSocket::Accept()
 {
     struct sockaddr_in addr;
     socklen_t len = sizeof(addr);
-    int client_fd = accept(m_socket_, (struct sockaddr*)&addr, &len);
-    if(client_fd < 0)
+    int fd = ::accept4(m_socket_, (sockaddr*)&addr, &len, SOCK_NONBLOCK | SOCK_CLOEXEC);
+    if(fd < 0)
     {
-        perror("accept error");
+        if (errno == EAGAIN || errno == EWOULDBLOCK) 
+        {
+            return -1;
+        }
+        LOG_ERROR("accept failed errno=" + std::to_string(errno));
         return -1;
     }
-    return client_fd;
+    SocketUtil::SetNonBlock(fd);
+    return fd;
 }
 
 bool TcpSocket::Connect(std::string ip, uint16_t port, int timeout)

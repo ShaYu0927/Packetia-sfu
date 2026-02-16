@@ -369,3 +369,13 @@ existing RTP/RTCP data path logic.
 - Fixed namespace and constructor signature mismatch for RtcpReceiverImpl (rtcpx::IRtcpObserver*) to resolve undefined reference issues.
 - Updated CMake build linkage to ensure RTCP implementation is correctly compiled and linked for unit tests.
 Improved RTSP/RTP module structure preparing for future RTCP feedback processing and keyframe request support.
+
+# Version 0.4.6 - 2026-02-16
+## Refactor TCP stack by introducing a Session/Observer based architecture.
+- Added generic ICodec<Msg> interface to support protocol-level decoding/encoding (SIP/RTMP/RTSP, etc.).
+- Implemented ObserverList to broadcast decoded messages to multiple business modules via ISessionObserver.
+- Introduced IConnectionObserver and improved connection-to-session callback flow for byte-level events.
+- Updated TcpConnection to expose bytes callbacks so TcpSession can take ownership of protocol parsing logic.
+- Prepared the framework for multi-protocol session management with clean transport/protocol separation.
+
+tips: Today is Chinese New Year. I stayed in my rented apartment and spent the day coding.
