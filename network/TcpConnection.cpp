@@ -77,7 +77,6 @@ void TcpConnection::Start()
 
     channel_->EnableReading();
     task_scheduler_->UpdateChannel(channel_);
-    LOG_INFO("Channel registered. sockfd=" + std::to_string(channel_->GetSocket()));
 }
 
 void TcpConnection::close()
@@ -114,7 +113,6 @@ void TcpConnection::HandleRead()
         if (errno == EAGAIN || errno == EWOULDBLOCK) break;
 
         fatal_errno = errno;
-        LOG_ERROR("Read error, errno=" + std::to_string(errno));
         peer_closed = true;
         break;
     }
@@ -137,7 +135,6 @@ void TcpConnection::HandleRead()
 
     if (peer_closed) 
     {
-        LOG_INFO("Peer closed connection (or fatal read error)");
         this->close();
         return;
     }    

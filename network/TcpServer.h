@@ -10,11 +10,14 @@
 #include <mutex>
 #include <chrono>
 #include <unordered_map>
+
 #include "Socket.h"
 #include "TcpConnection.h"
+#include "TcpSession.h"
 #include "RtspConnection.h"
 #include "EventLoop.h"
 #include "Acceptor.h"
+#include "ProtocolParser.h"
 
 class TcpServer 
 {
@@ -40,10 +43,12 @@ protected:
     EventLoop* event_loop_;
 	uint16_t port_;
 	std::string ip_;
-	std::unique_ptr<Acceptor> acceptor_; 
+	std::unique_ptr<Acceptor> acceptor_;
 	bool is_started_;
 	std::mutex mutex_;
-	std::unordered_map<SOCKET, TcpConnection::Ptr> connections_;    
+	std::unordered_map<SOCKET, TcpConnection::Ptr> connections_;
+	std::unordered_map<SOCKET, protocolDetector::ProtocolDetectorSession::Ptr> sessions_;
+	std::shared_ptr<protocolDetector::ProtocolDetector> proto_detector_;
 };
 
 

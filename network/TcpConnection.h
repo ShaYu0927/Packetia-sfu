@@ -10,8 +10,7 @@
 #include "TaskScheduler.h"
 #include "BufferWrite.h"
 #include "BufferRead.h"
-#include "ProtocolParser.h"
-#include "logger.h"
+
 
 class TcpConnection : public std::enable_shared_from_this<TcpConnection>
 {
@@ -73,9 +72,6 @@ public:
 	std::string GetIp() const
 	{ return SocketUtil::GetPeerIp(channel_->GetSocket()); }
 
-    void SetProtocolDetector(std::shared_ptr<ProtocolDetector> detector) {
-        protocol_detector_ = detector;
-    }
 
     void close();
 protected:
@@ -106,8 +102,6 @@ protected:
     std::mutex mutex_;
     std::atomic_bool is_closed_;
 
-    std::shared_ptr<ProtocolParser> parser_;
-    std::shared_ptr<ProtocolDetector> protocol_detector_;
 };
 
 

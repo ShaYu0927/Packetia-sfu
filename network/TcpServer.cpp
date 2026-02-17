@@ -3,7 +3,6 @@
 //
 
 #include "TcpServer.h"
-#include "SipParse.h"
 
 
 TcpServer::TcpServer(EventLoop *event_loop)
@@ -14,47 +13,56 @@ TcpServer::TcpServer(EventLoop *event_loop)
 {
     acceptor_->SetNewConnectionCallback([this](int sockfd) 
     {
-        LOG_INFO("New connection accepted: sockfd = " + std::to_string(sockfd));
-        auto detector = std::make_shared<ProtocolDetector>();
-
-        detector->Register({
-            "SIP",
-            3,
-            [](const uint8_t* data, size_t size) {
-                const char* prefix1 = "INV";
-                const char* prefix2 = "REG";
-                return size >= 3 && (std::equal(prefix1, prefix1 + 3, reinterpret_cast<const char*>(data)) ||
-                                     std::equal(prefix2, prefix2 + 3, reinterpret_cast<const char*>(data)));
-            },
-            []() { return std::make_shared<SipParse>(); }
-        });
         TcpConnection::Ptr conn = this->OnConnect(sockfd);
-        
-        if(conn)
+        if(!conn) return;
+
+        this->AddConnection(sockfd, conn);
+
+        auto promote = [this, sockfd](itcp_sess::ISessionBase::Ptr sess) {
+            sessions_[sockfd] = std::move(sess);
+        };
+
+        sessions_[sockfd] = std::make_shared<protocolDetector::ProtocolDetectorSession>(proto_detector_, promote);
+
+        conn->SetReadCallback([this,sockfd](TcpConnection::Ptr conn, BufferReader& buffer) 
         {
-            this->AddConnection(sockfd, conn);
-            if (dynamic_cast<RtspConnection*>(conn.get()) == nullptr)
+            auto it = sessions_.find(sockfd);
+            if (it != sessions_.end()) 
             {
-                conn->SetReadCallback([](TcpConnection::Ptr conn, BufferReader& buffer) {
-                    constexpr size_t kMaxPreview = 256;
-                    size_t n = buffer.ReadableBytes();
-                    size_t preview_n = std::min(n, kMaxPreview);
-                    buffer.Retrieve(n);
-                    return true;
-                    });
+                it->second->OnRead(conn,buffer);
             }
-            conn->SetDisconnectCallback([this](TcpConnection::Ptr conn){
-                auto scheduler = conn->GetTaskScheduler();
-                int socketfd = conn->GetSocket();
-                if (!scheduler->AddTriggerEvent([this, socketfd] {this->RemoveConnection(socketfd); })) {
-					scheduler->AddTimer([this, socketfd]() {this->RemoveConnection(socketfd); return false; }, 100);
-				}   
-            });
+            return true;
+        });
+    
+       conn->SetDisconnectCallback([this](TcpConnection::Ptr conn)
+       {
+            auto scheduler = conn->GetTaskScheduler();
+            int fd = conn->GetSocket();
+            std::weak_ptr<TcpConnection> weak = conn;
 
-             conn->SetProtocolDetector(detector);
+            auto cleanup = [this, fd, weak]() 
+            {
+                auto itc = connections_.find(fd);
+                if (itc == connections_.end()) return;
 
+                auto sp = weak.lock();
+                if (!sp || itc->second != sp) return;
 
-        }
+                auto its = sessions_.find(fd);
+                if (its != sessions_.end()) 
+                {
+                    its->second->OnClosed(0);
+                    sessions_.erase(its);
+                }
+
+                RemoveConnection(fd);
+            };
+
+            if (!scheduler->AddTriggerEvent(cleanup)) 
+            {
+                scheduler->AddTimer([cleanup]() { cleanup(); return false; }, 100);
+            }
+        });
     });
 }
 

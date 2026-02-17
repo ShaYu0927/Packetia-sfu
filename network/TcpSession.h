@@ -10,7 +10,8 @@
 
 #include "TcpConnection.h"
 
-namespace itcp_sess {
+namespace itcp_sess 
+{
 
 /* -------- ObserverList-------- */
 template <typename Obs>
@@ -56,8 +57,18 @@ private:
 };
 
 
+struct ISessionBase 
+{
+    using Ptr = std::shared_ptr<ISessionBase>;
+    virtual ~ISessionBase() = default;
+    virtual bool OnRead(TcpConnection::Ptr conn, BufferReader& buf) = 0;
+    virtual void OnClosed(int reason) = 0;
+    virtual void Start() = 0;
+};
+
+
 template<typename Msg>
-class ICodec 
+class ICodec
 {
 public:
     virtual ~ICodec() = default;
@@ -76,7 +87,7 @@ public:
 };
 
 /* -------- Connection observer (bytes-level) -------- */
-class IConnectionObserver 
+class IConnectionObserver
 {
 public:
     virtual ~IConnectionObserver() = default;

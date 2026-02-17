@@ -379,3 +379,7 @@ Improved RTSP/RTP module structure preparing for future RTCP feedback processing
 - Prepared the framework for multi-protocol session management with clean transport/protocol separation.
 
 tips: Today is Chinese New Year. I stayed in my rented apartment and spent the day coding.
+
+
+## Commit Message (2026-02-17)
+Refactored multi-protocol TCP session architecture by introducing ProtocolDetector and ProtocolDetectorSession, enabling dynamic protocol detection and seamless promotion to protocol-specific sessions (SIP/RTSP), while fixing include dependency and compilation issues in SIP parser integration.
