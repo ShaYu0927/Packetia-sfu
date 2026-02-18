@@ -383,3 +383,9 @@ tips: Today is Chinese New Year. I stayed in my rented apartment and spent the d
 
 ## Commit Message (2026-02-17)
 Refactored multi-protocol TCP session architecture by introducing ProtocolDetector and ProtocolDetectorSession, enabling dynamic protocol detection and seamless promotion to protocol-specific sessions (SIP/RTSP), while fixing include dependency and compilation issues in SIP parser integration.
+
+# Version 0.4.7 - 2026-02-18
+## Refactored protocol detection and RTSP parser integration by introducing RtspProtocolParser based on ProtocolParser
+- Added RtspProtocolParser implementation based on ProtocolParser to support RTSP protocol detection (including $ interleaved framing).
+- Refactored parser declarations/definitions and fixed ParseResult scope + missing return issues to resolve compilation errors.
+- Updated build integration and linkage to eliminate duplicate Parse declarations and vtable undefined reference errors.

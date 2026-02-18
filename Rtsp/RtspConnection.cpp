@@ -13,7 +13,6 @@ RtspConnection::RtspConnection(std::shared_ptr<RtspServer> rtsp_server, TaskSche
     ,rtsp_(std::make_shared<Rtsp>())
     ,packet_pool_(std::make_unique<PacketPool>(2048, 1000))
 {
-    // Initialize the connection
     LOG_INFO("RtspConnection created with sockfd: " + std::to_string(sockfd));
     active_ = true;
 

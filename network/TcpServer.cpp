@@ -5,6 +5,7 @@
 #include "TcpServer.h"
 
 
+
 TcpServer::TcpServer(EventLoop *event_loop)
     : event_loop_(event_loop)
 	, port_(0)
@@ -22,7 +23,7 @@ TcpServer::TcpServer(EventLoop *event_loop)
             sessions_[sockfd] = std::move(sess);
         };
 
-        sessions_[sockfd] = std::make_shared<protocolDetector::ProtocolDetectorSession>(proto_detector_, promote);
+        sessions_[sockfd] = std::make_shared<protocol::ProtocolDetectorSession>(proto_detector_, promote);
 
         conn->SetReadCallback([this,sockfd](TcpConnection::Ptr conn, BufferReader& buffer) 
         {

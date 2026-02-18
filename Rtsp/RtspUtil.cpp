@@ -1,7 +1,12 @@
 #include "RtspUtil.h"
 #include "logger.h"
 
-int RtspUtil::ParseStreamId(const std::string &control)
+namespace rtsp
+{
+
+
+
+std::optional<int> RtspUtil::ParseStreamId(const std::string &control)
 {
     // streamid=NUMBER
     static const std::string kKey = "streamid=";
@@ -32,4 +37,12 @@ int RtspUtil::ParseStreamId(const std::string &control)
         LOG_ERROR("ParseStreamId: invalid streamid=", num, " err=", e.what());
         return -1;
     }
+}
+
+
+
+
+
+
+
 }

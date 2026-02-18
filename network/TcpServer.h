@@ -18,6 +18,7 @@
 #include "EventLoop.h"
 #include "Acceptor.h"
 #include "ProtocolParser.h"
+#include "ProtocolDetector.h"
 
 class TcpServer 
 {
@@ -47,8 +48,8 @@ protected:
 	bool is_started_;
 	std::mutex mutex_;
 	std::unordered_map<SOCKET, TcpConnection::Ptr> connections_;
-	std::unordered_map<SOCKET, protocolDetector::ProtocolDetectorSession::Ptr> sessions_;
-	std::shared_ptr<protocolDetector::ProtocolDetector> proto_detector_;
+	std::unordered_map<SOCKET, protocol::ProtocolDetectorSession::Ptr> sessions_;
+	std::shared_ptr<protocol::ProtocolDetector> proto_detector_;
 };
 
 

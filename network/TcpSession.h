@@ -10,6 +10,8 @@
 
 #include "TcpConnection.h"
 
+
+
 namespace itcp_sess 
 {
 
@@ -65,6 +67,15 @@ struct ISessionBase
     virtual void OnClosed(int reason) = 0;
     virtual void Start() = 0;
 };
+
+class ISessionFactory 
+{
+public:
+    virtual ~ISessionFactory() = default;
+    virtual itcp_sess::ISessionBase::Ptr Create(const std::string& proto,
+                                                TcpConnection::Ptr conn) = 0;
+};
+
 
 
 template<typename Msg>

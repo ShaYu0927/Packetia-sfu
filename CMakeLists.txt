@@ -74,6 +74,8 @@ add_library(network STATIC
     network/TcpConnection.cpp
     network/ProtocolParser.cpp
     utils/Acceptor.cpp
+    network/DefaultSessionFactory.cpp
+    network/ProtocolDetector.cpp
 )
 
 add_library(LOGGER STATIC
@@ -138,8 +140,6 @@ add_library(rtp STATIC
     Rtsp/RtspUtil.h
 )
 
-
-
 add_library(rtsp STATIC
     Rtsp/Rtsp.cpp
     Rtsp/Rtsp.h
@@ -157,6 +157,8 @@ add_library(rtsp STATIC
     Rtsp/RtpThreadPool.cpp
     Rtsp/RtpThreadPool.h
     Rtsp/RtpInterleaved.cpp
+    Rtsp/RtspSession.cpp
+    Rtsp/RtspUtil.cpp
 )
 
 file(GLOB INTERLEAVED_SRCS

@@ -17,8 +17,6 @@ public:
   
 protected:
     TcpConnection::Ptr OnConnect(SOCKET sockfd) override;
-
-
 };
 
 
