@@ -18,4 +18,9 @@ void RtspSession::Start()
     LOG_INFO("RtspSession started for sockfd: " + std::to_string(conn_->GetSocket()));
 }
 
+void RtspSession::OnClosed(int reason)
+{
+    
+}
+
 }

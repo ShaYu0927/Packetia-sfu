@@ -36,6 +36,12 @@ public:
 	{ return port_; }
 	EventLoop* GetEventLoop() const { return event_loop_; }
 
+	void SetSessionFactory(std::shared_ptr<itcp_sess::ISessionFactory> f)
+	{
+		sess_factory_ = std::move(f);
+	}
+	
+
 protected:
     virtual TcpConnection::Ptr OnConnect(SOCKET sockfd);
 	virtual void AddConnection(SOCKET sockfd, TcpConnection::Ptr tcp_conn);
@@ -50,6 +56,7 @@ protected:
 	std::unordered_map<SOCKET, TcpConnection::Ptr> connections_;
 	std::unordered_map<SOCKET, protocol::ProtocolDetectorSession::Ptr> sessions_;
 	std::shared_ptr<protocol::ProtocolDetector> proto_detector_;
+	std::shared_ptr<itcp_sess::ISessionFactory> sess_factory_;
 };
 
 

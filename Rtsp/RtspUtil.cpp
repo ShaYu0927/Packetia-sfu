@@ -3,9 +3,6 @@
 
 namespace rtsp
 {
-
-
-
 std::optional<int> RtspUtil::ParseStreamId(const std::string &control)
 {
     // streamid=NUMBER
@@ -25,24 +22,20 @@ std::optional<int> RtspUtil::ParseStreamId(const std::string &control)
         return -1;
     }
 
-    try {
+    try 
+    {
         int idx = std::stoi(num);
-        if (idx < 0) {
+        if (idx < 0) 
+        {
             LOG_ERROR("ParseStreamId: negative streamid=", idx);
             return -1;
         }
         return idx;
     }
-    catch (const std::exception& e) {
+    catch (const std::exception& e) 
+    {
         LOG_ERROR("ParseStreamId: invalid streamid=", num, " err=", e.what());
         return -1;
     }
 }
-
-
-
-
-
-
-
 }

@@ -4,6 +4,10 @@
 #include <functional>
 #include <vector>
 #include <memory>
+#include <iomanip>
+#include <sstream>
+#include <cctype>
+#include <algorithm>
 
 #include "ProtocolParser.h"
 #include "RtspUtil.h"
@@ -48,6 +52,11 @@ public:
     ProtocolDetectorSession(std::shared_ptr<ProtocolDetector> detector,
                   std::function<void(itcp_sess::ISessionBase::Ptr)> promote)
         : detector_(std::move(detector)), promote_(std::move(promote)) {}
+
+    void SetSessionFactory(std::shared_ptr<itcp_sess::ISessionFactory> f)
+	{
+		sess_factory_ = std::move(f);
+	}
     
 
 protected:
@@ -59,7 +68,7 @@ private:
     std::shared_ptr<ProtocolDetector> detector_;
     std::function<void(itcp_sess::ISessionBase::Ptr)> promote_;
 
-    std::shared_ptr<itcp_sess::ISessionFactory> factory_;
+    std::shared_ptr<itcp_sess::ISessionFactory> sess_factory_;
 };
 }
 

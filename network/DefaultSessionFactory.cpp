@@ -1,18 +1,22 @@
 #include "DefaultSessionFactory.h"
-#include "RtspSession.h"
 
 
-DefaultSessionFactory::DefaultSessionFactory(std::shared_ptr<RtspServer> rtsp_server,
-                                             TaskScheduler* scheduler)
-    : rtsp_server_(std::move(rtsp_server))
-    , scheduler_(scheduler)
-{}
+DefaultSessionFactory::DefaultSessionFactory()
+{
+    
+}
 
 itcp_sess::ISessionBase::Ptr
 DefaultSessionFactory::Create(const std::string& proto, TcpConnection::Ptr conn)
 {
-    if (proto == "RTSP")
-        return std::make_shared<rtsp::RtspSession>(rtsp_server_, scheduler_, conn);
-
+    auto it = creators_.find(proto);
+        if (it == creators_.end()) return nullptr;
+        return it->second(std::move(conn));
     return nullptr;
+}
+
+
+void DefaultSessionFactory::Register(const std::string& proto, Creator c)
+{
+    creators_[proto] = std::move(c);
 }

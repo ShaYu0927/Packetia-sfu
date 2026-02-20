@@ -31,7 +31,7 @@ private:
 	std::mutex mutex_;
     std::unique_ptr<TcpSocket> tcp_socket_;
     ChannelPtr channel_ptr_;
-    NewConnectionCallback new_connection_callback_;    
+    NewConnectionCallback new_connection_callback_;
 };
 
 #endif

@@ -2,20 +2,20 @@
 #define _DEFAULTSESSIONFACTORY_H_
 
 #include "TcpSession.h"
-#include "RtspServer.h"
 
 class DefaultSessionFactory : public itcp_sess::ISessionFactory 
 {
 public:
-    DefaultSessionFactory(std::shared_ptr<RtspServer> rtsp_server,
-                          TaskScheduler* scheduler);
+    using Creator = std::function<itcp_sess::ISessionBase::Ptr(TcpConnection::Ptr)>;
+    DefaultSessionFactory();
 
     itcp_sess::ISessionBase::Ptr Create(const std::string& proto,
                                         TcpConnection::Ptr conn) override;
 
+    void Register(const std::string& proto, Creator c);
+
 private:
-    std::shared_ptr<RtspServer> rtsp_server_;
-    TaskScheduler* scheduler_{nullptr};
+    std::unordered_map<std::string, Creator> creators_;
 };
 
 #endif // _DEFAULTSESSIONFACTORY_H_

@@ -120,6 +120,9 @@ void TcpConnection::HandleRead()
     
     if (bytes_cb_)
     {
+        LOG_DEBUG("[TcpConnection] bytes_cb_ branch, fd=",
+              GetSocket(),
+              " readable=", n);
         size_t n = read_buffer_->ReadableBytes();
         if (n > 0)
         {
@@ -130,6 +133,9 @@ void TcpConnection::HandleRead()
     }
     else if (read_cb_)
     {
+        LOG_DEBUG("[TcpConnection] read_cb_ branch, fd=",
+              GetSocket(),
+              " readable=", n);
         read_cb_(shared_from_this(), *read_buffer_);
     }
 

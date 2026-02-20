@@ -1,4 +1,5 @@
 #include "RtspServer.h"
+#include "RtspSession.h"
 
 RtspServer::RtspServer(EventLoop* event_loop)
     : TcpServer(event_loop)
@@ -6,6 +7,14 @@ RtspServer::RtspServer(EventLoop* event_loop)
     // Initialize the RTSP server
     LOG_INFO("RtspServer created with event loop: " + std::to_string(reinterpret_cast<uintptr_t>(event_loop)));
 
+    auto factory = std::make_shared<DefaultSessionFactory>();
+
+     factory->Register("RTSP",
+        [](TcpConnection::Ptr conn) -> itcp_sess::ISessionBase::Ptr {
+            return std::make_shared<rtsp::RtspSession>(std::move(conn));
+        });
+
+    SetSessionFactory(factory);
 }
 
 RtspServer::~RtspServer()

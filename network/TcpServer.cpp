@@ -23,7 +23,12 @@ TcpServer::TcpServer(EventLoop *event_loop)
             sessions_[sockfd] = std::move(sess);
         };
 
-        sessions_[sockfd] = std::make_shared<protocol::ProtocolDetectorSession>(proto_detector_, promote);
+        auto det = std::make_shared<protocol::ProtocolDetectorSession>(proto_detector_, promote);
+        if (sess_factory_)
+        {
+            det->SetSessionFactory(sess_factory_);
+        }
+        sessions_[sockfd] = det;
 
         conn->SetReadCallback([this,sockfd](TcpConnection::Ptr conn, BufferReader& buffer) 
         {
@@ -133,3 +138,5 @@ void TcpServer::RemoveConnection(SOCKET sockfd)
     std::lock_guard<std::mutex> locker(mutex_);
 	connections_.erase(sockfd);
 }
+
+

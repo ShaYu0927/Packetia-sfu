@@ -389,3 +389,10 @@ Refactored multi-protocol TCP session architecture by introducing ProtocolDetect
 - Added RtspProtocolParser implementation based on ProtocolParser to support RTSP protocol detection (including $ interleaved framing).
 - Refactored parser declarations/definitions and fixed ParseResult scope + missing return issues to resolve compilation errors.
 - Updated build integration and linkage to eliminate duplicate Parse declarations and vtable undefined reference errors.
+
+# Version 0.4.8 - 2026-2-20
+## Refactor: Introduce protocol factory and session promotion mechanism
+- Added ISessionFactory abstraction and integrated factory injection into TcpServer, enabling protocol-level session creation without coupling transport layer to specific protocol implementations.
+- Implemented dynamic session promotion in ProtocolDetectorSession: upon successful protocol detection, create concrete session (e.g., RTSP) via factory and replace current session mapping.
+- Optimized detection flow to ensure newly promoted session immediately processes existing buffer data, preventing first-packet loss during protocol switch.
+- Decoupled RtspSession from RtspServer to reduce strong dependencies and improve modularity of protocol layer.
