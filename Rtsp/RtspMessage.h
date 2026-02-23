@@ -40,7 +40,7 @@ public:
 	{
 		kParseRequestLine,
 		kParseHeadersLine,
-		kParseBody,	
+		kParseBody,
 		kGotAll,
         kParseDone
 	};
@@ -49,11 +49,22 @@ public:
         RTSP_1_0,
         RTSP_2_0
     };
-   std::array<std::string, 3> ServerError = {
-    "RTSP/1.0 500 Internal Server Error\r\n",
-    "RTSP/1.0 404 Not Found\r\n",
-    "RTSP/1.0 400 Bad Request\r\n"
+
+    std::array<std::string, 3> ServerError = 
+    {
+        "RTSP/1.0 500 Internal Server Error\r\n",
+        "RTSP/1.0 404 Not Found\r\n",
+        "RTSP/1.0 400 Bad Request\r\n"
     };
+
+    typedef struct RtspRequestInfo
+    {
+        std::string method;
+        std::string url;
+        int cseq = -1;
+        std::unordered_map<std::string, std::string> headers;
+        std::string body;
+    }RtspRequestInfo;
 
 
     Method GetMethodString(const char* method)
@@ -206,10 +217,5 @@ public:
     std::shared_ptr<Sdp> sdp_;
 };
 
-
-class RtspResponse
-{
-
-};
 
 #endif

@@ -3,6 +3,7 @@
 
 #include "TcpSession.h"
 #include "RtspServer.h"
+#include "RtspMessage.h"
 
 namespace rtsp 
 {
@@ -32,6 +33,23 @@ public:
             media_pool_ = WorkerService::get_pool("media");
         }
     }
+
+    void SendRaw(std::string_view s,size_t size);
+    bool BindTrackByControl(std::string_view control,
+                                const std::shared_ptr<MediaSession>& media_session,
+                                std::shared_ptr<RtpTrack>& out_track);
+
+    void Dispatch(RtspRequest::RtspRequestInfo &req);
+
+public:
+    void HandleCmdOptions();
+    void HandleCmdDescribe();
+    void HandleCmdANNOUNCE();
+    void HandleCmdSetup();
+    void HandleCmdRecord();
+    void HandleCmdPlay();
+    void HandleCmdPause();
+    void HandleCmdTeardown();
 
 
 protected:

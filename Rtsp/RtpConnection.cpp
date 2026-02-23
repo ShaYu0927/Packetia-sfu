@@ -1,7 +1,7 @@
 #include "RtpConnection.h"
 
-RtpConnection::RtpConnection(std::weak_ptr<TcpConnection> rtsp_connection)
-    :rtsp_connection_(rtsp_connection)
+RtpConnection::RtpConnection(std::shared_ptr<TcpConnection> conn)
+    : rtsp_connection_(std::weak_ptr<TcpConnection>(conn))
 {
     std::random_device rd;
     std::mt19937 gen(rd()); // 更强的随机生成器

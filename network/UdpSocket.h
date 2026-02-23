@@ -1,0 +1,80 @@
+#ifndef _UDPSOCKET_H_
+#define _UDPSOCKET_H_
+
+#include <string>
+#include <cstdint>
+#include "Socket.h"
+#include "SocketUtil.h"
+
+namespace network
+{
+
+struct SocketAddr 
+{
+    sockaddr_storage ss{};
+    socklen_t len{0};
+
+    static SocketAddr FromIPPort(const std::string& ip, uint16_t port)
+    {
+        SocketAddr a;
+        sockaddr_in in{};
+        in.sin_family = AF_INET;
+        in.sin_port = htons(port);
+        in.sin_addr.s_addr = inet_addr(ip.c_str());
+        memcpy(&a.ss, &in, sizeof(in));
+        a.len = sizeof(in);
+        return a;
+    }
+
+    static SocketAddr FromSockaddr(const sockaddr* sa, socklen_t slen) 
+    {
+        SocketAddr a;
+        memcpy(&a.ss, sa, slen);
+        a.len = slen;
+        return a;
+    }
+
+    std::string ToString() const 
+    {
+        char ip[64]{};
+        uint16_t port = 0;
+        if (ss.ss_family == AF_INET) 
+        {
+            auto* in = (sockaddr_in*)&ss;
+            inet_ntop(AF_INET, &in->sin_addr, ip, sizeof(ip));
+            port = ntohs(in->sin_port);
+        } 
+        else if (ss.ss_family == AF_INET6) 
+        {
+            auto* in6 = (sockaddr_in6*)&ss;
+            inet_ntop(AF_INET6, &in6->sin6_addr, ip, sizeof(ip));
+            port = ntohs(in6->sin6_port);
+        }
+        return std::string(ip) + ":" + std::to_string(port);
+    }
+};
+
+
+class UdpSocket 
+{
+public:
+    explicit UdpSocket(int fd = -1) : fd_(fd) {}
+    ~UdpSocket() = default;
+
+    int  Create(); // socket(AF_INET, SOCK_DGRAM, 0)
+    bool Bind(const std::string& ip, uint16_t port);
+    void Close();
+
+    int Fd() const { return fd_; }
+
+    // recvfrom / sendto
+    int RecvFrom(uint8_t* buf, size_t cap, SocketAddr& src);
+    int SendTo(const SocketAddr& dst, const uint8_t* data, size_t len);
+
+private:
+    int fd_{-1};
+};
+
+}
+
+#endif /* _UDPSOCKET_H_ */

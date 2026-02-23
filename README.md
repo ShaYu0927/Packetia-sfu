@@ -396,3 +396,11 @@ Refactored multi-protocol TCP session architecture by introducing ProtocolDetect
 - Implemented dynamic session promotion in ProtocolDetectorSession: upon successful protocol detection, create concrete session (e.g., RTSP) via factory and replace current session mapping.
 - Optimized detection flow to ensure newly promoted session immediately processes existing buffer data, preventing first-packet loss during protocol switch.
 - Decoupled RtspSession from RtspServer to reduce strong dependencies and improve modularity of protocol layer.
+
+# Version 0.4.9 - 2026-2-22
+## feat(network): introduce UDP server abstraction integrated with EventLoop
+- Added UdpSocket encapsulation for non-blocking UDP operations (create/bind/recvfrom/sendto).
+- Implemented UdpServer with Channel-based integration into existing Reactor (EventLoop + EpollTaskScheduler).
+- Introduced IUdpHandler interface for decoupled datagram processing.
+- Enabled TCP and UDP servers to coexist under the same EventLoop.
+- Prepared foundation for future RTP/RTCP/ICE integration.

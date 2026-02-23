@@ -26,7 +26,7 @@ std::shared_ptr<RtpTrack> createTrack(
         int track_index);
 
 
-class RtspConnection : public TcpConnection , public UDPServer
+class RtspConnection : public TcpConnection
 {
 public:
     using Ptr = std::shared_ptr<RtspConnection>;
@@ -109,7 +109,6 @@ private:
     std::shared_ptr<Rtsp> rtsp_;
     std::unique_ptr<Sdp> sdp_;
     std::unique_ptr<RtspRequest> rtsp_request_;
-    std::unique_ptr<RtspResponse> read_buffer_;
 
 
     std::shared_ptr<Channel>       rtp_channel_;                        // rtp socket

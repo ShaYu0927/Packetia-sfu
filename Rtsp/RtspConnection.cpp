@@ -9,7 +9,6 @@ RtspConnection::RtspConnection(std::shared_ptr<RtspServer> rtsp_server, TaskSche
     ,task_scheduler_(task_scheduler)
     ,rtsp_request_(std::make_unique<RtspRequest>())
     ,sdp_(std::make_unique<Sdp>())
-    ,read_buffer_(std::make_unique<RtspResponse>())
     ,rtsp_(std::make_shared<Rtsp>())
     ,packet_pool_(std::make_unique<PacketPool>(2048, 1000))
 {

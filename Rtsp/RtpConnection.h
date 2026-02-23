@@ -21,7 +21,7 @@ class RtspConnection;
 class RtpConnection
 {
 public:
-    RtpConnection(std::weak_ptr<TcpConnection> rtsp_connection);
+    RtpConnection(std::shared_ptr<TcpConnection> conn);
     virtual ~RtpConnection();
     
     uint32_t GetRtpSessionId() const
@@ -79,7 +79,7 @@ private:
     struct sockaddr_in peer_rtp_addr_[MAX_MEDIA_CHANNEL];
     struct sockaddr_in peer_rtcp_sddr_[MAX_MEDIA_CHANNEL];
 
-    std::vector<MediaChannelInfo> media_channels_;   //存储音频和视频的通道信息
+    std::vector<MediaChannelInfo> media_channels_;   
 };
 
 

@@ -10,29 +10,6 @@ endif()
 
 add_compile_definitions(RTP_DEBUG=0)
 
-
-option(ENABLE_ASAN "Enable AddressSanitizer" OFF)
-
-if (CMAKE_BUILD_TYPE STREQUAL "Debug")
-   add_compile_options(
-    -O0
-    -g3
-    -fno-omit-frame-pointer
-    -fno-optimize-sibling-calls
-  )
-
-  if (ENABLE_ASAN)
-    add_compile_options(
-      -fsanitize=address
-      -fsanitize-address-use-after-scope
-    )
-    add_link_options(
-      -fsanitize=address
-    )
-  endif()
-endif()
-
-
 if (NOT WIN32)
   find_package(PkgConfig REQUIRED)
   pkg_check_modules(FFMPEG REQUIRED libavcodec libavformat libavutil libswscale libavfilter libavdevice)
@@ -76,6 +53,8 @@ add_library(network STATIC
     utils/Acceptor.cpp
     network/DefaultSessionFactory.cpp
     network/ProtocolDetector.cpp
+    network/UdpSocket.cpp
+    network/UdpServer.cpp
 )
 
 add_library(LOGGER STATIC
@@ -152,8 +131,6 @@ add_library(rtsp STATIC
     Rtsp/MediaSource.h
     Rtsp/RtspConnection.cpp
     Rtsp/RtspConnection.h
-    Rtsp/UdpServer.cpp
-    Rtsp/UdpServer.h
     Rtsp/RtpThreadPool.cpp
     Rtsp/RtpThreadPool.h
     Rtsp/RtpInterleaved.cpp
@@ -204,8 +181,18 @@ enable_testing()
 add_test(NAME TcpClientTest COMMAND tcp_client)
 
 target_compile_options(Packetia PRIVATE -H)
-
 target_compile_definitions(Packetia PRIVATE RTP_DEBUG=1)
+
+target_compile_options(Packetia PRIVATE
+    -O1
+    -g3
+    -fno-omit-frame-pointer
+)
+
+target_link_options(Packetia PRIVATE
+    -fsanitize=address
+    -fsanitize=undefined
+)
 
 # cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 # cmake --build build

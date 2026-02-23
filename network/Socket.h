@@ -19,6 +19,9 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <sys/select.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #define SOCKET int
 #define INVALID_SOCKET  (-1)
 #define SOCKET_ERROR    (-1)
