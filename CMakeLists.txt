@@ -55,6 +55,7 @@ add_library(network STATIC
     network/ProtocolDetector.cpp
     network/UdpSocket.cpp
     network/UdpServer.cpp
+    network/UdpSession.cpp
 )
 
 add_library(LOGGER STATIC

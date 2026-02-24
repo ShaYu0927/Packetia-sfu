@@ -404,3 +404,12 @@ Refactored multi-protocol TCP session architecture by introducing ProtocolDetect
 - Introduced IUdpHandler interface for decoupled datagram processing.
 - Enabled TCP and UDP servers to coexist under the same EventLoop.
 - Prepared foundation for future RTP/RTCP/ICE integration.
+
+# Version 0.5.0 - 2026-2-23
+## feat(media): introduce UDP transport skeleton and session demux layer
+- Add MediaEngine as transport entry container to manage UdpServer lifecycle
+- Implement UdpMuxHandler to demultiplex STUN / RTP / RTCP / DTLS packets
+- Introduce UdpSession abstraction to encapsulate per-peer state
+- Define initial session lookup/create mechanism (src-based mapping, preparatory for ICE-lite integration)
+- Refactor ownership model: UdpServer uses unique/shared ownership at engine level; sessions hold non-owning reference
+- Prepare groundwork for future ICE-lite + RTP integration

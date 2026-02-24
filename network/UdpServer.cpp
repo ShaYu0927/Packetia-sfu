@@ -40,7 +40,7 @@ bool UdpServer::Start(const std::string &ip, uint16_t port)
         return false;
     }
 
-    channel_ = std::make_shared<Channel>(scheduler_.get(), sock_.Fd());
+    channel_ = std::make_shared<Channel>(sock_.Fd());
 
     channel_->SetReadCallback([this]() { this->OnReadable(); });
     channel_->EnableReading();
