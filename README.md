@@ -413,3 +413,9 @@ Refactored multi-protocol TCP session architecture by introducing ProtocolDetect
 - Define initial session lookup/create mechanism (src-based mapping, preparatory for ICE-lite integration)
 - Refactor ownership model: UdpServer uses unique/shared ownership at engine level; sessions hold non-owning reference
 - Prepare groundwork for future ICE-lite + RTP integration
+
+# Version 0.5.1 - 2026-2-24
+## udp: add peer-based session routing and protocol demux
+- Introduce peer -> UdpSession routing in UdpMuxHandler
+- Enhance SocketAddr with operator== and custom hash
+- Integrate selected peer binding mechanism

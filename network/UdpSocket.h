@@ -52,6 +52,61 @@ struct SocketAddr
         }
         return std::string(ip) + ":" + std::to_string(port);
     }
+
+    bool operator==(const SocketAddr& other) const
+    {
+        if (ss.ss_family != other.ss.ss_family) return false;
+
+        if (ss.ss_family == AF_INET)
+        {
+            auto* a = (const sockaddr_in*)&ss;
+            auto* b = (const sockaddr_in*)&other.ss;
+
+            return a->sin_port == b->sin_port &&
+                a->sin_addr.s_addr == b->sin_addr.s_addr;
+        }
+        else if (ss.ss_family == AF_INET6)
+        {
+            auto* a = (const sockaddr_in6*)&ss;
+            auto* b = (const sockaddr_in6*)&other.ss;
+
+            return a->sin6_port == b->sin6_port &&
+                memcmp(&a->sin6_addr, &b->sin6_addr, sizeof(in6_addr)) == 0;
+        }
+
+        return false;
+    }
+};
+
+struct SocketAddrHash
+{
+    size_t operator()(const SocketAddr& a) const noexcept
+    {
+        if (a.ss.ss_family == AF_INET)
+        {
+            auto* in = (const sockaddr_in*)&a.ss;
+
+            uint64_t key =
+                (uint64_t(in->sin_addr.s_addr) << 16) |
+                uint64_t(in->sin_port);
+
+            return std::hash<uint64_t>()(key);
+        }
+        else if (a.ss.ss_family == AF_INET6)
+        {
+            auto* in6 = (const sockaddr_in6*)&a.ss;
+
+            const uint64_t* p =
+                reinterpret_cast<const uint64_t*>(&in6->sin6_addr);
+
+            uint64_t h =
+                p[0] ^ p[1] ^ uint64_t(in6->sin6_port);
+
+            return std::hash<uint64_t>()(h);
+        }
+
+        return 0;
+    }
 };
 
 

@@ -3,12 +3,17 @@
 
 #include "UdpServer.h"
 
+#include <functional>
+
 namespace network
 {
 
-class UdpSession 
+class UdpSession : public std::enable_shared_from_this<UdpSession>
 {
 public:
+    using OnSelectedPeerFn = std::function<void(std::shared_ptr<UdpSession>,
+                                               const network::SocketAddr&)>;
+
     explicit UdpSession(network::UdpServer* udp) : udp_(udp) {}
 
     void OnStun(const network::SocketAddr& src, const uint8_t* d, size_t n);
@@ -22,7 +27,10 @@ public:
 
     bool IsSelectedPeer(const network::SocketAddr& src) const;
     void SetSelectedPeer(const network::SocketAddr& peer);
-    const network::SocketAddr& SelectedPeer() const;
+    network::SocketAddr& SelectedPeer() const;
+
+
+    void SetOnSelectedPeer(OnSelectedPeerFn cb) { on_selected_peer_ = std::move(cb); }
 
 private:
     network::UdpServer* udp_;
@@ -34,25 +42,34 @@ private:
     uint64_t last_rx_ms_{0};
     uint64_t last_stun_ms_{0};
 
-
+    OnSelectedPeerFn on_selected_peer_;
 };
 
 class UdpMuxHandler : public IUdpHandler 
 {
 public:
+    enum class UdpProto { Stun, Dtls, Rtp, Rtcp, Unknown };
 
     explicit UdpMuxHandler(network::UdpServer* udp) : udp_(udp) {}
 
     void OnDatagram(const network::SocketAddr& src,
                             const uint8_t* data,
-                            size_t len) override
-                            {
-                                
-                            }
+                            size_t len) override;
+
+    static inline bool IsStunPacket(const uint8_t* d, size_t n);
+    static inline bool IsDtlsPacket(const uint8_t* d, size_t n);
+    static inline bool IsRtcpPacket(const uint8_t* d, size_t n);
+    static inline UdpProto DetectProto(const uint8_t* d, size_t n);
+
+
+    void BindPeer(const network::SocketAddr& peer, const std::shared_ptr<UdpSession>& sess);
+    void UnbindPeer(const network::SocketAddr& peer);
+    std::shared_ptr<UdpSession> FindByPeer(const network::SocketAddr& src);
+
 
 private:
-    network::UdpServer* udp_; // 非 owning
-    std::unordered_map<std::string, std::shared_ptr<UdpSession>> sessions_;
+    network::UdpServer* udp_;
+    std::unordered_map<std::string, std::weak_ptr<UdpSession>, SocketAddrHash> peer_map_;
 };
 
 class MediaEngine 
@@ -61,11 +78,8 @@ public:
     explicit MediaEngine(EventLoop* loop);
 
     bool Start(const std::string& ip, uint16_t port);
-
     void Stop();
-
     std::shared_ptr<UdpSession> CreateSession(const std::string& session_id);
-
     void Tick(uint64_t now_ms);
 
 
