@@ -221,7 +221,7 @@ void RtspConnection::HandleCmdOptions()
     std::shared_ptr<char> res(new char[2048], std::default_delete<char[]>());
     int size = rtsp_request_->BuildOptionsRes(res, 1024);
     LOG_INFO("Handling OPTIONS request, response size: " + std::to_string(size));
-    this->SendRtspMessage(res, size);	
+    this->SendRtspMessage(res, size);
 }
 
 //客户端播放流,服务器协商拟定

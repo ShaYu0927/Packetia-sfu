@@ -5,6 +5,8 @@
 #include "RtspServer.h"
 #include "RtspMessage.h"
 
+#include <cstddef>
+
 namespace rtsp 
 {
 
@@ -13,6 +15,29 @@ class RtspSession : public itcp_sess::ISessionBase,
 {
 public:
     using Ptr = std::shared_ptr<RtspSession>;
+
+    enum class ParseResult
+    {
+        CONSUMED,   
+        NEED_MORE,  
+        ERROR      
+    };
+
+    enum ConnectionMode
+    {
+        RTSP_SERVER, 
+		RTSP_PUSHER,
+    };
+
+    enum ConnectionState
+    {
+        INIT,
+        CONNECTING,
+        CONNECTED,
+        DISCONNECTED,
+        START_PLAY,
+		START_PUSH
+    };
 
     explicit RtspSession(TcpConnection::Ptr conn)
         : conn_(std::move(conn))
@@ -39,7 +64,17 @@ public:
                                 const std::shared_ptr<MediaSession>& media_session,
                                 std::shared_ptr<RtpTrack>& out_track);
 
-    void Dispatch(RtspRequest::RtspRequestInfo &req);
+    void Dispatch(const char* p, size_t total);
+
+    ParseResult TryConsumeOneFrame(BufferReader& buffer);
+    ParseResult TryConsumeInterleaved(BufferReader &buffer);
+    ParseResult TryConsumeRtspRequest(BufferReader &buffer);
+    ParseResult TryConsumeRtspResponse(BufferReader &buffer);
+
+
+
+    void OnRtspRequest(const char*p, size_t total);
+    void OnRtspResponse(const char*p, size_t total);
 
 public:
     void HandleCmdOptions();
@@ -68,6 +103,15 @@ private:
     RtpInterleaved interleaved_;
     std::shared_ptr<RtpConnection> rtp_connection_;
     int session_id_{0};
+
+    ConnectionMode mode_ = RTSP_SERVER;
+    ConnectionState state_ = INIT;
+
+public:
+    
+    size_t processedBytes = 0;
+    size_t processedFrames = 0;
+
 };
 }
 

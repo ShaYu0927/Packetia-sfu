@@ -5,6 +5,9 @@
 #include <string>
 #include <vector>
 #include <optional>
+#include <array>
+#include <memory>
+#include <cstring>
 
 namespace protocol::ice::stun 
 {
@@ -25,22 +28,63 @@ typedef struct XorMappedAddress
     uint16_t port = 0;
 }XorMappedAddress;
 
+typedef struct StunAttribute 
+{
+  std::uint16_t type{};
+  std::vector<std::uint8_t> value; 
+}StunAttribute;
+
 typedef struct StunMessage 
 {
-    uint16_t msg_type = 0;
-    uint16_t msg_len = 0;
-    uint32_t magic_cookie = 0;
-    uint8_t transaction_id[12] = {0};
+  std::uint16_t type{};
+  std::uint16_t length{}; 
+  std::uint32_t magic_cookie{};
+  std::array<std::uint8_t, 12> txid{};
+  std::vector<StunAttribute> attrs;
 
-    std::optional<XorMappedAddress> xor_mapped_addr;
+  const StunAttribute* FindAttr(std::uint16_t t) const noexcept 
+  {
+    for (auto& a : attrs) if (a.type == t) return &a;
+    return nullptr;
+  }
 }StunMessage;
 
 class StunCodec 
 {
 public:
-  static bool IsStun(const uint8_t*, size_t);
-  static std::vector<uint8_t> BuildBindingRequest(uint8_t txid[12]);
-  static std::optional<StunMessage> Parse(const uint8_t*, size_t);
+    static bool IsStun(const uint8_t*, size_t);
+    static std::vector<uint8_t> BuildBindingRequest(uint8_t txid[12]);
+    static std::optional<StunMessage> Parse(const uint8_t*, size_t);
+
+private:
+    static constexpr std::uint32_t kMagicCookie = 0x2112A442;
+
+    static std::uint16_t ReadBE16(const std::uint8_t* p) noexcept 
+    {
+       return (std::uint16_t(p[0]) << 8) | std::uint16_t(p[1]);
+    }
+
+    static std::uint32_t ReadBE32(const std::uint8_t* p) noexcept 
+    {
+        return (std::uint32_t(p[0]) << 24) | (std::uint32_t(p[1]) << 16) |
+            (std::uint32_t(p[2]) << 8)  |  std::uint32_t(p[3]);
+    }
+
+    static void WriteBE16(std::vector<std::uint8_t>& out, std::uint16_t v) 
+    {
+        out.push_back(std::uint8_t((v >> 8) & 0xFF));
+        out.push_back(std::uint8_t(v & 0xFF));
+    }
+
+    static void WriteBE32(std::vector<std::uint8_t>& out, std::uint32_t v) 
+    {
+        out.push_back(std::uint8_t((v >> 24) & 0xFF));
+        out.push_back(std::uint8_t((v >> 16) & 0xFF));
+        out.push_back(std::uint8_t((v >> 8) & 0xFF));
+        out.push_back(std::uint8_t(v & 0xFF));
+    }
+
+    static std::size_t Pad4(std::size_t x) noexcept { return (x + 3u) & ~3u; }
 };
 
 }

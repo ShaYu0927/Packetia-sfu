@@ -1,8 +1,79 @@
 #include "RtspSession.h"
 namespace rtsp 
 {
+static inline int FindCrlfCrlf(const char* p, size_t n)
+{
+    for (size_t i = 0; i + 3 < n; ++i) {
+        if (p[i] == '\r' && p[i+1] == '\n' && p[i+2] == '\r' && p[i+3] == '\n')
+            return (int)i;
+    }
+    return -1;
+}
+
+static inline bool IStartsWith(const char* s, size_t n, const char* prefix)
+{
+    // case-insensitive startswith for ASCII
+    size_t m = 0;
+    while (prefix[m]) m++;
+    if (n < m) return false;
+    for (size_t i = 0; i < m; ++i) {
+        unsigned char a = (unsigned char)s[i];
+        unsigned char b = (unsigned char)prefix[i];
+        if (a >= 'A' && a <= 'Z') a = a - 'A' + 'a';
+        if (b >= 'A' && b <= 'Z') b = b - 'A' + 'a';
+        if (a != b) return false;
+    }
+    return true;
+}
+
+static inline bool ParseContentLengthFromHeader(const char* header, size_t headerLen, size_t& outLen)
+{
+    outLen = 0;
+
+    size_t i = 0;
+    while (i < headerLen) 
+    {
+        size_t lineEnd = i;
+        while (lineEnd + 1 < headerLen && !(header[lineEnd] == '\r' && header[lineEnd + 1] == '\n'))
+            lineEnd++;
+        size_t lineLen = (lineEnd > i) ? (lineEnd - i) : 0;
+
+        if (lineLen == 0) break; 
+
+        const char* line = header + i;
+
+        if (IStartsWith(line, lineLen, "content-length:")) 
+        {
+            size_t k = 15;
+            while (k < lineLen && (line[k] == ' ' || line[k] == '\t')) k++;
+
+            size_t v = 0;
+            bool any = false;
+            while (k < lineLen) 
+            {
+                char c = line[k];
+                if (c < '0' || c > '9') break;
+                any = true;
+                v = v * 10 + size_t(c - '0');
+                k++;
+            }
+            if (!any) return false;
+            outLen = v;
+            return true;
+        }
+
+        i = lineEnd + 2; // skip \r\n
+    }
+
+    return true; // 没有 Content-Length 就当 0
+}
+
+
 bool RtspSession::OnRead(TcpConnection::Ptr conn, BufferReader& buffer)
 {
+    constexpr size_t kByteBudget = 256 * 1024;
+    constexpr size_t kFrameBudget = 512;
+
     size_t readable = buffer.ReadableBytes();
 
     LOG_INFO("[RTSP] OnRead fd=" 
@@ -10,13 +81,26 @@ bool RtspSession::OnRead(TcpConnection::Ptr conn, BufferReader& buffer)
              + " readable=" 
              + std::to_string(readable));
 
-    if (readable == 0)
-        return false;
+    while (buffer.ReadableBytes() > 0)
+    {
+        if (processedBytes >= kByteBudget || processedFrames >= kFrameBudget)
+            break;
 
-    size_t n = buffer.ReadableBytes();
-    size_t dump = std::min<size_t>(n, 200);
-    std::string s(buffer.Peek(), dump);
-    LOG_INFO("[RTSP] RAW:\n" + s);
+        size_t before = buffer.ReadableBytes();
+        auto r = TryConsumeOneFrame(buffer);
+        if (r == ParseResult::NEED_MORE) break;
+        if (r == ParseResult::ERROR) return false;
+
+        size_t after = buffer.ReadableBytes();
+
+        if (after >= before)
+        {
+            return false;
+        }
+
+        processedBytes += (before - after);
+        processedFrames++;
+    }
     return true;
 }
 
@@ -68,8 +152,20 @@ bool RtspSession::BindTrackByControl(std::string_view control, const std::shared
     return false;
 }
 
-void RtspSession::Dispatch(RtspRequest::RtspRequestInfo &req)
+void RtspSession::Dispatch(const char* p, size_t total)
 {
+    RtspRequest::RtspRequestInfo req;
+    if (!rtsp_request_->ParseRequest(p, total, req)) 
+    {
+        return;
+    }
+
+    if (req.cseq < 0) 
+    {
+        return;
+    }
+
+
     if (req.method == "OPTIONS")  { HandleCmdOptions();  return; }
     if (req.method == "DESCRIBE") { HandleCmdDescribe(); return; }
     if (req.method == "SETUP")    { HandleCmdSetup();    return; }
@@ -77,8 +173,131 @@ void RtspSession::Dispatch(RtspRequest::RtspRequestInfo &req)
     if (req.method == "PAUSE")    { HandleCmdPause();    return; }
     if (req.method == "TEARDOWN") { HandleCmdTeardown(); return; }
     if (req.method == "RECORD")   { HandleCmdRecord();   return; }
+}
 
-    // SendError(req.cseq, 501, "Not Implemented");
+RtspSession::ParseResult RtspSession::TryConsumeOneFrame(BufferReader &buffer)
+{
+    if (buffer.ReadableBytes() == 0)
+        return ParseResult::NEED_MORE;
+
+    const uint8_t* p = (const uint8_t*)buffer.Peek();
+    if (p[0] == '$')
+    {
+        return TryConsumeInterleaved(buffer);
+    }
+    else
+    {
+        if (mode_ == RTSP_SERVER)
+            return TryConsumeRtspRequest(buffer);
+        else
+            return TryConsumeRtspResponse(buffer);
+    }
+}
+
+RtspSession::ParseResult RtspSession::TryConsumeInterleaved(BufferReader &buffer)
+{
+    size_t n = buffer.ReadableBytes();
+    if (n == 0) return ParseResult::NEED_MORE;
+
+    const uint8_t* p = reinterpret_cast<const uint8_t*>(buffer.Peek());
+    if (p[0] != '$') return ParseResult::ERROR;
+
+    if (n < 4) return ParseResult::NEED_MORE;
+
+    uint8_t channel = p[1];
+    uint16_t len = (uint16_t(p[2]) << 8) | uint16_t(p[3]);
+    size_t total = 4u + size_t(len);
+
+    constexpr size_t kMaxInterleaved = 2 * 1024 * 1024;
+    if (total > kMaxInterleaved) return ParseResult::ERROR;
+
+    if (n < total) return ParseResult::NEED_MORE;
+
+    // OnInterleaved(channel, p + 4, len); 
+
+    buffer.Retrieve(total);
+    return ParseResult::CONSUMED;
+}
+
+RtspSession::ParseResult RtspSession::TryConsumeRtspRequest(BufferReader &buffer)
+{
+    size_t n = buffer.ReadableBytes();
+    if (n == 0) return ParseResult::NEED_MORE;
+
+    const char* p = buffer.Peek();
+    if (p[0] == '$') return ParseResult::ERROR;
+
+    constexpr size_t kMaxHeader = 32 * 1024;
+    if (n > kMaxHeader)
+    {
+
+    }
+
+    int idx = FindCrlfCrlf(p, n);
+    if (idx < 0) 
+    {
+        if (n > kMaxHeader) return ParseResult::ERROR; 
+        return ParseResult::NEED_MORE;
+    }
+
+    size_t headerLen = size_t(idx) + 4; 
+    if (headerLen > kMaxHeader) return ParseResult::ERROR;
+
+    size_t bodyLen = 0;
+    if (!ParseContentLengthFromHeader(p, headerLen, bodyLen)) return ParseResult::ERROR;
+
+    constexpr size_t kMaxBody = 2 * 1024 * 1024;
+    if (bodyLen > kMaxBody) return ParseResult::ERROR;
+
+    size_t total = headerLen + bodyLen;
+    if (n < total) return ParseResult::NEED_MORE;
+
+    buffer.Retrieve(total);
+    return ParseResult::CONSUMED;
+}
+
+RtspSession::ParseResult RtspSession::TryConsumeRtspResponse(BufferReader &buffer)
+{
+    size_t n = buffer.ReadableBytes();
+    if (n == 0) return ParseResult::NEED_MORE;
+
+    const char* p = buffer.Peek();
+    if (p[0] == '$') return ParseResult::ERROR;
+
+    constexpr size_t kMaxHeader = 32 * 1024;
+    int idx = FindCrlfCrlf(p, n);
+    if (idx < 0)
+    {
+        if (n > kMaxHeader) return ParseResult::ERROR;
+        return ParseResult::NEED_MORE;
+    }
+
+    size_t headerLen = size_t(idx) + 4;
+    if (headerLen > kMaxHeader) return ParseResult::ERROR;
+
+    size_t bodyLen = 0;
+    if (!ParseContentLengthFromHeader(p, headerLen, bodyLen)) return ParseResult::ERROR;
+
+    constexpr size_t kMaxBody = 2 * 1024 * 1024;
+    if (bodyLen > kMaxBody) return ParseResult::ERROR;
+
+    size_t total = headerLen + bodyLen;
+    if (n < total) return ParseResult::NEED_MORE;
+
+    OnRtspResponse(p, total);
+
+    buffer.Retrieve(total);
+    return ParseResult::CONSUMED;
+}
+
+void RtspSession::OnRtspRequest(const char *p, size_t total)
+{
+
+}
+
+void RtspSession::OnRtspResponse(const char *p, size_t total)
+{
+
 }
 
 void RtspSession::HandleCmdOptions()
@@ -193,7 +412,7 @@ void RtspSession::HandleCmdRecord()
     LOG_INFO("RECORD request for url=" + url);
 
     auto media_session = MediaSessionManager::Instance().GetSessionBySuffix(url);
-    if (!media_session) 
+    if (!media_session)
     {
         LOG_INFO("No existing MediaSession found for url=" + url + ", creating new one...");
         return;

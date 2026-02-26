@@ -4,6 +4,8 @@
 #include <string>
 #include <array>
 #include <unordered_map>
+#include <algorithm>
+#include <cctype>
 
 
 #include "BufferRead.h"
@@ -61,9 +63,16 @@ public:
     {
         std::string method;
         std::string url;
+        std::string version; 
         int cseq = -1;
-        std::unordered_map<std::string, std::string> headers;
+        std::unordered_map<std::string, std::string> headers; 
         std::string body;
+
+        std::string GetHeader(const std::string& k) const 
+        {
+            auto it = headers.find(k);
+            return it == headers.end() ? "" : it->second;
+        }
     }RtspRequestInfo;
 
 
@@ -94,10 +103,8 @@ public:
         }
     }
     
-    bool ParseRequest(BufferReader *buffer);
+    bool ParseRequest(const char* p, size_t total, RtspRequestInfo& out);
     
-
- 
     Method GetMethod() const { return method_; }
     const std::string& GetMethodString() const { return method_str_; }
     Version GetVersion() const { return version_; }

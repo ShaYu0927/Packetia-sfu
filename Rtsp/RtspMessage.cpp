@@ -2,137 +2,95 @@
 #include "MediaSession.h"
 #include <string>
 
-bool RtspRequest::ParseRequest(BufferReader *buffer)
+
+static inline void Trim(std::string& s)
 {
-    // 底层读取socket没有数据，需要切割
-    LOG_INFO("ReadableBytes=" + std::to_string(buffer->ReadableBytes()));
-    if (buffer->Peek()[0] == '$') // 判断是 RTP 数据包
+    auto not_space = [](unsigned char c){ return !std::isspace(c); };
+
+    while (!s.empty() && !not_space((unsigned char)s.front()))
+        s.erase(s.begin());
+
+    while (!s.empty() && !not_space((unsigned char)s.back()))
+        s.pop_back();
+}
+
+static inline bool SplitOnce(const std::string& s, char delim, std::string& left, std::string& right) 
+{
+    auto pos = s.find(delim);
+    if (pos == std::string::npos) return false;
+    left = s.substr(0, pos);
+    right = s.substr(pos + 1);
+    return true;
+}
+
+static inline std::string ToLower(std::string s) 
+{
+    for (auto& c : s) c = (char)std::tolower((unsigned char)c);
+    return s;
+}
+
+
+bool RtspRequest::ParseRequest(const char* p, size_t total, RtspRequestInfo& out)
+{
+    std::string msg(p, total);
+    auto hdrEnd = msg.find("\r\n\r\n");
+
+    if (hdrEnd == std::string::npos) return false;
+
+    std::string header = msg.substr(0, hdrEnd);
+    out.body = msg.substr(hdrEnd + 4);
+
+    size_t pos = 0;
+    auto nextLine = [&](std::string& line)->bool{
+        if (pos > header.size()) return false;
+        size_t eol = header.find("\r\n", pos);
+        if (eol == std::string::npos) {
+            line = header.substr(pos);
+            pos = header.size() + 1;
+            return true;
+        }
+        line = header.substr(pos, eol - pos);
+        pos = eol + 2;
+        return true;
+    };
+
+    std::string line;
+    if (!nextLine(line)) return false;
     {
-        LOG_INFO("this packet is't rtsp request");
-        return false; // 表示这不是 RTSP 请求，直接返回
+        size_t a = line.find(' ');
+        if (a == std::string::npos) return false;
+        size_t b = line.find(' ', a + 1);
+        if (b == std::string::npos) return false;
+
+        out.method  = line.substr(0, a);
+        out.url     = line.substr(a + 1, b - (a + 1));
+        out.version = line.substr(b + 1);
+        Trim(out.method); Trim(out.url); Trim(out.version);
+        if (out.method.empty() || out.url.empty()) return false;
     }
 
-    bool ret = true;
-    while (true)
+    while (pos <= header.size())
     {
-        if (state_ == kParseRequestLine)
+        if (!nextLine(line)) break;
+        if (line.empty()) break;
+
+        std::string k, v;
+        if (!SplitOnce(line, ':', k, v))
         {
-            LOG_INFO("State: kParseRequestLine");
-
-            const char* firstCrlf = buffer->FindFirstCrlf();
-            if (!firstCrlf)
-            {
-                LOG_INFO("Waiting for more data to complete request line...");
-                break;
-            }
-
-            std::string line(buffer->Peek(), firstCrlf - buffer->Peek());
-            LOG_INFO("Request line: [" + line + "]");
-
-            //存储CSeq
-            if (line.find("CSeq:") != std::string::npos)
-            {
-                ParseCseq(line);
-            }
-
-            ret = ParseRequestLine(buffer->Peek(), firstCrlf);
-            buffer->RetrieveUntil(firstCrlf + 2);
-
-            if (!ret)
-            {
-                LOG_ERROR("Failed to parse request line.");
-                return false;
-            }
-
-            LOG_INFO("Request line parsed successfully.");
+            continue;
         }
-        else if (state_ == kParseHeadersLine)
+
+        Trim(k); Trim(v);
+        k = ToLower(k);
+        out.headers[k] = v;
+        if (k == "cseq") 
         {
-            //LOG_INFO("State: kParseHeadersLine");
-
-            const char* firstCrlf = buffer->FindFirstCrlf();
-            if (!firstCrlf)
-            {
-                LOG_INFO("Waiting for more data to complete header line...");
-                break;
-            }
-
-            std::string line(buffer->Peek(), firstCrlf - buffer->Peek());
-            LOG_INFO("Header line: [" + line + "]");
-
-             // 即使是空行，也应该先判断是否前面还有 header
-            if (line.empty()) 
-            {
-                buffer->RetrieveUntil(firstCrlf + 2);
-                int content_len = GetContentLength();
-                LOG_INFO("End of headers detected. Content-Length: " + std::to_string(content_len));
-                if (header_line_param_.count("Content-Length") > 0)
-                {
-                    state_ = kParseBody;  // 如果有 body，就进入 kParseBody
-                    LOG_INFO("End of headers detected. Content-Length present, next state = kParseBody.");
-                }
-                else
-                {
-                    state_ = kParseDone;  // 没有 body，直接结束
-                    LOG_INFO("End of headers detected. No body, state changed to kParseDone.");
-                    break;
-                }
-                continue;
-            }
-            
-           
-            ret = ParseHeaderLines(buffer->Peek(), firstCrlf);
-            buffer->RetrieveUntil(firstCrlf + 2);
-
-            if (!ret)
-            {
-                LOG_ERROR("Failed to parse header line.");
-                return false;
-            }
-            LOG_INFO("Header line parsed successfully.");
-        }
-        else if (state_ == kParseBody)
-        {
-            LOG_INFO("State: kParseBody");
-            LOG_INFO("Before parsing body, ReadableBytes=" + std::to_string(buffer->ReadableBytes()));
-            //LOG_INFO("Peek first 20 bytes: [" + std::string(buffer->Peek(), std::min(20, buffer->ReadableBytes())) + "]");
-
-            int content_len = GetContentLength();
-            LOG_INFO("Expecting body of length: " + std::to_string(content_len));
-            if (content_len == 0) 
-            {
-                state_ = kParseRequestLine;
-                break;
-            }
-            if (content_len > 0 && buffer->ReadableBytes() >= content_len) {
-                ret = ParseBodyLine(buffer->Peek(), buffer->Peek() + content_len);
-                buffer->Retrieve(content_len);
-                SetContentLength(0); // Reset Content-Length after reading body
-                state_ = kParseDone;
-            }
-            else 
-            {
-                LOG_INFO("Waiting for more data to complete body...");
-                state_ = kParseBody;
-                break;
-            }
-
-        }
-        else if (state_ == kParseDone)
-        {
-            LOG_INFO("State: kParseDone. Parsing complete.");
-            state_ = RtspRequestParseState::kParseRequestLine;
-            //Reset();
-            break;
-        }
-        else
-        {
-            LOG_INFO("State is not parsing. Breaking out of loop.");
-            break;
+            out.cseq = std::stoi(v);
         }
     }
 
-    LOG_INFO("=== [RtspRequest] Finished parsing, state = " + std::to_string(state_) + " ===");
+    
+
     return true;
 }
 
@@ -345,14 +303,6 @@ int RtspRequest::BuildANNOUNCERes(std::shared_ptr<char> data, int size)
     return written;  // 返回实际写入长度
 }
 
-/*
-    RTSP/1.0 200 OK
-    CSeq: 4
-    Session: 6b8b4567
-    Range: npt=0.000-
-    Date: Tue, 14 Oct 2025 13:21:16 GMT
-*/
-
 int RtspRequest::BuildRecordRes(std::shared_ptr<char> data, int size,std::string session_id)
 {
     LOG_INFO("Building RTSP RECORD response with CSeq:" + this->GetCSeq());
@@ -463,8 +413,6 @@ bool RtspRequest::ParseRequestLine(const char *begin, const char *end)
     LOG_INFO("RTSP request line parsed successfully.");
     return true;
 }
-
-
 
 bool RtspRequest::ParseHeaderLines(const char *begin, const char *end)
 {
@@ -723,8 +671,6 @@ bool RtspRequest::ParseTransport(const std::string &header) {
 
     return false;
 }
-
-
 
 bool RtspRequest::ParseMediaChannel(std::string &message)
 {
