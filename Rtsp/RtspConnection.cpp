@@ -143,6 +143,7 @@ int RtspConnection::ParseStreamId(const std::string& control)
 
 bool RtspConnection::HandleRtspRequest(BufferReader &buffer)
 {
+    RtspRequest::RtspRequestInfo info{};
     if (buffer.ReadableBytes() <= 0)
     {
         LOG_ERROR("Buffer is empty or invalid");
@@ -154,7 +155,7 @@ bool RtspConnection::HandleRtspRequest(BufferReader &buffer)
 		LOG_INFO("Received RTSP request: " + str);
 	}
     LOG_INFO("Parsing RTSP request from buffer, size: " + std::to_string(buffer.ReadableBytes()));
-    if (!rtsp_request_->ParseRequest(&buffer)) 
+    if (!rtsp_request_->ParseRequest(str.c_str(), str.size(), info)) 
     {
         LOG_ERROR("Failed to parse RTSP request");
         return false;

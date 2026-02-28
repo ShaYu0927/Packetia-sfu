@@ -85,17 +85,17 @@ inline UdpMuxHandler::UdpProto UdpMuxHandler::DetectProto(const uint8_t *d, size
 
 void UdpMuxHandler::BindPeer(const network::SocketAddr &peer, const std::shared_ptr<UdpSession> &sess)
 {
-    peer_map_[peer.ToString()] = sess;
+    peer_map_[peer] = sess;
 }
 
 void UdpMuxHandler::UnbindPeer(const network::SocketAddr &peer)
 {
-    peer_map_.erase(peer.ToString());
+    peer_map_.erase(peer);
 }
 
 std::shared_ptr<UdpSession> UdpMuxHandler::FindByPeer(const network::SocketAddr &src)
 {
-    auto it = peer_map_.find(src.ToString());
+    auto it = peer_map_.find(src);
     if (it == peer_map_.end()) return nullptr;
     auto sp = it->second.lock();
     if (!sp) peer_map_.erase(it); 

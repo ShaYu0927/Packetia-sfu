@@ -1,7 +1,6 @@
 #ifndef _MEDIA_H_
 #define _MEDIA_H_
 
-#include <string>
 #include <memory>
 
 enum MediaType

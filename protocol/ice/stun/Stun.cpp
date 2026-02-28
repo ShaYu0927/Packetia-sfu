@@ -1,6 +1,12 @@
 #include "Stun.h"
 
-namespace protocol::ice::stun 
+#include <cstdint>
+#include <vector>
+#include <array>
+#include <cstring>
+
+
+namespace protocol
 {
 bool StunCodec::IsStun(const uint8_t*p, size_t n)
 {
@@ -13,6 +19,7 @@ bool StunCodec::IsStun(const uint8_t*p, size_t n)
 
     if ((msg_len % 4) != 0) return false;
     if (n < 20u + msg_len) return false;
+    if (cookie != kMagicCookie) return false;
 
     return true;
 }
@@ -25,7 +32,7 @@ std::vector<uint8_t> StunCodec::BuildBindingRequest(uint8_t txid[12])
     out.reserve(20);
 
     WriteBE16(out, kBindingRequest);
-    WriteBE16(out, 0);               // length = 0 (no attributes)
+    WriteBE16(out, 0);              
     WriteBE32(out, kMagicCookie);
 
     if (txid)
@@ -34,43 +41,67 @@ std::vector<uint8_t> StunCodec::BuildBindingRequest(uint8_t txid[12])
     }
     else
     {
-        out.insert(out.end(), txid, txid + 12);
+        out.insert(out.end(), 12, std::uint8_t{0});
     }
     return out;
 }
 
-std::optional<StunMessage> StunCodec::Parse(const uint8_t*p, size_t n)
+void StunCodec::DecodeType(uint16_t type_raw, StunMethod& method, StunClass& klass) noexcept
 {
-   if (!IsStun(p, n)) return std::nullopt;
-   StunMessage m{};
-   m.type         = ReadBE16(p + 0);
-   m.length       = ReadBE16(p + 2);
-   m.magic_cookie = ReadBE32(p + 4);
-   std::memcpy(m.txid.data(), p + 8, 12);
+    const uint16_t cls =
+        uint16_t(((type_raw & 0x0100) >> 7) | ((type_raw & 0x0010) >> 4));
+
+    const uint16_t m =
+        uint16_t((type_raw & 0x000F) |
+                 ((type_raw & 0x00E0) >> 1) |
+                 ((type_raw & 0x3E00) >> 2));
+
+    method = static_cast<StunMethod>(m);
+    klass = static_cast<StunClass>(cls);
+}
+
+bool StunCodec::Parse(const uint8_t*p, size_t n, StunMessageInfo& m)
+{
+    if (!IsStun(p, n)) return false;
+    m = {};
+    m.raw = p;
+    m.raw_len = n;
+
+    m.type_raw     = ReadBE16(p + 0);
+    m.length       = ReadBE16(p + 2);
+    m.magic_cookie = ReadBE32(p + 4);
+    std::memcpy(m.txid.data(), p + 8, 12);
+
+    if (m.magic_cookie != kMagicCookie) return false;
+    if (n < 20u) return false;
+
+    const std::size_t end = 20u + m.length;
+    if (end > n) return false;
 
 
-   const std::size_t end = 20u + m.length;
-   std::size_t off = 20;
+    DecodeType(m.type_raw, m.method, m.klass);
 
+    std::size_t off = 20u;
     while (off + 4 <= end) 
     {
-        const auto atype = ReadBE16(p + off + 0);
-        const auto alen  = ReadBE16(p + off + 2);
-        off += 4;
+        const uint16_t atype = ReadBE16(p + off + 0);
+        const uint16_t alen  = ReadBE16(p + off + 2);
+        off += 4u;
 
-        if (off + alen > end) return std::nullopt; 
+        if (off + alen > end) return false; 
 
-        StunAttribute a;
-        a.type = atype;
-        a.value.assign(p + off, p + off + alen);
-        m.attrs.emplace_back(std::move(a));
+        AttrView av{};
+        av.type = atype;
+        av.len  = alen;
+        av.value_offset = static_cast<uint32_t>(off);
+        m.attrs.emplace_back(av);
 
-        off += Pad4(alen);
+        off += alen;
+        off = Pad4(off);
     }
 
-    if (off != end) return std::nullopt;
-
-    return m;
+    if (off != end) return false;
+    return true;
 }
 
 }

@@ -69,7 +69,9 @@ public:
 
 private:
     network::UdpServer* udp_;
-    std::unordered_map<std::string, std::weak_ptr<UdpSession>, SocketAddrHash> peer_map_;
+    std::unordered_map<network::SocketAddr,
+                   std::weak_ptr<network::UdpSession>,
+                   network::SocketAddrHash> peer_map_;
 };
 
 class MediaEngine 

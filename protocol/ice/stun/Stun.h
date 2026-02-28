@@ -2,59 +2,109 @@
 #define _STUN_H_
 
 #include <cstdint>
-#include <string>
 #include <vector>
-#include <optional>
 #include <array>
-#include <memory>
 #include <cstring>
+#include <string_view>
 
-namespace protocol::ice::stun 
+namespace protocol
 {
-/* rfc8489 */    
 static constexpr uint32_t kMagicCookie = 0x2112A442;
 
-enum class MsgType : uint16_t 
+enum class StunClass : uint8_t 
 {
-    BindingRequest  = 0x0001,
-    BindingSuccess  = 0x0101,
-    BindingError    = 0x0111,
+    Request = 0, Indication = 1, SuccessResponse = 2, ErrorResponse = 3
+};
+    
+enum class StunMethod : uint16_t 
+{
+    Binding = 0x001,
+};
+    
+enum class AttrType : uint16_t 
+{
+    MAPPED_ADDRESS      = 0x0001,
+    USERNAME            = 0x0006,
+    MESSAGE_INTEGRITY   = 0x0008,
+    ERROR_CODE          = 0x0009,
+    UNKNOWN_ATTRIBUTES  = 0x000A,
+    REALM               = 0x0014,
+    NONCE               = 0x0015,
+    XOR_MAPPED_ADDRESS  = 0x0020,
+    SOFTWARE            = 0x8022,
+    ALTERNATE_SERVER    = 0x8023,
+    FINGERPRINT         = 0x8028,
+    PRIORITY            = 0x0024,
+    USE_CANDIDATE       = 0x0025,
+    ICE_CONTROLLED      = 0x8029,
+    ICE_CONTROLLING     = 0x802A,
 };
 
-typedef struct XorMappedAddress
+struct XorMappedAddress 
 {
     bool is_ipv6 = false;
-    std::string ip;
     uint16_t port = 0;
-}XorMappedAddress;
+    std::array<uint8_t, 16> ip{}; // v4 用前4字节
+};
 
-typedef struct StunAttribute 
+struct AttrView
 {
-  std::uint16_t type{};
-  std::vector<std::uint8_t> value; 
-}StunAttribute;
-
-typedef struct StunMessage 
+    uint16_t type = 0;
+    uint16_t len = 0;
+    uint32_t value_offset = 0; // offset from start of message
+};
+    
+typedef struct StunMessageInfo
 {
-  std::uint16_t type{};
-  std::uint16_t length{}; 
-  std::uint32_t magic_cookie{};
-  std::array<std::uint8_t, 12> txid{};
-  std::vector<StunAttribute> attrs;
+    uint16_t type_raw = 0;
+    uint16_t length = 0;
+    uint32_t magic_cookie = 0;
+    std::array<uint8_t, 12> txid{};
 
-  const StunAttribute* FindAttr(std::uint16_t t) const noexcept 
-  {
-    for (auto& a : attrs) if (a.type == t) return &a;
-    return nullptr;
-  }
-}StunMessage;
+    StunMethod method = static_cast<StunMethod>(0);
+    StunClass klass = static_cast<StunClass>(0);
+        
+    std::vector<AttrView> attrs;
+
+    const uint8_t* raw = nullptr;
+    size_t raw_len = 0;
+        
+    std::string_view AttrValue(const AttrView& a) const 
+    {
+        if (!raw) return {};
+        if ((size_t)a.value_offset + a.len > raw_len) return {};
+        return {(const char*)raw + a.value_offset, a.len};
+    }
+
+    const AttrView* FindAttr(uint16_t t) const noexcept 
+    {
+        for (const auto& a : attrs) if (a.type == t) return &a;
+        return nullptr;
+    }
+
+    bool IsBindingRequest() const 
+    {
+        return method == StunMethod::Binding && klass == StunClass::Request;
+    }
+
+    bool IsBindingResponse() const 
+    {
+        return method == StunMethod::Binding && klass == StunClass::SuccessResponse;
+    }
+
+    bool IsBindingErrorResponse() const 
+    {
+        return method == StunMethod::Binding && klass == StunClass::ErrorResponse;
+    }
+}StunMessageInfo;
 
 class StunCodec 
 {
 public:
     static bool IsStun(const uint8_t*, size_t);
     static std::vector<uint8_t> BuildBindingRequest(uint8_t txid[12]);
-    static std::optional<StunMessage> Parse(const uint8_t*, size_t);
+    static bool Parse(const uint8_t* p, size_t n, StunMessageInfo& out);
+    static void DecodeType(uint16_t type_raw, StunMethod& method, StunClass& klass) noexcept;
 
 private:
     static constexpr std::uint32_t kMagicCookie = 0x2112A442;
@@ -88,6 +138,5 @@ private:
 };
 
 }
-
 
 #endif /* _STUN_H_ */

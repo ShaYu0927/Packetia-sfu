@@ -419,3 +419,13 @@ Refactored multi-protocol TCP session architecture by introducing ProtocolDetect
 - Introduce peer -> UdpSession routing in UdpMuxHandler
 - Enhance SocketAddr with operator== and custom hash
 - Integrate selected peer binding mechanism
+
+wip: unify C++17 standard and fix clangd remote configuration
+
+- Ensure all targets compile with -std=gnu++17
+- Fix nested namespace C++17 warning in STUN module
+- Install and configure clangd-17 in remote SSH environment
+- Explicitly set clangd.path and compile-commands-dir
+- Regenerate and link compile_commands.json
+
+Status: build ok, clangd indexing restored

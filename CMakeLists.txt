@@ -3,6 +3,8 @@ project(Packetia)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS ON) 
+
 
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
@@ -30,6 +32,8 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/Common
     ${CMAKE_SOURCE_DIR}/protocol/sip
     ${CMAKE_SOURCE_DIR}/protocol/Rtcp
+    ${CMAKE_SOURCE_DIR}/protocol/ice
+    ${CMAKE_SOURCE_DIR}/protocol/ice/stun
     ${CMAKE_SOURCE_DIR}/src/interleaved
     ${CMAKE_SOURCE_DIR}/Room
     ${CMAKE_SOURCE_DIR}/Common/CallbackEmitter
@@ -73,8 +77,6 @@ add_library(COMMON STATIC
     Common/Depacketizer/H264Depacketizer.cpp
 )
 
-
-
 add_library(utils STATIC
     utils/TimeUtil.cpp
     utils/MemoryManager.cpp
@@ -106,6 +108,11 @@ add_library(Rtcp STATIC
     protocol/Rtcp/RtcpContext.h
     protocol/Rtcp/RtcpReciver.h
     protocol/Rtcp/RtcpReciver.cpp
+)
+
+add_library(ICE STATIC
+    protocol/ice/ice.cpp
+    protocol/ice/stun/Stun.cpp
 )
 
 add_library(rtp STATIC
@@ -147,8 +154,6 @@ file(GLOB ROOM_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/Room/*.cpp
 )
 
-
-
 add_library(Interleaved STATIC
     ${INTERLEAVED_SRCS}
 )
@@ -160,20 +165,21 @@ add_library(ROOM_LIB STATIC
 
 target_link_libraries(rtsp rtp network utils pthread sip Rtcp LOGGER ROOM_LIB 
     COMMON
+    ICE
 )
 
 enable_testing()
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/Rtsp/Test)
 
 
-add_executable(Packetia main.cpp)
+add_executable(Packetia ${CMAKE_SOURCE_DIR}/server/main.cpp)
 target_link_libraries(Packetia rtsp rtp utils Rtcp LOGGER ROOM_LIB
     ${FFMPEG_LIBRARIES}
     pthread
     c
     COMMON
+    ICE
 )
-
 
 add_executable(tcp_client test/tcp_client.cpp)
 target_link_libraries(tcp_client pthread)
@@ -183,7 +189,7 @@ add_test(NAME TcpClientTest COMMAND tcp_client)
 
 target_compile_options(Packetia PRIVATE -H)
 target_compile_definitions(Packetia PRIVATE RTP_DEBUG=1)
-
+set_target_properties(Packetia PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 target_compile_options(Packetia PRIVATE
     -O1
     -g3
