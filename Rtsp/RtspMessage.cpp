@@ -113,7 +113,6 @@ RTPTransportMode RtspRequest::GetTransport()
     return RTP_OVER_UNKNOWN;
 }
 
-//Content-Length: 561
 int RtspRequest::GetContentLength()
 {
     auto iter = header_line_param_.find("Content-Length");
@@ -372,7 +371,6 @@ bool RtspRequest::ParseRequestLine(const char *begin, const char *end)
         return false;
     }
 
-    // 尝试提取 IP、端口、suffix（兼容无 suffix 的情况）
     uint16_t port = 0;
     char ip[64] = {0};
     char suffix[64] = {0};
@@ -706,4 +704,55 @@ bool RtspRequest::ParseAuthorization(std::string &message)
     }
 
     return false;
+}
+
+std::string RtspRequest::HandleCmdOptions(RtspRequestInfo& req)
+{
+    std::shared_ptr<char> res(new char[2048], std::default_delete<char[]>());
+    int size = BuildOptionsRes(res, 1024);
+    return res.get();
+}
+
+std::string RtspRequest::HandleCmdDescribe(RtspRequestInfo& req)
+{
+    std::string message;
+    if (req.cseq < 0) return message;
+    if (req.GetHeader("Content-Type") != "application/sdp") return message;
+    if (req.body.empty()) return message;
+
+    // std::string streamName = ParseStreamName(req.url);
+
+    std::shared_ptr<char> res(new char[4096], std::default_delete<char[]>());
+    int MessageSize = BuildANNOUNCERes(res, 4096);
+    return res.get();
+}
+
+std::string RtspRequest::HandleCmdANNOUNCE(RtspRequestInfo& req)
+{
+
+}
+
+std::string RtspRequest::HandleCmdSetup(RtspRequestInfo& req)
+{
+
+}
+
+std::string RtspRequest::HandleCmdRecord(RtspRequestInfo& req)
+{
+
+}
+
+std::string RtspRequest::HandleCmdPlay(RtspRequestInfo& req)
+{
+
+}
+
+std::string RtspRequest::HandleCmdPause(RtspRequestInfo& req)
+{
+
+}
+
+std::string RtspRequest::HandleCmdTeardown(RtspRequestInfo& req)
+{
+
 }

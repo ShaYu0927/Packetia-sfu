@@ -429,3 +429,22 @@ wip: unify C++17 standard and fix clangd remote configuration
 - Regenerate and link compile_commands.json
 
 Status: build ok, clangd indexing restored
+
+WIP: scaffold ICE/STUN message layer and refactor RTSP parsing
+
+- add initial StunMessage class skeleton (RFC8489 based)
+- define STUN header layout (magic cookie, transaction id, attr parsing draft)
+- introduce basic AttrType / MsgType enums
+- start designing ICE candidate abstraction (placeholder only)
+
+- refactor RTSP request parsing state machine
+  * split request line / header / body stages
+  * improve CRLF detection logic
+  * prepare ANNOUNCE handling entry
+
+- adjust logging granularity for protocol layer
+- minor CMake cleanup
+
+NOTE:
+ICE connectivity check not implemented yet.
+Attribute parsing currently incomplete (no integrity/fingerprint validation).

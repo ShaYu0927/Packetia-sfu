@@ -93,6 +93,7 @@ public:
         else return Method::NONE;
 
     }
+    
     const char* GetVersionString(Version version)
     {
         switch (version)
@@ -179,6 +180,16 @@ public:
     int BuildSetupMulticastRes(std::shared_ptr<char> data, int size, const char* multicast_ip, uint16_t port, uint32_t session_id);
     int BuildANNOUNCERes(std::shared_ptr<char> data, int size);
     int BuildRecordRes(std::shared_ptr<char> data, int size,std::string session_id);
+
+
+    std::string HandleCmdOptions(RtspRequestInfo& req);
+    std::string HandleCmdDescribe(RtspRequestInfo& req);
+    std::string HandleCmdANNOUNCE(RtspRequestInfo& req);
+    std::string HandleCmdSetup(RtspRequestInfo& req);
+    std::string HandleCmdRecord(RtspRequestInfo& req);
+    std::string HandleCmdPlay(RtspRequestInfo& req);
+    std::string HandleCmdPause(RtspRequestInfo& req);
+    std::string HandleCmdTeardown(RtspRequestInfo& req);
 
 private:
     Method method_;                                     //请求方法

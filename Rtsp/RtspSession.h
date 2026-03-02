@@ -77,14 +77,14 @@ public:
     void OnRtspResponse(const char*p, size_t total);
 
 public:
-    void HandleCmdOptions();
-    void HandleCmdDescribe();
-    void HandleCmdANNOUNCE();
-    void HandleCmdSetup();
-    void HandleCmdRecord();
-    void HandleCmdPlay();
-    void HandleCmdPause();
-    void HandleCmdTeardown();
+    void HandleCmdOptions(RtspRequest::RtspRequestInfo& req);
+    void HandleCmdDescribe(RtspRequest::RtspRequestInfo& req);
+    void HandleCmdANNOUNCE(RtspRequest::RtspRequestInfo& req);
+    void HandleCmdSetup(RtspRequest::RtspRequestInfo& req);
+    void HandleCmdRecord(RtspRequest::RtspRequestInfo& req);
+    void HandleCmdPlay(RtspRequest::RtspRequestInfo& req);
+    void HandleCmdPause(RtspRequest::RtspRequestInfo& req);
+    void HandleCmdTeardown(RtspRequest::RtspRequestInfo& req);
 
 
 protected:
@@ -109,8 +109,7 @@ private:
 
 public:
     
-    size_t processedBytes = 0;
-    size_t processedFrames = 0;
+    
 
 };
 }

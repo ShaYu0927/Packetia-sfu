@@ -9,6 +9,7 @@
 #include <functional>
 #include <map>
 #include <chrono>
+#include <cstring>
 
 
 #include "logger.h"

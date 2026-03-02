@@ -74,12 +74,17 @@ bool RtspSession::OnRead(TcpConnection::Ptr conn, BufferReader& buffer)
     constexpr size_t kByteBudget = 256 * 1024;
     constexpr size_t kFrameBudget = 512;
 
+    size_t processedBytes = 0;
+    size_t processedFrames = 0;
+    
     size_t readable = buffer.ReadableBytes();
 
     LOG_INFO("[RTSP] OnRead fd=" 
              + std::to_string(conn->GetSocket()) 
              + " readable=" 
              + std::to_string(readable));
+
+    LOG_INFO(std::string(buffer.Peek(), buffer.ReadableBytes()));
 
     while (buffer.ReadableBytes() > 0)
     {
@@ -166,13 +171,14 @@ void RtspSession::Dispatch(const char* p, size_t total)
     }
 
 
-    if (req.method == "OPTIONS")  { HandleCmdOptions();  return; }
-    if (req.method == "DESCRIBE") { HandleCmdDescribe(); return; }
-    if (req.method == "SETUP")    { HandleCmdSetup();    return; }
-    if (req.method == "PLAY")     { HandleCmdPlay();     return; }
-    if (req.method == "PAUSE")    { HandleCmdPause();    return; }
-    if (req.method == "TEARDOWN") { HandleCmdTeardown(); return; }
-    if (req.method == "RECORD")   { HandleCmdRecord();   return; }
+    if (req.method == "OPTIONS")  { HandleCmdOptions(req);  return; }
+    if (req.method == "DESCRIBE") { HandleCmdDescribe(req); return; }
+    if (req.method ==  "ANNOUNCE"){ HandleCmdANNOUNCE(req); return; }
+    if (req.method == "SETUP")    { HandleCmdSetup(req);    return; }
+    if (req.method == "PLAY")     { HandleCmdPlay(req);     return; }
+    if (req.method == "PAUSE")    { HandleCmdPause(req);    return; }
+    if (req.method == "TEARDOWN") { HandleCmdTeardown(req); return; }
+    if (req.method == "RECORD")   { HandleCmdRecord(req);   return; }
 }
 
 RtspSession::ParseResult RtspSession::TryConsumeOneFrame(BufferReader &buffer)
@@ -252,6 +258,9 @@ RtspSession::ParseResult RtspSession::TryConsumeRtspRequest(BufferReader &buffer
     size_t total = headerLen + bodyLen;
     if (n < total) return ParseResult::NEED_MORE;
 
+    /* Handle protocol */
+    Dispatch(buffer.Peek(), total);
+
     buffer.Retrieve(total);
     return ParseResult::CONSUMED;
 }
@@ -300,19 +309,17 @@ void RtspSession::OnRtspResponse(const char *p, size_t total)
 
 }
 
-void RtspSession::HandleCmdOptions()
+void RtspSession::HandleCmdOptions(RtspRequest::RtspRequestInfo& req)
 {
-    std::shared_ptr<char> res(new char[2048], std::default_delete<char[]>());
-    int size = rtsp_request_->BuildOptionsRes(res, 1024);
-    LOG_INFO("Handling OPTIONS request, response size: " + std::to_string(size));
-    this->SendRaw(res.get(),(size_t)size);
-
+    std::string res  = rtsp_request_->HandleCmdOptions(req);
+    LOG_INFO("Handling OPTIONS request, response size: " + std::to_string(res.size()));
+    this->SendRaw(res,(size_t)res.size());
 }
 
-void RtspSession::HandleCmdDescribe()
+void RtspSession::HandleCmdDescribe(RtspRequest::RtspRequestInfo& req)
 {
 }
-void RtspSession::HandleCmdANNOUNCE()
+void RtspSession::HandleCmdANNOUNCE(RtspRequest::RtspRequestInfo& req)
 {
     if(!rtsp_request_->sdp_)
     {
@@ -329,7 +336,8 @@ void RtspSession::HandleCmdANNOUNCE()
     int MessageSize = rtsp_request_->BuildANNOUNCERes(res, 4096);
     this->SendRaw(res.get(),(size_t)MessageSize);
 }
-void RtspSession::HandleCmdSetup()
+
+void RtspSession::HandleCmdSetup(RtspRequest::RtspRequestInfo& req)
 {
     if (!rtsp_) { LOG_ERROR("RTSP context is null"); return; }
 
@@ -405,7 +413,7 @@ void RtspSession::HandleCmdSetup()
     media_session->AddClient(channel_id, rtp_connection_);
     conn_->Send(response.get(), (size_t)size);
 }
-void RtspSession::HandleCmdRecord()
+void RtspSession::HandleCmdRecord(RtspRequest::RtspRequestInfo& req)
 {
     //track轨道中是否存在
     std::string url = rtsp_request_->GetRtspUSuffix();
@@ -440,14 +448,14 @@ void RtspSession::HandleCmdRecord()
     int size = rtsp_request_->BuildRecordRes(res, 2048,std::to_string(session_id_));
     this->SendRaw(res.get(), size);
 }
-void RtspSession::HandleCmdPlay()
+void RtspSession::HandleCmdPlay(RtspRequest::RtspRequestInfo& req)
 {
 
 }
-void RtspSession::HandleCmdPause()
+void RtspSession::HandleCmdPause(RtspRequest::RtspRequestInfo& req)
 {
 }
-void RtspSession::HandleCmdTeardown()
+void RtspSession::HandleCmdTeardown(RtspRequest::RtspRequestInfo& req)
 {
 }
 }

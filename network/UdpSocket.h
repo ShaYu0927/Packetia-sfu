@@ -3,6 +3,7 @@
 
 #include <string>
 #include <cstdint>
+#include <cstring>
 #include "Socket.h"
 #include "SocketUtil.h"
 
@@ -13,6 +14,49 @@ struct SocketAddr
 {
     sockaddr_storage ss{};
     socklen_t len{0};
+
+    bool IsV4() const
+    {
+        return ss.ss_family == AF_INET;
+    }
+
+    bool IsV6() const
+    {
+        return ss.ss_family == AF_INET6;
+    }
+
+    std::string IPv4Bytes() const
+    {
+        if (!IsV4()) return {};
+        const auto* a = reinterpret_cast<const sockaddr_in*>(&ss);
+        const uint8_t* p = reinterpret_cast<const uint8_t*>(&a->sin_addr.s_addr);
+        return std::string(reinterpret_cast<const char*>(p), 4);
+    }
+
+    std::string IPv6Bytes() const
+    {
+        if (!IsV6()) return {};
+        const auto* a = reinterpret_cast<const sockaddr_in6*>(&ss);
+        const uint8_t* p = reinterpret_cast<const uint8_t*>(a->sin6_addr.s6_addr);
+        return std::string(reinterpret_cast<const char*>(p), 16);
+    }
+
+
+    uint16_t Port() const
+    {
+        if (IsV4())
+        {
+            const auto* a = reinterpret_cast<const sockaddr_in*>(&ss);
+            return ntohs(a->sin_port);
+        }
+        if (IsV6())
+        {
+            const auto* a = reinterpret_cast<const sockaddr_in6*>(&ss);
+            return ntohs(a->sin6_port);
+        }
+        return 0;
+    }
+
 
     static SocketAddr FromIPPort(const std::string& ip, uint16_t port)
     {

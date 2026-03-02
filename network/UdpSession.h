@@ -2,7 +2,6 @@
 #define _UDPSESSION_H_
 
 #include "UdpServer.h"
-
 #include <functional>
 
 namespace network
@@ -66,12 +65,18 @@ public:
     void UnbindPeer(const network::SocketAddr& peer);
     std::shared_ptr<UdpSession> FindByPeer(const network::SocketAddr& src);
 
+    void SetPendingSession(const std::shared_ptr<UdpSession>& sess);
+    void ClearPendingSession();
+
+
 
 private:
     network::UdpServer* udp_;
     std::unordered_map<network::SocketAddr,
                    std::weak_ptr<network::UdpSession>,
                    network::SocketAddrHash> peer_map_;
+    
+    std::weak_ptr<UdpSession> pending_session_;  /* stun binding session */
 };
 
 class MediaEngine 
