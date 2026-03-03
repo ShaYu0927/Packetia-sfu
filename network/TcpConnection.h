@@ -10,6 +10,7 @@
 #include "TaskScheduler.h"
 #include "BufferWrite.h"
 #include "BufferRead.h"
+#include "SocketUtil.h"
 
 
 class TcpConnection : public std::enable_shared_from_this<TcpConnection>

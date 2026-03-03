@@ -2,7 +2,7 @@
 #define _CLIENT_SESSION_H_
 
 #include <condition_variable>
-#include <memory>
+#include <cstring>
 
 #include "RtpConnection.h"
 #include "Rtp.h"

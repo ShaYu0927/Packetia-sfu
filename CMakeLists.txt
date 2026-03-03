@@ -30,6 +30,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/network
     ${CMAKE_SOURCE_DIR}/Rtsp
     ${CMAKE_SOURCE_DIR}/Common
+    ${CMAKE_SOURCE_DIR}/src/net
     ${CMAKE_SOURCE_DIR}/protocol/sip
     ${CMAKE_SOURCE_DIR}/protocol/Rtcp
     ${CMAKE_SOURCE_DIR}/protocol/ice
@@ -111,7 +112,7 @@ add_library(Rtcp STATIC
 )
 
 add_library(ICE STATIC
-    protocol/ice/ice.cpp
+    protocol/ice/IcePair.cpp
     protocol/ice/stun/Stun.cpp
 )
 
@@ -148,6 +149,7 @@ add_library(rtsp STATIC
 
 file(GLOB INTERLEAVED_SRCS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/interleaved/*.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/net/*.cpp
 )
 
 file(GLOB ROOM_SRC
@@ -163,22 +165,19 @@ add_library(ROOM_LIB STATIC
 )
 
 
-target_link_libraries(rtsp rtp network utils pthread sip Rtcp LOGGER ROOM_LIB 
-    COMMON
-    ICE
-)
-
 enable_testing()
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/Rtsp/Test)
 
 
 add_executable(Packetia ${CMAKE_SOURCE_DIR}/server/main.cpp)
-target_link_libraries(Packetia rtsp rtp utils Rtcp LOGGER ROOM_LIB
+target_link_libraries(Packetia
+    PRIVATE
+    -Wl,--start-group
+    rtsp rtp network utils Rtcp LOGGER ROOM_LIB COMMON ICE
+    -Wl,--end-group
     ${FFMPEG_LIBRARIES}
     pthread
     c
-    COMMON
-    ICE
 )
 
 add_executable(tcp_client test/tcp_client.cpp)

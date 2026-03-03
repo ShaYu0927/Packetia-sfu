@@ -1,4 +1,9 @@
 #include "SelectTaskScheduler.h"
+#include <cstring>
+#include <forward_list>
+#include <utility>   
+#include <cstring>  
+
 
 SelectTaskScheduler::SelectTaskScheduler(int id)
     :TaskScheduler(id)
@@ -91,12 +96,12 @@ bool SelectTaskScheduler::HandleEvent(int timeout)
             int events = iter.second->GetEvents();
 			SOCKET fd = iter.second->GetSocket();
 
-			if (is_fd_read_reset_ && (events&EVENT_IN)) //如果需要重置可读事件，并且该事件标记为 EVENT_IN
+			if (is_fd_read_reset_ && (events&EVENT_IN))
             {
 				FD_SET(fd, &fd_read);
 			}
 
-			if(is_fd_write_reset_ && (events&EVENT_OUT)) //如果需要重置可写事件，并且该事件标记为 EVENT_OUT
+			if(is_fd_write_reset_ && (events&EVENT_OUT))
             {
 				FD_SET(fd, &fd_write);
 			}

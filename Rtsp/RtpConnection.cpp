@@ -1,4 +1,6 @@
 #include "RtpConnection.h"
+#include "SocketUtil.h"
+#include <random>
 
 RtpConnection::RtpConnection(std::shared_ptr<TcpConnection> conn)
     : rtsp_connection_(std::weak_ptr<TcpConnection>(conn))

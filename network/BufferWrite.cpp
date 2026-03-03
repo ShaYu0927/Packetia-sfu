@@ -1,6 +1,6 @@
 #include "BufferWrite.h"
-#include "Socket.h"
 #include "SocketUtil.h"
+#include <cstring>
 
 BufferWirte::BufferWirte(int capacity)
     :max_queue_size(capacity)

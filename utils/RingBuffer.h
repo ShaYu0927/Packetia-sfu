@@ -1,10 +1,8 @@
 #ifndef _RING_BUFFER_H_
 #define _RING_BUFFER_H_
 
-#include <memory>
 #include <vector>
 #include <atomic>
-#include <iostream>
 
 template <typename T>
 class RingBuffer
