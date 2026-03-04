@@ -7,13 +7,31 @@
 #include <optional>
 
 
-/*
-   RFC 8445
-*/
+
+// IceCandidate represents a single ICE candidate as defined by ICE (RFC 8445 / RFC 5245).
+//
+// An ICE agent gathers multiple candidates (Host, Srflx, Relay; Prflx may be discovered during checks),
+// exchanges them with the peer via signaling (e.g., SDP "a=candidate" lines), and then forms
+// candidate pairs (local candidate + remote candidate). Each pair is validated via STUN connectivity
+// checks, and the best valid/nominated pair becomes the selected path for media/data transport.
+//
+// Key fields:
+// - component_: Component ID (commonly 1=RTP, 2=RTCP or any app-defined components).
+// - transport_: Transport protocol (typically UDP).
+// - type_: Candidate type: host / srflx (server-reflexive) / prflx (peer-reflexive) / relay.
+// - priority_: Candidate priority used for sorting and pair prioritization.
+// - foundation_: A grouping key used for checklist formation, unfreezing, and pruning redundant pairs.
+// - addr_: The candidate transport address advertised to the peer (<ip, port> in SDP).
+// - base_addr_: The base address for reflexive candidates (usually the related host candidate).
+// - rel_addr_: Related address (raddr/rport in SDP), typically present for srflx/relay candidates.
+// - network_id_/network_cost_: Optional local network metadata for multi-interface preference.
+
 namespace ice
 {
 
-enum class CandidateType 
+enum class PairState { Frozen, Waiting, InProgress, Succeeded, Failed };
+
+enum class CandidateType
 {
    Host,
    Srflx,
@@ -77,6 +95,10 @@ public:
 
       std::string ToString() const;
       std::string ToSdpCandidateLine() const;
+
+private:
+      static uint32_t TypePreference(CandidateType t);
+      static uint32_t ComputePriority(CandidateType type, uint16_t local_pref, uint8_t component);
       
 
 private:
@@ -95,6 +117,26 @@ private:
 
 };
 
+
+typedef struct IceCandidatePair 
+{
+    IceCandidate local;
+    IceCandidate remote;
+
+    uint64_t priority = 0;             /* pair priority (RFC) */
+    PairState state = PairState::Frozen;
+
+    bool valid = false;                /* connectivity check succeeded */
+    bool nominated = false;            /* USE-CANDIDATE accepted */
+
+
+    std::array<uint8_t, 12> txid{};    /* STUN transaction id (96-bit) */
+    int retransmit = 0;
+    uint64_t next_rto_ms = 0;
+    uint64_t last_send_ms = 0;
+
+    std::string ToString() const; 
+}IceCandidatePair;
 
 
 } // namespace ice

@@ -7,6 +7,9 @@
 
 namespace net 
 {
+
+#define INET6_ADDRSTRLEN 46
+
 enum class IPFamily 
 {
     IPv4,
@@ -22,9 +25,17 @@ public:
     static Endpoint FromIPv6(const std::array<uint8_t,16>& ip, uint16_t port);
 
     IPFamily Family() const { return family_; }
-    uint16_t Port() const { return port_; }
+    bool IsV4() const { return family_ == IPFamily::IPv4; }
+    bool IsV6() const { return family_ == IPFamily::IPv6; }
+
+    std::array<uint8_t,4> IpBytesV4() const;
+    const std::array<uint8_t,16>& IpBytesV6() const { return addr_; }
 
     std::string ToString() const;
+    std::string IpToString() const;
+
+    uint16_t Port() const { return port_; }
+    void SetPort(uint16_t p) { port_ = p; }
 
     bool operator==(const Endpoint& rhs) const;
     bool operator!=(const Endpoint& rhs) const { return !(*this == rhs); }
