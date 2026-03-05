@@ -112,8 +112,11 @@ add_library(Rtcp STATIC
 )
 
 add_library(ICE STATIC
-    protocol/ice/IcePair.cpp
+    protocol/ice/IceCandidate.cpp
     protocol/ice/stun/Stun.cpp
+    protocol/ice/IceCandidateStore.cpp
+    protocol/ice/IceChecklist.cpp
+    protocol/ice/IceContext.cpp
 )
 
 add_library(rtp STATIC

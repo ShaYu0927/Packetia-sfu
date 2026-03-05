@@ -46,6 +46,8 @@ enum class TransportType
 };
 
 
+
+
 class IceCandidate
 {
 public:
@@ -134,6 +136,7 @@ typedef struct IceCandidatePair
     int retransmit = 0;
     uint64_t next_rto_ms = 0;
     uint64_t last_send_ms = 0;
+    PairState State;
 
     std::string ToString() const; 
 }IceCandidatePair;

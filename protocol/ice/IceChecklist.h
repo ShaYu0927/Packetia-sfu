@@ -9,6 +9,7 @@ namespace ice
 class IceChecklist 
 {
 public:
+    enum class IceRole { Controlling, Controlled };
     IceChecklist() = default;
 
     const std::vector<IceCandidatePair>& pairs() const { return pairs_; }
@@ -21,13 +22,11 @@ public:
     void SortPairs();
 
     // Prune redundant pairs (RFC 8445-ish)
-    // Redundant if local bases are same and remote candidates identical, etc.
     void PruneRedundantPairs();
 
     // Update checklist state based on pair outcomes.
     void UpdateChecklistState();
 
-    // Find selected pair (if any)
     IceCandidatePair* Selected();
     const IceCandidatePair* Selected() const;
 
@@ -36,6 +35,7 @@ private:
 
 private:
     std::vector<IceCandidatePair> pairs_;
+    IceRole role_{IceRole::Controlling};
 };
 
 }
