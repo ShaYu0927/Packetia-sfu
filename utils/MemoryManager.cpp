@@ -1,4 +1,5 @@
 #include "MemoryManager.h"
+#include <cstdlib>
 
 void* Alloc(uint32_t size)
 {
@@ -17,14 +18,16 @@ MemoryPool::MemoryPool()
 
 MemoryPool::~MemoryPool()
 {
-	if (memory_) {
+	if (memory_) 
+	{
 		free(memory_);
 	}
 }
 
 void MemoryPool::Init(uint32_t size, uint32_t n)
 {
-	if (memory_) {
+	if (memory_) 
+	{
 		return;
 	}
 
@@ -37,7 +40,8 @@ void MemoryPool::Init(uint32_t size, uint32_t n)
 	head_->next = nullptr;
 
 	MemoryBlock* current = head_;
-	for (uint32_t n = 1; n < num_blocks_; n++) {
+	for (uint32_t n = 1; n < num_blocks_; n++) 
+	{
 		MemoryBlock* next = (MemoryBlock*)(memory_ + (n * (block_size_ + sizeof(MemoryBlock))));
 		next->block_id = n + 1;
 		next->pool = this;

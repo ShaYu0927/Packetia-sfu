@@ -78,25 +78,43 @@ public:
                               uint16_t network_cost = 0);
 
 
-      const std::string& Foundation() const { return foundation_; }
-      uint8_t Component() const { return component_; }
-      TransportType Transport() const { return transport_; }
-      CandidateType Type() const { return type_; }
-      uint32_t Priority() const { return priority_; }
+    const std::string& Foundation() const { return foundation_; }
+    uint8_t Component() const { return component_; }
+    TransportType Transport() const { return transport_; }
+    CandidateType Type() const { return type_; }
+    uint32_t Priority() const { return priority_; }
 
-      const net::Endpoint& Addr() const { return addr_; }
-      const net::Endpoint& BaseAddr() const { return base_addr_; }
-      const std::optional<net::Endpoint>& RelAddr() const { return rel_addr_; }
+    const net::Endpoint& Addr() const { return addr_; }
+    const net::Endpoint& BaseAddr() const { return base_addr_; }
+    const std::optional<net::Endpoint>& RelAddr() const { return rel_addr_; }
 
-      uint16_t NetworkId() const { return network_id_; }
-      uint16_t NetworkCost() const { return network_cost_; }
+    uint16_t NetworkId() const { return network_id_; }
+    uint16_t NetworkCost() const { return network_cost_; }
 
-      bool IsReflexive() const { return type_ == CandidateType::Srflx || type_ == CandidateType::Prflx; }
-      bool IsRelay() const { return type_ == CandidateType::Relay; }
-      bool IsHost() const { return type_ == CandidateType::Host; }
+    bool IsReflexive() const { return type_ == CandidateType::Srflx || type_ == CandidateType::Prflx; }
+    bool IsRelay() const { return type_ == CandidateType::Relay; }
+    bool IsHost() const { return type_ == CandidateType::Host; }
 
-      std::string ToString() const;
-      std::string ToSdpCandidateLine() const;
+    std::string ToString() const;
+    std::string ToSdpCandidateLine() const;
+
+    const net::Endpoint& Address() const { return addr_; }
+    const net::Endpoint& BaseAddress() const { return base_addr_; }
+    const std::optional<net::Endpoint>& RelatedAddress() const { return rel_addr_; }
+
+    void SetFoundation(const std::string& v) { foundation_ = v; }
+    void SetComponent(uint8_t v) { component_ = v; }
+    void SetTransport(TransportType v) { transport_ = v; }
+    void SetType(CandidateType v) { type_ = v; }
+    void SetPriority(uint32_t v) { priority_ = v; }
+
+    void SetAddress(const net::Endpoint& v) { addr_ = v; }
+    void SetBaseAddress(const net::Endpoint& v) { base_addr_ = v; }
+    void SetRelatedAddress(const std::optional<net::Endpoint>& v) { rel_addr_ = v; }
+
+    void SetNetworkId(uint16_t v) { network_id_ = v; }
+    void SetNetworkCost(uint16_t v) { network_cost_ = v; }
+
 
 private:
       static uint32_t TypePreference(CandidateType t);

@@ -1,14 +1,12 @@
 #ifndef _EVENTLOOP_H_
 #define _EVENTLOOP_H_
 
-#include <functional>
+
 #include <memory>
 #include <vector>
 
 #include "TaskScheduler.h"
-#include "EpollTaskScheduler.h"
 #include "TimeUtil.h"
-#include "RingBuffer.h"
 #include "Channel.h"
 
 class Channel;
@@ -44,10 +42,14 @@ public:
 
 private:
     std::mutex mutex_;
-	uint32_t num_threads_ = 1;
 	uint32_t index_ = 1;
 	std::vector<std::shared_ptr<TaskScheduler>> task_schedulers_;
-	std::vector<std::shared_ptr<std::thread>> threads_;    
+	std::vector<std::shared_ptr<std::thread>> threads_;
+
+    uint32_t num_threads_{1};
+    uint32_t scheduler_id_seed_{0};
+    uint32_t next_scheduler_index_{0};
+    bool started_{false};
 };
 
 #endif

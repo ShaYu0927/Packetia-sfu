@@ -1,10 +1,12 @@
 #include "TaskScheduler.h"
+#include <signal.h>
 
 TaskScheduler::TaskScheduler(int id)
-    :id_(id)
-    ,is_shutdown_(false) 
-    ,wakeup_pipe_(new Pip())
-    ,trigger_events_(new RingBuffer<TriggerEvent>(kMaxTriggetEvents))
+     : id_(id)
+    , shutdown_(false)
+    , started_(false)
+    , wakeup_pipe_(new Pip())
+    , pending_tasks_(kMaxTriggetEvents)
 {
     static std::once_flag flag;
     std::call_once(flag,[]{
@@ -16,11 +18,13 @@ TaskScheduler::TaskScheduler(int id)
 #endif             
     });
 
-    if(wakeup_pipe_->Create())
+    if (wakeup_pipe_ && wakeup_pipe_->Create()) 
     {
-        wakeup_channel_.reset(new Channel(wakeup_pipe_->Read()));
+        wakeup_channel_.reset(new Channel(wakeup_pipe_->ReadFd()));
         wakeup_channel_->EnableReading();
-        wakeup_channel_->SetReadCallback([this]{this->Wake();});
+        wakeup_channel_->SetReadCallback([this] {
+            this->HandlePendingTasks();
+        });
     }
 }
 
@@ -42,6 +46,8 @@ void TaskScheduler::stop()
     is_shutdown_ = true;
     char event = kTriggetEvent;
     wakeup_pipe_->Write(&event,1);
+    shutdown_.store(true);
+    started_.store(false);
 }
 
 TimeId TaskScheduler::AddTimer(TimeEvent timerEvent, uint32_t msec)
@@ -85,4 +91,52 @@ void TaskScheduler::HandleTriggerEvent()
        }
     } while (trigger_events_->Size() > 0);
     
+}
+
+void TaskScheduler::HandlePendingTasks()
+{
+    std::vector<Task> tasks;
+
+    {
+        std::lock_guard<std::mutex> lock(task_mutex_);
+        tasks.swap(pending_tasks_);
+    }
+
+    for (auto& task : tasks)
+    {
+        if (task)
+        {
+            task();
+        }
+    }
+}
+
+void TaskScheduler::DrainWakeupPipe()
+{
+    if (!wakeup_pipe_) return;
+
+    char buf[128];
+    while (wakeup_pipe_->Read(buf, sizeof(buf)) > 0)
+    {
+    }
+}
+
+bool TaskScheduler::Post(Task task)
+{
+    if (!task)
+    {
+        return false;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(task_mutex_);
+        if (pending_tasks_.size() >= kMaxTriggetEvents)
+        {
+            return false;
+        }
+        pending_tasks_.push_back(std::move(task));
+    }
+
+    Wake();
+    return true;
 }

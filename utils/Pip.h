@@ -1,8 +1,7 @@
 #ifndef _PIP_H_
 #define _PIP_H_
 
-#include "./TcpSocket.h"
-#include "./Socket.h"
+
 
 class Pip
 {
@@ -16,6 +15,9 @@ public:
 
     int Read() const { return pipe_fd_[0]; }
 	int Write() const { return pipe_fd_[1]; }
+
+    int ReadFd() const;
+    int WriteFd() const;
 
 private:
     int pipe_fd_[2];

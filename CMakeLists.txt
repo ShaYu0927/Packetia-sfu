@@ -6,6 +6,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS ON) 
 
 
+
+find_package(GTest REQUIRED)
+
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
 endif()
@@ -171,7 +174,9 @@ add_library(ROOM_LIB STATIC
 enable_testing()
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/Rtsp/Test)
 
-
+add_executable(ice_unit_tests
+    protocol/ice/test/test_IceChecklist.cpp
+)
 add_executable(Packetia ${CMAKE_SOURCE_DIR}/server/main.cpp)
 target_link_libraries(Packetia
     PRIVATE
@@ -186,22 +191,27 @@ target_link_libraries(Packetia
 add_executable(tcp_client test/tcp_client.cpp)
 target_link_libraries(tcp_client pthread)
 
-enable_testing()
+
 add_test(NAME TcpClientTest COMMAND tcp_client)
+target_link_libraries(ice_unit_tests
+    PRIVATE
+    ICE
+    GTest::gtest
+    GTest::gtest_main
+    pthread
+    Interleaved
+)
+
+target_include_directories(ice_unit_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/protocol/ice
+    ${CMAKE_SOURCE_DIR}/protocol/ice/stun
+)
+add_test(NAME IceChecklistUnitTest COMMAND ice_unit_tests)
+
 
 target_compile_options(Packetia PRIVATE -H)
 target_compile_definitions(Packetia PRIVATE RTP_DEBUG=1)
-set_target_properties(Packetia PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
-target_compile_options(Packetia PRIVATE
-    -O1
-    -g3
-    -fno-omit-frame-pointer
-)
 
-target_link_options(Packetia PRIVATE
-    -fsanitize=address
-    -fsanitize=undefined
-)
 
 # cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 # cmake --build build

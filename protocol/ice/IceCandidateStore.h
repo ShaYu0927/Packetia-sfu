@@ -16,7 +16,6 @@ public:
     std::vector<IceCandidate> GetLocals(uint8_t component) const;
     std::vector<IceCandidate> GetRemotes(uint8_t component) const;
 
-    // for SDP
     std::vector<std::string> LocalSdpLines() const;
 
 private:

@@ -1,19 +1,29 @@
 #include "EpollTaskScheduler.h"
+#include <errno.h>
+
 
 EpollTaskScheduler::EpollTaskScheduler(int id)
     :TaskScheduler(id)
 {
-    epollfd_ = epoll_create(1024);
-    this->UpdateChannel(wakeup_channel_);
+    epollfd_ = epoll_create1(EPOLL_CLOEXEC);
+    if (wakeup_channel_) 
+    {
+        UpdateChannel(wakeup_channel_);
+    }
 }
 
 EpollTaskScheduler::~EpollTaskScheduler()
 {
+    if (epollfd_ >= 0) 
+    {
+        ::close(epollfd_);
+        epollfd_ = -1;
+    }
 }
 
 void EpollTaskScheduler::UpdateChannel(std::shared_ptr<Channel> channel)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::mutex> lock(channel_mutex_);
     int fd = channel->GetSocket();
     if(channels_.find(fd) != channels_.end())
     {
@@ -39,7 +49,7 @@ void EpollTaskScheduler::UpdateChannel(std::shared_ptr<Channel> channel)
 
 void EpollTaskScheduler::RemoveChannel(std::shared_ptr<Channel> &channel)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::mutex> lock(channel_mutex_);
     int fd = channel->GetSocket();
 
     if(channels_.find(fd) != channels_.end())

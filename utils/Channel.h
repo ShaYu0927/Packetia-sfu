@@ -2,7 +2,6 @@
 #define _CHANNEL_H_
 
 #include <functional>
-#include <iostream>
 #include <memory>
 #include "Socket.h"
 #include "logger.h"

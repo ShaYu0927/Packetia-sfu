@@ -3,7 +3,7 @@
 
 
 #include "TaskScheduler.h"
-#include "logger.h"
+
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -14,9 +14,8 @@
   #include <sys/epoll.h>
 #endif
 
-#include <unistd.h>      // close()
-#include <errno.h>
-#include <string.h>      // strerror()
+#include <unistd.h>     
+
 
 
 class  EpollTaskScheduler : public TaskScheduler
@@ -27,15 +26,13 @@ public:
 
     void UpdateChannel(std::shared_ptr<Channel> channel);
 	void RemoveChannel(std::shared_ptr<Channel>& channel);
-
-	// timeout: ms
 	bool HandleEvent(int timeout);
 
 private:
     void Update(int operation, std::shared_ptr<Channel>& channel);
     int epollfd_ = -1;
 
-	std::mutex mutex_;
+	std::mutex channel_mutex_;
 	std::unordered_map<SOCKET, std::shared_ptr<Channel>> channels_;
 
 };

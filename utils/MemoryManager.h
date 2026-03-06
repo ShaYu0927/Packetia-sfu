@@ -1,9 +1,9 @@
 #ifndef _UTIL_MEMORYMANAGER_H_
 #define _UTIL_MEMORYMANAGER_H_
 
-#include <string>
+
 #include <cstdint>
-#include <memory>
+
 #include <mutex>
 
 void* Alloc(uint32_t size);

@@ -1,4 +1,6 @@
 #include "Pip.h"
+#include <fcntl.h>
+#include <unistd.h>
 
 Pip::Pip()
 {
@@ -25,6 +27,25 @@ int Pip::Read(void *buf, int len)
 
 void Pip::Close()
 {
-    close(pipe_fd_[0]);
-    close(pipe_fd_[1]);
+    if (pipe_fd_[0] >= 0)
+    {
+        ::close(pipe_fd_[0]);
+        pipe_fd_[0] = -1;
+    }
+
+    if (pipe_fd_[1] >= 0)
+    {
+        ::close(pipe_fd_[1]);
+        pipe_fd_[1] = -1;
+    }
+}
+
+int Pip::ReadFd() const
+{
+    return pipe_fd_[0];
+}
+
+int Pip::WriteFd() const
+{
+    return pipe_fd_[1];
 }

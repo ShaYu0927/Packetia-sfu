@@ -18,13 +18,13 @@ public:
     void BuildPairs(const std::vector<IceCandidate>& locals,
                     const std::vector<IceCandidate>& remotes);
 
-    // Sort pairs by pair priority (and potentially other heuristics).
+    /* Sort pairs by pair priority (and potentially other heuristics). */
     void SortPairs();
 
-    // Prune redundant pairs (RFC 8445-ish)
+    /* Prune redundant pairs (RFC 8445-ish) */
     void PruneRedundantPairs();
 
-    // Update checklist state based on pair outcomes.
+    /* Update checklist state based on pair outcomes. */
     void UpdateChecklistState();
 
     IceCandidatePair* Selected();
