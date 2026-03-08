@@ -1,56 +1,35 @@
 #include "UdpSession.h"
-#include "Stun.h"
+
 
 namespace network
 {
-void UdpSession::OnStun(const network::SocketAddr& src, const uint8_t* d, size_t n)
+
+bool UdpSession::Start()
 {
-    protocol::StunMessageInfo req{};
-    if (!protocol::StunCodec::Parse(d, n, req)) return;
-
-    if (req.method != protocol::StunMethod::Binding || req.klass != protocol::StunClass::Request) return;
-
-    if (!IsSelectedPeer(src)) SetSelectedPeer(src);
-
-    protocol::IpEndpoint ep{};
-
-    if (src.IsV4()) 
-    {
-        ep.family = 4;
-        ep.port = src.Port();
-        auto v4 = src.IPv4Bytes();              
-        std::memcpy(ep.ip.data(), v4.data(), 4);
-    } 
-    else 
-    {
-        ep.family = 6;
-        ep.port = src.Port();
-        auto v6 = src.IPv6Bytes();
-        std::memcpy(ep.ip.data(), v6.data(), 16);
-    }
-
-    uint8_t out[256];
-    size_t out_len = 0;
-    if (protocol::StunCodec::BuildBindingSuccess(req, ep, out, sizeof(out), out_len))
-        SendTo(src, out, out_len);
+    return true;
 }
 
-void UdpSession::OnDtls(const network::SocketAddr& src, const uint8_t* d, size_t n)
+void Stop()
 {
 
 }
 
-void UdpSession::OnRtp (const network::SocketAddr& src, const uint8_t* d, size_t n)
+void OnStun(WorkJob& job)
 {
 
 }
 
-void UdpSession::OnRtcp(const network::SocketAddr& src, const uint8_t* d, size_t n)
+void OnDtls(WorkJob& job)
 {
 
 }
 
-void UdpSession::Tick(uint64_t now_ms)
+void OnRtp(WorkJob& job)
+{
+
+}
+
+void OnRtcp(WorkJob& job)
 {
 
 }
@@ -105,13 +84,18 @@ void UdpMuxHandler::OnDatagram(const network::SocketAddr& src,
             return;
     }
 
-    switch (proto)
-    {
-    case UdpProto::Stun: sess->OnStun(src, data, len); break;
-    case UdpProto::Dtls: sess->OnDtls(src, data, len); break;
-    case UdpProto::Rtcp: sess->OnRtcp(src, data, len); break;
-    default:             sess->OnRtp (src, data, len); break;
-    }
+    auto endpoint_id = sess->Id();
+    std::shared_ptr<Packet> pkt = std::make_shared<Packet>(data, len);
+
+    WorkJob job{};
+    job.key  = endpoint_id;
+    job.type =  ToWorkJobType(proto);
+    job.payload = pkt;
+    job.payload_len = len;
+    job.enqueue_ts = Timestamp::NowMs();
+
+    WorkerService::post("endpoint_pool", std::move(job));
+  
 }
 
 /* 

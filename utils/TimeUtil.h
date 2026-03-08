@@ -80,7 +80,8 @@ public:
         return next_timeout_;
     }
 
-    bool triggerEventCallback() {
+    bool triggerEventCallback() 
+    {
         return event_callback_();
     }
     TimeEvent event_callback_ = [] { return false; };
@@ -92,7 +93,8 @@ private:
 
 };
 
-class TimeQueue {
+class TimeQueue
+{
 public:
     TimeId AddTimer(const TimeEvent& event, uint32_t msec);
     void RemoveTimer(TimeId id);
@@ -111,4 +113,53 @@ private:
     uint32_t last_timer_id_ = 0;
 
 };
+
+class Timestamp
+{
+public:
+    using SteadyClock = std::chrono::steady_clock;
+    using SystemClock = std::chrono::system_clock;
+
+public:
+    static uint64_t NowMs()
+    {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+                   SteadyClock::now().time_since_epoch())
+            .count();
+    }
+
+    static uint64_t NowUs()
+    {
+        return std::chrono::duration_cast<std::chrono::microseconds>(
+                   SteadyClock::now().time_since_epoch())
+            .count();
+    }
+
+    static uint64_t WallNowMs()
+    {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+                   SystemClock::now().time_since_epoch())
+            .count();
+    }
+
+    static uint64_t WallNowUs()
+    {
+        return std::chrono::duration_cast<std::chrono::microseconds>(
+                   SystemClock::now().time_since_epoch())
+            .count();
+    }
+
+    static uint64_t ElapsedMs(uint64_t begin_ms)
+    {
+        uint64_t now = NowMs();
+        return (now >= begin_ms) ? (now - begin_ms) : 0;
+    }
+
+    static uint64_t ElapsedUs(uint64_t begin_us)
+    {
+        uint64_t now = NowUs();
+        return (now >= begin_us) ? (now - begin_us) : 0;
+    }
+};
+
 #endif //FFMPEGAAC_TIME_H

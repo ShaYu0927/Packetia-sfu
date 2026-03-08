@@ -2,32 +2,42 @@
 #define _UDPSESSION_H_
 
 #include "UdpServer.h"
+#include "EndpointBase.h"
 #include <functional>
 
 namespace network
 {
 
-class UdpSession : public std::enable_shared_from_this<UdpSession>
+class UdpSession : public utils::EndpointBase,
+                   public std::enable_shared_from_this<UdpSession>
 {
 public:
     using OnSelectedPeerFn = std::function<void(std::shared_ptr<UdpSession>,
                                                const network::SocketAddr&)>;
 
-    explicit UdpSession(network::UdpServer* udp) : udp_(udp) {}
+    UdpSession(std::uint64_t endpoint_id,
+               std::string name,
+               network::UdpServer* udp)
+        : EndpointBase(endpoint_id, std::move(name)),
+          udp_(udp)
+    {
+    }
 
-    void OnStun(const network::SocketAddr& src, const uint8_t* d, size_t n);
-    void OnDtls(const network::SocketAddr& src, const uint8_t* d, size_t n);
-    void OnRtp (const network::SocketAddr& src, const uint8_t* d, size_t n);
-    void OnRtcp(const network::SocketAddr& src, const uint8_t* d, size_t n);
+    bool Start() override;
+    void Stop() override;
 
-    void Tick(uint64_t now_ms);
+protected:
+    void OnStun(WorkJob& job) override;
+    void OnDtls(WorkJob& job) override;
+    void OnRtp(WorkJob& job) override;
+    void OnRtcp(WorkJob& job) override;
 
+public:
     bool SendTo(const network::SocketAddr& dst, const uint8_t* data, size_t len);
 
     bool IsSelectedPeer(const network::SocketAddr& src) const;
     void SetSelectedPeer(const network::SocketAddr& peer);
-    network::SocketAddr& SelectedPeer() const;
-
+    const network::SocketAddr& SelectedPeer() const;
 
     void SetOnSelectedPeer(OnSelectedPeerFn cb) { on_selected_peer_ = std::move(cb); }
 
@@ -67,6 +77,18 @@ public:
 
     void SetPendingSession(const std::shared_ptr<UdpSession>& sess);
     void ClearPendingSession();
+
+    inline uint32_t ToWorkJobType(UdpMuxHandler::UdpProto proto)
+    {
+        switch (proto)
+        {
+            case UdpMuxHandler::UdpProto::Stun: return WORKJOB_TYPE_STUN;
+            case UdpMuxHandler::UdpProto::Dtls: return WORKJOB_TYPE_DTLS;
+            case UdpMuxHandler::UdpProto::Rtp:  return WORKJOB_TYPE_RTP;
+            case UdpMuxHandler::UdpProto::Rtcp: return WORKJOB_TYPE_RTCP;
+            default:                            return WORKJOB_TYPE_UNKNOWN;
+        }
+    }
 
 
 

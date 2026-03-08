@@ -93,6 +93,7 @@ add_library(utils STATIC
     utils/EventLoop.cpp
     utils/Acceptor.cpp
     utils/Pip.cpp
+    utils/EndpointBase.cpp
 
 )
 
@@ -173,6 +174,7 @@ add_library(ROOM_LIB STATIC
 
 enable_testing()
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/Rtsp/Test)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/utils/test)
 
 add_executable(ice_unit_tests
     protocol/ice/test/test_IceChecklist.cpp
@@ -188,11 +190,6 @@ target_link_libraries(Packetia
     c
 )
 
-add_executable(tcp_client test/tcp_client.cpp)
-target_link_libraries(tcp_client pthread)
-
-
-add_test(NAME TcpClientTest COMMAND tcp_client)
 target_link_libraries(ice_unit_tests
     PRIVATE
     ICE
@@ -207,8 +204,6 @@ target_include_directories(ice_unit_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/protocol/ice/stun
 )
 add_test(NAME IceChecklistUnitTest COMMAND ice_unit_tests)
-
-
 target_compile_options(Packetia PRIVATE -H)
 target_compile_definitions(Packetia PRIVATE RTP_DEBUG=1)
 

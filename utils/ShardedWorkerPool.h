@@ -24,9 +24,25 @@ typedef struct WorkJob
     size_t   payload_len;       
     uint64_t enqueue_ts;         
     std::weak_ptr<RtpTrack> track;
+    std::function<void()> fn;
     std::function<void(WorkJob&)>  deleter; 
 }WorkJob;
 
+enum : uint32_t
+{
+    WORKJOB_TYPE_UNKNOWN = 0,
+
+    WORKJOB_TYPE_TCP_PACKET,
+    WORKJOB_TYPE_UDP_PACKET,
+
+    WORKJOB_TYPE_RTSP,
+    WORKJOB_TYPE_RTP,
+    WORKJOB_TYPE_RTCP,
+    WORKJOB_TYPE_STUN,
+    WORKJOB_TYPE_DTLS,
+
+    WORKJOB_TYPE_FN,
+};
 
 struct IJobHandler
 {
@@ -67,7 +83,6 @@ public:
         ThreadStats sum;
         for (auto& up : workers_)
         {
-            // 读统计不强求强一致，简单读即可；如要强一致可加锁
             sum.enqueued += up->st.enqueued;
             sum.dequeued += up->st.dequeued;
             sum.dropped  += up->st.dropped;
@@ -119,6 +134,14 @@ public:
 
     static int post(const std::string& name, WorkJob&& job);
 
+    static int post_fn(const std::string& name, std::function<void()> fn);
+
+    template <typename F>
+    static int post_fn(const std::string& name, F&& f)
+    {
+        return post_fn(name, std::function<void()>(std::forward<F>(f)));
+    }
+
     static bool exists(const std::string& name);
 
     static ShardedWorkerPool* get_pool(const std::string& name);
@@ -131,4 +154,7 @@ private:
     static std::mutex mtx_;
     static std::unordered_map<std::string, std::unique_ptr<ShardedWorkerPool>> pools_;
 };
+
+
+
 #endif

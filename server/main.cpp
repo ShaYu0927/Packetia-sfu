@@ -3,32 +3,40 @@
 #include "logger.h"
 #include "UdpServer.h"
 #include "UdpSession.h"
+#include "EndpointBase.h"
 
-int main() 
+int main()
 {
+    utils::EndpointManager endpoint_mgr;
+
+    auto handler = std::make_shared<utils::EndpointJobHandler>(&endpoint_mgr);
+    if (WorkerService::create_pool("endpoint_pool", 4, handler, 4096) != 0)
+    {
+        LOG_ERROR("create worker pool failed");
+        return -1;
+    }
+
     auto event_loop = std::make_shared<EventLoop>(1);
     auto rtsp_server = std::make_shared<RtspServer>(event_loop.get());
-    if (!rtsp_server->Start("0.0.0.0", 554)) 
+    if (!rtsp_server->Start("0.0.0.0", 554))
     {
         LOG_ERROR("RTSP start failed");
         return -1;
     }
-    auto udp_server = std::make_shared<network::UdpServer>(event_loop.get());
-    auto handler = std::make_shared<network::UdpMuxHandler>(udp_server.get());
-    udp_server->SetHandler(handler);
 
-    if (!udp_server->Start("0.0.0.0", 9000)) 
+    auto udp_server = std::make_shared<network::UdpServer>(event_loop.get());
+    auto mux_handler = std::make_shared<network::UdpMuxHandler>(udp_server.get());
+    udp_server->SetHandler(mux_handler);
+    if (!udp_server->Start("0.0.0.0", 9000))
     {
         LOG_ERROR("UDP start failed");
         return -1;
     }
 
-    LOG_INFO("RTSP + UDP started");
+    LOG_INFO("system started");
 
-    while (true) 
-    {
-        std::this_thread::sleep_for(std::chrono::seconds(10));
-    }
+    event_loop->Loop();
 
+    WorkerService::destroy_pool("endpoint_pool", true);
     return 0;
 }

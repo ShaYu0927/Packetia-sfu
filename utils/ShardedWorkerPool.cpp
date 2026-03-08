@@ -63,13 +63,6 @@ int ShardedWorkerPool::post(WorkJob &&job)
         LOG_INFO("ShardedWorkerPool not started");
         return -1;
     }
-    
-    // if (job.key == 0)
-    // {
-    //     LOG_ERROR("post job with key=0, drop");
-    //     safe_release_job(job);
-    //     return -1;
-    // }
 
     auto idx = shard_index(job.key);
     Worker& w = *workers_[idx];
@@ -85,31 +78,19 @@ int ShardedWorkerPool::post(WorkJob &&job)
 
         if (w.q.size() >= max_queue_len_)
         {
-            // 队列满：按策略丢弃
             w.st.dropped++;
             if (drop_policy_ == DropPolicy::DropHead)
             {
-                // 丢最老的：务必对被丢的旧 job 执行 deleter
                 WorkJob old = std::move(w.q.front());
                 w.q.pop_front();
                 safe_release_job(old);
             }
             else
             {
-                // 丢最新的：对当前 job 执行 deleter
                 safe_release_job(job);
                 return -1;
             }
         }
-#if RTP_DEBUG
-        printf("[Worker %zu] q=%zu enq=%lu drop=%lu max=%lu\n",
-                idx,
-                w.q.size(),
-                w.st.dequeued,
-                w.st.dropped,
-                w.st.max_depth_seen);
-
-#endif
 
          w.q.emplace_back(std::move(job));
          w.st.enqueued++;
@@ -210,6 +191,14 @@ int WorkerService::post(const std::string &name, WorkJob &&job)
         pool = it->second.get();
     }
     return pool->post(std::move(job));
+}
+
+int WorkerService::post_fn(const std::string& name, std::function<void()> fn)
+{
+    WorkJob job{};
+    job.type = 0;
+    job.fn = std::move(fn);
+    return post(name, std::move(job));
 }
 
 bool WorkerService::exists(const std::string &name)
