@@ -9,27 +9,27 @@ bool UdpSession::Start()
     return true;
 }
 
-void Stop()
+void UdpSession::Stop()
 {
 
 }
 
-void OnStun(WorkJob& job)
+void UdpSession::OnStun(WorkJob& job)
 {
 
 }
 
-void OnDtls(WorkJob& job)
+void UdpSession::OnDtls(WorkJob& job)
 {
 
 }
 
-void OnRtp(WorkJob& job)
+void UdpSession::OnRtp(WorkJob& job)
 {
 
 }
 
-void OnRtcp(WorkJob& job)
+void UdpSession::OnRtcp(WorkJob& job)
 {
 
 }
@@ -164,7 +164,9 @@ std::shared_ptr<UdpSession> UdpMuxHandler::FindByPeer(const network::SocketAddr 
 
 std::shared_ptr<UdpSession> MediaEngine::CreateSession(const std::string &session_id)
 {
-    auto sess = std::make_shared<UdpSession>(udp_.get());
+    std::uint64_t endpoint_id = std::hash<std::string>{}(session_id);
+    auto sess = std::make_shared<UdpSession>(endpoint_id, session_id, udp_.get());
+
     sess->SetOnSelectedPeer([this](std::shared_ptr<UdpSession> s, const network::SocketAddr& peer) {
         handler_->BindPeer(peer, s);
     });

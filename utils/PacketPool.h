@@ -5,11 +5,10 @@
 #include <mutex>
 #include <cstdint>
 
-
 class PacketPool;
 struct Packet
 {
-    PacketPool* owner = nullptr;   
+    PacketPool* owner = nullptr;
     uint16_t    len   = 0;
     uint16_t    cap   = 0;
 
@@ -17,8 +16,23 @@ struct Packet
     uint64_t    recv_ts = 0;
     uint64_t    enqueue_ts = 0;
 
-    uint8_t*    data = nullptr;    
-    std::vector<uint8_t> storage;  
+    uint8_t*    data = nullptr;
+    std::vector<uint8_t> storage;
+
+    Packet() = default;
+
+    Packet(const uint8_t* src, size_t n)
+    {
+        assign(src, n);
+    }
+
+    void assign(const uint8_t* src, size_t n)
+    {
+        storage.assign(src, src + n);
+        data = storage.data();
+        len = static_cast<uint16_t>(storage.size());
+        cap = static_cast<uint16_t>(storage.capacity());
+    }
 
     inline void reset()
     {
@@ -26,7 +40,17 @@ struct Packet
         flags = 0;
         recv_ts = 0;
         enqueue_ts = 0;
-        
+
+        if (!storage.empty())
+        {
+            data = storage.data();
+            cap = static_cast<uint16_t>(storage.capacity());
+        }
+        else
+        {
+            data = nullptr;
+            cap = 0;
+        }
     }
 };
 

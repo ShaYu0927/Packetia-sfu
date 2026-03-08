@@ -40,7 +40,7 @@ public:
         SetState(State::kStopped);
     }
 
-    void ProcessJob(WorkJob&& job) override
+    void ProcessJob(WorkJob& job) override
     {
         {
             std::lock_guard<std::mutex> lock(mtx_);
