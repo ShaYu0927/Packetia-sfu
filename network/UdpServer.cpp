@@ -21,19 +21,19 @@ bool UdpServer::Start(const std::string &ip, uint16_t port)
     Stop();
 
     scheduler_ = event_loop_->GetTaskScheduler();
-    if (!scheduler_) 
+    if (!scheduler_)
     {
         LOG_ERROR("UdpServer Start: no scheduler");
         return false;
     }
 
-    if (sock_.Create() < 0) 
+    if (sock_.Create() < 0)
     {
         LOG_ERROR("UdpServer Start: socket create failed");
         return false;
     }
 
-    if (!sock_.Bind(ip, port)) 
+    if (!sock_.Bind(ip, port))
     {
         LOG_ERROR("UdpServer Start: bind failed");
         sock_.Close();
@@ -86,16 +86,19 @@ bool UdpServer::SendTo(const network::SocketAddr &dst, const uint8_t *data, size
 void UdpServer::OnReadable()
 {
     uint8_t buf[2048];
-    for (int i = 0; i < 32; ++i) 
+    for (int i = 0; i < 32; ++i)
     {
         SocketAddr src;
         int n = sock_.RecvFrom(buf, sizeof(buf), src);
         if (n == -1) break; 
         if (n == -2) 
         {
+            LOG_ERROR("UdpServer recv error errno=", errno);
             if (handler_) handler_->OnError(errno);
             break;
         }
+
+        LOG_INFO("UdpServer recv from ", src.ToString(), ":", src.Port(), " bytes=", n);
 
         if (handler_) handler_->OnDatagram(src, buf, (size_t)n);
     }

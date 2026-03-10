@@ -65,24 +65,27 @@ int ShardedWorkerPool::post(WorkJob &&job)
     }
 
     auto idx = shard_index(job.key);
-    Worker& w = *workers_[idx];
+    LOG_INFO("ShardedWorkerPool::post begin, key=", job.key,
+             " shard=", idx);
+
+    Worker& shard_worker  = *workers_[idx];
 
     {
-        std::unique_lock<std::mutex> lk(w.mtx);
+        std::unique_lock<std::mutex> lk(shard_worker.mtx);
 
-        if (!w.running.load()) 
+        if (!shard_worker.running.load()) 
         {
             safe_release_job(job);
             return -1;
         }
 
-        if (w.q.size() >= max_queue_len_)
+        if (shard_worker.q.size() >= max_queue_len_)
         {
-            w.st.dropped++;
+            shard_worker.st.dropped++;
             if (drop_policy_ == DropPolicy::DropHead)
             {
-                WorkJob old = std::move(w.q.front());
-                w.q.pop_front();
+                WorkJob old = std::move(shard_worker.q.front());
+                shard_worker.q.pop_front();
                 safe_release_job(old);
             }
             else
@@ -92,11 +95,12 @@ int ShardedWorkerPool::post(WorkJob &&job)
             }
         }
 
-         w.q.emplace_back(std::move(job));
-         w.st.enqueued++;
-        if (w.q.size() > w.st.max_depth_seen) w.st.max_depth_seen = w.q.size();
+         shard_worker.q.emplace_back(std::move(job));
+         shard_worker.st.enqueued++;
+        if (shard_worker.q.size() > shard_worker.st.max_depth_seen) shard_worker.st.max_depth_seen = shard_worker.q.size();
     }
-    w.cv.notify_one();
+    LOG_INFO("ShardedWorkerPool::post notify_one, shard=", idx);
+    shard_worker.cv.notify_one();
     return 0;
 }
 
@@ -129,29 +133,55 @@ std::size_t ShardedWorkerPool::shard_index(std::uint64_t key) const
     return static_cast<std::size_t>(h % workers_.size());
 }
 
-void ShardedWorkerPool::worker_loop(Worker &w, std::size_t idx)
+void ShardedWorkerPool::worker_loop(Worker &worker, std::size_t idx)
 {
-    while (w.running.load())
+    LOG_INFO("worker_loop start, idx=", idx);
+
+    for (;;)
     {
         WorkJob job;
+
         {
-            std::unique_lock<std::mutex> lk(w.mtx);
-            w.cv.wait(lk, [&]{
-                return !w.running.load() || !w.q.empty();
+            std::unique_lock<std::mutex> lk(worker.mtx);
+
+            LOG_INFO("worker wait, idx=", idx, " qsize=", worker.q.size());
+
+            worker.cv.wait(lk, [&] {
+                return !worker.running.load() || !worker.q.empty();
             });
 
-            if (!w.running.load() && w.q.empty())
-                break;
+            LOG_INFO("worker wake, idx=", idx,
+                     " running=", worker.running.load(),
+                     " qsize=", worker.q.size());
 
-            job = std::move(w.q.front());
-            w.q.pop_front();
-            w.st.dequeued++;
+            if (!worker.running.load() && worker.q.empty())
+            {
+                LOG_INFO("worker exit by stop, idx=", idx);
+                break;
+            }
+
+            job = std::move(worker.q.front());
+            worker.q.pop_front();
+            worker.st.dequeued++;
+
+            LOG_INFO("worker pop job, idx=", idx,
+                     " key=", job.key,
+                     " type=", job.type,
+                     " qsize_after=", worker.q.size());
         }
 
+        if (!handler_)
+        {
+            LOG_ERROR("worker handler is null, idx=", idx);
+            continue;
+        }
+
+        LOG_INFO("worker handle begin, idx=", idx, " key=", job.key);
         handler_->handle(std::move(job));
+        LOG_INFO("worker handle end, idx=", idx, " key=", job.key);
     }
 
-      
+    LOG_INFO("worker_loop exit, idx=", idx);
 }
 
 int WorkerService::create_pool(const std::string &name, std::size_t worker_count, std::shared_ptr<IJobHandler> handler, std::size_t max_queue_len, ShardedWorkerPool::DropPolicy drop)

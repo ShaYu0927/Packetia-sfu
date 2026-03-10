@@ -32,7 +32,7 @@ public:
 
     std::uint64_t Id() const
     {
-        return endpoint_id_;
+        return NextEndpointId();
     }
 
     const std::string& Name() const
@@ -66,6 +66,12 @@ protected:
     void SetState(State s)
     {
         state_.store(s, std::memory_order_relaxed);
+    }
+
+    static std::uint64_t NextEndpointId()
+    {
+        static std::atomic<std::uint64_t> s_id {1};
+        return s_id.fetch_add(1, std::memory_order_relaxed);
     }
 
 protected:

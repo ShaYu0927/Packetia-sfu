@@ -37,6 +37,7 @@ public:
     void UpdateChannel(ChannelPtr channel);
     void RemoveChannel(ChannelPtr channel);
 
+    bool Start();
     void Loop();
     void Stop();
 

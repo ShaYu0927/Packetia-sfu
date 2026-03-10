@@ -5,9 +5,10 @@
 #ifndef FFMPEGAAC_SOCKETUTIL_H
 #define FFMPEGAAC_SOCKETUTIL_H
 
-#include "TcpSocket.h"
+
+#include <cstdint>
 #include <string>
-#include "Socket.h"
+
 
 class SocketUtil {
 public:

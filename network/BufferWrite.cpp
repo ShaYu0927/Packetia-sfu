@@ -1,6 +1,7 @@
 #include "BufferWrite.h"
 #include "SocketUtil.h"
 #include <cstring>
+#include "Socket.h"
 
 BufferWirte::BufferWirte(int capacity)
     :max_queue_size(capacity)
@@ -55,18 +56,22 @@ int  BufferWirte::Send(int socketfd,int timeOut)
     int ret   = 0;
     int count = 0;
 
-   while (!buffer_.empty()) {
+   while (!buffer_.empty()) 
+   {
         Packet &pkt = buffer_.front();
         int ret = send(socketfd, pkt.data.get() + pkt.writeIndex, pkt.size - pkt.writeIndex, 0);
-        if (ret > 0) {
+        if (ret > 0) 
+        {
             pkt.writeIndex += ret;
             if (pkt.writeIndex == pkt.size) buffer_.pop();
-        } else if (ret < 0) {
+        } 
+        else if (ret < 0) 
+        {
 #if defined(__linux__) || defined(__linux__)
-            if(errno == EINTR) continue;        // 信号中断重试
-            if(errno == EAGAIN || errno == EWOULDBLOCK) break; // 等待下次写事件
+            if(errno == EINTR) continue;        
+            if(errno == EAGAIN || errno == EWOULDBLOCK) break; 
 #endif
-            return -1; // 其他错误，关闭连接
+            return -1;
         }
     }
     return 0;

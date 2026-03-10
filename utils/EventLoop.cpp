@@ -72,15 +72,16 @@ void EventLoop::RemoveChannel(ChannelPtr channel)
 	}
 }
 
-void EventLoop::Loop()
+bool EventLoop::Start()
 {
     std::lock_guard<std::mutex> lock(mutex_);
     if(!task_schedulers_.empty())
     {
-        return ;
+        return false;
     }
 
-    for (uint32_t i = 0; i < num_threads_; ++i) {
+    for (uint32_t i = 0; i < num_threads_; ++i) 
+    {
         std::shared_ptr<TaskScheduler> task_scheduler =
             std::make_shared<EpollTaskScheduler>(scheduler_id_seed_++);
         task_schedulers_.push_back(task_scheduler);
@@ -125,6 +126,15 @@ void EventLoop::Loop()
 		}
 #endif
 	}
+    return true;
+}
+
+void EventLoop::Loop()
+{
+    while (started_) 
+    {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
 }
 
 void EventLoop::Stop()
@@ -135,14 +145,15 @@ void EventLoop::Stop()
         return;
     }
 
-    for (auto& iter : task_schedulers_) 
+    for (auto& iter : task_schedulers_)
 	{
         iter->stop();
     }
 
     for (auto& iter : threads_) 
 	{
-        if (iter && iter->joinable()) {
+        if (iter && iter->joinable())
+        {
             iter->join();
         }
     }

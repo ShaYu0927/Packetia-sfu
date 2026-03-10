@@ -17,6 +17,12 @@ int main()
     }
 
     auto event_loop = std::make_shared<EventLoop>(1);
+    if (!event_loop->Start())
+    {
+        LOG_ERROR("event loop start failed");
+        return -1;
+    }
+
     auto rtsp_server = std::make_shared<RtspServer>(event_loop.get());
     if (!rtsp_server->Start("0.0.0.0", 554))
     {
@@ -32,8 +38,6 @@ int main()
         LOG_ERROR("UDP start failed");
         return -1;
     }
-
-    LOG_INFO("system started");
 
     event_loop->Loop();
 

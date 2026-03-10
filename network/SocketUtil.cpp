@@ -4,6 +4,8 @@
 
 #include "SocketUtil.h"
 #include <fcntl.h>
+#include "Socket.h"
+
 bool SocketUtil::Bind(int sockfd, std::string ip, uint16_t port)
 {
     struct sockaddr_in addr = {0};

@@ -4,7 +4,8 @@
 
 #include "TcpSocket.h"
 #include "SocketUtil.h"
-
+#include "logger.h"
+#include "Socket.h"
 
 TcpSocket::TcpSocket(int m_socket)
     : m_socket_(m_socket)

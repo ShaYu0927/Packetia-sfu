@@ -58,6 +58,7 @@ void EndpointJobHandler::handle(WorkJob&& job)
     if (!mgr_)
     {
         if (job.deleter) job.deleter(job);
+        LOG_INFO("ERROR mgr_");
         return;
     }
 
@@ -65,6 +66,7 @@ void EndpointJobHandler::handle(WorkJob&& job)
     if (!endpoint)
     {
         if (job.deleter) job.deleter(job);
+        LOG_INFO("endpoint");
         return;
     }
 

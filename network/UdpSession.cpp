@@ -16,22 +16,22 @@ void UdpSession::Stop()
 
 void UdpSession::OnStun(WorkJob& job)
 {
-
+    LOG_INFO("UdpSessionEndpoint::onStun",job.key);
 }
 
 void UdpSession::OnDtls(WorkJob& job)
 {
-
+    LOG_INFO("UdpSessionEndpoint::OnDtls",job.key);
 }
 
 void UdpSession::OnRtp(WorkJob& job)
 {
-
+    LOG_INFO("UdpSessionEndpoint::OnRtp",job.key);
 }
 
 void UdpSession::OnRtcp(WorkJob& job)
 {
-
+    LOG_INFO("UdpSessionEndpoint::OnRtcp",job.key);
 }
 
 bool UdpSession::SendTo(const network::SocketAddr& dst, const uint8_t* data, size_t len)
@@ -80,8 +80,8 @@ void UdpMuxHandler::OnDatagram(const network::SocketAddr& src,
             sess = pending_session_.lock();
         }
 
-        if (!sess)
-            return;
+        // if (!sess)
+        //     return;
     }
 
     auto endpoint_id = sess->Id();

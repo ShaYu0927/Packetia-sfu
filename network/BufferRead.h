@@ -1,11 +1,11 @@
 #ifndef _BUFFERREAD_H_
 #define _BUFFERREAD_H_
 
-#include <queue>
-#include <iostream>
-#include <memory>
+
 #include <algorithm>
-#include "Socket.h"
+#include <cstdint>
+#include <string>
+#include <vector>
 
 uint32_t ReadUint32BE(char* data);
 uint32_t ReadUint32LE(char* data);

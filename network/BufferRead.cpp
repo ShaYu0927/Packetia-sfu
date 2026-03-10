@@ -1,4 +1,5 @@
 #include "BufferRead.h"
+#include "Socket.h"
 
 
 const char BufferReader::kCRLF[] = "\r\n";
