@@ -150,19 +150,33 @@ std::string RtspRequest::GetGmtTimeString()
     return buf;
 }
 
-int RtspRequest::BuildOptionsRes(std::shared_ptr<char> data, int size)
+int RtspRequest::BuildOptionsRes(const RtspRequestInfo& req,
+                                 std::shared_ptr<char> data,
+                                 int size)
 {
-    memset((void*)data.get(), 0, size);
-    LOG_DEBUG("Building RTSP OPTIONS response with CSeq:" + this->GetCSeq());
-   snprintf(data.get(), size,
-        "RTSP/1.0 200 OK\r\n"
-        "CSeq: %s\r\n"
-        "Public: OPTIONS, DESCRIBE, SETUP, TEARDOWN, PLAY\r\n"
-        "\r\n",
-        this->GetCSeq().c_str()
-    );
+    if (!data || size <= 0)
+    {
+        return -1;
+    }
 
-	return (int)strlen(data.get());
+    memset(data.get(), 0, size);
+
+    LOG_DEBUG("Building RTSP OPTIONS response with cseq=" + std::to_string(req.cseq));
+
+    int ret = snprintf(data.get(), size,
+        "RTSP/1.0 200 OK\r\n"
+        "CSeq: %d\r\n"
+        "Public: OPTIONS, DESCRIBE, SETUP, TEARDOWN, PLAY\r\n"
+        "Server: MyRtspServer\r\n"
+        "\r\n",
+        req.cseq);
+
+    if (ret < 0 || ret >= size)
+    {
+        return -1;
+    }
+
+    return ret;
 }
 
 int RtspRequest::BuildDescribeRes(std::shared_ptr<char> data, int size, const std::string &sdp)
@@ -265,27 +279,10 @@ int RtspRequest::BuildSetupMulticastRes(std::shared_ptr<char> data, int size, co
     return 0;
 }
 
-int RtspRequest::BuildANNOUNCERes(std::shared_ptr<char> data, int size)
+int RtspRequest::BuildANNOUNCERes(const RtspRequestInfo& req,std::shared_ptr<char> data, int size)
 {
-    LOG_INFO("Building RTSP ANNOUNCE response with CSeq:" + this->GetCSeq());
-
     if (!data || size <= 0) return 0;
-    //std::string body = sdp_->buildANNOUNCEBody();
-
-    // 清空缓冲区（可选）
     memset(data.get(), 0, size);
-
-    // snprintf 返回写入的字符数，不包括 '\0'
-    // int written = snprintf(data.get(), size,
-    //    "RTSP/1.0 200 OK\r\n"
-    //     "CSeq: %s\r\n"
-    //     "Content-Type: application/sdp\r\n"
-    //     "Content-Length: %zu\r\n"
-    //     "\r\n%s",
-    //     this->GetCSeq().c_str(),
-    //     body.size(),
-    //     body.c_str()
-    // );
     int written = snprintf(data.get(), size,
        "RTSP/1.0 200 OK\r\n"
         "CSeq: %s\r\n"
@@ -299,7 +296,7 @@ int RtspRequest::BuildANNOUNCERes(std::shared_ptr<char> data, int size)
         return 0;
     }
 
-    return written;  // 返回实际写入长度
+    return written; 
 }
 
 int RtspRequest::BuildRecordRes(std::shared_ptr<char> data, int size,std::string session_id)
@@ -709,7 +706,7 @@ bool RtspRequest::ParseAuthorization(std::string &message)
 std::string RtspRequest::HandleCmdOptions(RtspRequestInfo& req)
 {
     std::shared_ptr<char> res(new char[2048], std::default_delete<char[]>());
-    int size = BuildOptionsRes(res, 1024);
+    int size = BuildOptionsRes(req,res, 1024);
     return res.get();
 }
 
@@ -723,18 +720,52 @@ std::string RtspRequest::HandleCmdDescribe(RtspRequestInfo& req)
     // std::string streamName = ParseStreamName(req.url);
 
     std::shared_ptr<char> res(new char[4096], std::default_delete<char[]>());
-    int MessageSize = BuildANNOUNCERes(res, 4096);
+    int MessageSize = BuildANNOUNCERes(req,res, 4096);
     return res.get();
 }
 
 std::string RtspRequest::HandleCmdANNOUNCE(RtspRequestInfo& req)
 {
+    LOG_INFO("Handle ANNOUNCE req:\n%s", req.Dump().c_str());
 
+    std::string contentType = req.GetHeader("Content-Type");
+    LOG_INFO("ANNOUNCE Content-Type=%s, body_len=%zu",
+             contentType.c_str(),
+             req.body.size());
+
+    if (!req.body.empty())
+    {
+        LOG_INFO("ANNOUNCE SDP body:\n%s", req.body.c_str());
+    }
+    std::shared_ptr<char> res(new char[2048], std::default_delete<char[]>());
+    int size = BuildANNOUNCERes(req,res,1024);
+    return res.get();
 }
 
 std::string RtspRequest::HandleCmdSetup(RtspRequestInfo& req)
 {
+    std::string session_id,url,control;
+    std::shared_ptr<RtpTrack> track_ptr;
+    std::shared_ptr<char> response(new char[10240], std::default_delete<char[]>());
+    size_t size,transport = 1;
+    uint16_t rtp_ch, rtcp_ch = 0;
 
+    url = req.url;
+    control = req.GetControlFromUrl();
+
+    auto media_session = MediaSessionManager::Instance().GetSessionBySuffix(url);
+    if (!media_session)
+    {
+        LOG_ERROR("Media session not found, url=%s", url.c_str());
+        return "";
+    }
+
+    session_id = std::to_string(media_session->GetId());
+    LOG_INFO("SETUP url=%s control=%s sessionId=%s",
+             url.c_str(), control.c_str(), session_id.c_str());
+
+
+    return "";
 }
 
 std::string RtspRequest::HandleCmdRecord(RtspRequestInfo& req)

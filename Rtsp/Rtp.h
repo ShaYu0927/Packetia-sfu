@@ -3,7 +3,6 @@
 
 #include <memory>
 #include <string>
-#include <variant>
 #include <vector>
 #include "RtpTypes.h"
 #include <functional>

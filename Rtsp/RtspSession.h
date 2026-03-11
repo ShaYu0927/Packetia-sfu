@@ -60,9 +60,6 @@ public:
     }
 
     void SendRaw(std::string_view s,size_t size);
-    bool BindTrackByControl(std::string_view control,
-                                const std::shared_ptr<MediaSession>& media_session,
-                                std::shared_ptr<RtpTrack>& out_track);
 
     void Dispatch(const char* p, size_t total);
 

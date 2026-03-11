@@ -74,38 +74,38 @@ void RtspConnection::OnMessage(BufferReader *buffer)
 {
 }
 
-bool RtspConnection::onClose()
-{
-    if(session_id_ != 0)
-    {
-        LOG_INFO("Closing RtspConnection, session_id: " + std::to_string(session_id_));
-        auto rtsp = rtsp_.get();
-        if (rtsp) 
-        {
-            auto MediaSession = rtsp_->LookMediaSession(session_id_);
-            if(MediaSession)
-            {
-                LOG_INFO("Removing MediaSession with id: " + std::to_string(session_id_));
-                MediaSession->RemoveClient(this->GetSocket());
-            }
-            else
-            {
-                LOG_ERROR("MediaSession not found for session_id: " + std::to_string(session_id_));
-            }
-        }
-        session_id_ = 0;
-    }
+// bool RtspConnection::onClose()
+// {
+//     if(session_id_ != 0)
+//     {
+//         LOG_INFO("Closing RtspConnection, session_id: " + std::to_string(session_id_));
+//         auto rtsp = rtsp_.get();
+//         if (rtsp) 
+//         {
+//             auto MediaSession = rtsp_->LookMediaSession(session_id_);
+//             if(MediaSession)
+//             {
+//                 LOG_INFO("Removing MediaSession with id: " + std::to_string(session_id_));
+//                 MediaSession->RemoveClient(this->GetSocket());
+//             }
+//             else
+//             {
+//                 LOG_ERROR("MediaSession not found for session_id: " + std::to_string(session_id_));
+//             }
+//         }
+//         session_id_ = 0;
+//     }
 
-    for(int n = 0; n < MAX_MEDIA_CHANNEL; ++n)
-    {
-       if(rtcp_channels_[n] && rtcp_channels_[n]->IsNoneEvent())
-       {
-           LOG_INFO("Closing RTCP channel for MediaChannelId: " + std::to_string(n));
-           task_scheduler_->RemoveChannel(rtcp_channels_[n]);
-       }
-    }
-    return true;
-}
+//     for(int n = 0; n < MAX_MEDIA_CHANNEL; ++n)
+//     {
+//        if(rtcp_channels_[n] && rtcp_channels_[n]->IsNoneEvent())
+//        {
+//            LOG_INFO("Closing RTCP channel for MediaChannelId: " + std::to_string(n));
+//            task_scheduler_->RemoveChannel(rtcp_channels_[n]);
+//        }
+//     }
+//     return true;
+// }
 
 int RtspConnection::ParseStreamId(const std::string& control)
 {
@@ -219,218 +219,198 @@ bool RtspConnection::HandleRtspResponse(BufferReader &buffer)
 
 void RtspConnection::HandleCmdOptions()
 {
-    std::shared_ptr<char> res(new char[2048], std::default_delete<char[]>());
-    int size = rtsp_request_->BuildOptionsRes(res, 1024);
-    LOG_INFO("Handling OPTIONS request, response size: " + std::to_string(size));
-    this->SendRtspMessage(res, size);
 }
 
-//客户端播放流,服务器协商拟定
-void RtspConnection::HandleCmdDescribe()
-{
-    LOG_INFO("Handling DESCRIBE request");
+// void RtspConnection::HandleCmdDescribe()
+// {
+//     LOG_INFO("Handling DESCRIBE request");
 
-    if (!rtsp_) {
-        LOG_ERROR("RTSP context is null");
-        return;
-    }
+//     if (!rtsp_) {
+//         LOG_ERROR("RTSP context is null");
+//         return;
+//     }
 
-    // 查找媒体会话
-    auto suffix = rtsp_request_->GetRtspUSuffix();
-    auto media_session = rtsp_->LookMediaSession(suffix);
-    if (!media_session) {
-        LOG_ERROR("Media session not found for suffix: create suffix" + suffix);
-        std::shared_ptr<char> errorRes(new char[256], std::default_delete<char[]>());
-        media_session = MediaSession::CreateNew(suffix);
-        rtsp_->AddMediaSession(media_session);
-    }
+//     // 查找媒体会话
+//     auto suffix = rtsp_request_->GetRtspUSuffix();
+//     auto media_session = rtsp_->LookMediaSession(suffix);
+//     if (!media_session) {
+//         LOG_ERROR("Media session not found for suffix: create suffix" + suffix);
+//         std::shared_ptr<char> errorRes(new char[256], std::default_delete<char[]>());
+//         media_session = MediaSession::CreateNew(suffix);
+//         rtsp_->AddMediaSession(media_session);
+//     }
 
-    // 初始化 RTP connection
-    if (!rtp_connection_) 
-    {
-        rtp_connection_ = std::make_shared<RtpConnection>(shared_from_this());
-    }
+//     // 初始化 RTP connection
+//     if (!rtp_connection_) 
+//     {
+//         rtp_connection_ = std::make_shared<RtpConnection>(shared_from_this());
+//     }
 
-    // 设置 RTP 参数
-    session_id_ = media_session->GetId();
-    LOG_INFO("Setting session_id: " + std::to_string(session_id_));
-    for (int i = 0; i < MAX_MEDIA_CHANNEL; ++i) 
-    {
-        rtp_connection_->SetClockrate((MediaChannelId)i, media_session->GetMediaChannelClockRate((MediaChannelId)i));
-        rtp_connection_->SetPlayLoadType((MediaChannelId)i, media_session->GetMediaChannelPayloadType((MediaChannelId)i));
-    }
+//     // 设置 RTP 参数
+//     session_id_ = media_session->GetId();
+//     LOG_INFO("Setting session_id: " + std::to_string(session_id_));
+//     for (int i = 0; i < MAX_MEDIA_CHANNEL; ++i) 
+//     {
+//         rtp_connection_->SetClockrate((MediaChannelId)i, media_session->GetMediaChannelClockRate((MediaChannelId)i));
+//         rtp_connection_->SetPlayLoadType((MediaChannelId)i, media_session->GetMediaChannelPayloadType((MediaChannelId)i));
+//     }
 
-    // 构建 SDP
-    std::shared_ptr<char> res(new char[4096], std::default_delete<char[]>());
-    int size = 0;
-    std::string sdp_message = sdp_->GetSdpMessage(rtsp_->rtsp_url_info_.ip, media_session->GetRtspSuffix());
-    if(sdp_message == "")
-    {
-        size = rtsp_request_->BuildNotFoundRes(res,4096);
-    }
-    else
-    {
-        size = rtsp_request_->BuildDescribeRes(res, 4096, sdp_message);
-    }
+//     // 构建 SDP
+//     std::shared_ptr<char> res(new char[4096], std::default_delete<char[]>());
+//     int size = 0;
+//     std::string sdp_message = sdp_->GetSdpMessage(rtsp_->rtsp_url_info_.ip, media_session->GetRtspSuffix());
+//     if(sdp_message == "")
+//     {
+//         size = rtsp_request_->BuildNotFoundRes(res,4096);
+//     }
+//     else
+//     {
+//         size = rtsp_request_->BuildDescribeRes(res, 4096, sdp_message);
+//     }
    
-    this->SendRtspMessage(res, size);
-}
+//     this->SendRtspMessage(res, size);
+// }
 
 void RtspConnection::HandleCmdANNOUNCE()
 {
-    if(!rtsp_request_->sdp_)
-    {
-        rtsp_request_->sdp_ = std::make_shared<Sdp>();
-    }
-    std::string body = rtsp_request_->sdp_->buildANNOUNCEBody();
-    if(body.size() == 0)
-    {
-        return;
-    }
 
-    LOG_INFO("Handling ANNOUNCE request");
-    std::shared_ptr<char> res(new char[4096], std::default_delete<char[]>());
-    int MessageSize = rtsp_request_->BuildANNOUNCERes(res, 4096);
-    this->SendRtspMessage(res, MessageSize);
 }
 
-/*
-    处理客户端 SETUP 请求，根据传输模式（TCP/UDP/组播）为每个 track 建立对应的 RTP 通道，并构造符合 RTSP 标准的响应报文
-*/
 
-void RtspConnection::HandleCmdSetup()
-{
-    if (!rtsp_) { LOG_ERROR("RTSP context is null"); return; }
 
-    std::string url = rtsp_request_->GetRtspUSuffix();
-    auto controlTdx = rtsp_request_->GetControl();
+// void RtspConnection::HandleCmdSetup()
+// {
+//     if (!rtsp_) { LOG_ERROR("RTSP context is null"); return; }
 
-    auto media_session = MediaSessionManager::Instance().GetSessionBySuffix(url);
-    if (!media_session) 
-    {
-        media_session = MediaSession::CreateNew(url);
-        std::string sid = MediaSessionManager::Instance().AddSession(media_session, url);
-        media_session->SetId(std::stoi(sid));
-    }
-    std::string sessionId = std::to_string(media_session->GetId()); 
-    LOG_INFO("sessionId:" + sessionId);
+//     std::string url = rtsp_request_->GetRtspUSuffix();
+//     auto controlTdx = rtsp_request_->GetControl();
 
-    int trackIdx = -1;
-    std::shared_ptr<RtpTrack> track_ptr;
+//     auto media_session = MediaSessionManager::Instance().GetSessionBySuffix(url);
+//     if (!media_session) 
+//     {
+//         media_session = MediaSession::CreateNew(url);
+//         std::string sid = MediaSessionManager::Instance().AddSession(media_session, url);
+//         media_session->SetId(std::stoi(sid));
+//     }
+//     std::string sessionId = std::to_string(media_session->GetId()); 
+//     LOG_INFO("sessionId:" + sessionId);
+
+//     int trackIdx = -1;
+//     std::shared_ptr<RtpTrack> track_ptr;
 
    
-    bool found = false;
-    for (auto& m : rtsp_request_->sdp_->media_list_) 
-    {
-        if (m.control == controlTdx) 
-        {
-            found = true;
-            trackIdx = ParseStreamId(m.control);
-            TrackType type = (m.media_type == "video") ? TrackType::TrackVideo : TrackType::TrackAudio;
-            track_ptr = createTrack(type, m.codec_name, m.payload_type, m.clock_rate, trackIdx );
+//     bool found = false;
+//     for (auto& m : rtsp_request_->sdp_->media_list_) 
+//     {
+//         if (m.control == controlTdx) 
+//         {
+//             found = true;
+//             trackIdx = ParseStreamId(m.control);
+//             TrackType type = (m.media_type == "video") ? TrackType::TrackVideo : TrackType::TrackAudio;
+//             track_ptr = createTrack(type, m.codec_name, m.payload_type, m.clock_rate, trackIdx );
 
-            media_session->AddTrack(type, m.codec_name, m.control /*control*/,
-                        m.payload_type, m.clock_rate);
-            MediaSessionManager::Instance().AddTrackChannel(trackIdx, track_ptr);
+//             media_session->AddTrack(type, m.codec_name, m.control /*control*/,
+//                         m.payload_type, m.clock_rate);
+//             MediaSessionManager::Instance().AddTrackChannel(trackIdx, track_ptr);
 
-            /* bind the sending entity to the session */
-            media_session->BindRtpTrack(trackIdx, track_ptr);
+//             /* bind the sending entity to the session */
+//             media_session->BindRtpTrack(trackIdx, track_ptr);
 
             
 
-            break;
-        }
-    }
-    if (!found || trackIdx < 0 || !track_ptr) 
-    {
-        LOG_ERROR("SETUP: track not found, control=", controlTdx);
-        // 回复 404/461
-        return;
-    }
+//             break;
+//         }
+//     }
+//     if (!found || trackIdx < 0 || !track_ptr) 
+//     {
+//         LOG_ERROR("SETUP: track not found, control=", controlTdx);
+//         // 回复 404/461
+//         return;
+//     }
 
-    if (!rtp_connection_) rtp_connection_ = std::make_shared<RtpConnection>(shared_from_this());
+//     if (!rtp_connection_) rtp_connection_ = std::make_shared<RtpConnection>(shared_from_this());
 
-    std::shared_ptr<char> res(new char[10240], std::default_delete<char[]>());
-    int size = 0;
-    MediaChannelId channel_id = rtsp_request_->GetSessionId();
+//     std::shared_ptr<char> res(new char[10240], std::default_delete<char[]>());
+//     int size = 0;
+//     MediaChannelId channel_id = rtsp_request_->GetSessionId();
 
-    if (rtsp_request_->GetTransport() == RTP_OVER_TCP) 
-    {
-        uint16_t rtp_ch  = rtsp_request_->GetRtpChannel();
-        uint16_t rtcp_ch = rtsp_request_->GetRtcpChannel();
+//     if (rtsp_request_->GetTransport() == RTP_OVER_TCP) 
+//     {
+//         uint16_t rtp_ch  = rtsp_request_->GetRtpChannel();
+//         uint16_t rtcp_ch = rtsp_request_->GetRtcpChannel();
 
-        if (rtp_ch > 255 || rtcp_ch > 255 || rtp_ch == rtcp_ch) 
-        {
-            LOG_ERROR("Invalid interleaved channels rtp=", rtp_ch, " rtcp=", rtcp_ch);
-            return;
-        }
+//         if (rtp_ch > 255 || rtcp_ch > 255 || rtp_ch == rtcp_ch) 
+//         {
+//             LOG_ERROR("Invalid interleaved channels rtp=", rtp_ch, " rtcp=", rtcp_ch);
+//             return;
+//         }
 
-        if (!rtp_connection_->SetupRtpOverTcp(channel_id, rtp_ch, rtcp_ch)) 
-        {
-            return;
-        }
+//         if (!rtp_connection_->SetupRtpOverTcp(channel_id, rtp_ch, rtcp_ch)) 
+//         {
+//             return;
+//         }
 
-        // 关键：channel -> track 绑定（用于接收端切包分发）
-        interleaved_.bind((uint8_t)rtp_ch,  track_ptr, false);
-        interleaved_.bind((uint8_t)rtcp_ch, track_ptr, true);
+//         // 关键：channel -> track 绑定（用于接收端切包分发）
+//         interleaved_.bind((uint8_t)rtp_ch,  track_ptr, false);
+//         interleaved_.bind((uint8_t)rtcp_ch, track_ptr, true);
 
 
 
         
-        size = rtsp_request_->BuildSetupRes(res, 4096, rtp_ch, rtcp_ch, channel_id, sessionId);
-    }
-    else if (rtsp_request_->GetTransport() == RTP_OVER_UDP) 
-    {
-        // TODO: 这里建议按 client_port/server_port 语义重做
+//         size = rtsp_request_->BuildSetupRes(res, 4096, rtp_ch, rtcp_ch, channel_id, sessionId);
+//     }
+//     else if (rtsp_request_->GetTransport() == RTP_OVER_UDP) 
+//     {
+//         // TODO: 这里建议按 client_port/server_port 语义重做
        
-    }
-    else 
-    {
-        LOG_ERROR("Unsupported transport mode for SETUP");
-        return;
-    }
+//     }
+//     else 
+//     {
+//         LOG_ERROR("Unsupported transport mode for SETUP");
+//         return;
+//     }
 
-    SendRtspMessage(res, size);
-    media_session->AddClient(channel_id, rtp_connection_);
-}
+//     SendRtspMessage(res, size);
+//     media_session->AddClient(channel_id, rtp_connection_);
+// }
 
-void RtspConnection::HandleCmdRecord()
-{
-    //track轨道中是否存在
-    std::string url = rtsp_request_->GetRtspUSuffix();
-    LOG_INFO("RECORD request for url=" + url);
+// void RtspConnection::HandleCmdRecord()
+// {
+//     //track轨道中是否存在
+//     std::string url = rtsp_request_->GetRtspUSuffix();
+//     LOG_INFO("RECORD request for url=" + url);
 
-    auto media_session = MediaSessionManager::Instance().GetSessionBySuffix(url);
-    if (!media_session) 
-    {
-        LOG_INFO("No existing MediaSession found for url=" + url + ", creating new one...");
-        return;
-    }
+//     auto media_session = MediaSessionManager::Instance().GetSessionBySuffix(url);
+//     if (!media_session) 
+//     {
+//         LOG_INFO("No existing MediaSession found for url=" + url + ", creating new one...");
+//         return;
+//     }
    
-    if (media_session->tracks_.empty()) 
-    {
-        LOG_DEBUG("No tracks in session, cannot RECORD");
-        return;
-    }
+//     if (media_session->tracks_.empty()) 
+//     {
+//         LOG_DEBUG("No tracks in session, cannot RECORD");
+//         return;
+//     }
 
-    // 遍历 track 初始化 RTP
-    for (auto &track : media_session->tracks_) 
-    {
-        if (!track->_inited) 
-        {
-            //track->_ssrc = GenerateSSRC();
-            track->_seq = 0;
-            track->_time_stamp = 0;
-            track->_inited = true;
-        }
-    }
+//     // 遍历 track 初始化 RTP
+//     for (auto &track : media_session->tracks_) 
+//     {
+//         if (!track->_inited) 
+//         {
+//             //track->_ssrc = GenerateSSRC();
+//             track->_seq = 0;
+//             track->_time_stamp = 0;
+//             track->_inited = true;
+//         }
+//     }
 
-    // 启动 RTP OVER TCP 推送线程
+//     // 启动 RTP OVER TCP 推送线程
     
-    std::shared_ptr<char> res(new char[2048], std::default_delete<char[]>());
-    int size = rtsp_request_->BuildRecordRes(res, 2048,std::to_string(session_id_));
-    this->SendRtspMessage(res, size);
-}
+//     std::shared_ptr<char> res(new char[2048], std::default_delete<char[]>());
+//     int size = rtsp_request_->BuildRecordRes(res, 2048,std::to_string(session_id_));
+//     this->SendRtspMessage(res, size);
+// }
 
 
 /**
