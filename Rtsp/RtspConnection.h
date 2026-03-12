@@ -66,10 +66,9 @@ public:
     
 
     void HandleCmdOptions();
-    void HandleCmdDescribe();
+
     void HandleCmdANNOUNCE();
-    void HandleCmdSetup();
-    void HandleCmdRecord();
+  
     void HandleCmdPlay();
     void HandleCmdPause();
     void HandleCmdTeardown();
@@ -86,7 +85,6 @@ protected:
 
     bool onRead(BufferReader& buffer);
     bool onWrite(BufferWirte& buffer);
-    bool onClose();
 
 private:
     int ParseStreamId(const std::string& control);

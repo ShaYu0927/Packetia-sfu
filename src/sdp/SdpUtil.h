@@ -22,6 +22,8 @@ private:
     static bool ParseMedia(const SdpLine& line, SdpSession& session, SdpMedia*& current_media, std::string& err);
     static bool ParseAttribute(const SdpLine& line, SdpSession& session, SdpMedia* current_media, std::string& err);
 
+    static std::vector<SdpLine> SplitLines(const std::string& text);
+
     static SdpAttribute SplitAttribute(const std::string& text);
 };
 

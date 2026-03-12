@@ -39,6 +39,8 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/protocol/ice
     ${CMAKE_SOURCE_DIR}/protocol/ice/stun
     ${CMAKE_SOURCE_DIR}/src/interleaved
+    ${CMAKE_SOURCE_DIR}/src/net
+    ${CMAKE_SOURCE_DIR}/src/sdp
     ${CMAKE_SOURCE_DIR}/Room
     ${CMAKE_SOURCE_DIR}/Common/CallbackEmitter
     ${CMAKE_SOURCE_DIR}/Common/Depacketizer
@@ -157,6 +159,7 @@ add_library(rtsp STATIC
 file(GLOB INTERLEAVED_SRCS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/interleaved/*.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/net/*.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/sdp/*.cpp
 )
 
 file(GLOB ROOM_SRC

@@ -58,11 +58,7 @@ void RtspConnection::InitCallbacks()
         return self->onRead(buffer);
     });
 
-    this->SetCloseCallback([weak_self](std::shared_ptr<TcpConnection>) -> bool {
-        auto self = weak_self.lock();
-        if (!self) return false;
-        return self->onClose();
-    });
+    
 }
 
 /*    回复服务器支持的操作 SETUP、PLAY、PAUSE、TEARDOWN
@@ -171,11 +167,11 @@ bool RtspConnection::HandleRtspRequest(BufferReader &buffer)
             break;
         case RtspRequest::Method::DESCRIBE:
             LOG_INFO("Handling DESCRIBE request");
-            HandleCmdDescribe();
+           
             break;
         case RtspRequest::Method::SETUP:
             LOG_INFO("Handing SETUP request");
-            HandleCmdSetup();
+        
             break;
         case RtspRequest::Method::PLAY:
             LOG_INFO("Handing Play request");
@@ -194,7 +190,7 @@ bool RtspConnection::HandleRtspRequest(BufferReader &buffer)
             break;
         case RtspRequest::Method::RECORD:
             LOG_INFO("Handling RECORD request");
-            HandleCmdRecord();
+           
             break;
         default:
             LOG_ERROR("Unsupported RTSP method: " + rtsp_request_->GetMethodString());
