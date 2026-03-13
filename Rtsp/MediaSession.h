@@ -8,13 +8,28 @@
 #include "Rtp.h"
 #include "RtpTypes.h"
 #include "Rtsp.h"
+#include "Sdp.h"
 
 
 #define MAX_TRACKS 5
 
+
 class MediaSession : public std::enable_shared_from_this<MediaSession>
 {
 public:
+    struct MediaTrackInfo
+    {
+        bool valid = false;
+        TrackType type = TrackType::TrackInvalid;
+
+        std::string codec;
+        std::string control;
+        int payload_type = -1;
+        int clock_rate = 0;
+        int channels = 0;
+        std::string fmtp;
+    };
+
     using Ptr = std::shared_ptr<MediaSession>;
 
     MediaSession() = default;
@@ -38,6 +53,8 @@ public:
     /* Unbind the rtp tracker */
     void UnbindRtpTrack(int trackIdx);
 
+    bool ApplySdp(const sdp::SdpSession& sdp, std::string* err);
+
 
     bool IsReady() const { return ready_.load(); }
     void SetReady(bool ready) { ready_.store(ready); }
@@ -54,11 +71,13 @@ private:
     MediaSessionId session_id_{0};
 
     mutable std::mutex track_mtx_;
-    std::unordered_map<int, std::weak_ptr<RtpTrack>> runtime_tracks_;
-    std::unordered_map<uint32_t, int> ssrc_to_track_;
-
     std::atomic_bool ready_{false};
     bool has_publisher_{false};
+
+    std::unordered_map<int, MediaTrackInfo> track_infos_;
+    std::unordered_map<std::string, int> control_to_track_;
+    std::unordered_map<int, std::weak_ptr<RtpTrack>> runtime_tracks_;
+    std::unordered_map<uint32_t, int> ssrc_to_track_;
 
 };
 

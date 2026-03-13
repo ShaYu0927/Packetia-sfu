@@ -5,10 +5,7 @@
 #include <string>
 #include <unistd.h>
 #include <vector>
-#include <array>
 #include <memory>
-
-#include "Socket.h"
 
 
 #define RTP_HEADER_SIZE   	   12
@@ -20,27 +17,6 @@
 
 #define MAX_MEDIA_CHANNEL 16
 
-typedef struct UniqueFd 
-{
-    int fd{-1};
-    ~UniqueFd(){ if(fd>=0) ::close(fd); }
-    UniqueFd() = default;
-    explicit UniqueFd(int f):fd(f){}
-    UniqueFd(const UniqueFd&) = delete;
-    UniqueFd& operator=(const UniqueFd&) = delete;
-    UniqueFd(UniqueFd&& o) noexcept : fd(o.fd) { o.fd=-1; }
-    UniqueFd& operator=(UniqueFd&& o) noexcept { std::swap(fd,o.fd); return *this; }
-}UniqueFd;
-
-struct ChannelTransport 
-{
-    uint16_t local_rtp_port{0}, local_rtcp_port{0};
-    UniqueFd rtp_fd, rtcp_fd;
-    sockaddr_storage peer_rtp{}, peer_rtcp{};
-    uint32_t clock_rate{90000};
-    uint8_t  payload_type{96};
-    bool ready{false};
-};
 
 
 
@@ -99,7 +75,6 @@ typedef struct RtpTrackInfo
     std::string audio_config;  // config=1210
 }RtpTrackInfo;
 
-// 整个 SDP Session 信息
 typedef struct RtspSessionDesc 
 {
     std::string version;    // v=0

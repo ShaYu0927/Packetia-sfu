@@ -1,6 +1,7 @@
 #include "RtspMessage.h"
 #include "MediaSession.h"
 #include <string>
+#include "Sdp.h"
 
 
 static inline void Trim(std::string& s)
@@ -23,7 +24,7 @@ static inline bool SplitOnce(const std::string& s, char delim, std::string& left
     return true;
 }
 
-static inline std::string ToLower(std::string s) 
+static inline std::string ToLower(std::string s)
 {
     for (auto& c : s) c = (char)std::tolower((unsigned char)c);
     return s;
@@ -291,12 +292,13 @@ int RtspRequest::BuildANNOUNCERes(const RtspRequestInfo& req,std::shared_ptr<cha
     );
 
 
-    if (written < 0 || written >= size) {
+    if (written < 0 || written >= size) 
+    {
         LOG_ERROR("Failed to build RTSP ANNOUNCE response or buffer too small");
         return 0;
     }
 
-    return written; 
+    return written;
 }
 
 int RtspRequest::BuildRecordRes(std::shared_ptr<char> data, int size,std::string session_id)
@@ -672,7 +674,8 @@ bool RtspRequest::ParseMediaChannel(std::string &message)
     channel_id_ = channel_0;
 
 	auto iter = request_line_param_.find("url");
-	if(iter != request_line_param_.end()) {
+	if(iter != request_line_param_.end()) 
+    {
 		std::size_t pos = iter->second.first.find("track1");
 		if (pos != std::string::npos) {
 			channel_id_ = channel_1;
@@ -727,6 +730,7 @@ std::string RtspRequest::HandleCmdDescribe(RtspRequestInfo& req)
 std::string RtspRequest::HandleCmdANNOUNCE(RtspRequestInfo& req)
 {
     LOG_INFO("Handle ANNOUNCE req:\n%s", req.Dump().c_str());
+    std::string err;
 
     std::string contentType = req.GetHeader("Content-Type");
     LOG_INFO("ANNOUNCE Content-Type=%s, body_len=%zu",
@@ -737,6 +741,29 @@ std::string RtspRequest::HandleCmdANNOUNCE(RtspRequestInfo& req)
     {
         LOG_INFO("ANNOUNCE SDP body:\n%s", req.body.c_str());
     }
+
+    /* handle sdp */
+    auto result = sdp::Sdp::Parse(req.body);
+    if (!result.ok)
+    {
+        LOG_ERROR("Parse SDP failed, line=%zu, msg=%s",
+                  result.line, result.message.c_str());
+        return "";
+    }
+
+    auto session = MediaSessionManager::Instance().GetSessionBySuffix(req.url);
+    if (!session)
+    {
+        session = MediaSession::CreateNew(req.url);
+        MediaSessionManager::Instance().AddSession(session, req.url);
+    }
+
+    if (!session->ApplySdp(result.session, &err))
+    {
+        LOG_ERROR("ApplySdp failed: %s", err.c_str());
+        return "";
+    }
+
     std::shared_ptr<char> res(new char[2048], std::default_delete<char[]>());
     int size = BuildANNOUNCERes(req,res,1024);
     return res.get();

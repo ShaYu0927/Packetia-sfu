@@ -28,14 +28,34 @@ struct SdpConnection
     std::string address;
 };
 
+struct SdpRtpMap
+{
+    int payloadType = -1;
+    std::string encodingName;
+    int clockRate = 0;
+    int channels = 0;
+};
+
+struct SdpFmtp
+{
+    int payloadType = -1;
+    std::string params;
+};
+
 struct SdpMedia
 {
     std::string media;                    // video / audio
     int port = 0;
-    std::string proto;                    // RTP/AVP
+    std::string proto;                             // RTP/AVP
     std::vector<std::string> fmts;               // payload types
     std::vector<SdpAttribute> attributes;
-    SdpConnection conn;              // c=
+    SdpConnection conn;                         // c=
+
+    std::vector<SdpRtpMap> rtpmaps;
+    std::vector<SdpFmtp> fmtps;
+
+    std::string GetAttribute(const std::string& key) const;
+    bool HasAttribute(const std::string& key) const;
 };
 
 struct SdpOrigin
