@@ -1,6 +1,7 @@
 #include "SdpMode.h"
 
-namespace sdp {
+namespace sdp 
+{
 
 
 std::string SdpMedia::GetAttribute(const std::string& key) const

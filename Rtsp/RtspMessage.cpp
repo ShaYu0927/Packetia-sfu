@@ -2,6 +2,7 @@
 #include "MediaSession.h"
 #include <string>
 #include "Sdp.h"
+#include "RtpInterleaved.h"
 
 
 static inline void Trim(std::string& s)
@@ -95,24 +96,6 @@ bool RtspRequest::ParseRequest(const char* p, size_t total, RtspRequestInfo& out
     return true;
 }
 
-
-
-RTPTransportMode RtspRequest::GetTransport()
-{
-    if(transport_mode_ == RTP_OVER_TCP)
-    {
-        return RTP_OVER_TCP;
-    }
-    else if(transport_mode_ == RTP_OVER_UDP)
-    {
-        return RTP_OVER_UDP;
-    }
-    else if(transport_mode_ == RTP_OVER_MULTICAST)
-    {
-        return RTP_OVER_MULTICAST;
-    }
-    return RTP_OVER_UNKNOWN;
-}
 
 int RtspRequest::GetContentLength()
 {
@@ -335,8 +318,7 @@ bool RtspRequest::ParseRequestLine(const char *begin, const char *end)
     if (method_ == Method::NONE)
         return false;
     method_str_ = method;
-    
-    // LOG_INFO("Parsed method=[" + method_str_ + "], uri=[" + std::string(uri) + "], version=[" + std::string(version) + "]");
+
 
     if (strncmp(version, "RTSP/1.0", 8) == 0)
         version_ = Version::RTSP_1_0;
@@ -375,30 +357,37 @@ bool RtspRequest::ParseRequestLine(const char *begin, const char *end)
     char suffix[64] = {0};
     bool parse_ok = false;
 
-    if (sscanf(uri_str.c_str(), "%63[^:]:%hu/%63s", ip, &port, suffix) == 3) {
+    if (sscanf(uri_str.c_str(), "%63[^:]:%hu/%63s", ip, &port, suffix) == 3) 
+    {
         LOG_INFO("Parsed uri with port and suffix: ip=[" + std::string(ip) + "], port=[" + std::to_string(port) + "], suffix=[" + std::string(suffix) + "]");
         parse_ok = true;
-    } else if (sscanf(uri_str.c_str(), "%63[^:]:%hu", ip, &port) == 2) {
+    } 
+    else if (sscanf(uri_str.c_str(), "%63[^:]:%hu", ip, &port) == 2) 
+    {
         LOG_INFO("Parsed uri with port only: ip=[" + std::string(ip) + "], port=[" + std::to_string(port) + "]");
         suffix[0] = '\0';
         parse_ok = true;
-    } else if (sscanf(uri_str.c_str(), "%63[^/]/%63s", ip, suffix) == 2) {
+    } 
+    else if (sscanf(uri_str.c_str(), "%63[^/]/%63s", ip, suffix) == 2) 
+    {
         port = 554;
         LOG_INFO("Parsed uri without port: ip=[" + std::string(ip) + "], suffix=[" + std::string(suffix) + "]");
         parse_ok = true;
-    } else if (sscanf(uri_str.c_str(), "%63s", ip) == 1) {
+    } 
+    else if (sscanf(uri_str.c_str(), "%63s", ip) == 1) 
+    {
         port = 554;
         suffix[0] = '\0';
         LOG_INFO("Parsed uri with only ip: ip=[" + std::string(ip) + "]");
         parse_ok = true;
     }
 
-    if (!parse_ok) {
+    if (!parse_ok) 
+    {
         LOG_ERROR("Failed to parse ip/port/suffix from uri: [" + uri_str + "]");
         return false;
     }
 
-    // 填入参数
     request_line_param_.emplace("url", std::make_pair(uri_str, 0));
     request_line_param_.emplace("url_ip", std::make_pair(std::string(ip), 0));
     request_line_param_.emplace("url_port", std::make_pair("", static_cast<uint32_t>(port)));
@@ -426,7 +415,6 @@ bool RtspRequest::ParseHeaderLines(const char *begin, const char *end)
         return false;
     }
 
-    // 解析 CSeq
     if (line.find("CSeq:") == 0) 
     {
         if (!ParseCseq(line)) {
@@ -436,14 +424,12 @@ bool RtspRequest::ParseHeaderLines(const char *begin, const char *end)
         return true;
     }
 
-    // 解析 Accept
     if (method_ == Method::DESCRIBE && line.find("Accept:") == 0) 
     {
         ParseAccept(line);
         return true;
     }
 
-    // 解析 Transport
     if (method_ == Method::SETUP && line.find("Transport:") == 0) 
     {
         LOG_INFO("Parsing SETUP Transport header: " + line);
@@ -454,7 +440,6 @@ bool RtspRequest::ParseHeaderLines(const char *begin, const char *end)
         return true;
     }
 
-    // 解析 Session
     if ((method_ == Method::PLAY || method_ == Method::TEARDOWN || method_ == Method::SETUP) && line.find("Session:") == 0) 
     {
         if (!ParseSessionId(line)) {
@@ -464,14 +449,12 @@ bool RtspRequest::ParseHeaderLines(const char *begin, const char *end)
         return true;
     }
 
-    // 解析 Authorization
     if (line.find("Authorization:") == 0) 
     {
         ParseAuthorization(line);
         return true;
     }
 
-    //解析 Content-Length
     if (line.find("Content-Length:") == 0) 
     {
         int content_length = 0;
@@ -494,59 +477,6 @@ bool RtspRequest::ParseHeaderLines(const char *begin, const char *end)
 
 bool RtspRequest::ParseBodyLine(const char *begin, const char *end)
 {
-    std::string body(begin, end);
-    LOG_INFO("Parsing RTSP body line: [" + body + "]");
-    std::istringstream iss(body);
-    std::string line;
-    sdp_ = std::make_shared<Sdp>();
-    Sdp::MediaDescription media;
-
-    bool inMedia = false;
-
-    std::shared_ptr<Sdp::MediaDescription> currentMedia;
-
-    while (std::getline(iss, line)) {
-        if (!line.empty() && line.back() == '\r')
-            line.pop_back();
-
-        LOG_INFO("Body line: [" + line + "]");
-
-        if (line.rfind("m=", 0) == 0) {
-            // 新建一个 media
-            currentMedia = std::make_shared<Sdp::MediaDescription>();
-            std::istringstream ms(line.substr(2));
-            ms >> currentMedia->media_type >> currentMedia->port >> currentMedia->protocol >> currentMedia->payload_type;
-
-            // 不 push_back，现在只创建
-        }
-        else if (line.rfind("a=rtpmap:", 0) == 0 && currentMedia) 
-        {
-            size_t sep = line.find(' ');
-            if (sep != std::string::npos) {
-                int pt = std::stoi(line.substr(9, sep - 9));
-                std::string codec_info = line.substr(sep + 1);
-                size_t slash = codec_info.find('/');
-                if (slash != std::string::npos) {
-                    currentMedia->codec_name = codec_info.substr(0, slash);
-                    currentMedia->clock_rate = std::stoi(codec_info.substr(slash + 1));
-                }
-            }
-        }
-        else if (line.rfind("a=control:", 0) == 0 && currentMedia) 
-        {
-            currentMedia->control = line.substr(10);
-            sdp_->media_list_.push_back(*currentMedia);  // 填充完成后 push_back
-            currentMedia.reset();                        // 准备下一 media
-        }
-    }
-
-    for (auto &m : sdp_->media_list_) {
-        LOG_INFO("Media type: " + m.media_type + ", codec: " + m.codec_name +
-                 ", payload: " + std::to_string(m.payload_type) +
-                 ", clock: " + std::to_string(m.clock_rate) +
-                 ", control: " + m.control);
-    }
-
     return true;
 }
 
@@ -729,17 +659,17 @@ std::string RtspRequest::HandleCmdDescribe(RtspRequestInfo& req)
 
 std::string RtspRequest::HandleCmdANNOUNCE(RtspRequestInfo& req)
 {
-    LOG_INFO("Handle ANNOUNCE req:\n%s", req.Dump().c_str());
+    LOG_INFO("Handle ANNOUNCE req:", req.Dump().c_str());
     std::string err;
 
     std::string contentType = req.GetHeader("Content-Type");
-    LOG_INFO("ANNOUNCE Content-Type=%s, body_len=%zu",
+    LOG_INFO("ANNOUNCE Content-Type=, body_len=",
              contentType.c_str(),
              req.body.size());
 
-    if (!req.body.empty())
+    if (req.body.empty())
     {
-        LOG_INFO("ANNOUNCE SDP body:\n%s", req.body.c_str());
+        LOG_INFO("ANNOUNCE SDP body:", req.body.c_str());
     }
 
     /* handle sdp */
@@ -760,7 +690,7 @@ std::string RtspRequest::HandleCmdANNOUNCE(RtspRequestInfo& req)
 
     if (!session->ApplySdp(result.session, &err))
     {
-        LOG_ERROR("ApplySdp failed: %s", err.c_str());
+        LOG_ERROR("ApplySdp failed:", err.c_str());
         return "";
     }
 

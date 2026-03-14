@@ -186,7 +186,7 @@ add_executable(Packetia ${CMAKE_SOURCE_DIR}/server/main.cpp)
 target_link_libraries(Packetia
     PRIVATE
     -Wl,--start-group
-    rtsp rtp network utils Rtcp LOGGER ROOM_LIB COMMON ICE
+    rtsp rtp network utils Rtcp LOGGER ROOM_LIB COMMON ICE Interleaved
     -Wl,--end-group
     ${FFMPEG_LIBRARIES}
     pthread

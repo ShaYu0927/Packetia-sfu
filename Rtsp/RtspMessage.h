@@ -1,19 +1,14 @@
 #ifndef _RTSPMESSAGE_H_
 #define _RTSPMESSAGE_H_
 
+#include <cstring>
 #include <string>
 #include <array>
 #include <unordered_map>
-#include <algorithm>
-#include <cctype>
-
-
-#include "BufferRead.h"
-#include "logger.h"
-#include "Rtp.h"
+#include <sstream>
+#include "RtpTypes.h"
 #include "Media.h"
-#include "RtpReceiver.h"
-#include "RtpInterleaved.h"
+
 
 
 class Sdp;

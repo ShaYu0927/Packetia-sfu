@@ -1,17 +1,24 @@
 #include "RtspServer.h"
 #include "RtspSession.h"
+#include "DefaultSessionFactory.h"
+#include "RtspConnection.h"
 
 RtspServer::RtspServer(EventLoop* event_loop)
     : TcpServer(event_loop)
 {
-    // Initialize the RTSP server
     LOG_INFO("RtspServer created with event loop: " + std::to_string(reinterpret_cast<uintptr_t>(event_loop)));
 
     auto factory = std::make_shared<DefaultSessionFactory>();
 
-     factory->Register("RTSP",
+    factory->Register("RTSP",
         [](TcpConnection::Ptr conn) -> itcp_sess::ISessionBase::Ptr {
-            return std::make_shared<rtsp::RtspSession>(std::move(conn));
+            auto rtsp_conn = std::dynamic_pointer_cast<RtspConnection>(conn);
+            if (!rtsp_conn)
+            {
+                LOG_ERROR("session factory cast TcpConnection -> RtspConnection failed");
+                return nullptr;
+            }
+            return std::make_shared<rtsp::RtspSession>(std::move(rtsp_conn));
         });
 
     SetSessionFactory(factory);

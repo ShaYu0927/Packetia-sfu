@@ -1,6 +1,7 @@
 #include "Rtp.h"
 #include "Rtsp.h"
 #include <string>
+#include "Socket.h"
 
 static inline std::string hex8(uint8_t v)
 {

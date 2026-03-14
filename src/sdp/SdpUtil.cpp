@@ -329,4 +329,21 @@ bool SdpParser::ParseAttribute(const SdpLine& line, SdpSession& session, SdpMedi
     return true;
 }
 
+SdpAttribute SdpParser::SplitAttribute(const std::string& text)
+{
+    SdpAttribute attr;
+
+    auto pos = text.find(':');
+    if (pos == std::string::npos)
+    {
+        attr.key = text;
+        attr.value.clear();
+        return attr;
+    }
+
+    attr.key = text.substr(0, pos);
+    attr.value = text.substr(pos + 1);
+    return attr;
+}
+
 }

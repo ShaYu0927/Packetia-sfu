@@ -72,8 +72,6 @@ private:
     int rtpfd_[MAX_MEDIA_CHANNEL];
     int rtcpfd_[MAX_MEDIA_CHANNEL];
 
-    std::array<ChannelTransport, MAX_MEDIA_CHANNEL> ch_{};
-
 
     struct sockaddr_in peer_addr_;
     struct sockaddr_in peer_rtp_addr_[MAX_MEDIA_CHANNEL];

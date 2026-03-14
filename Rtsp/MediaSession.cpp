@@ -1,21 +1,54 @@
 #include "MediaSession.h"
+#include "SdpMode.h"
 
 MediaSession::Ptr MediaSession::CreateNew(const std::string& suffix)
 {
-    return nullptr;
+    auto session = std::make_shared<MediaSession>();
+    session->suffix_ = suffix;
+    return session;
 }
 
-std::string MediaSessionManager::AddSession(MediaSession::Ptr session, const std::string& suffix) 
+std::string MediaSessionManager::GenerateGlobalId()
 {
+    static std::atomic<uint64_t> seq{0};
+
+    auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                   std::chrono::system_clock::now().time_since_epoch())
+                   .count();
+
+    uint64_t n = ++seq;
+
+    std::ostringstream oss;
+    oss << now << "-" << std::hash<std::thread::id>{}(std::this_thread::get_id())
+        << "-" << n;
+    return oss.str();
+}
+
+uint32_t MediaSessionManager::AddSession(MediaSession::Ptr session, const std::string& suffix) 
+{
+    if (!session)
+        return 0;
+
     std::lock_guard<std::mutex> lock(mtx_);
-    std::string id = std::to_string(++last_id_);
-    session->session_id_ = last_id_;
+
+    if (suffix.empty())
+        return 0;
+
+    if (suffix_map_.find(suffix) != suffix_map_.end())
+        return 0;
+
+    MediaSessionId id = ++last_id_;
+    session->session_id_ = id;
+
+    if (session->global_id_.empty())
+        session->global_id_ = GenerateGlobalId();
+
     sessions_[id] = session;
     suffix_map_[suffix] = session;
     return id;
 }
 
-MediaSession::Ptr MediaSessionManager::GetSessionById(const std::string& id)
+MediaSession::Ptr MediaSessionManager::GetSessionById(const uint32_t& id)
 {
     std::lock_guard<std::mutex> lock(mtx_);
     auto it = sessions_.find(id);
@@ -29,7 +62,7 @@ MediaSession::Ptr MediaSessionManager::GetSessionBySuffix(const std::string& suf
     return (it != suffix_map_.end()) ? it->second : nullptr;
 }
 
-void MediaSessionManager::RemoveSession(const std::string& id)
+void MediaSessionManager::RemoveSession(const uint32_t& id)
 {
     std::lock_guard<std::mutex> lock(mtx_);
     auto it = sessions_.find(id);
@@ -59,7 +92,7 @@ bool MediaSession::ApplySdp(const sdp::SdpSession& sdp, std::string* err)
     sdp_.clear();
 
     int trackIdx = 0;
-    for (const auto& media : sdp.medias)
+    for (const sdp::SdpMedia& media : sdp.medias)
     {
         TrackType type = TrackType::TrackInvalid;
         if (media.media == "audio")
@@ -106,11 +139,11 @@ bool MediaSession::ApplySdp(const sdp::SdpSession& sdp, std::string* err)
         ++trackIdx;
     }
 
-    if (track_infos_.empty())
-    {
-        if (err) *err = "no valid media track in sdp";
-        return false;
-    }
+    // if (track_infos_.empty())
+    // {
+    //     if (err) *err = "no valid media track in sdp";
+    //     return false;
+    // }
 
     return true;
 }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -46,11 +47,8 @@ public:
     const std::string& GetRtspSuffix() const { return suffix_; }
     void SetRtspSuffix(const std::string& suffix) { suffix_ = suffix; }
     
-
-    /* Avoid session forcibly extending the track lifecycle */
     void BindRtpTrack(int trackIdx, const std::shared_ptr<RtpTrack>& track);
     std::shared_ptr<RtpTrack> GetRtpTrack(int trackIdx) const;
-    /* Unbind the rtp tracker */
     void UnbindRtpTrack(int trackIdx);
 
     bool ApplySdp(const sdp::SdpSession& sdp, std::string* err);
@@ -63,12 +61,15 @@ public:
     void SetHasPublisher(bool v) { has_publisher_ = v; }
 
 public:
-    friend class MediaSessionManager; 
+    friend class MediaSessionManager;
+
+    
 
 private:
     std::string suffix_;
     std::string sdp_;
     MediaSessionId session_id_{0};
+    std::string global_id_;
 
     mutable std::mutex track_mtx_;
     std::atomic_bool ready_{false};
@@ -93,15 +94,17 @@ public:
         return inst;
     }
 
-    std::string AddSession(MediaSession::Ptr session, const std::string& suffix);
-    MediaSession::Ptr GetSessionById(const std::string& id);
+    uint32_t AddSession(MediaSession::Ptr session, const std::string& suffix);
+    MediaSession::Ptr GetSessionById(const uint32_t& id);
     MediaSession::Ptr GetSessionBySuffix(const std::string& suffix);
-    void RemoveSession(const std::string& id);
+    void RemoveSession(const uint32_t& id);
+
+    static std::string GenerateGlobalId();
 
 
 private:
     std::mutex mtx_;
-    std::unordered_map<std::string, MediaSession::Ptr> sessions_;   // id -> session
+    std::unordered_map<uint32_t, MediaSession::Ptr> sessions_;       // id -> session
     std::unordered_map<std::string, MediaSession::Ptr> suffix_map_; // suffix -> session
     std::atomic_uint64_t last_id_{0};
 };

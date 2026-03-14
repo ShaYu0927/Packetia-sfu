@@ -2,11 +2,12 @@
 #define _RTSPSERSSION_H_
 
 #include "TcpSession.h"
-#include "RtspServer.h"
 #include "RtspMessage.h"
 #include "ShardedWorkerPool.h"
 #include "RtpInterleaved.h"
+#include "RtspConnection.h"
 #include <cstddef>
+#include "Sdp.h"
 
 namespace rtsp 
 {
@@ -21,16 +22,16 @@ public:
     {
         CONSUMED,   
         NEED_MORE,  
-        ERROR      
+        ERROR   
     };
 
-    enum ConnectionMode
+    enum SessionMode
     {
         RTSP_SERVER, 
 		RTSP_PUSHER,
     };
 
-    enum ConnectionState
+    enum SessionState
     {
         INIT,
         CONNECTING,
@@ -40,22 +41,13 @@ public:
 		START_PUSH
     };
 
-    explicit RtspSession(TcpConnection::Ptr conn)
+    explicit RtspSession(RtspConnection::Ptr conn)
         : conn_(std::move(conn))
         , rtsp_request_(std::make_unique<RtspRequest>())
         , packet_pool_(std::make_unique<PacketPool>(2048, 1000))
     {
         interleaved_.SetPacketPool(packet_pool_.get());
         task_scheduler_ = conn_->GetTaskScheduler();
-
-        // auto rtp_handler = std::make_shared<RtpJobHandler>(packet_pool_.get());
-        // media_pool_ = WorkerService::get_pool("media");
-        // if (!media_pool_)
-        // {
-        //     WorkerService::create_pool("media", 4, rtp_handler, 4096,
-        //         ShardedWorkerPool::DropPolicy::DropHead);
-        //     media_pool_ = WorkerService::get_pool("media");
-        // }
     }
 
     void SendRaw(std::string_view s,size_t size);
@@ -90,21 +82,16 @@ protected:
 
 private:
     TaskScheduler* task_scheduler_;
-    TcpConnection::Ptr conn_;
+    RtspConnection::Ptr conn_;
     std::unique_ptr<RtspRequest> rtsp_request_;
-    std::unique_ptr<Sdp> sdp_;
+    std::unique_ptr<sdp::Sdp> sdp_;
     std::unique_ptr<PacketPool> packet_pool_;
     ShardedWorkerPool* media_pool_ = nullptr;
     RtpInterleaved interleaved_;
     int session_id_{0};
 
-    ConnectionMode mode_ = RTSP_SERVER;
-    ConnectionState state_ = INIT;
-
-public:
-    
-    
-
+    SessionMode mode_ = RTSP_SERVER;
+    SessionState state_ = INIT;
 };
 }
 
