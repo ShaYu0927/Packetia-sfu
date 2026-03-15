@@ -5,6 +5,7 @@
 #include <optional>
 
 #include "ProtocolParser.h"
+#include "Rtsp.h"
 
 namespace rtsp
 {
@@ -15,6 +16,8 @@ public:
    
     static std::optional<int> ParseStreamId(const std::string& control);
     static std::optional<int> ParseTrackId(const std::string& control);
+    static std::string GetSuffixFromSetupUrl(const std::string& url);
+    static bool ParseTransport(const std::string& text, RtspTransport& out);
 };
 
 

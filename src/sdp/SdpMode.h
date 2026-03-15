@@ -44,7 +44,7 @@ struct SdpFmtp
 
 struct SdpMedia
 {
-    std::string media;                    // video / audio
+    std::string media;                              // video / audio
     int port = 0;
     std::string proto;                             // RTP/AVP
     std::vector<std::string> fmts;               // payload types

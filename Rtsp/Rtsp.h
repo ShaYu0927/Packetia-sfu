@@ -3,15 +3,7 @@
 
 #include <string>
 #include <memory>
-#include <map>
 
-
-#include "Media.h"
-#include "Rtp.h"
-
-
-class MediaSession;
-class SdpTracker;
 
 struct RtspUrlInfo
 {
@@ -19,6 +11,41 @@ struct RtspUrlInfo
 	std::string ip;
 	uint16_t port;
 	std::string suffix;
+};
+
+enum RtspTransportType
+{
+    TcpInterleaved = 1,
+    UdpInterleaved,
+    Unknown
+};
+
+enum RtspMode
+{
+    ModeUnknown = 1,
+    PLAY,
+    RECORD
+};
+
+struct RtspTransport
+{
+    std::string lower_transport;    /* TCP / UDP */
+    std::string profile;            /* RTP/AVP, RTP/AVP/TCP */
+    bool unicast = true;
+    bool multicast = false;
+
+    int interleaved_rtp = -1;
+    int interleaved_rtcp = -1;
+
+    int client_rtp_port = -1;
+    int client_rtcp_port = -1;
+
+    int server_rtp_port = -1;
+    int server_rtcp_port = -1;
+
+    RtspTransportType transport = RtspTransportType::Unknown;
+    RtspMode mode = RtspMode::ModeUnknown;
+;         
 };
 
 class Rtsp : public std::enable_shared_from_this<Rtsp>
@@ -36,7 +63,7 @@ public:
     }
     virtual bool HasAuthInfo() const { return has_auth_info_; }
 
-    virtual void SetVersion(const std::string& version) // SDP Session Name
+    virtual void SetVersion(const std::string& version)
     {
         version_ = version;
     }
@@ -81,18 +108,12 @@ public:
         }
     }
 
-
-    std::shared_ptr<MediaSession> LookMediaSession(const std::string& suffix);
-    std::shared_ptr<MediaSession> LookMediaSession(MediaSessionId sessionId);
-    bool AddMediaSession(const std::shared_ptr<MediaSession>& session);
-
     bool has_auth_info_;
 	std::string realm_;
 	std::string username_;
 	std::string password_;
 	std::string version_;
 	struct RtspUrlInfo rtsp_url_info_;
-    std::map<std::string, std::shared_ptr<MediaSession>> media_sessions_;
 };
 
 

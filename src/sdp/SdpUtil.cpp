@@ -56,6 +56,7 @@ bool SdpParser::Parse(const std::string& text, SdpSession& session, std::string&
     {
         return false;
     }
+    session = std::move(tmp_session);
     return true;
 }
 
@@ -144,6 +145,7 @@ bool SdpParser::ParseLines(const std::vector<SdpLine>& lines, SdpSession& sessio
 
         }
     }
+
     return true;
 }
 
@@ -299,6 +301,7 @@ bool SdpParser::ParseMedia(const SdpLine& line, SdpSession& session, SdpMedia*& 
 
     session.medias.push_back(std::move(media));
     current_media = &session.medias.back();
+
     return true;
 }
 

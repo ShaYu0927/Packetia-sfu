@@ -14,6 +14,7 @@
 #include "logger.h"
 #include "H264Depacketizer.h"
 #include "RtcpReciver.h"
+#include "Rtsp.h"
 
 
 /*
@@ -356,14 +357,6 @@ public:
 };
 
 
-/*
-    RTP 包的 payload 通常是 NALU 数据（即编码后的视频片段），分三种情况：
-
-    类型	含义	特点
-    单一 NAL 单元包 (Single NALU)	一个包 = 一整个 NALU	最常见（小片段）
-    FU-A 分片 (Fragmentation Unit - A)	大帧被拆成多个包	需拼接重组
-    STAP-A 聚合包 (Single-Time Aggregation Packet)	多个小 NALU 合并	很少见
-*/
 
 class RtpTrack : public EnhancedPacketSortor<RtpPacket::Ptr, uint16_t> 
 {
@@ -398,6 +391,26 @@ public:
 
     void setNtpStamp(uint32_t rtp_stamp, uint64_t ntp_stamp_ms);
     void setPayloadType(uint8_t pt) { _pt = pt; }
+    
+    void setRtspTransportInfo(const RtspTransport& info) { _rtsp_transport = info; }
+    const RtspTransport& getRtspTransportInfo() const { return _rtsp_transport; }
+
+    void setInterleavedChannel(int rtp_ch, int rtcp_ch)
+    {
+        _rtsp_transport.transport = RtspTransportType::TcpInterleaved;
+        _rtsp_transport.interleaved_rtp = rtp_ch;
+        _rtsp_transport.interleaved_rtcp = rtcp_ch;
+    }
+
+    int getRtpChannel() const { return _rtsp_transport.interleaved_rtp; }
+    int getRtcpChannel() const { return _rtsp_transport.interleaved_rtcp; }
+    bool isTcpInterleaved() const
+    {
+        return _rtsp_transport.transport == RtspTransportType::TcpInterleaved;
+    }
+
+    void setMode(const RtspMode& mode) { _rtsp_transport.mode = mode; }
+    const RtspMode& getMode() const { return _rtsp_transport.mode; }
 
 
    
@@ -412,7 +425,8 @@ private:
     uint32_t _sample_rate = 0;
     uint8_t _channel_id = 0;
     bool _disable_ntp = false;
-    uint8_t _pt = 0xFF; //当前跟踪的有效载荷类型
+    uint8_t _pt = 0xFF;
+    RtspTransport _rtsp_transport;
 };
 
 

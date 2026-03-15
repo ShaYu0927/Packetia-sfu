@@ -1,11 +1,53 @@
 #include "RtspUtil.h"
 #include "logger.h"
+#include <cstring>
 
 namespace rtsp
 {
+
+static std::vector<std::string> Split(const std::string& s, char delim)
+{
+    std::vector<std::string> out;
+    std::string cur;
+
+    for (char ch : s)
+    {
+        if (ch == delim)
+        {
+            out.push_back(cur);
+            cur.clear();
+        }
+        else
+        {
+            cur.push_back(ch);
+        }
+    }
+
+    out.push_back(cur);
+    return out;
+}
+
+static std::string Trim(const std::string& s)
+{
+    size_t begin = 0;
+    size_t end = s.size();
+
+    while (begin < end && std::isspace(static_cast<unsigned char>(s[begin])))
+    {
+        ++begin;
+    }
+
+    while (end > begin && std::isspace(static_cast<unsigned char>(s[end - 1])))
+    {
+        --end;
+    }
+
+    return s.substr(begin, end - begin);
+}
+
+
 std::optional<int> RtspUtil::ParseStreamId(const std::string &control)
 {
-    // streamid=NUMBER
     static const std::string kKey = "streamid=";
 
     auto pos = control.find(kKey);
@@ -38,4 +80,123 @@ std::optional<int> RtspUtil::ParseStreamId(const std::string &control)
         return -1;
     }
 }
+
+
+std::string RtspUtil::GetSuffixFromSetupUrl(const std::string& url)
+{
+    std::string s = url;
+
+    auto pos = s.find("://");
+    if (pos != std::string::npos)
+    {
+        auto path_pos = s.find('/', pos + 3);
+        if (path_pos != std::string::npos)
+            s = s.substr(path_pos); 
+        else
+            return "";
+    }
+
+    auto last_slash = s.rfind('/');
+    if (last_slash == std::string::npos)
+    {
+        if (!s.empty() && s[0] == '/')
+            return s.substr(1);
+        return s;
+    }
+
+    std::string tail = s.substr(last_slash + 1);
+    if (tail.find("streamid=") == 0 || tail.find("trackID=") == 0)
+        s = s.substr(0, last_slash);
+
+    if (!s.empty() && s[0] == '/')
+        s.erase(0, 1);
+
+    return s;
+}
+
+bool RtspUtil::ParseTransport(const std::string& text, RtspTransport& out)
+{
+    auto parts = Split(text, ';');
+    if (parts.empty())
+        return false;
+
+    out.profile = Trim(parts[0]);
+
+    if (out.profile.find("/TCP") != std::string::npos)
+        out.lower_transport = "TCP";
+    else
+        out.lower_transport = "UDP";
+
+    for (size_t i = 1; i < parts.size(); ++i)
+    {
+        std::string item = Trim(parts[i]);
+
+        if (item == "unicast")
+        {
+            out.unicast = true;
+            out.multicast = false;
+        }
+        else if (item == "multicast")
+        {
+            out.unicast = false;
+            out.multicast = true;
+        }
+        else if (item.rfind("interleaved=", 0) == 0)
+        {
+            std::string v = item.substr(strlen("interleaved="));
+            auto pos = v.find('-');
+            if (pos == std::string::npos)
+                return false;
+
+            out.interleaved_rtp = std::atoi(v.substr(0, pos).c_str());
+            out.interleaved_rtcp = std::atoi(v.substr(pos + 1).c_str());
+        }
+        else if (item.rfind("client_port=", 0) == 0)
+        {
+            std::string v = item.substr(strlen("client_port="));
+            auto pos = v.find('-');
+            if (pos == std::string::npos)
+                return false;
+
+            out.client_rtp_port = std::atoi(v.substr(0, pos).c_str());
+            out.client_rtcp_port = std::atoi(v.substr(pos + 1).c_str());
+        }
+        else if (item.rfind("server_port=", 0) == 0)
+        {
+            std::string v = item.substr(strlen("server_port="));
+            auto pos = v.find('-');
+            if (pos == std::string::npos)
+                return false;
+
+            out.server_rtp_port = std::atoi(v.substr(0, pos).c_str());
+            out.server_rtcp_port = std::atoi(v.substr(pos + 1).c_str());
+        }
+        else if (item.rfind("mode=", 0) == 0)
+        {
+            std::string mode = item.substr(std::string("mode=").size());
+            mode = Trim(mode);
+
+            if (!mode.empty() && mode.front() == '"')
+                mode.erase(mode.begin());
+            if (!mode.empty() && mode.back() == '"')
+                mode.pop_back();
+
+            if (mode == "record")
+            {
+                out.mode = RtspMode::RECORD;
+            }
+            else if (mode == "play")
+            {
+                out.mode = RtspMode::PLAY;
+            }
+            else
+            {
+                out.mode = RtspMode::ModeUnknown;
+            }
+        }
+    }
+
+    return true;
+}
+
 }

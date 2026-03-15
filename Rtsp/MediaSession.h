@@ -8,7 +8,6 @@
 #include <atomic>
 #include "Rtp.h"
 #include "RtpTypes.h"
-#include "Rtsp.h"
 #include "Sdp.h"
 
 
@@ -42,16 +41,15 @@ public:
                         int payload_type,
                         int clock_rate);
 
-    MediaSessionId GetId() const { return session_id_; }
-    void SetId(MediaSessionId id) { session_id_ = id; }
+    uint32_t GetId() const { return session_id_; }
+    void SetId(uint32_t id) { session_id_ = id; }
     const std::string& GetRtspSuffix() const { return suffix_; }
     void SetRtspSuffix(const std::string& suffix) { suffix_ = suffix; }
     
-    void BindRtpTrack(int trackIdx, const std::shared_ptr<RtpTrack>& track);
-    std::shared_ptr<RtpTrack> GetRtpTrack(int trackIdx) const;
-    void UnbindRtpTrack(int trackIdx);
+    std::shared_ptr<RtpTrack> GetRtpTrack(const std::string& control) const;
 
     bool ApplySdp(const sdp::SdpSession& sdp, std::string* err);
+    RtpTrack::Ptr CreateTrack(const MediaTrackInfo& info);
 
 
     bool IsReady() const { return ready_.load(); }
@@ -68,7 +66,7 @@ public:
 private:
     std::string suffix_;
     std::string sdp_;
-    MediaSessionId session_id_{0};
+    uint32_t session_id_{0};
     std::string global_id_;
 
     mutable std::mutex track_mtx_;
@@ -77,7 +75,7 @@ private:
 
     std::unordered_map<int, MediaTrackInfo> track_infos_;
     std::unordered_map<std::string, int> control_to_track_;
-    std::unordered_map<int, std::weak_ptr<RtpTrack>> runtime_tracks_;
+    std::unordered_map<int, std::shared_ptr<RtpTrack>> runtime_tracks_;
     std::unordered_map<uint32_t, int> ssrc_to_track_;
 
 };

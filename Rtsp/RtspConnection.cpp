@@ -1,5 +1,4 @@
 #include "RtspConnection.h"
-#include "RtpTypes.h"
 #include "logger.h"
 
 
@@ -62,14 +61,3 @@ bool RtspConnection::onRead(BufferReader &buffer)
     return true;
 }
 
-
-std::shared_ptr<RtpTrack> createTrack(TrackType type, const std::string &codec_name, int payload_type, uint32_t clock_rate, int track_index)
-{
-     if (type == TrackType::TrackVideo) {
-        return std::make_shared<RtpVideoTracker>(
-            type, codec_name, payload_type, 0, clock_rate, track_index);
-    }
-
-    return std::make_shared<RtpAudioTracker>(
-        type, codec_name, payload_type, 0, clock_rate, track_index);
-}

@@ -3,6 +3,8 @@
 #include <string>
 #include "Sdp.h"
 #include "RtpInterleaved.h"
+#include "RtspUtil.h"
+#include "logger.h"
 
 
 static inline void Trim(std::string& s)
@@ -183,49 +185,6 @@ int RtspRequest::BuildDescribeRes(std::shared_ptr<char> data, int size, const st
     return static_cast<int>(res.size());
 }
 
-int RtspRequest::BuildSetupRes(std::shared_ptr<char> data, int size, uint16_t rtp_port, uint16_t rtcp_port, MediaChannelId channel_id,std::string session_id)
-{
-    memset((void*)data.get(), 0, size);
-
-     std::stringstream randisss;
-    randisss << std::hex << (rand() & 0xFFFFFFFF);
-
-    std::ostringstream oss;
-    oss << "RTSP/1.0 200 OK\r\n";
-    oss << "CSeq: " << this->GetCSeq() << "\r\n";
-    oss << "Session: " <<  randisss.str() << "\r\n";
-    oss << "Transport: ";
-
-    if (transport_mode_ == RTP_OVER_TCP) 
-    {
-        // RTP over TCP (interleaved方式)
-        oss << "RTP/AVP/TCP;unicast;interleaved=" 
-            << rtp_port << "-" << rtcp_port << ";mode=record" << "\r\n";\
-    }
-    else if (transport_mode_ == RTP_OVER_UDP) 
-    {
-        // RTP over UDP
-        oss << "RTP/AVP;unicast;client_port=" 
-            << rtp_port << "-" 
-            << rtcp_port << "\r\n";
-    }
-    else 
-    {
-        // 其他传输方式
-        oss << "RTP/AVP;unicast\r\n";
-    }
-    oss << "\r\n"; 
-    std::string res = oss.str();
-    if (res.size() > size) {
-        // buffer不够，返回错误
-        return -1;
-    }
-
-    memcpy(data.get(), res.c_str(), res.size());
-
-    return res.size();
-}
-
 int RtspRequest::BuildNotFoundRes(std::shared_ptr<char> data, int size)
 {
     memset((void*)data.get(), 0, size);
@@ -271,9 +230,8 @@ int RtspRequest::BuildANNOUNCERes(const RtspRequestInfo& req,std::shared_ptr<cha
        "RTSP/1.0 200 OK\r\n"
         "CSeq: %s\r\n"
         "\r\n",
-        this->GetCSeq().c_str()
+        std::to_string(req.cseq).c_str()
     );
-
 
     if (written < 0 || written >= size) 
     {
@@ -301,6 +259,24 @@ int RtspRequest::BuildRecordRes(std::shared_ptr<char> data, int size,std::string
         this->GetGmtTimeString().c_str()
     );
     return (int)strlen(data.get());
+}
+
+std::string RtspRequest::BuildSetupRes(const std::string& cseq,
+                          const std::string& session_id,
+                          int rtp_channel,
+                          int rtcp_channel,
+                          const std::string& mode)
+{
+    std::ostringstream oss;
+
+    oss << "RTSP/1.0 200 OK\r\n";
+    oss << "CSeq: " << cseq << "\r\n";
+    oss << "Session: " << session_id << ";timeout=60\r\n";
+    oss << "Transport: RTP/AVP/TCP;unicast;interleaved="
+        << rtp_channel << "-" << rtcp_channel << "\r\n";
+    oss << "\r\n";
+
+    return oss.str();
 }
 
 bool RtspRequest::ParseRequestLine(const char *begin, const char *end)
@@ -659,18 +635,15 @@ std::string RtspRequest::HandleCmdDescribe(RtspRequestInfo& req)
 
 std::string RtspRequest::HandleCmdANNOUNCE(RtspRequestInfo& req)
 {
-    LOG_INFO("Handle ANNOUNCE req:", req.Dump().c_str());
-    std::string err;
+    std::string err, suffix;
 
     std::string contentType = req.GetHeader("Content-Type");
-    LOG_INFO("ANNOUNCE Content-Type=, body_len=",
-             contentType.c_str(),
-             req.body.size());
-
     if (req.body.empty())
     {
         LOG_INFO("ANNOUNCE SDP body:", req.body.c_str());
     }
+
+    suffix = rtsp::RtspUtil::GetSuffixFromSetupUrl(req.url);
 
     /* handle sdp */
     auto result = sdp::Sdp::Parse(req.body);
@@ -681,11 +654,11 @@ std::string RtspRequest::HandleCmdANNOUNCE(RtspRequestInfo& req)
         return "";
     }
 
-    auto session = MediaSessionManager::Instance().GetSessionBySuffix(req.url);
+    auto session = MediaSessionManager::Instance().GetSessionBySuffix(suffix);
     if (!session)
     {
-        session = MediaSession::CreateNew(req.url);
-        MediaSessionManager::Instance().AddSession(session, req.url);
+        session = MediaSession::CreateNew(suffix);
+        MediaSessionManager::Instance().AddSession(session, suffix);
     }
 
     if (!session->ApplySdp(result.session, &err))
@@ -701,28 +674,66 @@ std::string RtspRequest::HandleCmdANNOUNCE(RtspRequestInfo& req)
 
 std::string RtspRequest::HandleCmdSetup(RtspRequestInfo& req)
 {
-    std::string session_id,url,control;
+    std::string session_id,url,control, suffix;
     std::shared_ptr<RtpTrack> track_ptr;
     std::shared_ptr<char> response(new char[10240], std::default_delete<char[]>());
     size_t size,transport = 1;
     uint16_t rtp_ch, rtcp_ch = 0;
+    RtspTransport pTranOut;
+    int ret;
 
-    url = req.url;
+    LOG_INFO(req.url);
+    suffix = rtsp::RtspUtil::GetSuffixFromSetupUrl(req.url);
     control = req.GetControlFromUrl();
 
-    auto media_session = MediaSessionManager::Instance().GetSessionBySuffix(url);
+    LOG_INFO(control);
+
+    auto media_session = MediaSessionManager::Instance().GetSessionBySuffix(suffix);
     if (!media_session)
     {
-        LOG_ERROR("Media session not found, url=%s", url.c_str());
+        LOG_ERROR("Media session not found, url=", suffix);
         return "";
     }
 
     session_id = std::to_string(media_session->GetId());
-    LOG_INFO("SETUP url=%s control=%s sessionId=%s",
-             url.c_str(), control.c_str(), session_id.c_str());
+    auto tracker = media_session->GetRtpTrack(control);
+    if(!tracker)
+    {
+        LOG_ERROR("Track not found, suffix=, control=", suffix, control);
+        return "";
+    }
+
+    std::string transport_str = req.GetHeader("transport");
+    if (transport_str.empty())
+    {
+        LOG_ERROR("SETUP missing Transport header");
+        return "";
+    }
+    ret = rtsp::RtspUtil::ParseTransport(transport_str, pTranOut);
+    if(!ret)
+    {
+        LOG_ERROR("SETUP missing Transport header");
+        return "";
+    }
 
 
-    return "";
+    if (pTranOut.interleaved_rtp < 0 || pTranOut.interleaved_rtcp < 0)
+    {
+        LOG_ERROR("SETUP missing interleaved channel, transport={}", transport_str);
+        return "";
+    }
+
+    tracker->setInterleavedChannel(pTranOut.interleaved_rtp, pTranOut.interleaved_rtcp);
+    tracker->setMode(pTranOut.mode);
+
+    LOG_INFO("SETUP ok, session=, control=, tcp interleaved=, mode=",
+             session_id, control,
+             pTranOut.interleaved_rtp, pTranOut.interleaved_rtcp,
+             tracker->getMode());
+    std::string str = BuildSetupRes(std::to_string(req.cseq), session_id,pTranOut.interleaved_rtp, pTranOut.interleaved_rtcp,"record");
+    LOG_INFO(str);
+    
+    return str;
 }
 
 std::string RtspRequest::HandleCmdRecord(RtspRequestInfo& req)

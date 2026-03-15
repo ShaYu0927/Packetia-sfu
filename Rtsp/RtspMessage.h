@@ -182,7 +182,6 @@ public:
 
     void Reset()
     {
-        //method_ = Method::NONE;
         state_ = RtspRequestParseState::kParseRequestLine;
         method_str_.clear();
         version_ = Version::RTSP_1_0;
@@ -206,12 +205,16 @@ public:
 
     int BuildOptionsRes(const RtspRequestInfo& req,std::shared_ptr<char> data,int size);
     int BuildDescribeRes(std::shared_ptr<char> data, int size, const std::string& sdp);
-    int BuildSetupRes(std::shared_ptr<char> data, int size, uint16_t rtp_port, uint16_t rtcp_port, MediaChannelId channel_id,std::string session_id);
     int BuildNotFoundRes(std::shared_ptr<char> data,int size);
     int BuildServerErrorRes(std::shared_ptr<char> data, int size, const std::string& error_message);
     int BuildSetupMulticastRes(std::shared_ptr<char> data, int size, const char* multicast_ip, uint16_t port, uint32_t session_id);
     int BuildANNOUNCERes(const RtspRequestInfo& req,std::shared_ptr<char> data, int size);
     int BuildRecordRes(std::shared_ptr<char> data, int size,std::string session_id);
+    std::string BuildSetupRes(const std::string& cseq,
+                          const std::string& session_id,
+                          int rtp_channel,
+                          int rtcp_channel,
+                          const std::string& mode);
 
 
     std::string HandleCmdOptions(RtspRequestInfo& req);

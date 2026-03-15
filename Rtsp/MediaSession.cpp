@@ -37,7 +37,7 @@ uint32_t MediaSessionManager::AddSession(MediaSession::Ptr session, const std::s
     if (suffix_map_.find(suffix) != suffix_map_.end())
         return 0;
 
-    MediaSessionId id = ++last_id_;
+    uint32_t id = ++last_id_;
     session->session_id_ = id;
 
     if (session->global_id_.empty())
@@ -134,17 +134,69 @@ bool MediaSession::ApplySdp(const sdp::SdpSession& sdp, std::string* err)
             info.control = "trackID=" + std::to_string(trackIdx);
         }
 
+        auto track = CreateTrack(info);
+        if (!track)
+        {
+            if (err) *err = "unsupported track codec: " + info.codec;
+            return false;
+        }
+
+        LOG_INFO("trackIdx: ", trackIdx, "info.control: ", info.control);
+
         track_infos_[trackIdx] = info;
         control_to_track_[info.control] = trackIdx;
+        runtime_tracks_[trackIdx] = track;
         ++trackIdx;
     }
 
-    // if (track_infos_.empty())
-    // {
-    //     if (err) *err = "no valid media track in sdp";
-    //     return false;
-    // }
-
     return true;
+}
+
+RtpTrack::Ptr MediaSession::CreateTrack(const MediaTrackInfo& info)
+{
+    uint32_t ssrc = 0; 
+    uint8_t channel_id = 0;
+    bool disable_ntp = false;
+
+    if (info.type == TrackType::TrackVideo)
+    {
+        return std::make_shared<RtpVideoTracker>(
+            info.type,
+            info.codec,
+            static_cast<uint8_t>(info.payload_type),
+            ssrc,
+            static_cast<uint32_t>(info.clock_rate),
+            channel_id,
+            disable_ntp);
+    }
+
+    if (info.type == TrackType::TrackAudio)
+    {
+        return std::make_shared<RtpAudioTracker>(
+            info.type,
+            info.codec,
+            static_cast<uint8_t>(info.payload_type),
+            ssrc,
+            static_cast<uint32_t>(info.clock_rate),
+            channel_id,
+            disable_ntp);
+    }
+
+    return nullptr;
+}
+
+std::shared_ptr<RtpTrack> MediaSession::GetRtpTrack(const std::string& control) const
+{
+    auto it = control_to_track_.find(control);
+    if (it == control_to_track_.end())
+        return nullptr;
+
+    int trackIdx = it->second;
+
+    auto track_it = runtime_tracks_.find(trackIdx);
+    if (track_it == runtime_tracks_.end())
+        return nullptr;
+
+    return track_it->second;
 }
 
