@@ -72,7 +72,7 @@ void IceChecklist::BuildPairs(const std::vector<IceCandidate>& locals,
             }
             const uint64_t pp = ComputePairPriority(g, d);
 
-            IceCandidatePair p;
+            IceCandidatePairEntry p;
             p.local = lc;
             p.remote = rc;
             p.priority = pp;
@@ -84,7 +84,7 @@ void IceChecklist::BuildPairs(const std::vector<IceCandidate>& locals,
 void IceChecklist::SortPairs()
 {
     std::stable_sort(pairs_.begin(), pairs_.end(),
-        [](const IceCandidatePair& a, const IceCandidatePair& b) {
+        [](const IceCandidatePairEntry& a, const IceCandidatePairEntry& b) {
 
             if (a.priority != b.priority)
                 return a.priority > b.priority;
@@ -158,7 +158,7 @@ void IceChecklist::PruneRedundantPairs()
         return c.Addr().ToString();
     };
 
-    std::vector<IceCandidatePair> kept;
+    std::vector<IceCandidatePairEntry> kept;
     kept.reserve(pairs_.size());
 
     for (const auto& p : pairs_) {
@@ -181,7 +181,7 @@ void IceChecklist::PruneRedundantPairs()
     pairs_.swap(kept);
 }
 
-IceCandidatePair* IceChecklist::Selected()
+IceCandidatePairEntry* IceChecklist::Selected()
 {
     for (auto& p : pairs_) 
     {
@@ -201,7 +201,7 @@ IceCandidatePair* IceChecklist::Selected()
     return nullptr;
 }
 
-const IceCandidatePair* IceChecklist::Selected() const
+const IceCandidatePairEntry* IceChecklist::Selected() const
 {
     for (const auto& p : pairs_) 
     {

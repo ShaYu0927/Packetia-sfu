@@ -12,8 +12,8 @@ public:
     enum class IceRole { Controlling, Controlled };
     IceChecklist() = default;
 
-    const std::vector<IceCandidatePair>& pairs() const { return pairs_; }
-    std::vector<IceCandidatePair>& pairs() { return pairs_; }
+    const std::vector<IceCandidatePairEntry>& pairs() const { return pairs_; }
+    std::vector<IceCandidatePairEntry>& pairs() { return pairs_; }
 
     void BuildPairs(const std::vector<IceCandidate>& locals,
                     const std::vector<IceCandidate>& remotes);
@@ -27,14 +27,14 @@ public:
     /* Update checklist state based on pair outcomes. */
     void UpdateChecklistState();
 
-    IceCandidatePair* Selected();
-    const IceCandidatePair* Selected() const;
+    IceCandidatePairEntry* Selected();
+    const IceCandidatePairEntry* Selected() const;
 
 private:
     static uint64_t ComputePairPriority(uint32_t g, uint32_t d);
 
 private:
-    std::vector<IceCandidatePair> pairs_;
+    std::vector<IceCandidatePairEntry> pairs_;
     IceRole role_{IceRole::Controlling};
 };
 

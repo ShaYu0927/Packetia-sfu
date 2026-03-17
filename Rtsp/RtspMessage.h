@@ -209,7 +209,7 @@ public:
     int BuildServerErrorRes(std::shared_ptr<char> data, int size, const std::string& error_message);
     int BuildSetupMulticastRes(std::shared_ptr<char> data, int size, const char* multicast_ip, uint16_t port, uint32_t session_id);
     int BuildANNOUNCERes(const RtspRequestInfo& req,std::shared_ptr<char> data, int size);
-    int BuildRecordRes(std::shared_ptr<char> data, int size,std::string session_id);
+    int BuildRecordRes(const RtspRequestInfo& req,std::shared_ptr<char> data, int size);
     std::string BuildSetupRes(const std::string& cseq,
                           const std::string& session_id,
                           int rtp_channel,

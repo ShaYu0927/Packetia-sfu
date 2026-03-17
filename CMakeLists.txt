@@ -138,7 +138,6 @@ add_library(rtp STATIC
 )
 
 add_library(rtsp STATIC
-    Rtsp/Rtsp.cpp
     Rtsp/Rtsp.h
     Rtsp/RtspMessage.cpp
     Rtsp/RtspMessage.h

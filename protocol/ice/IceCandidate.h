@@ -2,6 +2,8 @@
 #define _ICE_PAIR_H_
 
 #include "Endpoint.h"
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <string>
 #include <optional>
@@ -45,6 +47,14 @@ enum class TransportType
     Tcp
 };
 
+enum class IceCandidatePairState
+{
+    Frozen = 0,
+    Waiting,
+    InProgress,
+    Succeeded,
+    Failed
+};
 
 
 
@@ -138,7 +148,7 @@ private:
 };
 
 
-typedef struct IceCandidatePair 
+typedef struct IceCandidatePairEntry 
 {
     IceCandidate local;
     IceCandidate remote;
@@ -157,7 +167,319 @@ typedef struct IceCandidatePair
     PairState State;
 
     std::string ToString() const; 
-}IceCandidatePair;
+}IceCandidatePairEntry;
+
+class IceCandidatePair
+{
+public:
+    using Clock = std::chrono::system_clock;
+    using TimePoint = Clock::time_point;
+
+public:
+    IceCandidatePair() = default;
+
+
+
+    IceCandidatePair(const IceCandidate& local,
+                     const IceCandidate& remote,
+                     bool controlling)
+        : local_(local),
+          remote_(remote),
+          ice_role_controlling_(controlling),
+          state_(IceCandidatePairState::Waiting)
+    {
+    }
+
+    static IceCandidatePair Create(const IceCandidate& local,
+                                   const IceCandidate& remote,
+                                   bool controlling)
+    {
+        return IceCandidatePair(local, remote, controlling);
+    }
+
+public:
+    const IceCandidate& Local() const { return local_; }
+    const IceCandidate& Remote() const { return remote_; }
+
+    void SetLocal(const IceCandidate& v) { local_ = v; }
+    void SetRemote(const IceCandidate& v) { remote_ = v; }
+
+    bool IsControlling() const { return ice_role_controlling_; }
+    void SetControlling(bool v) { ice_role_controlling_ = v; }
+
+    uint64_t Id() const { return id_.load(std::memory_order_relaxed); }
+    void SetId(uint64_t v) { id_.store(v, std::memory_order_relaxed); }
+    
+
+    IceCandidatePairState State() const
+    {
+        return state_.load(std::memory_order_relaxed);
+    }
+
+    void SetState(IceCandidatePairState s)
+    {
+        state_.store(s, std::memory_order_relaxed);
+    }
+
+    bool Nominated() const
+    {
+        return nominated_.load(std::memory_order_relaxed);
+    }
+
+    void SetNominated(bool v)
+    {
+        nominated_.store(v, std::memory_order_relaxed);
+    }
+
+    bool NominateOnBindingSuccess() const
+    {
+        return nominate_on_binding_success_.load(std::memory_order_relaxed);
+    }
+
+    void SetNominateOnBindingSuccess(bool v)
+    {
+        nominate_on_binding_success_.store(v, std::memory_order_relaxed);
+    }
+
+    uint16_t BindingRequestCount() const
+    {
+        return binding_request_count_.load(std::memory_order_relaxed);
+    }
+
+    void IncBindingRequestCount()
+    {
+        binding_request_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    bool Equal(const IceCandidatePair& other) const;
+
+    std::string ToString() const;
+
+    uint64_t Priority() const;
+
+
+public:
+    uint64_t RequestsReceived() const
+    {
+        return requests_received_.load(std::memory_order_relaxed);
+    }
+
+    uint64_t RequestsSent() const
+    {
+        return requests_sent_.load(std::memory_order_relaxed);
+    }
+
+    uint64_t ResponsesReceived() const
+    {
+        return responses_received_.load(std::memory_order_relaxed);
+    }
+
+    uint64_t ResponsesSent() const
+    {
+        return responses_sent_.load(std::memory_order_relaxed);
+    }
+
+    void UpdateRequestSent()
+    {
+        requests_sent_.fetch_add(1, std::memory_order_relaxed);
+
+        const int64_t now_ns = NowNs();
+        SetFirstIfEmpty(first_request_sent_at_ns_, now_ns);
+        last_request_sent_at_ns_.store(now_ns, std::memory_order_relaxed);
+    }
+
+    void UpdateResponseSent()
+    {
+        responses_sent_.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    void UpdateRequestReceived()
+    {
+        requests_received_.fetch_add(1, std::memory_order_relaxed);
+
+        const int64_t now_ns = NowNs();
+        SetFirstIfEmpty(first_request_received_at_ns_, now_ns);
+        last_request_received_at_ns_.store(now_ns, std::memory_order_relaxed);
+    }
+
+public:
+    uint32_t PacketsSent() const
+    {
+        return packets_sent_.load(std::memory_order_relaxed);
+    }
+
+    uint32_t PacketsReceived() const
+    {
+        return packets_received_.load(std::memory_order_relaxed);
+    }
+
+    uint64_t BytesSent() const
+    {
+        return bytes_sent_.load(std::memory_order_relaxed);
+    }
+
+    uint64_t BytesReceived() const
+    {
+        return bytes_received_.load(std::memory_order_relaxed);
+    }
+
+    void UpdatePacketSent(int n)
+    {
+        if (n <= 0)
+            return;
+
+        packets_sent_.fetch_add(1, std::memory_order_relaxed);
+        bytes_sent_.fetch_add(static_cast<uint64_t>(n), std::memory_order_relaxed);
+        last_packet_sent_at_ns_.store(NowNs(), std::memory_order_relaxed);
+    }
+
+    void UpdatePacketReceived(int n)
+    {
+        if (n <= 0)
+            return;
+
+        packets_received_.fetch_add(1, std::memory_order_relaxed);
+        bytes_received_.fetch_add(static_cast<uint64_t>(n), std::memory_order_relaxed);
+        last_packet_received_at_ns_.store(NowNs(), std::memory_order_relaxed);
+    }
+
+    void UpdateRoundTripTime(std::chrono::nanoseconds rtt)
+    {
+        const int64_t rtt_ns = rtt.count();
+
+        current_round_trip_time_ns_.store(rtt_ns, std::memory_order_relaxed);
+        total_round_trip_time_ns_.fetch_add(rtt_ns, std::memory_order_relaxed);
+        responses_received_.fetch_add(1, std::memory_order_relaxed);
+
+        const int64_t now_ns = NowNs();
+        SetFirstIfEmpty(first_response_received_at_ns_, now_ns);
+        last_response_received_at_ns_.store(now_ns, std::memory_order_relaxed);
+    }
+
+    double CurrentRoundTripTime() const
+    {
+        return static_cast<double>(
+                   current_round_trip_time_ns_.load(std::memory_order_relaxed))
+               / 1000000000.0;
+    }
+
+    double TotalRoundTripTime() const
+    {
+        return static_cast<double>(
+                   total_round_trip_time_ns_.load(std::memory_order_relaxed))
+               / 1000000000.0;
+    }
+
+public:
+    std::optional<TimePoint> LastPacketSentAt() const
+    {
+        return NsToTimePoint(last_packet_sent_at_ns_.load(std::memory_order_relaxed));
+    }
+
+    std::optional<TimePoint> LastPacketReceivedAt() const
+    {
+        return NsToTimePoint(last_packet_received_at_ns_.load(std::memory_order_relaxed));
+    }
+
+    std::optional<TimePoint> FirstRequestSentAt() const
+    {
+        return NsToTimePoint(first_request_sent_at_ns_.load(std::memory_order_relaxed));
+    }
+
+    std::optional<TimePoint> LastRequestSentAt() const
+    {
+        return NsToTimePoint(last_request_sent_at_ns_.load(std::memory_order_relaxed));
+    }
+
+    std::optional<TimePoint> FirstResponseReceivedAt() const
+    {
+        return NsToTimePoint(first_response_received_at_ns_.load(std::memory_order_relaxed));
+    }
+
+    std::optional<TimePoint> LastResponseReceivedAt() const
+    {
+        return NsToTimePoint(last_response_received_at_ns_.load(std::memory_order_relaxed));
+    }
+
+    std::optional<TimePoint> FirstRequestReceivedAt() const
+    {
+        return NsToTimePoint(first_request_received_at_ns_.load(std::memory_order_relaxed));
+    }
+
+    std::optional<TimePoint> LastRequestReceivedAt() const
+    {
+        return NsToTimePoint(last_request_received_at_ns_.load(std::memory_order_relaxed));
+    }
+
+private:
+    std::atomic<uint64_t> id_{0};
+
+    IceCandidate local_;
+    IceCandidate remote_;
+
+    bool ice_role_controlling_{false};
+
+    std::atomic<uint16_t> binding_request_count_{0};
+    std::atomic<IceCandidatePairState> state_{IceCandidatePairState::Waiting};
+    std::atomic<bool> nominated_{false};
+    std::atomic<bool> nominate_on_binding_success_{false};
+
+    std::atomic<int64_t> current_round_trip_time_ns_{0};
+    std::atomic<int64_t> total_round_trip_time_ns_{0};
+
+    std::atomic<uint32_t> packets_sent_{0};
+    std::atomic<uint32_t> packets_received_{0};
+    std::atomic<uint64_t> bytes_sent_{0};
+    std::atomic<uint64_t> bytes_received_{0};
+
+    std::atomic<int64_t> last_packet_sent_at_ns_{0};
+    std::atomic<int64_t> last_packet_received_at_ns_{0};
+
+    std::atomic<uint64_t> requests_received_{0};
+    std::atomic<uint64_t> requests_sent_{0};
+    std::atomic<uint64_t> responses_received_{0};
+    std::atomic<uint64_t> responses_sent_{0};
+
+    std::atomic<int64_t> first_request_sent_at_ns_{0};
+    std::atomic<int64_t> last_request_sent_at_ns_{0};
+    std::atomic<int64_t> first_response_received_at_ns_{0};
+    std::atomic<int64_t> last_response_received_at_ns_{0};
+    std::atomic<int64_t> first_request_received_at_ns_{0};
+    std::atomic<int64_t> last_request_received_at_ns_{0};
+
+private:
+    static bool CandidateEqual(const IceCandidate& a, const IceCandidate& b)
+    {
+        return a.Foundation() == b.Foundation() &&
+               a.Component() == b.Component() &&
+               a.Transport() == b.Transport() &&
+               a.Type() == b.Type() &&
+               a.Priority() == b.Priority() &&
+               a.Address() == b.Address() &&
+               a.BaseAddress() == b.BaseAddress() &&
+               a.RelatedAddress() == b.RelatedAddress();
+    }
+
+    static int64_t NowNs()
+    {
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(
+                   Clock::now().time_since_epoch())
+            .count();
+    }
+
+    static std::optional<TimePoint> NsToTimePoint(int64_t ns)
+    {
+        if (ns == 0)
+            return std::nullopt;
+        return TimePoint(std::chrono::nanoseconds(ns));
+    }
+
+    static void SetFirstIfEmpty(std::atomic<int64_t>& field, int64_t value)
+    {
+        int64_t expected = 0;
+        field.compare_exchange_strong(expected, value, std::memory_order_relaxed);
+    }
+};
 
 
 } // namespace ice

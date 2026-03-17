@@ -126,15 +126,7 @@ std::string RtspRequest::GetRtspUSuffix() const
     return "";
 }
 
-std::string RtspRequest::GetGmtTimeString()
-{
-    char buf[128];
-    time_t now = time(nullptr);
-    struct tm tm_now;
-    gmtime_r(&now, &tm_now);
-    strftime(buf, sizeof(buf), "%a, %d %b %Y %H:%M:%S GMT", &tm_now);
-    return buf;
-}
+
 
 int RtspRequest::BuildOptionsRes(const RtspRequestInfo& req,
                                  std::shared_ptr<char> data,
@@ -242,23 +234,33 @@ int RtspRequest::BuildANNOUNCERes(const RtspRequestInfo& req,std::shared_ptr<cha
     return written;
 }
 
-int RtspRequest::BuildRecordRes(std::shared_ptr<char> data, int size,std::string session_id)
+int RtspRequest::BuildRecordRes(const RtspRequestInfo& req,std::shared_ptr<char> data, int size)
 {
-    LOG_INFO("Building RTSP RECORD response with CSeq:" + this->GetCSeq());
-    if (!data || size <= 0) return 0;
+    if (!data || size <= 0)
+        return 0;
+
     memset(data.get(), 0, size);
-    snprintf(data.get(), size,
+    std::string cseq = std::to_string(req.cseq);
+    std::string session = req.GetHeader("Session");
+    std::string timestamp = std::to_string(Timestamp::NowMs());
+
+    int ret = snprintf(
+        data.get(), size,
         "RTSP/1.0 200 OK\r\n"
         "CSeq: %s\r\n"
         "Session: %s\r\n"
         "Range: npt=0.000-\r\n"
         "Date: %s\r\n"
         "\r\n",
-        this->GetCSeq().c_str(),
-        session_id.c_str(),
-        this->GetGmtTimeString().c_str()
+        cseq.c_str(),
+        session.c_str(),
+        timestamp.c_str()
     );
-    return (int)strlen(data.get());
+
+    if (ret < 0)
+        return 0;
+
+    return ret;
 }
 
 std::string RtspRequest::BuildSetupRes(const std::string& cseq,
@@ -738,7 +740,25 @@ std::string RtspRequest::HandleCmdSetup(RtspRequestInfo& req)
 
 std::string RtspRequest::HandleCmdRecord(RtspRequestInfo& req)
 {
+    std::string str = req.Dump();
+    LOG_INFO("str", str);
+    std::string cseq = req.GetHeader("CSeq");
+    std::string session_id = req.GetHeader("session");
 
+    if (session_id.empty())
+    {
+        return "";
+    }
+
+    auto session = MediaSessionManager::Instance().GetSessionById(std::stoi(session_id));
+    if (!session)
+    {
+        return "";
+    }
+
+    std::shared_ptr<char> res(new char[2048], std::default_delete<char[]>());
+    int size = BuildRecordRes(req, res, 1024);
+    return res.get();
 }
 
 std::string RtspRequest::HandleCmdPlay(RtspRequestInfo& req)

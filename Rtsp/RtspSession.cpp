@@ -3,7 +3,8 @@ namespace rtsp
 {
 static inline int FindCrlfCrlf(const char* p, size_t n)
 {
-    for (size_t i = 0; i + 3 < n; ++i) {
+    for (size_t i = 0; i + 3 < n; ++i) 
+    {
         if (p[i] == '\r' && p[i+1] == '\n' && p[i+2] == '\r' && p[i+3] == '\n')
             return (int)i;
     }
@@ -12,7 +13,6 @@ static inline int FindCrlfCrlf(const char* p, size_t n)
 
 static inline bool IStartsWith(const char* s, size_t n, const char* prefix)
 {
-    // case-insensitive startswith for ASCII
     size_t m = 0;
     while (prefix[m]) m++;
     if (n < m) return false;
@@ -68,7 +68,6 @@ static inline bool ParseContentLengthFromHeader(const char* header, size_t heade
     return true; 
 }
 
-
 bool RtspSession::OnRead(TcpConnection::Ptr conn, BufferReader& buffer)
 {
     constexpr size_t kByteBudget = 256 * 1024;
@@ -83,8 +82,6 @@ bool RtspSession::OnRead(TcpConnection::Ptr conn, BufferReader& buffer)
              + std::to_string(conn->GetSocket()) 
              + " readable=" 
              + std::to_string(readable));
-
-    LOG_INFO(std::string(buffer.Peek(), buffer.ReadableBytes()));
 
     while (buffer.ReadableBytes() > 0)
     {
@@ -299,11 +296,12 @@ void RtspSession::HandleCmdANNOUNCE(RtspRequest::RtspRequestInfo& req)
 void RtspSession::HandleCmdSetup(RtspRequest::RtspRequestInfo& req)
 {
     std::string res  = rtsp_request_->HandleCmdSetup(req);
-    
+    this->SendRaw(res,(size_t)res.size());
 }
 void RtspSession::HandleCmdRecord(RtspRequest::RtspRequestInfo& req)
 {
-
+    std::string res  = rtsp_request_->HandleCmdRecord(req);
+    this->SendRaw(res,(size_t)res.size());
 }
 void RtspSession::HandleCmdPlay(RtspRequest::RtspRequestInfo& req)
 {
