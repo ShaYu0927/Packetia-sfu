@@ -4,6 +4,43 @@
 namespace network
 {
 
+using HandlerFn = void (*)(WorkJob&, void*);
+inline UdpSession* GetSession(WorkerContext* ctx, uint64_t key)
+{
+    auto it = ctx->sessions.find(key);
+    if (it == ctx->sessions.end())
+        return nullptr;
+
+    return static_cast<UdpSession*>(it->second.ptr);
+}
+
+template<void (UdpSession::*Fn)(WorkJob&)>
+static void Handle(WorkJob& job, void* ctx)
+{
+    auto* worker = static_cast<WorkerContext*>(ctx);
+    auto* sess = GetSession(worker, job.key);
+    if (!sess) return;
+
+    (sess->*Fn)(job);
+}
+
+static HandlerFn HandleStun = Handle<&UdpSession::OnStun>;
+static HandlerFn HandleDtls = Handle<&UdpSession::OnDtls>;
+static HandlerFn HandleRtp  = Handle<&UdpSession::OnRtp>;
+static HandlerFn HandleRtcp = Handle<&UdpSession::OnRtcp>;
+
+static HandlerFn DispatchHandler(UdpMuxHandler::UdpProto proto)
+{
+    switch (proto)
+    {
+    case UdpMuxHandler::UdpProto::Stun: return HandleStun;
+    case UdpMuxHandler::UdpProto::Dtls: return HandleDtls;
+    case UdpMuxHandler::UdpProto::Rtp:  return HandleRtp;
+    case UdpMuxHandler::UdpProto::Rtcp: return HandleRtcp;
+    default: return nullptr;
+    }
+}
+
 bool UdpSession::Start()
 {
     return true;
@@ -79,20 +116,23 @@ void UdpMuxHandler::OnDatagram(const network::SocketAddr& src,
         {
             sess = pending_session_.lock();
         }
-
-        // if (!sess)
-        //     return;
     }
 
     auto endpoint_id = sess->Id();
-    std::shared_ptr<Packet> pkt = std::make_shared<Packet>(data, len);
+    Packet* pkt = PacketPool::instance().acquire();
+    if (!pkt)
+    {
+        return;
+    }
+    pkt->recv_ts = Timestamp::NowMs();
+    pkt->assign(data, len);
 
     WorkJob job{};
     job.key  = endpoint_id;
-    job.type =  ToWorkJobType(proto);
-    job.payload = pkt;
-    job.payload_len = len;
-    job.enqueue_ts = Timestamp::NowMs();
+    job.type = ToWorkJobType(proto);
+    job.pkt  = pkt;
+    job.enqueue_ts = pkt->recv_ts;
+    job.handler = DispatchHandler(proto);
 
     WorkerService::post("endpoint_pool", std::move(job));
   

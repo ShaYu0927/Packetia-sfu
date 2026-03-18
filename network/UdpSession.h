@@ -26,7 +26,7 @@ public:
     bool Start() override;
     void Stop() override;
 
-protected:
+public:
     void OnStun(WorkJob& job) override;
     void OnDtls(WorkJob& job) override;
     void OnRtp(WorkJob& job) override;

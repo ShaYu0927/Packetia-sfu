@@ -21,7 +21,7 @@ public:
     virtual void OnError(int /*err*/) {}
 };
 
-class UdpServer 
+class UdpServer
 {
 public:
     using Ptr = std::shared_ptr<UdpServer>;

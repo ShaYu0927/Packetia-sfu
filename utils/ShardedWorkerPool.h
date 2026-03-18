@@ -11,22 +11,39 @@
 #include <atomic>
 #include <functional>
 
-#include "Rtp.h"
 #include "PacketPool.h"
 
-using Payload = std::variant<std::monostate, std::pair<uint8_t*, size_t>, std::shared_ptr<Packet>>;
 
-typedef struct WorkJob 
+struct WorkJob
 {
-    uint64_t key;                
-    uint32_t type;               
-    Payload  payload;            
-    size_t   payload_len;       
-    uint64_t enqueue_ts;         
-    std::weak_ptr<RtpTrack> track;
-    std::function<void()> fn;
-    std::function<void(WorkJob&)>  deleter; 
-}WorkJob;
+    uint64_t key;
+    uint32_t type;
+
+    union
+    {
+        Packet* pkt;                 // RTP / RTCP / STUN
+        struct
+        {
+            uint8_t* data;
+            uint32_t len;
+        } raw;                      // TCP / UDP
+    };
+
+    uint64_t enqueue_ts;
+
+    void (*handler)(WorkJob&, void* ctx);   
+};
+
+struct SessionEntry
+{
+    uint32_t type;   // UDP / TCP / HTTP / ...
+    void*    ptr;
+};
+
+struct WorkerContext
+{
+    std::unordered_map<uint64_t, SessionEntry> sessions;
+};
 
 enum : uint32_t
 {
@@ -119,6 +136,7 @@ private:
     std::atomic<bool> started_{false};
 
 };
+
 
 
 class WorkerService final 
