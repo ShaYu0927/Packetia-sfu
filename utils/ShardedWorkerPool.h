@@ -13,11 +13,28 @@
 
 #include "PacketPool.h"
 
+enum class WorkType : uint32_t
+{
+    Invalid = 0,
+
+    /* 媒体类 */
+    Rtp,
+    Rtcp,
+    Stun,
+
+    /* 网络原始数据 */
+    RawTcp,
+    RawUdp,
+
+    /* 控制/系统类 */
+    Timer,
+    Control
+};
 
 struct WorkJob
 {
     uint64_t key;
-    uint32_t type;
+    WorkType type = WorkType::Invalid;
 
     union
     {
@@ -31,12 +48,13 @@ struct WorkJob
 
     uint64_t enqueue_ts;
 
-    void (*handler)(WorkJob&, void* ctx);   
+    void (*handler)(WorkJob&, void* ctx);
+    void (*deleter)(WorkJob&) = nullptr;
 };
 
 struct SessionEntry
 {
-    uint32_t type;   // UDP / TCP / HTTP / ...
+    uint32_t type;   // UDP / TCP / HTTP / 
     void*    ptr;
 };
 
@@ -64,7 +82,7 @@ enum : uint32_t
 struct IJobHandler
 {
     virtual ~IJobHandler() = default;
-    virtual void handle(WorkJob&& job) = 0;
+    virtual void handle(WorkJob& job) = 0;
 };
 
 
@@ -153,12 +171,6 @@ public:
     static int post(const std::string& name, WorkJob&& job);
 
     static int post_fn(const std::string& name, std::function<void()> fn);
-
-    template <typename F>
-    static int post_fn(const std::string& name, F&& f)
-    {
-        return post_fn(name, std::function<void()>(std::forward<F>(f)));
-    }
 
     static bool exists(const std::string& name);
 

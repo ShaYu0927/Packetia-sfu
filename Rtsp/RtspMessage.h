@@ -8,6 +8,7 @@
 #include <sstream>
 #include "RtpTypes.h"
 #include "Media.h"
+#include "MediaSession.h"
 
 
 
@@ -137,7 +138,6 @@ public:
     }
     
     bool ParseRequest(const char* p, size_t total, RtspRequestInfo& out);
-    
     Method GetMethod() const { return method_; }
     const std::string& GetMethodString() const { return method_str_; }
     Version GetVersion() const { return version_; }
@@ -160,25 +160,12 @@ public:
         }
         return "";
     }
-
+    MediaSession::Ptr GetMediaSession() const { return media_session; }
    
-    const uint16_t GetRtpChannel()
-    {
-        return rtp_channel_;
-    }
-    const uint16_t GetRtcpChannel()
-    {
-        
-        return rtcp_channel_;
-    }
-    const uint16_t GetRtpPort()
-    {
-        return rtp_port_;
-    }
-    const uint16_t GetRtcpPort()
-    {
-        return rtcp_port_;
-    }
+    const uint16_t GetRtpChannel() { return rtp_channel_; }
+    const uint16_t GetRtcpChannel() { return rtcp_channel_; }
+    const uint16_t GetRtpPort() { return rtp_port_; }
+    const uint16_t GetRtcpPort() { return rtcp_port_; }
 
     void Reset()
     {
@@ -265,6 +252,8 @@ private:
 
     std::unordered_map<std::string, std::pair<std::string, uint32_t>> request_line_param_;
     std::unordered_map<std::string, std::pair<std::string, uint32_t>> header_line_param_;
+
+    MediaSession::Ptr media_session;
 
 public:
     std::shared_ptr<Sdp> sdp_;

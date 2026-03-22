@@ -690,7 +690,7 @@ std::string RtspRequest::HandleCmdSetup(RtspRequestInfo& req)
 
     LOG_INFO(control);
 
-    auto media_session = MediaSessionManager::Instance().GetSessionBySuffix(suffix);
+    media_session = MediaSessionManager::Instance().GetSessionBySuffix(suffix);
     if (!media_session)
     {
         LOG_ERROR("Media session not found, url=", suffix);
@@ -718,7 +718,6 @@ std::string RtspRequest::HandleCmdSetup(RtspRequestInfo& req)
         return "";
     }
 
-
     if (pTranOut.interleaved_rtp < 0 || pTranOut.interleaved_rtcp < 0)
     {
         LOG_ERROR("SETUP missing interleaved channel, transport={}", transport_str);
@@ -726,12 +725,7 @@ std::string RtspRequest::HandleCmdSetup(RtspRequestInfo& req)
     }
 
     tracker->setInterleavedChannel(pTranOut.interleaved_rtp, pTranOut.interleaved_rtcp);
-    tracker->setMode(pTranOut.mode);
 
-    LOG_INFO("SETUP ok, session=, control=, tcp interleaved=, mode=",
-             session_id, control,
-             pTranOut.interleaved_rtp, pTranOut.interleaved_rtcp,
-             tracker->getMode());
     std::string str = BuildSetupRes(std::to_string(req.cseq), session_id,pTranOut.interleaved_rtp, pTranOut.interleaved_rtcp,"record");
     LOG_INFO(str);
     
@@ -740,8 +734,6 @@ std::string RtspRequest::HandleCmdSetup(RtspRequestInfo& req)
 
 std::string RtspRequest::HandleCmdRecord(RtspRequestInfo& req)
 {
-    std::string str = req.Dump();
-    LOG_INFO("str", str);
     std::string cseq = req.GetHeader("CSeq");
     std::string session_id = req.GetHeader("session");
 

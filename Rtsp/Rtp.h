@@ -2,19 +2,13 @@
 #define _RTP_H_
 
 #include <memory>
-#include <string>
-#include <vector>
 #include "RtpTypes.h"
 #include <functional>
 #include <map>
 #include <chrono>
 #include <cstring>
-
-
 #include "logger.h"
-#include "H264Depacketizer.h"
-#include "RtcpReciver.h"
-#include "Rtsp.h"
+
 
 
 /*
@@ -37,6 +31,9 @@ struct RtpWireHeader
 #pragma pack(pop)
 
 static_assert(sizeof(RtpWireHeader) == 12);
+
+class Frame;
+using FramePtr = std::shared_ptr<Frame>;
 
 
 /*
@@ -131,44 +128,9 @@ struct RtcpStats
     uint64_t last_ntp_time = 0;
 };
 
-enum class MediaSessionState : uint8_t 
-{
-    Init   = 0,
-    Setup  = 1,
-    Play   = 2,
-    Record = 4,
-};
 
-inline MediaSessionState operator|(MediaSessionState a, MediaSessionState b) 
-{
-    return static_cast<MediaSessionState>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
-}
-inline bool hasState(MediaSessionState state, MediaSessionState flag) 
-{
-    return (static_cast<uint8_t>(state) & static_cast<uint8_t>(flag)) != 0;
-}
 
-struct MediaChannelInfo 
-{
-    RtpHeader rtp_header;
 
-    RtpTransportInfo transport;
-
-    uint16_t rtp_sequence = 0;
-    uint32_t clock_rate = 90000;  // default for video
-
-    RtcpStats rtcp_stats;
-
-    MediaSessionState state = MediaSessionState::Init;
-
-    void markSetup()  { state = state | MediaSessionState::Setup; }
-    void markPlay()   { state = state | MediaSessionState::Play; }
-    void markRecord() { state = state | MediaSessionState::Record; }
-
-    bool isSetup() const  { return hasState(state, MediaSessionState::Setup); }
-    bool isPlay() const   { return hasState(state, MediaSessionState::Play); }
-    bool isRecord() const { return hasState(state, MediaSessionState::Record); }
-};
 
 template<typename Packet, typename Seq = uint16_t>
 class EnhancedPacketSortor {
@@ -253,14 +215,6 @@ public:
 private:
     void emit(Seq seq, const Packet& pkt) 
     {
-#if RTP_DEBUG
-        LOG_INFO("[Emitter] emit begin: seq=", seq,
-            " next_seq=", _next_seq,
-            " cb=", (void*)(_cb ? (void*)1 : nullptr),
-            " sp_addr=", (void*)&pkt,
-            " obj=", (void*)(pkt ? pkt.get() : nullptr),
-            " use_count=", (pkt ? pkt.use_count() : 0));
-#endif
         if (_cb) 
         {
             _cb(seq, pkt);
@@ -270,7 +224,7 @@ private:
 
     uint32_t distance(Seq a, Seq b) const 
     {
-        return static_cast<uint16_t>(a - b); // 支持回绕
+        return static_cast<uint16_t>(a - b);
     }
 
 private:
@@ -282,7 +236,7 @@ private:
 
     uint16_t _max_gap;
     size_t _max_cache;
-    uint32_t _flush_timeout; // milliseconds
+    uint32_t _flush_timeout; 
 
     size_t _lost_count = 0;
     size_t _drop_count = 0;
@@ -290,209 +244,215 @@ private:
     std::chrono::steady_clock::time_point _last_flush_time;
 };
 
-class RtpPacket : public std::enable_shared_from_this<RtpPacket>
-{
+class RtpPacket {
 public:
     using Ptr = std::shared_ptr<RtpPacket>;
-    RtpPacket();
-    ~RtpPacket();
 
-    static constexpr int kRtpVersion = 2;
-    static constexpr int kRtpHeaderSize = 12;
-    static constexpr int kRtpTcpHeaderSize = 4;
-    static constexpr int kRtpMaxSize = 1500;  
+    static constexpr uint8_t kRtpVersion = 2;
+    static constexpr size_t kRtpHeaderSize = 12;
+    static constexpr size_t kRtpTcpHeaderSize = 4;
+    static constexpr size_t kRtpMaxSize = 1500;
 
+    static Ptr create(size_t capacity = kRtpMaxSize);
 
-    static std::shared_ptr<RtpPacket> create(size_t capacity = kRtpMaxSize);
-
-
-    uint16_t getSeq() const;
-    void setSeq(uint16_t seq);
-
-    uint32_t getStamp() const;
-    void setStamp(uint32_t ts);
-
-    uint64_t getStampMS(bool ntp = true) const;
-
-    uint32_t getSSRC() const;
-    void setSSRC(uint32_t ssrc);
-
-    uint8_t* getPayload();                 
-    size_t getPayloadSize() const;        
-
-    void setPayload(const uint8_t* payload_data, size_t len);
-
-    void setMarker(bool val);
-    bool getMarker() const;
-
-    void setPayloadType(uint8_t pt);
-    uint8_t getPayloadType() const;
-
-    void setVersion(uint8_t version);
-    uint8_t getVersion() const;
-    
 public:
-    TrackType type          = TrackInvalid;
-    uint32_t sample_rate    = 90000;
-    uint64_t ntp_stamp_ms   = 0;
-    int track_index         = -1;
-    std::shared_ptr<uint8_t[]> data;
-    size_t capacity = 0;  
-    size_t size = 0;
-    uint16_t hdr_len;
-    uint16_t payload_off;
-    uint32_t payload_len;
-    bool marker;
-    uint8_t pt;
-    uint32_t ts;
-    uint32_t ssrc;
-    uint32_t seq_;
-    uint8_t version;
-    bool padding;
-    bool extension;
-    uint8_t cc;
-    uint8_t csrc_count;
-    std::array<uint32_t, 15> csrc;
-    uint32_t recv_time_ms;
+    RtpPacket() = default;
+    ~RtpPacket() = default;
+
+    uint16_t getSeq() const { return seq_; }
+    void setSeq(uint16_t seq) { seq_ = seq; }
+
+    uint32_t getStamp() const { return ts_; }
+    void setStamp(uint32_t ts) { ts_ = ts; }
+
+    uint32_t getSSRC() const { return ssrc_; }
+    void setSSRC(uint32_t ssrc) { ssrc_ = ssrc; }
+
+    uint8_t getPayloadType() const { return pt_; }
+    void setPayloadType(uint8_t pt) { pt_ = pt; }
+
+    bool getMarker() const { return marker_; }
+    void setMarker(bool val) { marker_ = val; }
+
+    uint8_t getVersion() const { return version_; }
+    void setVersion(uint8_t version) { version_ = version; }
+
+    uint8_t* getData() { return data_.get(); }
+    const uint8_t* getData() const { return data_.get(); }
+
+    uint8_t* getPayload() { return data_ ? data_.get() + payload_off_ : nullptr; }
+    const uint8_t* getPayload() const { return data_ ? data_.get() + payload_off_ : nullptr; }
+
+    size_t getSize() const { return size_; }
+    size_t getCapacity() const { return capacity_; }
+    size_t getHeaderLen() const { return hdr_len_; }
+    size_t getPayloadSize() const { return payload_len_; }
+
+    void setTrackType(TrackType type) { type_ = type; }
+    TrackType getTrackType() const { return type_; }
+
+    void setSampleRate(uint32_t rate) { sample_rate_ = rate; }
+    uint32_t getSampleRate() const { return sample_rate_; }
+
+    void setTrackIndex(int index) { track_index_ = index; }
+    int getTrackIndex() const { return track_index_; }
+
+    void setRecvTimeMs(uint64_t ms) { recv_time_ms_ = ms; }
+    uint64_t getRecvTimeMs() const { return recv_time_ms_; }
+
+    void reset();
+
+private:
+    TrackType type_ = TrackInvalid;
+    uint32_t sample_rate_ = 90000;
+    uint64_t ntp_stamp_ms_ = 0;
+    int track_index_ = -1;
+
+    std::shared_ptr<uint8_t[]> data_;
+    size_t capacity_ = 0;
+    size_t size_ = 0;
+
+    size_t hdr_len_ = kRtpHeaderSize;
+    size_t payload_off_ = kRtpHeaderSize;
+    size_t payload_len_ = 0;
+
+    bool marker_ = false;
+    uint8_t pt_ = 0;
+    uint32_t ts_ = 0;
+    uint32_t ssrc_ = 0;
+    uint16_t seq_ = 0;
+    uint8_t version_ = kRtpVersion;
+
+    bool padding_ = false;
+    bool extension_ = false;
+    uint8_t cc_ = 0;
+    uint8_t csrc_count_ = 0;
+    std::array<uint32_t, 15> csrc_{};
+
+    uint64_t recv_time_ms_ = 0;
 };
 
-
-
-class RtpTrack : public EnhancedPacketSortor<RtpPacket::Ptr, uint16_t> 
+class RtpTrack
 {
 public:
     using Ptr = std::shared_ptr<RtpTrack>;
+    using OnFrameCallback = std::function<void(const FramePtr&)>;
+    using OnNackCallback = std::function<void(const uint16_t*, size_t)>;
+    using OnPliCallback = std::function<void()>;
+    using OnFirCallback = std::function<void(uint8_t)>;
 
-    RtpTrack(TrackType type, std::string codec, uint8_t payload_type,
-             uint32_t ssrc, uint32_t clock_rate, uint8_t channel_id = 0, bool disable_ntp = false)
-       : _type(type),
-        _codec(std::move(codec)),
-        _ssrc(ssrc),
-        _sample_rate(clock_rate),
-        _channel_id(channel_id),
-        _disable_ntp(disable_ntp),
-        _pt(payload_type) 
-        {
-            setOnPacketSorted(
-                [this](uint16_t seq, const RtpPacket::Ptr& pkt) {
-                    this->onRtpSorted(pkt);
-                }
-            );
-        }
+public:
+    explicit RtpTrack(const TrackInfo& info);
+    ~RtpTrack();
 
+public:
+    const TrackInfo& getTrackInfo() const;
+    const RtpTrackStats& getStats() const;
 
-    uint32_t getSSRC() const { return _ssrc; }
-    uint8_t  getPayloadType() const { return _pt; }
-    TrackType getType() const { return _type; }
-    uint32_t getSampleRate() const { return _sample_rate; }
+    int getTrackIndex() const;
+    TrackType getTrackType() const;
+    CodecId getCodecId() const;
+    uint32_t getSSRC() const;
+    uint8_t getPayloadType() const;
+    uint32_t getSampleRate() const;
 
-    virtual RtpPacket::Ptr inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len) = 0;
-    virtual void inputRtcp(const uint8_t* ptr, size_t len) = 0;
-
-    void setNtpStamp(uint32_t rtp_stamp, uint64_t ntp_stamp_ms);
-    void setPayloadType(uint8_t pt) { _pt = pt; }
+    void setInterleavedChannel(uint8_t rtp_channel, uint8_t rtcp_channel);
     
-    void setRtspTransportInfo(const RtspTransport& info) { _rtsp_transport = info; }
-    const RtspTransport& getRtspTransportInfo() const { return _rtsp_transport; }
 
-    void setInterleavedChannel(int rtp_ch, int rtcp_ch)
-    {
-        _rtsp_transport.transport = RtspTransportType::TcpInterleaved;
-        _rtsp_transport.interleaved_rtp = rtp_ch;
-        _rtsp_transport.interleaved_rtcp = rtcp_ch;
-    }
+public:
+    bool inputRtp(uint8_t* data, size_t len);
+    void inputRtcp(const uint8_t* data, size_t len);
 
-    int getRtpChannel() const { return _rtsp_transport.interleaved_rtp; }
-    int getRtcpChannel() const { return _rtsp_transport.interleaved_rtcp; }
-    bool isTcpInterleaved() const
-    {
-        return _rtsp_transport.transport == RtspTransportType::TcpInterleaved;
-    }
+public:
+    void setOnFrame(OnFrameCallback cb);
+    void setOnNack(OnNackCallback cb);
+    void setOnPli(OnPliCallback cb);
+    void setOnFir(OnFirCallback cb);
 
-    void setMode(const RtspMode& mode) { _rtsp_transport.mode = mode; }
-    const RtspMode& getMode() const { return _rtsp_transport.mode; }
+public:
 
-
-   
-protected:
-    virtual void onRtpSorted(RtpPacket::Ptr rtp) {}
-    virtual void onBeforeRtpSorted(const RtpPacket::Ptr &rtp) {}
 
 private:
-    TrackType _type;
-    std::string _codec;
-    uint32_t _ssrc = 0;
-    uint32_t _sample_rate = 0;
-    uint8_t _channel_id = 0;
-    bool _disable_ntp = false;
-    uint8_t _pt = 0xFF;
-    RtspTransport _rtsp_transport;
+    bool handleRtpPacket(const PacketBufferView& pkt);
+private:
+    TrackInfo info_;
+    RtpTrackStats stats_;
+
+
+    OnFrameCallback on_frame_;
+    OnNackCallback on_nack_;
+    OnPliCallback on_pli_;
+    OnFirCallback on_fir_;
 };
 
 
-
-class RtpVideoTracker : public RtpTrack, public rtcpx::IRtcpObserver
+class RtpTracker
 {
 public:
-    using Ptr = std::shared_ptr<RtpVideoTracker>;
-     RtpVideoTracker(TrackType type,
-                    const std::string& codec,
-                    uint8_t payload_type,
-                    uint32_t ssrc,
-                    uint32_t clock_rate,
-                    uint8_t channel_id = 0,
-                    bool disable_ntp = false)
-        : RtpTrack(type, codec, payload_type, ssrc, clock_rate, channel_id, disable_ntp)
-    {
-        if (codec == "H264" || codec == "h264") 
-        {
-            depacketizer_ = std::make_unique<H264Depacketizer>();
-            rtcp_packet_ = std::make_unique<rtcpx::RtcpReceiverImpl>(this);
-        } 
-        else 
-        {
-            depacketizer_.reset(); 
-        }
-    }
-    RtpPacket::Ptr inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len) override;
+    using Ptr = std::shared_ptr<RtpTracker>;
+    using TrackPtr = std::shared_ptr<RtpTrack>;
+    using OnFrameCallback = std::function<void(int track_index, const FramePtr&)>;
+    using OnTrackAddedCallback = std::function<void(int track_index, const TrackPtr&)>;
+    using OnTrackRemovedCallback = std::function<void(int track_index)>;
 
+public:
+    RtpTracker() = default;
+    ~RtpTracker() = default;
 
-protected:
-    void onRtpSorted(RtpPacket::Ptr rtp) override;
-    void inputRtcp(const uint8_t* ptr, size_t len) override;
-    void OnReceiverReport(uint32_t sender_ssrc, const std::vector<rtcpx::RrBlock>& blocks) override;
-    void OnPli(uint32_t media_ssrc) override;
-    void OnNack(uint32_t media_ssrc, const std::vector<uint16_t>& missing_seq) override;
+public:
+    // 添加轨道
+    bool addTrack(int track_index, const TrackPtr& track);
+
+    // 删除轨道
+    void removeTrack(int track_index);
+
+    // 清空全部轨道
+    void clear();
+
+    // 获取轨道
+    TrackPtr getTrack(int track_index) const;
+
+    // 按类型查找
+    TrackPtr getTrackByType(TrackType type) const;
+
+    // 是否存在
+    bool hasTrack(int track_index) const;
+
+    // 轨道数量
+    size_t size() const;
+
+    // 获取全部轨道
+    std::vector<TrackPtr> getAllTracks() const;
+
+public:
+    // RTP 分发
+    bool inputRtp(int track_index,
+                  TrackType type,
+                  int sample_rate,
+                  uint8_t* ptr,
+                  size_t len);
+
+    // RTCP 分发
+    bool inputRtcp(int track_index,
+                   const uint8_t* ptr,
+                   size_t len);
+
+public:
+    void setOnFrame(OnFrameCallback cb);
+    void setOnTrackAdded(OnTrackAddedCallback cb);
+    void setOnTrackRemoved(OnTrackRemovedCallback cb);
 
 private:
-    std::vector<RtpPacket::Ptr> cache_;
-    std::vector<uint8_t> nalu_buf_;
-    uint32_t cur_ts_ = 0;
-    bool has_ts_ = false;
-    bool assembling_fu_ = false;
-    uint8_t fu_nal_type_ = 0;
+    void bindTrackFrame(int track_index, const TrackPtr& track);
 
-    static inline void append_start_code(std::vector<uint8_t>& out);
-    
-    bool isKeyFrame(const RtpPacket::Ptr& pkt);
-    std::unique_ptr<H264Depacketizer> depacketizer_;
-    std::unique_ptr<rtcpx::RtcpReceiverImpl> rtcp_packet_;
+private:
+    std::unordered_map<int, TrackPtr> runtime_tracks_;
+
+    OnFrameCallback on_frame_;
+    OnTrackAddedCallback on_track_added_;
+    OnTrackRemovedCallback on_track_removed_;
 };
 
-class RtpAudioTracker : public RtpTrack
-{
-public:
-    RtpAudioTracker(TrackType type,
-                    const std::string& codec,
-                    uint8_t payload_type,
-                    uint32_t ssrc,
-                    uint32_t clock_rate,
-                    uint8_t channel_id = 0,
-                    bool disable_ntp = false)
-        : RtpTrack(type, codec, payload_type, ssrc, clock_rate, channel_id, disable_ntp)
-    {}
-    RtpPacket::Ptr inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len) override;
 
-    virtual void inputRtcp(const uint8_t* ptr, size_t len) override { (void)ptr; (void)len; }
-};
+
 #endif

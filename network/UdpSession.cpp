@@ -129,7 +129,7 @@ void UdpMuxHandler::OnDatagram(const network::SocketAddr& src,
 
     WorkJob job{};
     job.key  = endpoint_id;
-    job.type = ToWorkJobType(proto);
+    job.type = static_cast<WorkType>(ToWorkJobType(proto));
     job.pkt  = pkt;
     job.enqueue_ts = pkt->recv_ts;
     job.handler = DispatchHandler(proto);

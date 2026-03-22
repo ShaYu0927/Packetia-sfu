@@ -148,8 +148,6 @@ add_library(rtsp STATIC
     Rtsp/MediaSource.h
     Rtsp/RtspConnection.cpp
     Rtsp/RtspConnection.h
-    Rtsp/RtpThreadPool.cpp
-    Rtsp/RtpThreadPool.h
     Rtsp/RtpInterleaved.cpp
     Rtsp/RtspSession.cpp
     Rtsp/RtspUtil.cpp

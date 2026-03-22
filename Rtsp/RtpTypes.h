@@ -6,18 +6,18 @@
 #include <unistd.h>
 #include <vector>
 #include <memory>
+#include <array>
+#include "Rtsp.h"
 
 
-#define RTP_HEADER_SIZE   	   12
-#define MAX_RTP_PAYLOAD_SIZE   1420
-#define RTP_MAX_PACKET_SIZE    (RTP_HEADER_SIZE + MAX_RTP_PAYLOAD_SIZE)
+static constexpr size_t kRtpHeaderSize = 12;
+static constexpr size_t kMaxRtpPayloadSize = 1420;
+static constexpr size_t kRtpMaxPacketSize = kRtpHeaderSize + kMaxRtpPayloadSize;
 #define RTP_VERSION			   2
 #define RTP_TCP_HEAD_SIZE	   4
 #define RTP_VPX_HEAD_SIZE	   1
 
 #define MAX_MEDIA_CHANNEL 16
-
-
 
 
 typedef enum RTPTransportMode
@@ -38,13 +38,17 @@ typedef enum RTPTransportMode
 enum TrackType
 {	
 	TrackInvalid = -1,
-	TrackVideo = 0,
-	TrackAudio,
-	TrackTitle,
-	TrackApplication,
-	TrackMax
+    TrackVideo = 0,
+    TrackAudio,
+    TrackTitle,
+    TrackApplication,
+    TrackMax
 };
 
+enum class RTPVERSION
+{
+    VERSION_ONE
+};
 
 enum class MediaTransportType 
 {
@@ -112,18 +116,85 @@ struct RtpRawPacket
     uint32_t timestamp = 0;
     uint8_t payload_type = 0;
     bool marker = false;
+
+    std::size_t header_size = kRtpHeaderSize;
+    std::size_t payload_offset = kRtpHeaderSize;
+    std::size_t payload_size = 0;
 };
 
-namespace rtp_limits 
+struct RtpHeaderFields {
+    RTPVERSION version = RTPVERSION::VERSION_ONE;
+    bool padding = false;
+    bool extension = false;
+    uint8_t cc = 0;
+    bool marker = false;
+    uint8_t payload_type = 0;
+    uint16_t seq = 0;
+    uint32_t timestamp = 0;
+    uint32_t ssrc = 0;
+    uint8_t csrc_count = 0;
+    std::array<uint32_t, 15> csrc{};
+};
+
+struct PacketBufferView 
 {
+    std::shared_ptr<uint8_t[]> data;
+    size_t capacity = 0;
+    size_t size = 0;
+    uint16_t header_len = kRtpHeaderSize;
+    uint16_t payload_offset = kRtpHeaderSize;
+    uint32_t payload_len = 0;
+};
 
-    // max Rtp size
-    static constexpr std::size_t kMaxPayloadBytes = 1200;
+struct RtpPacketMeta 
+{
+    TrackType track_type = TrackInvalid;
+    uint32_t sample_rate = 90000;
+    uint64_t ntp_stamp_ms = 0;
+    int track_index = -1;
+    uint32_t recv_time_ms = 0;
+};
 
-    // RTP fixed header = 12 bytes (不含 CSRC/extension)
-    static constexpr std::size_t kMinHeaderBytes  = 12;
+enum class CodecId
+{
+    Unknown = 0,
+    H264,
+    H265,
+    AAC,
+    Opus,
+    PCMA,
+    PCMU
+};
 
-    // 允许的最大 RTP 包长度（header + payload）
-    static constexpr std::size_t kMaxPacketBytes  = kMinHeaderBytes + kMaxPayloadBytes;
 
-}
+struct TrackInfo
+{
+    RtspTransport _rtsp_transport;
+    TrackType type = TrackInvalid;
+    CodecId codec_id = CodecId::Unknown;
+    std::string codec_name;
+
+    uint32_t ssrc = 0;
+    uint32_t sample_rate = 90000;
+    uint8_t payload_type = 0xFF;
+
+    int track_index = -1;
+};
+
+
+
+struct RtpTrackStats
+{
+    uint64_t received_packets = 0;
+    uint64_t sorted_packets = 0;
+    uint64_t dropped_packets = 0;
+    uint64_t lost_packets = 0;
+    uint64_t duplicate_packets = 0;
+    uint64_t out_of_order_packets = 0;
+
+    uint16_t last_seq = 0;
+    uint32_t last_ts = 0;
+    bool seen_packet = false;
+};
+
+

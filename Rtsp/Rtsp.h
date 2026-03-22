@@ -45,7 +45,6 @@ struct RtspTransport
 
     RtspTransportType transport = RtspTransportType::Unknown;
     RtspMode mode = RtspMode::ModeUnknown;
-;         
 };
 
 class Rtsp : public std::enable_shared_from_this<Rtsp>

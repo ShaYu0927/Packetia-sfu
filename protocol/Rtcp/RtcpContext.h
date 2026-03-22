@@ -28,26 +28,43 @@ namespace rtcpx
         int32_t  rtt_ms = -1;           // optional
     };
 
-    /* ---------- Observer (events) ---------- */
-    class IRtcpObserver 
-    {
-    public:
-        virtual ~IRtcpObserver() = default;
+class IRtcpObserver
+{
+public:
+    virtual ~IRtcpObserver() = default;
 
-        /* RR / SR related */
-        virtual void OnReceiverReport(uint32_t sender_ssrc,
-                                        const std::vector<RrBlock>& blocks) = 0;
+    virtual void OnReceiverReport(uint32_t sender_ssrc,
+                                  uint32_t media_ssrc,
+                                  uint8_t fraction_lost,
+                                  int32_t cumulative_lost,
+                                  uint32_t highest_seq,
+                                  uint32_t jitter,
+                                  uint32_t lsr,
+                                  uint32_t dlsr) = 0;
 
-        /* Generic NACK feedback: list of missing RTP seq */
-        virtual void OnNack(uint32_t media_ssrc,
-                            const std::vector<uint16_t>& missing_seq) = 0;
+    virtual void OnSenderReport(uint32_t sender_ssrc,
+                                uint64_t ntp,
+                                uint32_t rtp_ts,
+                                uint32_t packet_count,
+                                uint32_t octet_count) = 0;
 
-        /* PLI/FIR: request keyframe for a media ssrc */
-        virtual void OnPli(uint32_t media_ssrc) = 0;
+    virtual void OnNack(uint32_t sender_ssrc,
+                        uint32_t media_ssrc,
+                        const uint16_t* seqs,
+                        size_t count) = 0;
 
-        /* Optional: BYE / other events */
-        virtual void OnBye(uint32_t ssrc) {}
-    };
+    virtual void OnPli(uint32_t sender_ssrc,
+                       uint32_t media_ssrc) = 0;
+
+    virtual void OnFir(uint32_t sender_ssrc,
+                       uint32_t media_ssrc,
+                       uint8_t seq_nr) = 0;
+
+    virtual void OnBye(uint32_t sender_ssrc) = 0;
+
+    virtual void OnRttUpdated(uint32_t media_ssrc,
+                              uint32_t rtt_ms) = 0;
+};
 
     /* ---------- Receiver (parse incoming RTCP) ---------- */
     class IRtcpReceiver 

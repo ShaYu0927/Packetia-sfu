@@ -1,4 +1,5 @@
 #include "EndpointBase.h"
+#include "logger.h"
 
 namespace utils 
 {
@@ -53,7 +54,7 @@ void EndpointManager::Clear()
     endpoints_.clear();
 }
 
-void EndpointJobHandler::handle(WorkJob&& job)
+void EndpointJobHandler::handle(WorkJob& job)
 {
     if (!mgr_)
     {
@@ -80,16 +81,7 @@ void EndpointJobHandler::handle(WorkJob&& job)
 
 void EndpointBase::ProcessJob(WorkJob& job)
 {
-    switch (job.type)
-    {
-        case WORKJOB_TYPE_RTP:   OnRtp(job); break;
-        case WORKJOB_TYPE_RTCP:  OnRtcp(job); break;
-        case WORKJOB_TYPE_STUN:  OnStun(job); break;
-        case WORKJOB_TYPE_DTLS:  OnDtls(job); break;
-        case WORKJOB_TYPE_RTSP:  OnRtsp(job); break;
-        case WORKJOB_TYPE_FN:    OnFunction(job); break;
-        default:                 OnUnknown(job); break;
-    }
+   
 }
 
 }

@@ -14,6 +14,8 @@ public:
 
     bool OnRtcpPacket(const uint8_t* data, size_t len) override;
 
+    void HandleSingleRtcpPacket(const uint8_t* p,size_t len, uint8_t fmt, uint8_t pt);
+
     void SetObserver(IRtcpObserver* obs) override;
     void SetLocalSsrc(uint32_t ssrc) override;
     void SetRemoteSsrc(uint32_t ssrc) override;

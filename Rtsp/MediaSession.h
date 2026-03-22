@@ -30,6 +30,14 @@ public:
         std::string fmtp;
     };
 
+    struct ChannelBinding
+    {
+        bool valid = false;
+        int track_id = -1;
+        bool is_rtcp = false;
+        uint64_t key = 0;
+    };
+
     using Ptr = std::shared_ptr<MediaSession>;
 
     MediaSession() = default;
@@ -58,11 +66,11 @@ public:
     bool HasPublisher() const { return has_publisher_; }
     void SetHasPublisher(bool v) { has_publisher_ = v; }
 
+    bool BindInterleavedChannel(uint8_t channel, int track_id, bool is_rtcp);
+    bool GetChannelBinding(uint8_t channel, ChannelBinding* out) const;
+
 public:
     friend class MediaSessionManager;
-
-    
-
 private:
     std::string suffix_;
     std::string sdp_;
@@ -73,10 +81,11 @@ private:
     std::atomic_bool ready_{false};
     bool has_publisher_{false};
 
-    std::unordered_map<int, MediaTrackInfo> track_infos_;
-    std::unordered_map<std::string, int> control_to_track_;
-    std::unordered_map<int, std::shared_ptr<RtpTrack>> runtime_tracks_;
-    std::unordered_map<uint32_t, int> ssrc_to_track_;
+    std::unordered_map<int, MediaTrackInfo>             track_infos_;
+    std::unordered_map<std::string, int>                control_to_track_;
+    std::unordered_map<int, std::shared_ptr<RtpTrack>>  runtime_tracks_;
+    std::unordered_map<uint32_t, int>                   ssrc_to_track_;
+    std::array<ChannelBinding, 256>                     channel_bindings_;
 
 };
 

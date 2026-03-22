@@ -16,7 +16,6 @@ std::shared_ptr<RtspConnection> RtspConnection::Create(std::shared_ptr<RtspServe
     auto conn = std::shared_ptr<RtspConnection>(new RtspConnection(rtsp_server, task_scheduler, sockfd));
 
     conn->InitCallbacks();
-    conn->Start();
 
     return conn;
 }
@@ -27,15 +26,6 @@ RtspConnection::~RtspConnection()
 
 void RtspConnection::InitCallbacks()
 {
-    std::weak_ptr<RtspConnection> weak_self =
-    std::static_pointer_cast<RtspConnection>(TcpConnection::shared_from_this());
-
-
-    this->SetReadCallback([weak_self](std::shared_ptr<TcpConnection>, BufferReader& buffer) -> bool {
-        auto self = weak_self.lock();
-        if (!self) return false;         
-        return self->onRead(buffer);
-    });
 
     
 }
@@ -50,7 +40,6 @@ void RtspConnection::SendRtspMessage(std::shared_ptr<char> data, uint32_t size)
     LOG_DEBUG("RTSP message content (" + std::to_string(size) + " bytes):");
     LOG_DEBUG("\n" + std::string(data.get(), size));
     LOG_DEBUG("End of RTSP message content");
-	this->Send(data, size);
 	return;
 }
 

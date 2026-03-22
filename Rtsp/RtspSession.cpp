@@ -1,4 +1,5 @@
 #include "RtspSession.h"
+#include "logger.h"
 namespace rtsp 
 {
 static inline int FindCrlfCrlf(const char* p, size_t n)
@@ -123,7 +124,54 @@ void RtspSession::SendRaw(std::string_view s,size_t size)
     conn_->Send(s.data(), s.size());
 }
 
+void RtspSession::OnInterleaved(int channel,const uint8_t*p, int len)
+{
+    if (channel < 0 || channel > 255 || !p || len <= 0)
+    {
+        LOG_ERROR("invalid interleaved packet, channel=", channel, " len=", len);
+        return;
+    }
 
+    auto media = media_session_;
+    if (!media)
+    {
+        LOG_ERROR("invalid media session");
+        return;
+    }
+
+    MediaSession::ChannelBinding binding;
+    if (!media->GetChannelBinding(static_cast<uint8_t>(channel), &binding))
+    {
+        LOG_ERROR("channel binding not found, channel=", channel,
+                  " session_id=", media->GetId());
+        return;
+    }
+
+    if (!binding.valid)
+    {
+        LOG_ERROR("channel binding invalid, channel=", channel,
+                  " session_id=", media->GetId());
+        return;
+    }
+
+    WorkJob job;
+    job.key = binding.key;
+    job.type = binding.is_rtcp ? WorkType::Rtcp : WorkType::Rtp;
+    job.raw.data = new uint8_t[len];
+    std::memcpy(job.raw.data, p, static_cast<size_t>(len));
+    job.raw.len = static_cast<uint32_t>(len);
+    job.enqueue_ts = Timestamp::NowMs();
+
+    if (WorkerService::post("meida",std::move(job)) != 0)
+    {
+        if (job.deleter)
+            job.deleter(job);
+
+        LOG_ERROR("post interleaved packet failed, channel=", channel,
+                  " len=", len);
+    }
+
+}
 
 void RtspSession::Dispatch(const char* p, size_t total)
 {
@@ -187,7 +235,7 @@ RtspSession::ParseResult RtspSession::TryConsumeInterleaved(BufferReader &buffer
 
     if (n < total) return ParseResult::NEED_MORE;
 
-    // OnInterleaved(channel, p + 4, len); 
+    OnInterleaved(channel, p + 4, len); 
 
     buffer.Retrieve(total);
     return ParseResult::CONSUMED;
@@ -296,6 +344,7 @@ void RtspSession::HandleCmdANNOUNCE(RtspRequest::RtspRequestInfo& req)
 void RtspSession::HandleCmdSetup(RtspRequest::RtspRequestInfo& req)
 {
     std::string res  = rtsp_request_->HandleCmdSetup(req);
+    media_session_ = rtsp_request_->GetMediaSession();
     this->SendRaw(res,(size_t)res.size());
 }
 void RtspSession::HandleCmdRecord(RtspRequest::RtspRequestInfo& req)

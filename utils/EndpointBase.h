@@ -114,7 +114,7 @@ public:
     }
 
     ~EndpointJobHandler() override = default;
-    void handle(WorkJob&& job) override;
+    void handle(WorkJob& job) override;
 
 
 private:

@@ -68,7 +68,7 @@ private:
 
 
     std::shared_ptr<Channel>       rtp_channel_;                        // rtp socket
-	std::shared_ptr<Channel>       rtcp_channels_[MAX_MEDIA_CHANNEL];   //rtcp socket
+	std::shared_ptr<Channel>       rtcp_channels_[2];   //rtcp socket
 };
 
 

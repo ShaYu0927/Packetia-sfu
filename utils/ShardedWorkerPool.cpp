@@ -135,16 +135,12 @@ std::size_t ShardedWorkerPool::shard_index(std::uint64_t key) const
 
 void ShardedWorkerPool::worker_loop(Worker &worker, std::size_t idx)
 {
-    LOG_INFO("worker_loop start, idx=", idx);
-
     for (;;)
     {
         WorkJob job;
 
         {
             std::unique_lock<std::mutex> lk(worker.mtx);
-
-            LOG_INFO("worker wait, idx=", idx, " qsize=", worker.q.size());
 
             worker.cv.wait(lk, [&] {
                 return !worker.running.load() || !worker.q.empty();
@@ -163,11 +159,6 @@ void ShardedWorkerPool::worker_loop(Worker &worker, std::size_t idx)
             job = std::move(worker.q.front());
             worker.q.pop_front();
             worker.st.dequeued++;
-
-            LOG_INFO("worker pop job, idx=", idx,
-                     " key=", job.key,
-                     " type=", job.type,
-                     " qsize_after=", worker.q.size());
         }
 
         if (!handler_)
@@ -177,7 +168,7 @@ void ShardedWorkerPool::worker_loop(Worker &worker, std::size_t idx)
         }
 
         LOG_INFO("worker handle begin, idx=", idx, " key=", job.key);
-        handler_->handle(std::move(job));
+        handler_->handle(job);
         LOG_INFO("worker handle end, idx=", idx, " key=", job.key);
     }
 
@@ -223,13 +214,6 @@ int WorkerService::post(const std::string &name, WorkJob &&job)
     return pool->post(std::move(job));
 }
 
-int WorkerService::post_fn(const std::string& name, std::function<void()> fn)
-{
-    WorkJob job{};
-    job.type = 0;
-    job.fn = std::move(fn);
-    return post(name, std::move(job));
-}
 
 bool WorkerService::exists(const std::string &name)
 {

@@ -1,6 +1,12 @@
 #include "MediaSession.h"
 #include "SdpMode.h"
 
+static uint64_t MakeStreamKey(uint32_t session_id, uint32_t track_id)
+{
+    return (static_cast<uint64_t>(session_id) << 32) |
+           static_cast<uint32_t>(track_id);
+}
+
 MediaSession::Ptr MediaSession::CreateNew(const std::string& suffix)
 {
     auto session = std::make_shared<MediaSession>();
@@ -160,26 +166,26 @@ RtpTrack::Ptr MediaSession::CreateTrack(const MediaTrackInfo& info)
 
     if (info.type == TrackType::TrackVideo)
     {
-        return std::make_shared<RtpVideoTracker>(
-            info.type,
-            info.codec,
-            static_cast<uint8_t>(info.payload_type),
-            ssrc,
-            static_cast<uint32_t>(info.clock_rate),
-            channel_id,
-            disable_ntp);
+        // return std::make_shared<RtpVideoTracker>(
+        //     info.type,
+        //     info.codec,
+        //     static_cast<uint8_t>(info.payload_type),
+        //     ssrc,
+        //     static_cast<uint32_t>(info.clock_rate),
+        //     channel_id,
+        //     disable_ntp);
     }
 
     if (info.type == TrackType::TrackAudio)
     {
-        return std::make_shared<RtpAudioTracker>(
-            info.type,
-            info.codec,
-            static_cast<uint8_t>(info.payload_type),
-            ssrc,
-            static_cast<uint32_t>(info.clock_rate),
-            channel_id,
-            disable_ntp);
+        // return std::make_shared<RtpAudioTracker>(
+        //     info.type,
+        //     info.codec,
+        //     static_cast<uint8_t>(info.payload_type),
+        //     ssrc,
+        //     static_cast<uint32_t>(info.clock_rate),
+        //     channel_id,
+        //     disable_ntp);
     }
 
     return nullptr;
@@ -200,3 +206,31 @@ std::shared_ptr<RtpTrack> MediaSession::GetRtpTrack(const std::string& control) 
     return track_it->second;
 }
 
+bool MediaSession::BindInterleavedChannel(uint8_t channel, int track_id, bool is_rtcp)
+{
+    std::lock_guard<std::mutex> lk(track_mtx_);
+
+    auto it = runtime_tracks_.find(track_id);
+    if (it == runtime_tracks_.end())
+        return false;
+
+    ChannelBinding& b = channel_bindings_[channel];
+    b.valid = true;
+    b.track_id = track_id;
+    b.is_rtcp = is_rtcp;
+    b.key = MakeStreamKey(session_id_, static_cast<uint32_t>(track_id));
+    return true;
+}
+
+
+bool MediaSession::GetChannelBinding(uint8_t channel, ChannelBinding* out) const
+{
+    if (!out) return false;
+
+    std::lock_guard<std::mutex> lk(track_mtx_);
+    const auto& b = channel_bindings_[channel];
+    if (!b.valid) return false;
+
+    *out = b;
+    return true;
+}

@@ -44,14 +44,12 @@ public:
     explicit RtspSession(RtspConnection::Ptr conn)
         : conn_(std::move(conn))
         , rtsp_request_(std::make_unique<RtspRequest>())
-        , packet_pool_(std::make_unique<PacketPool>(2048, 1000))
     {
-        interleaved_.SetPacketPool(packet_pool_.get());
         task_scheduler_ = conn_->GetTaskScheduler();
     }
 
     void SendRaw(std::string_view s,size_t size);
-
+    void OnInterleaved(int channel,const uint8_t*p, int len);
     void Dispatch(const char* p, size_t total);
 
     ParseResult TryConsumeOneFrame(BufferReader& buffer);
@@ -92,6 +90,7 @@ private:
 
     SessionMode mode_ = RTSP_SERVER;
     SessionState state_ = INIT;
+    MediaSession::Ptr media_session_;
 };
 }
 

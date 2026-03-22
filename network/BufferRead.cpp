@@ -1,5 +1,6 @@
 #include "BufferRead.h"
 #include "Socket.h"
+#include <cstdint>
 
 
 const char BufferReader::kCRLF[] = "\r\n";
@@ -101,7 +102,7 @@ uint32_t ReadUint24LE(char *data)
     return (p[2] << 16) | (p[1] << 8) | p[0];
 }
 
-uint16_t ReadUint16BE(char *data)
+uint16_t ReadUint16BE(const uint8_t*data)
 {
     uint8_t* p = (uint8_t*)data;
     return (p[0] << 8) | p[1];

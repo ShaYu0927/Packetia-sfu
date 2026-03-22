@@ -12,6 +12,8 @@ target_link_libraries(test_rtp_input
     LOGGER
     COMMON
     pthread
+    GTest::gtest
+    GTest::gtest_main
 )
 
 target_include_directories(test_rtp_input PRIVATE

@@ -44,13 +44,13 @@ public:
     {
         {
             std::lock_guard<std::mutex> lock(mtx_);
-            handled_types_.push_back(job.type);
+            handled_types_.push_back(static_cast<uint32_t>(job.type));
             ++handled_count_;
         }
 
         cv_.notify_all();
 
-        if (job.type == kWorkClose)
+        if (job.type == WorkType::Invalid)
         {
             Stop();
         }
@@ -116,16 +116,16 @@ protected:
                     std::atomic<int>* release_counter = nullptr)
     {
         WorkJob job;
-        job.key = endpoint_id;
-        job.type = type;
-        job.payload_len = 0;
-        job.enqueue_ts = 0;
-        job.deleter = [release_counter](WorkJob&) {
-            if (release_counter)
-            {
-                ++(*release_counter);
-            }
-        };
+        // job.key = endpoint_id;
+        // job.type = type;
+        // job.payload_len = 0;
+        // job.enqueue_ts = 0;
+        // job.deleter = [release_counter](WorkJob&) {
+        //     if (release_counter)
+        //     {
+        //         ++(*release_counter);
+        //     }
+        // };
         return job;
     }
 
