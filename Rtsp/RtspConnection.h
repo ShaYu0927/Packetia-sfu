@@ -35,18 +35,8 @@ public:
 
 
     virtual ~RtspConnection();
-    void InitCallbacks();
-
-    ConnectionType GetConnectionType() const override { return ConnectionType::Rtsp; }
-
-    void OnMessage(BufferReader* buffer);
     bool isActive() const { return active_; } 
-
-
     void SendRtspMessage(std::shared_ptr<char> data, uint32_t size);
-
-    int RtspConn_ConsumeInterleaved(BufferReader& buffer);
-
 protected:
     bool onRead(BufferReader& buffer);
     bool onWrite(BufferWirte& buffer);
@@ -60,15 +50,10 @@ private:
 
 private:
     bool active_ = false;
-    std::atomic<int> heart_count_ = 0;
     std::shared_ptr<RtspServer> rtsp_server_;
     TaskScheduler *task_scheduler_;
     ConnectionMode mode_ = RTSP_SERVER;
     ConnectionState state_ = INIT;
-
-
-    std::shared_ptr<Channel>       rtp_channel_;                        // rtp socket
-	std::shared_ptr<Channel>       rtcp_channels_[2];   //rtcp socket
 };
 
 

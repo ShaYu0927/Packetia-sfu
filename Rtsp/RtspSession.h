@@ -4,7 +4,6 @@
 #include "TcpSession.h"
 #include "RtspMessage.h"
 #include "ShardedWorkerPool.h"
-#include "RtpInterleaved.h"
 #include "RtspConnection.h"
 #include <cstddef>
 #include "Sdp.h"
@@ -48,6 +47,11 @@ public:
         task_scheduler_ = conn_->GetTaskScheduler();
     }
 
+    ~RtspSession()
+    {
+        LOG_INFO("RtspSession destroyed, fd=" + std::to_string(conn_ ? conn_->GetSocket() : -1));
+    }
+
     void SendRaw(std::string_view s,size_t size);
     void OnInterleaved(int channel,const uint8_t*p, int len);
     void Dispatch(const char* p, size_t total);
@@ -73,7 +77,7 @@ public:
     void HandleCmdTeardown(RtspRequest::RtspRequestInfo& req);
 
 
-protected:
+public:
     bool OnRead(TcpConnection::Ptr conn, BufferReader& buffer) override;
     void OnClosed(int reason) override;
     void Start() override;
@@ -85,7 +89,6 @@ private:
     std::unique_ptr<sdp::Sdp> sdp_;
     std::unique_ptr<PacketPool> packet_pool_;
     ShardedWorkerPool* media_pool_ = nullptr;
-    RtpInterleaved interleaved_;
     int session_id_{0};
 
     SessionMode mode_ = RTSP_SERVER;

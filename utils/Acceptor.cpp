@@ -40,7 +40,7 @@ int Acceptor::Listen(std::string ip, uint16_t port)
     {
 		return -1;
 	}
-    channel_ptr_->SetReadCallback([this]() { this->OnAccept(); }); //有新连接，触发回调函数
+    channel_ptr_->SetReadCallback([this]() { this->OnAccept(); });
 	channel_ptr_->EnableReading();
     LOG_INFO("EnableReading called on fd=" + std::to_string(tcp_socket_->GetSocket()));
 	event_loop_->UpdateChannel(channel_ptr_);

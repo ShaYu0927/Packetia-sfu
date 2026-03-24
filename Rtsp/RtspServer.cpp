@@ -1,7 +1,7 @@
 #include "RtspServer.h"
 #include "RtspSession.h"
 #include "DefaultSessionFactory.h"
-#include "RtspConnection.h"
+
 
 RtspServer::RtspServer(EventLoop* event_loop)
     : TcpServer(event_loop)
@@ -37,6 +37,27 @@ TcpConnection::Ptr RtspServer:: OnConnect(SOCKET sockfd)
                                        sockfd);
 
     std::weak_ptr<RtspServer> weak_server = shared_from_this();
+    auto rtsp_conn = std::dynamic_pointer_cast<RtspConnection>(conn);
+    if (!rtsp_conn)
+    {
+        LOG_ERROR("cast to RtspConnection failed, sockfd=" + std::to_string(sockfd));
+        return conn;
+    }
+
+    auto session = std::make_shared<rtsp::RtspSession>(rtsp_conn);
+    sessions_[sockfd] = session;
+    std::weak_ptr<rtsp::RtspSession> weak_session = session;
+    conn->SetReadCallback(
+        [weak_session](TcpConnection::Ptr conn, BufferReader& buffer) -> bool
+        {
+            auto session = weak_session.lock();
+            if (!session)
+            {
+                LOG_ERROR("RtspSession expired, fd=" + std::to_string(conn->GetSocket()));
+                return false;
+            }
+            return session->OnRead(conn, buffer);
+        });
 
     conn->SetDisconnectCallback([weak_server](TcpConnection::Ptr conn) {
         auto server = weak_server.lock();
@@ -57,6 +78,6 @@ TcpConnection::Ptr RtspServer:: OnConnect(SOCKET sockfd)
             }, 100);
         }
     });
-
+    conn->Start();
     return conn;
 }

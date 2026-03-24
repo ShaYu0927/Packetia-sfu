@@ -102,7 +102,6 @@ protected:
     TaskScheduler *task_scheduler_;
     std::mutex mutex_;
     std::atomic_bool is_closed_;
-
 };
 
 

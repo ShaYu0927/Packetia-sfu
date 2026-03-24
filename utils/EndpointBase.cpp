@@ -63,7 +63,7 @@ void EndpointJobHandler::handle(WorkJob& job)
         return;
     }
 
-    auto endpoint = mgr_->Find(job.key);
+    endpoint = mgr_->Find(job.key);
     if (!endpoint)
     {
         if (job.deleter) job.deleter(job);
@@ -81,7 +81,21 @@ void EndpointJobHandler::handle(WorkJob& job)
 
 void EndpointBase::ProcessJob(WorkJob& job)
 {
-   
+    switch (job.type)
+    {
+    case WorkType::Rtp:
+        OnRtp(job);
+        break;
+
+    case WorkType::Rtcp:
+        OnRtcp(job);
+        break;
+
+    default:
+        LOG_ERROR("unsupported job type, key=", job.key,
+                  " type=", static_cast<int>(job.type));
+        break;
+    }
 }
 
 }

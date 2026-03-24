@@ -138,7 +138,6 @@ void ShardedWorkerPool::worker_loop(Worker &worker, std::size_t idx)
     for (;;)
     {
         WorkJob job;
-
         {
             std::unique_lock<std::mutex> lk(worker.mtx);
 
@@ -166,13 +165,8 @@ void ShardedWorkerPool::worker_loop(Worker &worker, std::size_t idx)
             LOG_ERROR("worker handler is null, idx=", idx);
             continue;
         }
-
-        LOG_INFO("worker handle begin, idx=", idx, " key=", job.key);
         handler_->handle(job);
-        LOG_INFO("worker handle end, idx=", idx, " key=", job.key);
     }
-
-    LOG_INFO("worker_loop exit, idx=", idx);
 }
 
 int WorkerService::create_pool(const std::string &name, std::size_t worker_count, std::shared_ptr<IJobHandler> handler, std::size_t max_queue_len, ShardedWorkerPool::DropPolicy drop)

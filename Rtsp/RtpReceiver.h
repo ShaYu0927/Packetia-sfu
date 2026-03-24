@@ -210,8 +210,6 @@ public:
 
 
 private:
-    
-
     NackCallback _on_nack;
     PliCallback _on_pli;
     FirCallback _on_fir;

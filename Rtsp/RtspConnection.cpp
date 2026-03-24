@@ -14,23 +14,10 @@ RtspConnection::RtspConnection(std::shared_ptr<RtspServer> rtsp_server, TaskSche
 std::shared_ptr<RtspConnection> RtspConnection::Create(std::shared_ptr<RtspServer> rtsp_server, TaskScheduler *task_scheduler, SOCKET sockfd)
 {
     auto conn = std::shared_ptr<RtspConnection>(new RtspConnection(rtsp_server, task_scheduler, sockfd));
-
-    conn->InitCallbacks();
-
     return conn;
 }
 
 RtspConnection::~RtspConnection()
-{
-}
-
-void RtspConnection::InitCallbacks()
-{
-
-    
-}
-
-void RtspConnection::OnMessage(BufferReader *buffer)
 {
 }
 
@@ -45,8 +32,6 @@ void RtspConnection::SendRtspMessage(std::shared_ptr<char> data, uint32_t size)
 
 bool RtspConnection::onRead(BufferReader &buffer)
 {
-
-
     return true;
 }
 
