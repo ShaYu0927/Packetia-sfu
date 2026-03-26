@@ -1,4 +1,4 @@
-#include "MediaSession.h"
+#include "RtspMediaSession.h"
 #include "SdpMode.h"
 
 static uint64_t MakeStreamKey(uint32_t session_id, uint32_t track_id)

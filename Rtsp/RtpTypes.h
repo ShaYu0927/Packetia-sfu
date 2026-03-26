@@ -61,22 +61,20 @@ enum class MediaTransportType
 /* track Info */
 typedef struct RtpTrackInfo 
 {
-    int payload_type;       // RTP payload type，比如 96, 97
-    std::string codec;      // 编码类型，比如 H265, MPEG4-GENERIC
-    int clock_rate;         // 时钟频率，比如 90000, 44100
-    int channels;           // 音频通道数，视频为 0 或 1
+    int payload_type;       
+    std::string codec;      
+    int clock_rate;         
+    int channels;           
 
-    std::string control;    // control:streamid=0
-    std::string fmtp;       // 原始的 fmtp 整串
-    std::string rtpmap;     // 原始的 rtpmap 整串
+    std::string control;    
+    std::string fmtp;       
+    std::string rtpmap;    
 
-    // H.265 
     std::string vps;
     std::string sps;
     std::string pps;
 
-    // AAC 
-    std::string audio_config;  // config=1210
+    std::string audio_config;  
 }RtpTrackInfo;
 
 typedef struct RtspSessionDesc 
@@ -122,7 +120,8 @@ struct RtpRawPacket
     std::size_t payload_size = 0;
 };
 
-struct RtpHeaderFields {
+struct RtpHeaderFields 
+{
     RTPVERSION version = RTPVERSION::VERSION_ONE;
     bool padding = false;
     bool extension = false;

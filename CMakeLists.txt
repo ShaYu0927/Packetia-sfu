@@ -143,8 +143,8 @@ add_library(rtsp STATIC
     Rtsp/RtspMessage.h
     Rtsp/RtspServer.cpp
     Rtsp/RtspServer.h
-    Rtsp/MediaSession.cpp
-    Rtsp/MediaSession.h
+    Rtsp/RtspMediaSession.cpp
+    Rtsp/RtspMediaSession.h
     Rtsp/MediaSource.h
     Rtsp/RtspConnection.cpp
     Rtsp/RtspConnection.h
@@ -169,6 +169,7 @@ add_library(Interleaved STATIC
 add_library(ROOM_LIB STATIC
     ${ROOM_SRC}
 )
+add_subdirectory(media)
 
 
 enable_testing()
