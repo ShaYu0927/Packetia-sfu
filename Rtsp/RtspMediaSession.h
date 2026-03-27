@@ -69,6 +69,18 @@ public:
     bool BindInterleavedChannel(uint8_t channel, int track_id, bool is_rtcp);
     bool GetChannelBinding(uint8_t channel, ChannelBinding* out) const;
 
+private:
+    void ResetTracks();
+
+    bool ParseTrackInfoFromMedia(const sdp::SdpMedia& media, int track_index, TrackInfo* info, std::string* err) const;
+
+    RtpTrack::Ptr BuildTrackFromInfo(const TrackInfo& info, std::string* err);
+
+    void InstallTrack(int track_index, const TrackInfo& info, const RtpTrack::Ptr& track);
+    
+    RtpTrack::Ptr CreateTrack(const TrackInfo& info);
+    
+
 public:
     friend class MediaSessionManager;
 private:
@@ -81,7 +93,7 @@ private:
     std::atomic_bool ready_{false};
     bool has_publisher_{false};
 
-    std::unordered_map<int, MediaTrackInfo>             track_infos_;
+    std::unordered_map<int, TrackInfo>             track_infos_;
     std::unordered_map<std::string, int>                control_to_track_;
     std::unordered_map<int, std::shared_ptr<RtpTrack>>  runtime_tracks_;
     std::unordered_map<uint32_t, int>                   ssrc_to_track_;

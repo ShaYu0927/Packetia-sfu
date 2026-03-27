@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 
 add_library(media STATIC
-    endpoint/media_endpoint.cpp
+    endpoint/MediaEndpoint.cpp
+    endpoint/MediaSession.cpp
 )
 
 target_include_directories(media

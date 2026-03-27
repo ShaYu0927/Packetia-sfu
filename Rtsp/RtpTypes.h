@@ -1,12 +1,14 @@
 #pragma once
 
 
+#include <algorithm>
 #include <bits/stdint-uintn.h>
 #include <string>
 #include <unistd.h>
 #include <vector>
 #include <memory>
 #include <array>
+#include <unordered_map>
 #include "Rtsp.h"
 
 
@@ -135,7 +137,7 @@ struct RtpHeaderFields
     std::array<uint32_t, 15> csrc{};
 };
 
-struct PacketBufferView 
+struct PacketBufferView
 {
     std::shared_ptr<uint8_t[]> data;
     size_t capacity = 0;
@@ -159,28 +161,56 @@ enum class CodecId
     Unknown = 0,
     H264,
     H265,
-    AAC,
-    Opus,
+
+    // audio
+    PCMU,
     PCMA,
-    PCMU
+    OPUS,
+    AAC
 };
+
+struct CodecTraits
+{
+    CodecId id;
+    uint32_t default_clock_rate;
+    bool is_audio;
+};
+
+const CodecTraits* GetCodecTraits(CodecId id)
+{
+    static const std::unordered_map<CodecId, CodecTraits> kTraits = {
+        {CodecId::OPUS, {CodecId::OPUS, 48000, true}},
+        {CodecId::PCMU, {CodecId::PCMU, 8000, true}},
+        {CodecId::H264, {CodecId::H264, 90000, false}},
+        {CodecId::H265, {CodecId::H265, 90000, false}},
+    };
+
+    auto it = kTraits.find(id);
+    if (it != kTraits.end())
+        return &it->second;
+
+    return nullptr;
+}
 
 
 struct TrackInfo
 {
-    RtspTransport _rtsp_transport;
+    RtspTransport rtsp_transport;
+
     TrackType type = TrackInvalid;
     CodecId codec_id = CodecId::Unknown;
     std::string codec_name;
 
-    uint32_t ssrc = 0;
-    uint32_t sample_rate = 90000;
-    uint8_t payload_type = 0xFF;
-
     int track_index = -1;
+
+    uint32_t ssrc = 0;
+    uint32_t clock_rate = 0;
+    uint8_t payload_type = 0xFF;
+    int channels = 0;
+
+    std::string control;
+    std::string fmtp;
 };
-
-
 
 struct RtpTrackStats
 {
@@ -197,3 +227,50 @@ struct RtpTrackStats
 };
 
 
+inline void NormalizeTrackInfo(TrackInfo& info)
+{
+    if (info.clock_rate == 0)
+    {
+        if (const auto* traits = GetCodecTraits(info.codec_id))
+        {
+            info.clock_rate = traits->default_clock_rate;
+        }
+    }
+
+    if (info.type == TrackInvalid)
+    {
+        if (const auto* traits = GetCodecTraits(info.codec_id))
+        {
+            info.type = traits->is_audio ? TrackAudio : TrackVideo;
+        }
+    }
+}
+
+CodecId StringToCodecId(const std::string& name)
+{
+    std::string codec = name;
+    std::transform(codec.begin(), codec.end(), codec.begin(),
+                   [](unsigned char c) { return std::toupper(c); });
+
+    if (codec == "H264") return CodecId::H264;
+    if (codec == "H265" || codec == "HEVC") return CodecId::H265;
+    if (codec == "PCMU") return CodecId::PCMU;
+    if (codec == "PCMA") return CodecId::PCMA;
+    if (codec == "OPUS") return CodecId::OPUS;
+    if (codec == "AAC" || codec == "MPEG4-GENERIC") return CodecId::AAC;
+
+    return CodecId::Unknown;
+}
+
+inline const char* TrackTypeToString(TrackType type)
+{
+    switch (type)
+    {
+    case TrackType::TrackAudio:
+        return "audio";
+    case TrackType::TrackVideo:
+        return "video";
+    default:
+        return "invalid";
+    }
+}

@@ -14,9 +14,6 @@
 /*
     https://www.rfc-editor.org/rfc/rfc3550.pdf
 */
-
-
-
 class Sdp;
 
 #pragma pack(push,1)
@@ -110,12 +107,14 @@ struct RtpTransportInfo
 {
     MediaTransportType transport_type = MediaTransportType::UNKNOWN;
 
-    struct {
+    struct 
+    {
         uint16_t rtp_channel = 0;
         uint16_t rtcp_channel = 0;
     } tcp;
 
-    struct {
+    struct 
+    {
         uint16_t rtp_port = 0;
         uint16_t rtcp_port = 0;
     } udp;
@@ -133,7 +132,8 @@ struct RtcpStats
 
 
 template<typename Packet, typename Seq = uint16_t>
-class EnhancedPacketSortor {
+class EnhancedPacketSortor 
+{
 public:
     using Callback = std::function<void(Seq seq, const Packet& pkt)>;
 
@@ -244,7 +244,8 @@ private:
     std::chrono::steady_clock::time_point _last_flush_time;
 };
 
-class RtpPacket {
+class RtpPacket 
+{
 public:
     using Ptr = std::shared_ptr<RtpPacket>;
 
@@ -332,6 +333,26 @@ private:
     uint64_t recv_time_ms_ = 0;
 };
 
+// Represents a single media track (per-stream object).
+// A track typically corresponds to one audio stream or one video stream.
+// It is responsible for handling RTP/RTCP packets of this track,
+// maintaining per-track state and statistics, and emitting decoded frames
+// or control feedback events (e.g., NACK / PLI / FIR) to upper layers.
+//
+// Responsibilities:
+// 1. Maintain track-level metadata such as track_index, type, codec,
+//    SSRC, payload type, and sample rate.
+// 2. Process incoming RTP packets belonging to this track and assemble
+//    them into media frames when applicable.
+// 3. Process incoming RTCP packets and trigger control callbacks
+//    (e.g., NACK, PLI, FIR).
+// 4. Maintain per-track runtime statistics (packet loss, jitter, etc.).
+//
+// Notes:
+// - RtpTrack models a single media stream.
+// - Concrete implementations such as AudioTrack and VideoTrack should
+//   derive from this class and implement media-specific logic.
+
 class RtpTrack
 {
 public:
@@ -345,23 +366,23 @@ public:
     explicit RtpTrack(const TrackInfo& info);
     ~RtpTrack();
 
-public:
-    const TrackInfo& getTrackInfo() const;
-    const RtpTrackStats& getStats() const;
+    virtual TrackType type() const = 0;
 
-    int getTrackIndex() const;
-    TrackType getTrackType() const;
-    CodecId getCodecId() const;
-    uint32_t getSSRC() const;
-    uint8_t getPayloadType() const;
-    uint32_t getSampleRate() const;
+public:
+    const TrackInfo& getTrackInfo() const { return info_; };
+    const RtpTrackStats& getStats() const { return stats_; };
+
+    int getTrackIndex() const { return info_.track_index; };
+    TrackType getTrackType() const { return info_.type; };
+    CodecId getCodecId() const { return info_.codec_id; };
+    uint32_t getSSRC() const { return info_.ssrc; };
+    uint8_t getPayloadType() const { return info_.payload_type; };
 
     void setInterleavedChannel(uint8_t rtp_channel, uint8_t rtcp_channel);
     
-
 public:
-    bool inputRtp(uint8_t* data, size_t len);
-    void inputRtcp(const uint8_t* data, size_t len);
+    virtual bool onInputRtp(uint8_t* data, size_t len);
+    virtual void onInputRtcp(const uint8_t* data, size_t len);
 
 public:
     void setOnFrame(OnFrameCallback cb);
@@ -369,11 +390,6 @@ public:
     void setOnPli(OnPliCallback cb);
     void setOnFir(OnFirCallback cb);
 
-public:
-
-
-private:
-    bool handleRtpPacket(const PacketBufferView& pkt);
 private:
     TrackInfo info_;
     RtpTrackStats stats_;
@@ -385,7 +401,20 @@ private:
     OnFirCallback on_fir_;
 };
 
-
+// Manages multiple RTP tracks within a session (track container / dispatcher).
+// RtpTracker owns and maintains a collection of RtpTrack instances,
+// and is responsible for routing incoming RTP/RTCP packets to the correct track.
+//
+// Responsibilities:
+// 1. Maintain a mapping from track_index to RtpTrack.
+// 2. Add / remove / query tracks.
+// 3. Dispatch incoming RTP/RTCP packets to the corresponding track.
+// 4. Bridge per-track callbacks (e.g., OnFrame) to upper-layer callbacks.
+//
+// Notes:
+// - RtpTracker does not implement media logic itself.
+// - It acts as a routing and management layer for multiple tracks.
+// - Each RtpTrack handles its own media processing independently.
 class RtpTracker
 {
 public:
@@ -400,28 +429,28 @@ public:
     ~RtpTracker() = default;
 
 public:
-    // 添加轨道
+    
+
+    /* add tracker */
     bool addTrack(int track_index, const TrackPtr& track);
 
-    // 删除轨道
+    /* delete tracker */
     void removeTrack(int track_index);
 
-    // 清空全部轨道
     void clear();
 
-    // 获取轨道
+    /* get tracker */
     TrackPtr getTrack(int track_index) const;
 
-    // 按类型查找
+    /* find by type */
     TrackPtr getTrackByType(TrackType type) const;
 
-    // 是否存在
     bool hasTrack(int track_index) const;
 
-    // 轨道数量
+    /* number */
     size_t size() const;
 
-    // 获取全部轨道
+    /* get all tracker */
     std::vector<TrackPtr> getAllTracks() const;
 
 public:
@@ -451,6 +480,38 @@ private:
     OnFrameCallback on_frame_;
     OnTrackAddedCallback on_track_added_;
     OnTrackRemovedCallback on_track_removed_;
+};
+
+class AudioTrack : public RtpTrack
+{
+public:
+    explicit AudioTrack(const TrackInfo& info)
+        : RtpTrack(info) {}
+
+    TrackType type() const override
+    {
+        return TrackType::TrackAudio;
+    }
+
+protected:
+    bool onInputRtp(uint8_t* data, size_t len) override;
+    void onInputRtcp(const uint8_t* data, size_t len) override;
+};
+
+class VideoTrack : public RtpTrack
+{
+public:
+    explicit VideoTrack(const TrackInfo& info)
+        : RtpTrack(info) {}
+
+    TrackType type() const override
+    {
+        return TrackType::TrackVideo;
+    }
+
+protected:
+    bool onInputRtp(uint8_t* data, size_t len) override;
+    void onInputRtcp(const uint8_t* data, size_t len) override;
 };
 
 

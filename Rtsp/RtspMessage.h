@@ -8,7 +8,7 @@
 #include <sstream>
 #include "RtpTypes.h"
 #include "Media.h"
-#include "MediaSession.h"
+#include "RtspMediaSession.h"
 
 
 

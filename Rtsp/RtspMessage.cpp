@@ -1,5 +1,4 @@
 #include "RtspMessage.h"
-#include "MediaSession.h"
 #include <string>
 #include "Sdp.h"
 #include "RtspUtil.h"

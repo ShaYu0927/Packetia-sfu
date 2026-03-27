@@ -89,107 +89,206 @@ void MediaSessionManager::RemoveSession(const uint32_t& id)
     }
 }
 
-bool MediaSession::ApplySdp(const sdp::SdpSession& sdp, std::string* err)
+void MediaSession::ResetTracks()
 {
-    std::lock_guard<std::mutex> lock(track_mtx_);
-
     track_infos_.clear();
     control_to_track_.clear();
+    runtime_tracks_.clear();
     sdp_.clear();
+}
 
-    int trackIdx = 0;
-    for (const sdp::SdpMedia& media : sdp.medias)
+bool MediaSession::ParseTrackInfoFromMedia(const sdp::SdpMedia& media, int track_index, TrackInfo* info, std::string* err) const
+{
+    if (!info)
     {
-        TrackType type = TrackType::TrackInvalid;
-        if (media.media == "audio")
-            type = TrackType::TrackAudio;
-        else if (media.media == "video")
-            type = TrackType::TrackVideo;
-        else
-            continue;
-
-        if (trackIdx >= MAX_TRACKS)
+        if (err)
         {
-            if (err) *err = "too many tracks";
-            return false;
+            *err = "invalid TrackInfo output";
         }
+        return false;
+    }
 
-        MediaTrackInfo info;
-        info.valid = true;
-        info.type = type;
-        info.control = media.GetAttribute("control");
-        info.fmtp = media.GetAttribute("fmtp");
+    *info = TrackInfo{};
+    info->track_index = track_index;
 
-        if (!media.fmtps.empty())
+    if (media.media == "audio")
+    {
+        info->type = TrackType::TrackAudio;
+    }
+    else if (media.media == "video")
+    {
+        info->type = TrackType::TrackVideo;
+    }
+    else
+    {
+        info->type = TrackType::TrackInvalid;
+        return true;
+    }
+
+    info->control = media.GetAttribute("control");
+    info->fmtp = media.GetAttribute("fmtp");
+
+    if (!media.fmtps.empty())
+    {
+        info->fmtp = media.fmtps[0].params;
+    }
+
+    if (!media.rtpmaps.empty())
+    {
+        const auto& rtpmap = media.rtpmaps[0];
+
+        info->payload_type = static_cast<uint8_t>(rtpmap.payloadType);
+        info->codec_name   = rtpmap.encodingName;
+        info->codec_id     = StringToCodecId(info->codec_name);
+        info->clock_rate   = static_cast<uint32_t>(rtpmap.clockRate);
+        info->channels     = rtpmap.channels;
+    }
+    else
+    {
+        if (err)
         {
-            info.fmtp = media.fmtps[0].params;
+            *err = "missing rtpmap for track index " + std::to_string(track_index);
         }
+        return false;
+    }
 
-        if (!media.rtpmaps.empty())
+    if (info->codec_id == CodecId::Unknown)
+    {
+        if (err)
         {
-            const auto& rtpmap = media.rtpmaps[0];
-            info.payload_type = rtpmap.payloadType;
-            info.codec = rtpmap.encodingName;
-            info.clock_rate = rtpmap.clockRate;
-            info.channels = rtpmap.channels;
+            *err = "unsupported codec '" + info->codec_name +
+                   "' for track index " + std::to_string(track_index);
         }
-     
+        return false;
+    }
 
-        if (info.control.empty())
+    if (info->clock_rate == 0)
+    {
+        if (const auto* traits = GetCodecTraits(info->codec_id))
         {
-            info.control = "trackID=" + std::to_string(trackIdx);
+            info->clock_rate = traits->default_clock_rate;
         }
+    }
 
-        auto track = CreateTrack(info);
-        if (!track)
+    if (info->clock_rate == 0)
+    {
+        if (err)
         {
-            if (err) *err = "unsupported track codec: " + info.codec;
-            return false;
+            *err = "invalid clock rate for track index " + std::to_string(track_index);
         }
+        return false;
+    }
 
-        LOG_INFO("trackIdx: ", trackIdx, "info.control: ", info.control);
-
-        track_infos_[trackIdx] = info;
-        control_to_track_[info.control] = trackIdx;
-        runtime_tracks_[trackIdx] = track;
-        ++trackIdx;
+    if (info->control.empty())
+    {
+        info->control = "trackID=" + std::to_string(track_index);
     }
 
     return true;
 }
 
-RtpTrack::Ptr MediaSession::CreateTrack(const MediaTrackInfo& info)
+RtpTrack::Ptr MediaSession::BuildTrackFromInfo(const TrackInfo& info, std::string* err)
 {
-    uint32_t ssrc = 0; 
-    uint8_t channel_id = 0;
-    bool disable_ntp = false;
-
-    if (info.type == TrackType::TrackVideo)
+    auto track = CreateTrack(info);
+    if (!track)
     {
-        // return std::make_shared<RtpVideoTracker>(
-        //     info.type,
-        //     info.codec,
-        //     static_cast<uint8_t>(info.payload_type),
-        //     ssrc,
-        //     static_cast<uint32_t>(info.clock_rate),
-        //     channel_id,
-        //     disable_ntp);
+        if (err)
+        {
+            *err = "failed to create track, index=" + std::to_string(info.track_index) +
+                   ", type=" + TrackTypeToString(info.type) +
+                   ", codec=" + info.codec_name;
+        }
+        return nullptr;
     }
 
-    if (info.type == TrackType::TrackAudio)
-    {
-        // return std::make_shared<RtpAudioTracker>(
-        //     info.type,
-        //     info.codec,
-        //     static_cast<uint8_t>(info.payload_type),
-        //     ssrc,
-        //     static_cast<uint32_t>(info.clock_rate),
-        //     channel_id,
-        //     disable_ntp);
-    }
-
-    return nullptr;
+    return track;
 }
+
+
+RtpTrack::Ptr MediaSession::CreateTrack(const TrackInfo& info)
+{
+    switch (info.type)
+    {
+    case TrackType::TrackAudio:
+        switch (info.codec_id)
+        {
+        case CodecId::PCMU:
+        case CodecId::PCMA:
+        case CodecId::OPUS:
+        case CodecId::AAC:
+            return std::make_shared<AudioTrack>(info);
+
+        default:
+            return nullptr;
+        }
+
+    case TrackType::TrackVideo:
+        switch (info.codec_id)
+        {
+        case CodecId::H264:
+        case CodecId::H265:
+            return std::make_shared<VideoTrack>(info);
+
+        default:
+            return nullptr;
+        }
+
+    default:
+        return nullptr;
+    }
+}
+
+bool MediaSession::ApplySdp(const sdp::SdpSession& sdp, std::string* err)
+{
+    std::lock_guard<std::mutex> lock(track_mtx_);
+
+    ResetTracks();
+
+    int track_idx = 0;
+    for (const auto& media : sdp.medias)
+    {
+        if (track_idx >= MAX_TRACKS)
+        {
+            if (err)
+            {
+                *err = "too many tracks";
+            }
+            return false;
+        }
+
+        TrackInfo info;
+        if (!ParseTrackInfoFromMedia(media, track_idx, &info, err))
+        {
+            return false;
+        }
+
+        // ignore unsupported media types such as application / text
+        if (info.type == TrackType::TrackInvalid)
+        {
+            continue;
+        }
+
+        auto track = BuildTrackFromInfo(info, err);
+        if (!track)
+        {
+            return false;
+        }
+
+        LOG_INFO("track_idx=", track_idx,
+                 " control=", info.control,
+                 " codec=", info.codec_name,
+                 " pt=", static_cast<int>(info.payload_type),
+                 " clock_rate=", info.clock_rate);
+
+        track_infos_[track_idx] = info;
+        control_to_track_[info.control] = track_idx;
+        runtime_tracks_[track_idx] = track;
+
+        ++track_idx;
+    }
+    return true;
+}
+
 
 std::shared_ptr<RtpTrack> MediaSession::GetRtpTrack(const std::string& control) const
 {
