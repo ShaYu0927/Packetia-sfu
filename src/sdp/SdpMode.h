@@ -46,10 +46,10 @@ struct SdpMedia
 {
     std::string media;                              // video / audio
     int port = 0;
-    std::string proto;                             // RTP/AVP
-    std::vector<std::string> fmts;               // payload types
+    std::string proto;                              // RTP/AVP
+    std::vector<std::string> fmts;                  // payload types
     std::vector<SdpAttribute> attributes;
-    SdpConnection conn;                         // c=
+    SdpConnection conn;                             // c=
 
     std::vector<SdpRtpMap> rtpmaps;
     std::vector<SdpFmtp> fmtps;

@@ -363,8 +363,9 @@ public:
     using OnFirCallback = std::function<void(uint8_t)>;
 
 public:
-    explicit RtpTrack(const TrackInfo& info);
-    ~RtpTrack();
+    explicit RtpTrack(const TrackInfo& info)
+        :info_(info) {}
+    virtual ~RtpTrack() = default;
 
     virtual TrackType type() const = 0;
 
@@ -381,8 +382,8 @@ public:
     void setInterleavedChannel(uint8_t rtp_channel, uint8_t rtcp_channel);
     
 public:
-    virtual bool onInputRtp(uint8_t* data, size_t len);
-    virtual void onInputRtcp(const uint8_t* data, size_t len);
+    virtual bool onInputRtp(uint8_t* data, size_t len) = 0;
+    virtual void onInputRtcp(const uint8_t* data, size_t len) = 0;
 
 public:
     void setOnFrame(OnFrameCallback cb);

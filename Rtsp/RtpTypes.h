@@ -176,7 +176,7 @@ struct CodecTraits
     bool is_audio;
 };
 
-const CodecTraits* GetCodecTraits(CodecId id)
+inline const CodecTraits* GetCodecTraits(CodecId id)
 {
     static const std::unordered_map<CodecId, CodecTraits> kTraits = {
         {CodecId::OPUS, {CodecId::OPUS, 48000, true}},
@@ -246,7 +246,7 @@ inline void NormalizeTrackInfo(TrackInfo& info)
     }
 }
 
-CodecId StringToCodecId(const std::string& name)
+inline CodecId StringToCodecId(const std::string& name)
 {
     std::string codec = name;
     std::transform(codec.begin(), codec.end(), codec.begin(),

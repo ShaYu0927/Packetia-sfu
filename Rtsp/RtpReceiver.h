@@ -49,13 +49,11 @@ public:
     const std::string &getCodecName() const { return _info.codec_name; }
 
     uint32_t getSSRC() const { return _info.ssrc; }
-    uint32_t getSampleRate() const { return _info.sample_rate; }
     uint8_t getPayloadType() const { return _info.payload_type; }
     int getTrackIndex() const { return _info.track_index; }
 
     void setSSRC(uint32_t ssrc) { _info.ssrc = ssrc; }
     void setPayloadType(uint8_t pt) { _info.payload_type = pt; }
-    void setSampleRate(uint32_t rate) { _info.sample_rate = rate; }
     void setTrackIndex(int index) { _info.track_index = index; }
 
     void setRtspTransport(const RtspTransport &transport) { _rtsp_transport = transport; }

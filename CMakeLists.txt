@@ -4,9 +4,6 @@ project(Packetia)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS ON) 
-
-
-
 find_package(GTest REQUIRED)
 
 if(NOT CMAKE_BUILD_TYPE)
@@ -96,6 +93,7 @@ add_library(utils STATIC
     utils/Acceptor.cpp
     utils/Pip.cpp
     utils/EndpointBase.cpp
+    utils/IWorkerModule.cpp
 
 )
 

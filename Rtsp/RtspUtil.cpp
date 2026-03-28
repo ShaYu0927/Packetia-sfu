@@ -199,4 +199,88 @@ bool RtspUtil::ParseTransport(const std::string& text, RtspTransport& out)
     return true;
 }
 
+bool RtspUtil::ParseRtpMapLine(const std::string& line,
+                            int* payload_type,
+                            std::string* codec_name,
+                            uint32_t* clock_rate,
+                            int* channels)
+{
+    // line examples:
+    // "96 H264/90000"
+    // "97 MPEG4-GENERIC/44100/2"
+
+    if (!payload_type || !codec_name || !clock_rate || !channels)
+    {
+        return false;
+    }
+
+    *payload_type = -1;
+    codec_name->clear();
+    *clock_rate = 0;
+    *channels = 0;
+
+    auto sp = line.find(' ');
+    if (sp == std::string::npos)
+    {
+        return false;
+    }
+
+    std::string pt_str = line.substr(0, sp);
+    std::string enc = line.substr(sp + 1);
+
+    try
+    {
+        *payload_type = std::stoi(pt_str);
+    }
+    catch (...)
+    {
+        return false;
+    }
+
+    // enc examples:
+    // H264/90000
+    // MPEG4-GENERIC/44100/2
+    size_t p1 = enc.find('/');
+    if (p1 == std::string::npos)
+    {
+        return false;
+    }
+
+    *codec_name = enc.substr(0, p1);
+
+    size_t p2 = enc.find('/', p1 + 1);
+    try
+    {
+        if (p2 == std::string::npos)
+        {
+            *clock_rate = static_cast<uint32_t>(std::stoul(enc.substr(p1 + 1)));
+            *channels = 0;
+        }
+        else
+        {
+            *clock_rate = static_cast<uint32_t>(std::stoul(enc.substr(p1 + 1, p2 - p1 - 1)));
+            *channels = std::stoi(enc.substr(p2 + 1));
+        }
+    }
+    catch (...)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+std::string RtspUtil::StripFmtpPayloadPrefix(const std::string& fmtp_line)
+{
+    // "96 packetization-mode=1; profile-level-id=..."
+    // -> "packetization-mode=1; profile-level-id=..."
+
+    auto sp = fmtp_line.find(' ');
+    if (sp == std::string::npos)
+    {
+        return fmtp_line;
+    }
+    return fmtp_line.substr(sp + 1);
+}
+
 }

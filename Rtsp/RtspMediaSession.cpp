@@ -1,5 +1,6 @@
 #include "RtspMediaSession.h"
 #include "SdpMode.h"
+#include "RtspUtil.h"
 
 static uint64_t MakeStreamKey(uint32_t session_id, uint32_t track_id)
 {
@@ -99,7 +100,7 @@ void MediaSession::ResetTracks()
 
 bool MediaSession::ParseTrackInfoFromMedia(const sdp::SdpMedia& media, int track_index, TrackInfo* info, std::string* err) const
 {
-    if (!info)
+      if (!info)
     {
         if (err)
         {
@@ -122,16 +123,29 @@ bool MediaSession::ParseTrackInfoFromMedia(const sdp::SdpMedia& media, int track
     else
     {
         info->type = TrackType::TrackInvalid;
-        return true;
+        if (err)
+        {
+            *err = "unsupported media type: " + media.media;
+        }
+        return false;
     }
 
     info->control = media.GetAttribute("control");
-    info->fmtp = media.GetAttribute("fmtp");
 
     if (!media.fmtps.empty())
     {
         info->fmtp = media.fmtps[0].params;
     }
+    else
+    {
+        std::string raw_fmtp = media.GetAttribute("fmtp");
+        if (!raw_fmtp.empty())
+        {
+            info->fmtp = rtsp::RtspUtil::StripFmtpPayloadPrefix(raw_fmtp);
+        }
+    }
+
+    bool got_rtpmap = false;
 
     if (!media.rtpmaps.empty())
     {
@@ -142,8 +156,35 @@ bool MediaSession::ParseTrackInfoFromMedia(const sdp::SdpMedia& media, int track
         info->codec_id     = StringToCodecId(info->codec_name);
         info->clock_rate   = static_cast<uint32_t>(rtpmap.clockRate);
         info->channels     = rtpmap.channels;
+        got_rtpmap = true;
     }
     else
+    {
+        std::string raw_rtpmap = media.GetAttribute("rtpmap");
+        if (!raw_rtpmap.empty())
+        {
+            int payload_type = -1;
+            std::string codec_name;
+            uint32_t clock_rate = 0;
+            int channels = 0;
+
+            if (rtsp::RtspUtil::ParseRtpMapLine(raw_rtpmap,
+                                &payload_type,
+                                &codec_name,
+                                &clock_rate,
+                                &channels))
+            {
+                info->payload_type = static_cast<uint8_t>(payload_type);
+                info->codec_name   = codec_name;
+                info->codec_id     = StringToCodecId(info->codec_name);
+                info->clock_rate   = clock_rate;
+                info->channels     = channels;
+                got_rtpmap = true;
+            }
+        }
+    }
+
+    if (!got_rtpmap)
     {
         if (err)
         {
@@ -185,23 +226,6 @@ bool MediaSession::ParseTrackInfoFromMedia(const sdp::SdpMedia& media, int track
     }
 
     return true;
-}
-
-RtpTrack::Ptr MediaSession::BuildTrackFromInfo(const TrackInfo& info, std::string* err)
-{
-    auto track = CreateTrack(info);
-    if (!track)
-    {
-        if (err)
-        {
-            *err = "failed to create track, index=" + std::to_string(info.track_index) +
-                   ", type=" + TrackTypeToString(info.type) +
-                   ", codec=" + info.codec_name;
-        }
-        return nullptr;
-    }
-
-    return track;
 }
 
 
@@ -287,6 +311,11 @@ bool MediaSession::ApplySdp(const sdp::SdpSession& sdp, std::string* err)
         ++track_idx;
     }
     return true;
+}
+
+RtpTrack::Ptr MediaSession::BuildTrackFromInfo(const TrackInfo& info, std::string* err)
+{
+    return CreateTrack(info);
 }
 
 

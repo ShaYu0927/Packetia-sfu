@@ -4,10 +4,21 @@
 #include "UdpServer.h"
 #include "UdpSession.h"
 #include "EndpointBase.h"
+#include "IWorkerModule.h"
 
 int main()
 {
+    WorkerModuleRegistry registry;
     utils::EndpointManager endpoint_mgr;
+
+    registry.Add(std::make_shared<MediaWorkerModule>());
+
+    int ret = registry.RegisterAll();
+    if (ret != 0)
+    {
+        std::cerr << "worker modules init failed\n";
+        return -1;
+    }
 
     auto handler = std::make_shared<utils::EndpointJobHandler>(&endpoint_mgr);
     if (WorkerService::create_pool("endpoint_pool", 4, handler, 4096) != 0)

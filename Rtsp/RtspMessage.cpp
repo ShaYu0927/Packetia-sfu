@@ -724,6 +724,24 @@ std::string RtspRequest::HandleCmdSetup(RtspRequestInfo& req)
 
     tracker->setInterleavedChannel(pTranOut.interleaved_rtp, pTranOut.interleaved_rtcp);
 
+    const int track_id = tracker->getTrackIndex();
+
+    if (!media_session->BindInterleavedChannel(
+            static_cast<uint8_t>(pTranOut.interleaved_rtp), track_id, false))
+    {
+        LOG_ERROR("Bind RTP interleaved channel failed, session={}, track_id={}, channel={}",
+                  session_id, track_id, pTranOut.interleaved_rtp);
+        return "";
+    }
+
+    if (!media_session->BindInterleavedChannel(
+            static_cast<uint8_t>(pTranOut.interleaved_rtcp), track_id, true))
+    {
+        LOG_ERROR("Bind RTCP interleaved channel failed, session={}, track_id={}, channel={}",
+                  session_id, track_id, pTranOut.interleaved_rtcp);
+        return "";
+    }
+
     std::string str = BuildSetupRes(std::to_string(req.cseq), session_id,pTranOut.interleaved_rtp, pTranOut.interleaved_rtcp,"record");
     LOG_INFO(str);
     

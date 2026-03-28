@@ -13,8 +13,28 @@ static inline std::string hex8(uint8_t v)
 
 void RtpTrack::setInterleavedChannel(uint8_t rtp_channel, uint8_t rtcp_channel)
 {
-    info_._rtsp_transport.interleaved_rtcp = rtcp_channel;
-    info_._rtsp_transport.interleaved_rtp  = rtp_channel;
+    info_.rtsp_transport.interleaved_rtcp = rtcp_channel;
+    info_.rtsp_transport.interleaved_rtp  = rtp_channel;
+}
+
+bool AudioTrack::onInputRtp(uint8_t* data, size_t len)
+{
+    return true;
+}
+
+void AudioTrack::onInputRtcp(const uint8_t* data, size_t len)
+{
+    
+}
+
+bool VideoTrack::onInputRtp(uint8_t* data, size_t len)
+{
+    return true;
+}
+
+void VideoTrack::onInputRtcp(const uint8_t* data, size_t len)
+{
+    
 }
 
 

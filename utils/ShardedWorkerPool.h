@@ -86,6 +86,7 @@ struct IJobHandler
 };
 
 
+
 class ShardedWorkerPool
 {
 public:
@@ -160,6 +161,14 @@ private:
 class WorkerService final 
 {
 public:
+    enum class WorkerPoolId : std::size_t
+    {
+        Media = 0,
+        Sip,
+        Rtsp,
+        Count
+    };
+
     static int create_pool(const std::string& name,
                            std::size_t worker_count,
                            std::shared_ptr<IJobHandler> handler,
@@ -182,9 +191,17 @@ private:
     WorkerService() = delete;
 
     static std::mutex mtx_;
-    static std::unordered_map<std::string, std::unique_ptr<ShardedWorkerPool>> pools_;
+    static std::array<std::unique_ptr<ShardedWorkerPool>,
+           static_cast<std::size_t>(WorkerPoolId::Count)> pools_;
 };
 
-
+struct WorkerModuleConfig
+{
+    WorkerService::WorkerPoolId id;
+    std::size_t worker_count;
+    std::size_t max_queue_len;
+    ShardedWorkerPool::DropPolicy drop_policy;
+    std::shared_ptr<IJobHandler> handler;
+};
 
 #endif
