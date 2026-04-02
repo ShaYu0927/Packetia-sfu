@@ -166,7 +166,8 @@ public:
         Media = 0,
         Sip,
         Rtsp,
-        Count
+        Endpoint,
+        Count,
     };
 
     static int create_pool(const std::string& name,

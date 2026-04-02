@@ -9,6 +9,17 @@
 class PacketPool;
 
 constexpr size_t MAX_PACKET_SIZE = 1500;
+
+enum PacketFlags : uint8_t
+{
+    PKT_F_NONE  = 0,
+    PKT_F_RTP   = 1 << 0,
+    PKT_F_RTCP  = 1 << 1,
+    PKT_F_STUN  = 1 << 2,
+    PKT_F_DTLS  = 1 << 3,
+};
+
+
 struct Packet
 {
     PacketPool* owner = nullptr;

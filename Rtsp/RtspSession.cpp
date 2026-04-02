@@ -162,14 +162,11 @@ void RtspSession::OnInterleaved(int channel,const uint8_t*p, int len)
     job.raw.len = static_cast<uint32_t>(len);
     job.enqueue_ts = Timestamp::NowMs();
 
-    int ret = WorkerService::post("meida",std::move(job));
+    int ret = WorkerService::post("media",std::move(job));
     if (ret != 0)
     {
         if (job.deleter)
             job.deleter(job);
-
-        // LOG_ERROR("post interleaved packet failed, channel=", channel,
-        //           " len=", len);
     }
 
 }

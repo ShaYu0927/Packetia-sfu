@@ -27,6 +27,11 @@ bool ParsePoolName(const std::string& name, PoolId& id)
         id = PoolId::Rtsp;
         return true;
     }
+    if (name == "endpoint_pool" || name == "EndpointPool")
+    {
+        id = PoolId::Endpoint;
+        return true;
+    }
     return false;
 }
 
@@ -116,14 +121,6 @@ int ShardedWorkerPool::post(WorkJob&& job)
 
     auto idx = shard_index(job.key);
     Worker& shard_worker = *workers_[idx];
-
-    LOG_INFO("[worker post] begin, key={}, type={}, shard={}, running={}, queue_size={}",
-             job.key,
-             static_cast<int>(job.type),
-             idx,
-             shard_worker.running.load(),
-             shard_worker.q.size());
-
     {
         std::unique_lock<std::mutex> lk(shard_worker.mtx);
 
@@ -181,16 +178,7 @@ int ShardedWorkerPool::post(WorkJob&& job)
         {
             shard_worker.st.max_depth_seen = after_size;
         }
-
-        LOG_INFO("[worker post] enqueued, shard={}, before_size={}, after_size={}, total_enqueued={}, total_dropped={}, max_depth_seen={}",
-                 idx,
-                 before_size,
-                 after_size,
-                 shard_worker.st.enqueued,
-                 shard_worker.st.dropped,
-                 shard_worker.st.max_depth_seen);
     }
-    LOG_INFO("[worker post] notify_one, shard={}", idx);
     shard_worker.cv.notify_one();
     return 0;
 }
@@ -236,9 +224,7 @@ void ShardedWorkerPool::worker_loop(Worker &worker, std::size_t idx)
                 return !worker.running.load() || !worker.q.empty();
             });
 
-            LOG_INFO("worker wake, idx=", idx,
-                     " running=", worker.running.load(),
-                     " qsize=", worker.q.size());
+            LOG_INFO("worker wake, idx=", idx, " running=", worker.running.load(), " qsize=", worker.q.size());
 
             if (!worker.running.load() && worker.q.empty())
             {
@@ -262,17 +248,20 @@ void ShardedWorkerPool::worker_loop(Worker &worker, std::size_t idx)
 
 int WorkerService::create_pool(const std::string &name, std::size_t worker_count, std::shared_ptr<IJobHandler> handler, std::size_t max_queue_len, ShardedWorkerPool::DropPolicy drop)
 {
-    
+    LOG_INFO("[WorkerService] create_pool called, name=", name,
+             " worker_count=", worker_count,
+             " max_queue_len=", max_queue_len,
+             " drop_policy=", static_cast<int>(drop));
     PoolId id;
     if (!ParsePoolName(name, id))
     {
-        std::cerr << "[WorkerService] unknown pool name: " << name << std::endl;
+        LOG_ERROR("[WorkerService] unknown pool name: ", name);
         return -1;
     }
 
     if (!handler)
     {
-        std::cerr << "[WorkerService] handler is null, pool=" << name << std::endl;
+        LOG_ERROR("[WorkerService] handler is null, pool=" + name);
         return -2;
     }
 
@@ -280,8 +269,7 @@ int WorkerService::create_pool(const std::string &name, std::size_t worker_count
     const int ret = pool->start(worker_count, std::move(handler), max_queue_len, drop);
     if (ret != 0)
     {
-        std::cerr << "[WorkerService] start pool failed, pool=" << name
-                  << " ret=" << ret << std::endl;
+        LOG_ERROR("[WorkerService] start pool failed, pool=" + name + " ret=" + std::to_string(ret));
         return ret;
     }
 

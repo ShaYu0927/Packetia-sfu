@@ -46,6 +46,113 @@ using FramePtr = std::shared_ptr<Frame>;
     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 */
 
+class RtpRecvStatsBase
+{
+public:
+    RtpRecvStatsBase() = default;
+    virtual ~RtpRecvStatsBase() = default;
+
+public:
+    void OnFrameCompleted();
+    void CountNack(size_t count);
+    void CountPli();
+    void CountFir();
+    void SetRttMs(uint32_t rtt_ms);
+    void SetJitter(uint32_t jitter);
+    void UpdateSequenceStats(uint16_t seq);
+
+    void Reset()
+    {
+        _first_rtp_recv_ms = 0;
+        _last_rtp_recv_ms = 0;
+        _first_frame_ms = 0;
+        _last_frame_ms = 0;
+
+        _rtp_packet_count = 0;
+        _rtp_bytes = 0;
+        _frame_count = 0;
+
+        _duplicate_packets = 0;
+        _out_of_order_packets = 0;
+
+        _nack_count = 0;
+        _pli_count = 0;
+        _fir_count = 0;
+
+        _ssrc = 0;
+        _payload_type = 0;
+        _last_seq = 0;
+        _last_timestamp = 0;
+
+        _rtt_ms = 0;
+        _jitter = 0;
+
+        _has_seq = false;
+    }
+
+public:
+    uint64_t GetFirstRtpRecvMs() const { return _first_rtp_recv_ms; }
+    uint64_t GetLastRtpRecvMs() const { return _last_rtp_recv_ms; }
+    uint64_t GetFirstFrameMs() const { return _first_frame_ms; }
+    uint64_t GetLastFrameMs() const { return _last_frame_ms; }
+
+    uint64_t GetRtpPacketCount() const { return _rtp_packet_count; }
+    uint64_t GetRtpBytes() const { return _rtp_bytes; }
+    uint64_t GetFrameCount() const { return _frame_count; }
+
+    uint64_t GetDuplicatePackets() const { return _duplicate_packets; }
+    uint64_t GetOutOfOrderPackets() const { return _out_of_order_packets; }
+
+    uint64_t GetNackCount() const { return _nack_count; }
+    uint64_t GetPliCount() const { return _pli_count; }
+    uint64_t GetFirCount() const { return _fir_count; }
+
+    uint32_t GetSsrc() const { return _ssrc; }
+    uint8_t GetPayloadType() const { return _payload_type; }
+    uint16_t GetLastSeq() const { return _last_seq; }
+    uint32_t GetLastTimestamp() const { return _last_timestamp; }
+
+    uint32_t GetRttMs() const { return _rtt_ms; }
+    uint32_t GetJitter() const { return _jitter; }
+
+protected:
+
+    static uint64_t NowMs()
+    {
+        using namespace std::chrono;
+        return duration_cast<milliseconds>(
+            steady_clock::now().time_since_epoch()).count();
+    }
+
+
+protected:
+    uint64_t _first_rtp_recv_ms = 0;
+    uint64_t _last_rtp_recv_ms = 0;
+    uint64_t _first_frame_ms = 0;
+    uint64_t _last_frame_ms = 0;
+
+    uint64_t _rtp_packet_count = 0;
+    uint64_t _rtp_bytes = 0;
+    uint64_t _frame_count = 0;
+
+    uint64_t _duplicate_packets = 0;
+    uint64_t _out_of_order_packets = 0;
+
+    uint64_t _nack_count = 0;
+    uint64_t _pli_count = 0;
+    uint64_t _fir_count = 0;
+
+    uint32_t _ssrc = 0;
+    uint8_t  _payload_type = 0;
+    uint16_t _last_seq = 0;
+    uint32_t _last_timestamp = 0;
+
+    uint32_t _rtt_ms = 0;
+    uint32_t _jitter = 0;
+
+    bool _has_seq = false;
+};
+
 class RtpHeader 
 {
 
@@ -126,8 +233,6 @@ struct RtcpStats
     uint64_t octet_count = 0;
     uint64_t last_ntp_time = 0;
 };
-
-
 
 
 
@@ -302,6 +407,18 @@ public:
     uint64_t getRecvTimeMs() const { return recv_time_ms_; }
 
     void reset();
+    bool assign(const uint8_t* ptr, size_t len,
+            uint8_t version,
+            bool padding,
+            bool extension,
+            uint8_t csrcCnt,
+            bool marker,
+            uint8_t pt,
+            uint16_t seq,
+            uint32_t timestamp,
+            uint32_t ssrc,
+            size_t headerLen,
+            size_t payloadLen);
 
 private:
     TrackType type_ = TrackInvalid;
@@ -499,7 +616,7 @@ protected:
     void onInputRtcp(const uint8_t* data, size_t len) override;
 };
 
-class VideoTrack : public RtpTrack
+class VideoTrack : public RtpTrack, public RtpRecvStatsBase
 {
 public:
     explicit VideoTrack(const TrackInfo& info)
@@ -510,11 +627,13 @@ public:
         return TrackType::TrackVideo;
     }
 
-protected:
+public:
     bool onInputRtp(uint8_t* data, size_t len) override;
     void onInputRtcp(const uint8_t* data, size_t len) override;
-};
 
+private:
+    RtpRecvStatsBase _stats;
+};
 
 
 #endif

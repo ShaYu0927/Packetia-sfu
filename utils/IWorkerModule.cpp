@@ -14,7 +14,7 @@ int WorkerModuleRegistry::RegisterAll()
     {
         if (!module)
             continue;
-
+        
         int ret = module->Register();
         if (ret != 0)
         {

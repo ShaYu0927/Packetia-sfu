@@ -2,6 +2,7 @@
 #define _MEDIAENDPOINT_H_
 
 #include "EndpointBase.h"
+#include "RtpReceiver.h"
 
 namespace media 
 {
@@ -31,13 +32,28 @@ public:
     bool Start() override;
     void Stop() override;
 
+    void SetVideoTrack(const std::shared_ptr<VideoTrack>& track)
+    {
+        video_track_ = track;
+    }
+
+    bool InitTracks(const std::vector<TrackInfo>& infos);
+
 protected:
     void HandleRtpPacket(Packet* pkt) override;
     void HandleRtcpPacket(Packet* pkt) override;
 
 private:
-    
+    RtpReceiverTrack::Ptr FindTrackBySsrc(uint32_t ssrc);
+    std::shared_ptr<RtpReceiverTrack> GetOrCreateTrack(uint32_t ssrc);
+
+private:
+    std::mutex track_mtx_;
+    std::unordered_map<uint32_t, RtpReceiverTrack::Ptr> ssrc_to_track_;
+    std::shared_ptr<VideoTrack> video_track_;
 };
+
+
 
 }
 
