@@ -29,6 +29,7 @@ static bool TryGetRtpSsrc(const uint8_t* data, size_t len, uint32_t& ssrc)
 /* 网络协议包 转成 RtpPacket */
 void MediaEndpoint::OnRtp(WorkJob& job)
 {
+    LOG_INFO("MediaEndpoint::OnRtp called, key=", job.key, " type=", static_cast<int>(job.type));
     auto* pkt = static_cast<Packet*>(job.pkt);
     if (!pkt || !IsRunning()) 
     {

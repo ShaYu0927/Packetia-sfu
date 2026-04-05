@@ -154,8 +154,9 @@ void RtspSession::OnInterleaved(int channel,const uint8_t*p, int len)
         return;
     }
 
+
     WorkJob job;
-    job.key = binding.key;
+    job.key = binding.endpoint_id;
     job.type = binding.is_rtcp ? WorkType::Rtcp : WorkType::Rtp;
     job.raw.data = new uint8_t[len];
     std::memcpy(job.raw.data, p, static_cast<size_t>(len));

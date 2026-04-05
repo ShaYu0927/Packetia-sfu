@@ -32,7 +32,7 @@ public:
 
     std::uint64_t Id() const
     {
-        return NextEndpointId();
+        return endpoint_id_;
     }
 
     const std::string& Name() const
@@ -48,6 +48,12 @@ public:
     bool IsRunning() const
     {
         return state_.load(std::memory_order_relaxed) == State::kRunning;
+    }
+
+    static std::uint64_t NextEndpointId()
+    {
+        static std::atomic<std::uint64_t> s_id {1};
+        return s_id.fetch_add(1, std::memory_order_relaxed);
     }
 
     virtual bool Start() = 0;
@@ -68,11 +74,7 @@ protected:
         state_.store(s, std::memory_order_relaxed);
     }
 
-    static std::uint64_t NextEndpointId()
-    {
-        static std::atomic<std::uint64_t> s_id {1};
-        return s_id.fetch_add(1, std::memory_order_relaxed);
-    }
+  
 
 protected:
     std::uint64_t endpoint_id_{0};
@@ -83,8 +85,11 @@ protected:
 class EndpointManager
 {
 public:
-    EndpointManager() = default;
-    ~EndpointManager() = default;
+    static EndpointManager& Instance()
+    {
+        static EndpointManager instance;
+        return instance;
+    }
 
     std::uint64_t AllocId();
 
@@ -98,6 +103,15 @@ public:
     std::size_t Size() const;
 
     void Clear();
+
+private:
+    EndpointManager() = default;
+    ~EndpointManager() = default;
+
+    EndpointManager(const EndpointManager&) = delete;
+    EndpointManager& operator=(const EndpointManager&) = delete;
+    EndpointManager(EndpointManager&&) = delete;
+    EndpointManager& operator=(EndpointManager&&) = delete;
 
 private:
     mutable std::mutex mtx_;

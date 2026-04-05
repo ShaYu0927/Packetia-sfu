@@ -224,8 +224,6 @@ void ShardedWorkerPool::worker_loop(Worker &worker, std::size_t idx)
                 return !worker.running.load() || !worker.q.empty();
             });
 
-            LOG_INFO("worker wake, idx=", idx, " running=", worker.running.load(), " qsize=", worker.q.size());
-
             if (!worker.running.load() && worker.q.empty())
             {
                 LOG_INFO("worker exit by stop, idx=", idx);

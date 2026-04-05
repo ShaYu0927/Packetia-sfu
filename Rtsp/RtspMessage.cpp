@@ -1,5 +1,7 @@
 #include "RtspMessage.h"
 #include <string>
+#include "EndpointBase.h"
+#include "MediaEndpoint.h"
 #include "Sdp.h"
 #include "RtspUtil.h"
 #include "logger.h"
@@ -96,7 +98,6 @@ bool RtspRequest::ParseRequest(const char* p, size_t total, RtspRequestInfo& out
     return true;
 }
 
-
 int RtspRequest::GetContentLength()
 {
     auto iter = header_line_param_.find("Content-Length");
@@ -123,8 +124,6 @@ std::string RtspRequest::GetRtspUSuffix() const
     }
     return "";
 }
-
-
 
 int RtspRequest::BuildOptionsRes(const RtspRequestInfo& req,
                                  std::shared_ptr<char> data,
@@ -721,13 +720,13 @@ std::string RtspRequest::HandleCmdSetup(RtspRequestInfo& req)
         LOG_ERROR("SETUP missing interleaved channel, transport={}", transport_str);
         return "";
     }
-
+    std::uint64_t endpoint_id = utils::EndpointBase::NextEndpointId();
     tracker->setInterleavedChannel(pTranOut.interleaved_rtp, pTranOut.interleaved_rtcp);
 
     const int track_id = tracker->getTrackIndex();
 
     if (!media_session->BindInterleavedChannel(
-            static_cast<uint8_t>(pTranOut.interleaved_rtp), track_id, false))
+            static_cast<uint8_t>(pTranOut.interleaved_rtp), track_id, false, endpoint_id))
     {
         LOG_ERROR("Bind RTP interleaved channel failed, session={}, track_id={}, channel={}",
                   session_id, track_id, pTranOut.interleaved_rtp);
@@ -735,10 +734,36 @@ std::string RtspRequest::HandleCmdSetup(RtspRequestInfo& req)
     }
 
     if (!media_session->BindInterleavedChannel(
-            static_cast<uint8_t>(pTranOut.interleaved_rtcp), track_id, true))
+            static_cast<uint8_t>(pTranOut.interleaved_rtcp), track_id, true, endpoint_id))
     {
         LOG_ERROR("Bind RTCP interleaved channel failed, session={}, track_id={}, channel={}",
                   session_id, track_id, pTranOut.interleaved_rtcp);
+        return "";
+    }
+
+    
+    auto endpoint = std::make_shared<media::MediaEndpoint>(endpoint_id, tracker, media_session);
+
+    if (!utils::EndpointManager::Instance().Add(endpoint))
+    {
+        LOG_ERROR("Add endpoint failed, endpoint_id={}, session={}, track_id={}",
+                  endpoint_id, session_id, track_id);
+        return "";
+    }
+
+    if (!media_session->BindTrackEndpoint(static_cast<uint8_t>(pTranOut.interleaved_rtp), endpoint_id))
+    {
+        LOG_ERROR("Bind RTP channel endpoint failed, endpoint_id={}, channel={}",
+                  endpoint_id, pTranOut.interleaved_rtp);
+        utils::EndpointManager::Instance().Remove(endpoint_id);
+        return "";
+    }
+
+    if (!media_session->BindTrackEndpoint(static_cast<uint8_t>(pTranOut.interleaved_rtcp), endpoint_id))
+    {
+        LOG_ERROR("Bind RTCP channel endpoint failed, endpoint_id={}, channel={}",
+                  endpoint_id, pTranOut.interleaved_rtcp);
+        utils::EndpointManager::Instance().Remove(endpoint_id);
         return "";
     }
 

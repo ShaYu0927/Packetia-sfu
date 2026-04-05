@@ -74,9 +74,9 @@ public:
 protected:
     std::shared_ptr<IJobHandler> CreateHandler() override
     {
-        return std::make_shared<utils::EndpointJobHandler>(&endpoint_mgr);
+        return std::make_shared<utils::EndpointJobHandler>(
+            &utils::EndpointManager::Instance());
     }
-    utils::EndpointManager endpoint_mgr;
 };
 
 class WorkerModuleRegistry

@@ -334,7 +334,7 @@ std::shared_ptr<RtpTrack> MediaSession::GetRtpTrack(const std::string& control) 
     return track_it->second;
 }
 
-bool MediaSession::BindInterleavedChannel(uint8_t channel, int track_id, bool is_rtcp)
+bool MediaSession::BindInterleavedChannel(uint8_t channel, int track_id, bool is_rtcp, uint64_t endpoint_id)
 {
     std::lock_guard<std::mutex> lk(track_mtx_);
 
@@ -347,6 +347,7 @@ bool MediaSession::BindInterleavedChannel(uint8_t channel, int track_id, bool is
     b.track_id = track_id;
     b.is_rtcp = is_rtcp;
     b.key = MakeStreamKey(session_id_, static_cast<uint32_t>(track_id));
+    b.endpoint_id = endpoint_id;
     return true;
 }
 
@@ -361,4 +362,19 @@ bool MediaSession::GetChannelBinding(uint8_t channel, ChannelBinding* out) const
 
     *out = b;
     return true;
+}
+
+bool MediaSession::BindTrackEndpoint(int track_id, uint64_t endpoint_id)
+{
+    std::lock_guard<std::mutex> lk(track_mtx_);
+    endpoint_to_track_[endpoint_id] = track_id;
+    return true;
+}
+
+uint64_t MediaSession::FindEndpointByTrack(int track_id) const
+{
+    std::lock_guard<std::mutex> lk(track_mtx_);
+    auto it = std::find_if(endpoint_to_track_.begin(), endpoint_to_track_.end(),
+        [track_id](const auto& pair) { return pair.second == track_id; });
+    return (it != endpoint_to_track_.end()) ? it->first : 0;
 }

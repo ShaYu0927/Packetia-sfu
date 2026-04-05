@@ -3,6 +3,7 @@
 
 #include "EndpointBase.h"
 #include "RtpReceiver.h"
+#include "RtspMediaSession.h"
 
 namespace media 
 {
@@ -11,6 +12,18 @@ class MediaEndpoint : public utils::EndpointBase
 {
 public:
     using EndpointBase::EndpointBase;
+    MediaEndpoint(uint64_t id,
+                  std::shared_ptr<RtpTrack> tracker,
+                  std::shared_ptr<MediaSession> session)
+        : utils::EndpointBase(id, "MediaEndpoint"),
+          tracker_(std::move(tracker)),
+          session_(std::move(session))
+    {
+    }
+    ~MediaEndpoint() = default;
+    bool Start() override { return true;}
+
+    void Stop() override { }
 
     void OnRtp(WorkJob& job) override;
     void OnRtcp(WorkJob& job) override;
@@ -18,10 +31,17 @@ public:
     void OnDtls(WorkJob& job) override;
 
 protected:
-    virtual void HandleRtpPacket(Packet* pkt) = 0;
-    virtual void HandleRtcpPacket(Packet* pkt) = 0;
+    virtual void HandleRtpPacket(Packet* pkt) {}
+    virtual void HandleRtcpPacket(Packet* pkt) {}
     virtual void HandleStunPacket(Packet* pkt) {}
     virtual void HandleDtlsPacket(Packet* pkt) {}
+
+    
+
+private:
+    std::shared_ptr<MediaSession> session_;
+    uint64_t id_;
+    std::shared_ptr<RtpTrack> tracker_;
 };
 
 class SfuEndpoint : public MediaEndpoint

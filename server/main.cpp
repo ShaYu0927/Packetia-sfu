@@ -9,7 +9,6 @@
 int main()
 {
     WorkerModuleRegistry registry;
-    utils::EndpointManager endpoint_mgr;
 
     registry.Add(std::make_shared<MediaWorkerModule>());
 
@@ -20,7 +19,7 @@ int main()
         return -1;
     }
 
-    auto handler = std::make_shared<utils::EndpointJobHandler>(&endpoint_mgr);
+    auto handler = std::make_shared<utils::EndpointJobHandler>(&utils::EndpointManager::Instance());
     if (WorkerService::create_pool("endpoint_pool", 4, handler, 4096) != 0)
     {
         LOG_ERROR("create worker pool failed");

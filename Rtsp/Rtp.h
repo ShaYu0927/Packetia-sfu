@@ -59,7 +59,10 @@ public:
     void CountFir();
     void SetRttMs(uint32_t rtt_ms);
     void SetJitter(uint32_t jitter);
-    void UpdateSequenceStats(uint16_t seq);
+    void UpdateSequenceStats(uint16_t seq)
+    {
+        
+    }
 
     void Reset()
     {

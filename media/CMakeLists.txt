@@ -15,9 +15,14 @@ target_compile_features(media PUBLIC cxx_std_17)
 
 target_link_libraries(media
     PUBLIC
-        Common
-        utils
-        protocol
+        rtsp
+        rtp
         network
-        log
+        utils
+        Rtcp
+        LOGGER
+        ROOM_LIB
+        COMMON
+        ICE
+        Interleaved
 )

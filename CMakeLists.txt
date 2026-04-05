@@ -41,7 +41,8 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/Room
     ${CMAKE_SOURCE_DIR}/Common/CallbackEmitter
     ${CMAKE_SOURCE_DIR}/Common/Depacketizer
-    
+    ${CMAKE_SOURCE_DIR}/media/endpoint
+    ${CMAKE_SOURCE_DIR}/media/track
 )
 
 link_directories(
@@ -181,7 +182,7 @@ add_executable(Packetia ${CMAKE_SOURCE_DIR}/server/main.cpp)
 target_link_libraries(Packetia
     PRIVATE
     -Wl,--start-group
-    rtsp rtp network utils Rtcp LOGGER ROOM_LIB COMMON ICE Interleaved
+    media rtsp rtp network utils Rtcp LOGGER ROOM_LIB COMMON ICE Interleaved
     -Wl,--end-group
     ${FFMPEG_LIBRARIES}
     pthread

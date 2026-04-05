@@ -67,7 +67,7 @@ void EndpointJobHandler::handle(WorkJob& job)
     if (!endpoint)
     {
         if (job.deleter) job.deleter(job);
-        LOG_INFO("endpoint");
+        LOG_ERROR("endpoint not found, key=", job.key);
         return;
     }
 
@@ -81,19 +81,17 @@ void EndpointJobHandler::handle(WorkJob& job)
 
 void EndpointBase::ProcessJob(WorkJob& job)
 {
+    LOG_INFO("EndpointBase::ProcessJob called, endpoint_id=", endpoint_id_, " job_key=", job.key, " job_type=", static_cast<int>(job.type));
     switch (job.type)
     {
     case WorkType::Rtp:
         OnRtp(job);
         break;
-
     case WorkType::Rtcp:
         OnRtcp(job);
         break;
-
     default:
-        LOG_ERROR("unsupported job type, key=", job.key,
-                  " type=", static_cast<int>(job.type));
+        LOG_ERROR("unsupported job type, key=", job.key, " type=", static_cast<int>(job.type));
         break;
     }
 }

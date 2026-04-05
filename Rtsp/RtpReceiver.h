@@ -92,8 +92,14 @@ protected:
         return false;
     }
 
-    virtual void onBeforeRtpSorted(const RtpPacket::Ptr &pkt);
-    virtual void onRtpSorted(const RtpPacket::Ptr &pkt) = 0;
+    virtual void onBeforeRtpSorted(const RtpPacket::Ptr &pkt)
+    {
+
+    }
+    virtual void onRtpSorted(const RtpPacket::Ptr &pkt)
+    {
+        
+    }
 
 protected:
     TrackInfo _info;
@@ -119,32 +125,62 @@ public:
 public:
     RtpPacket::Ptr inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len) override;
 
-    void inputRtcp(const uint8_t *ptr, size_t len) override;
+    void inputRtcp(const uint8_t *ptr, size_t len) override
+    {
+
+    }
 
     void setOnNack(NackCallback cb) { _on_nack = std::move(cb); }
     void setOnPli(PliCallback cb) { _on_pli = std::move(cb); }
     void setOnFir(FirCallback cb) { _on_fir = std::move(cb); }
 
 protected:
-    void onBeforeRtpSorted(const RtpPacket::Ptr &pkt) override;
+    void onBeforeRtpSorted(const RtpPacket::Ptr &pkt) override
+    {
 
-    void onRtpSorted(const RtpPacket::Ptr &pkt) override;
+    }
+
+    void onRtpSorted(const RtpPacket::Ptr &pkt) override
+    {
+
+    }
 
 public:
     void OnReceiverReport(uint32_t sender_ssrc, uint32_t media_ssrc, uint8_t fraction_lost, int32_t cumulative_lost,
-                          uint32_t highest_seq, uint32_t jitter, uint32_t lsr, uint32_t dlsr) override;
+                          uint32_t highest_seq, uint32_t jitter, uint32_t lsr, uint32_t dlsr) override
+                          {
 
-    void OnSenderReport(uint32_t sender_ssrc, uint64_t ntp, uint32_t rtp_ts, uint32_t packet_count, uint32_t octet_count) override;
+                          }
 
-    void OnNack(uint32_t sender_ssrc, uint32_t media_ssrc, const uint16_t* seqs, size_t count) override;
+    void OnSenderReport(uint32_t sender_ssrc, uint64_t ntp, uint32_t rtp_ts, uint32_t packet_count, uint32_t octet_count) override
+    {
 
-    void OnPli(uint32_t sender_ssrc, uint32_t media_ssrc) override;
+    }
 
-    void OnFir(uint32_t sender_ssrc, uint32_t media_ssrc, uint8_t seq_nr) override;
+    void OnNack(uint32_t sender_ssrc, uint32_t media_ssrc, const uint16_t* seqs, size_t count) override
+    {
+
+    }
+
+    void OnPli(uint32_t sender_ssrc, uint32_t media_ssrc) override
+    {
+
+    }
+
+    void OnFir(uint32_t sender_ssrc, uint32_t media_ssrc, uint8_t seq_nr) override
+    {
+
+    }
     
-    void OnBye(uint32_t sender_ssrc) override;
+    void OnBye(uint32_t sender_ssrc) override
+    {
 
-    void OnRttUpdated(uint32_t media_ssrc, uint32_t rtt_ms) override;
+    }
+
+    void OnRttUpdated(uint32_t media_ssrc, uint32_t rtt_ms) override
+    {
+
+    }
 
 
 private:
