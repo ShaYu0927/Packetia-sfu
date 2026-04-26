@@ -1,146 +1,155 @@
 #include "RtpReceiver.h"
-#include "TimeUtil.h"
+#include "logger.h"
 
 
 /* 网络包 转 协议包 */
 RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len)
 {
-    if (!ptr || len < 12)
+    if (!ptr || len < RtpHeader::kSize)
     {
-        LOG_ERROR("inputRtp invalid param, ptr=", (void*)ptr, ", len=", len);
-        return nullptr;
-    }
-      uint8_t vpxcc = ptr[0];
-    uint8_t mpt   = ptr[1];
-
-    uint8_t version = (vpxcc >> 6) & 0x03;
-    bool padding    = ((vpxcc >> 5) & 0x01) != 0;
-    bool extension  = ((vpxcc >> 4) & 0x01) != 0;
-    uint8_t csrcCnt = vpxcc & 0x0F;
-
-    bool marker     = ((mpt >> 7) & 0x01) != 0;
-    uint8_t pt      = mpt & 0x7F;
-
-    if (version != 2)
-    {
-        LOG_ERROR("inputRtp invalid rtp version=", (int)version);
+        LOG_ERROR("inputRtp invalid param, ptr=", (void*)ptr, " len=", len);
         return nullptr;
     }
 
-    size_t headerLen = 12 + csrcCnt * 4;
+    RtpHeader hdr;
+    if (!hdr.InputFromBuffer(ptr, len))
+    {
+        LOG_ERROR("inputRtp parse rtp header failed");
+        return nullptr;
+    }
+
+    if (hdr.getVersion() != 2)
+    {
+        LOG_ERROR("inputRtp invalid rtp version=", static_cast<int>(hdr.getVersion()));
+        return nullptr;
+    }
+
+    size_t headerLen = hdr.getHeaderSize();
     if (len < headerLen)
     {
-        LOG_ERROR("inputRtp len too short for csrc, len=", len,
-                  ", headerLen=", headerLen);
+        LOG_ERROR("inputRtp len too short for csrc, len=", len, " headerLen=", headerLen);
         return nullptr;
     }
 
-    if (extension)
+    if (hdr.getExtension())
     {
-        // RTP extension header:
-        // 16bit profile + 16bit length(单位是32bit word)
         if (len < headerLen + 4)
         {
             LOG_ERROR("inputRtp len too short for extension header, len=", len);
             return nullptr;
         }
 
-        uint16_t extLenWords =
-            (static_cast<uint16_t>(ptr[headerLen + 2]) << 8) |
-             static_cast<uint16_t>(ptr[headerLen + 3]);
+        uint16_t extLenWords = (static_cast<uint16_t>(ptr[headerLen + 2]) << 8) | static_cast<uint16_t>(ptr[headerLen + 3]);
 
         size_t extTotalLen = 4 + static_cast<size_t>(extLenWords) * 4;
         if (len < headerLen + extTotalLen)
         {
-            LOG_ERROR("inputRtp len too short for extension body, len=", len,
-                      ", need=", headerLen + extTotalLen);
+            LOG_ERROR("inputRtp len too short for extension body, len=", len, " need=", headerLen + extTotalLen);
             return nullptr;
         }
 
         headerLen += extTotalLen;
     }
 
-    if (headerLen > len)
-    {
-        LOG_ERROR("inputRtp invalid headerLen=", headerLen, ", len=", len);
-        return nullptr;
-    }
-
     size_t payloadLen = len - headerLen;
 
-    if (padding)
+    if (hdr.getPadding())
     {
-        if (payloadLen == 0)
-        {
-            LOG_ERROR("inputRtp invalid padding packet, no payload");
-            return nullptr;
-        }
-
         uint8_t padLen = ptr[len - 1];
         if (padLen == 0 || padLen > payloadLen)
         {
-            LOG_ERROR("inputRtp invalid padLen=", (int)padLen,
-                      ", payloadLen=", payloadLen);
+            LOG_ERROR("inputRtp invalid padLen=", static_cast<int>(padLen), " payloadLen=", payloadLen);
             return nullptr;
         }
-
         payloadLen -= padLen;
     }
 
-    uint16_t seq =
-        (static_cast<uint16_t>(ptr[2]) << 8) |
-         static_cast<uint16_t>(ptr[3]);
-
-    uint32_t timestamp =
-        (static_cast<uint32_t>(ptr[4]) << 24) |
-        (static_cast<uint32_t>(ptr[5]) << 16) |
-        (static_cast<uint32_t>(ptr[6]) << 8)  |
-         static_cast<uint32_t>(ptr[7]);
-
-    uint32_t ssrc =
-        (static_cast<uint32_t>(ptr[8])  << 24) |
-        (static_cast<uint32_t>(ptr[9])  << 16) |
-        (static_cast<uint32_t>(ptr[10]) << 8)  |
-         static_cast<uint32_t>(ptr[11]);
-
     auto pkt = std::make_shared<RtpPacket>();
-    
-    if (!pkt->assign(ptr, len,
-                 version,
-                 padding,
-                 extension,
-                 csrcCnt,
-                 marker,
-                 pt,
-                 seq,
-                 timestamp,
-                 ssrc,
-                 headerLen,
-                 payloadLen))
-    {
-        LOG_ERROR("assign rtp packet failed");
-        return nullptr;
-    }
-
-    if (_first_rtp_recv_ms == 0)
-    {
-        _first_rtp_recv_ms = NowMs();
-    }
-    _last_rtp_recv_ms = NowMs();
-
-    ++_rtp_packet_count;
-    _rtp_bytes += len;
-
-    _ssrc = ssrc;
-    _payload_type = pt;
-    _last_timestamp = timestamp;
-
-    UpdateSequenceStats(seq);
+    pkt->reserve(headerLen + payloadLen);
+    pkt->SetSequence(hdr.getSequence());
+    pkt->setStamp(hdr.getTimestamp());
+    pkt->setSSRC(hdr.getSSRC());
+    pkt->setPayloadType(hdr.getPayloadType());
+    pkt->setMarker(hdr.getMarker());
+    pkt->setPayload(ptr + headerLen, payloadLen);
+    pkt->setRaw(ptr, len);
 
 
-
-    /* 排序 */
     inputPacket(pkt);
     return pkt;
 }
 
+
+void RtpVideoTracker::onBeforeRtpSorted(const RtpPacket::Ptr &pkt)
+{
+    if(!pkt)
+    {
+        LOG_ERROR("RtpPacket is nullptr");
+        return;
+    }
+
+    auto seq = pkt->getSeq();
+    auto ts = pkt->getStamp();
+    auto ssrc = pkt->getSSRC();
+
+    if(_has_last_seq)
+    {
+        uint16_t expected = _last_seq + 1;
+        if (seq != expected) 
+        {
+            LOG_ERROR("[RtpVideoTracker] packet lost after sorted, expected=", expected, " actual=", seq);
+        }
+
+    }
+    _last_seq = seq;
+    _has_last_seq = true;
+}
+
+void RtpVideoTracker::onRtpSorted(const RtpPacket::Ptr &pkt)
+{
+    if (!pkt) 
+    {
+        LOG_INFO("[RtpVideoTracker] onRtpSorted failed, pkt is null");
+        return;
+    }
+
+    if (!_depacketizer) 
+    {
+        LOG_INFO("[RtpVideoTracker] no depacketizer, pt=", pkt->getPayloadType(),
+                 " seq=", pkt->getSeq(),
+                 " ssrc=", pkt->getSSRC());
+        return;
+    }
+
+    const uint8_t *payload = pkt->getPayload();
+    size_t payload_size = pkt->getPayloadSize();
+
+    if (!payload || payload_size == 0) 
+    {
+        LOG_INFO("[RtpVideoTracker] empty RTP payload, seq=", pkt->getSeq(),
+                 " ssrc=", pkt->getSSRC());
+        return;
+    }
+
+    RtpView view;
+    view.ssrc = pkt->getSSRC();
+    view.seq = pkt->getSeq();
+    view.ts = pkt->getStamp();
+    view.marker = pkt->getMarker();
+    view.payload = payload;
+    view.payload_len = payload_size;
+
+    if (view.payload && view.payload_len > 0) 
+    {
+        uint8_t nal_type = view.payload[0] & 0x1F;
+    } 
+
+    if (!_depacketizer->input(view)) 
+    {
+        LOG_INFO("[RtpVideoTracker] depacketizer input failed, seq=", view.seq,
+                 " ts=", view.ts,
+                 " ssrc=", view.ssrc,
+                 " payload_size=", view.payload_len);
+        return;
+    }
+}

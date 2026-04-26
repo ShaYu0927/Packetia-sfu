@@ -58,13 +58,6 @@ bool H264Depacketizer::input(const RtpView& pkt)
     const uint8_t nalhdr = payload[0];
     const uint8_t type = nal_type(nalhdr);
 
-   LOG_INFO("Received RTP packet: ssrc=" + std::to_string(ssrc) +
-         ", ts=" + std::to_string(ts) +
-         ", seq=" + std::to_string(seq) +
-         ", marker=" + std::to_string(marker) +
-         ", payload_len=" + std::to_string(payload_len) +
-         ", nal_type=" + std::to_string(type));
-
     /* sigle NAL 1 ~ 23 */
     if(type >= 1 && type <= 23)
     {
@@ -80,7 +73,17 @@ bool H264Depacketizer::input(const RtpView& pkt)
     }
     else
     {
-        LOG_ERROR("Unsupported NAL type:", std::to_string(type));
+        LOG_ERROR("[H264Depacketizer] Unsupported NAL type",
+              " type=", static_cast<int>(type),
+              " ssrc=", pkt.ssrc,
+              " seq=", pkt.seq,
+              " ts=", pkt.ts,
+              " marker=", pkt.marker,
+              " payload_len=", pkt.payload_len,
+              " payload0=", pkt.payload_len > 0 ? static_cast<int>(pkt.payload[0]) : -1,
+              " payload1=", pkt.payload_len > 1 ? static_cast<int>(pkt.payload[1]) : -1,
+              " payload2=", pkt.payload_len > 2 ? static_cast<int>(pkt.payload[2]) : -1,
+              " payload3=", pkt.payload_len > 3 ? static_cast<int>(pkt.payload[3]) : -1);
         return false;
     }
 

@@ -1,9 +1,7 @@
 #ifndef _DEPACKETIZER_H__
 #define _DEPACKETIZER_H__
 
-
-
-#include <memory>
+#include <cstdint>
 #include <vector>
 
 struct RtpView 

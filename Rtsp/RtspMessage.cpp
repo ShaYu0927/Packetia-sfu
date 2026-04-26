@@ -742,7 +742,7 @@ std::string RtspRequest::HandleCmdSetup(RtspRequestInfo& req)
     }
 
     
-    auto endpoint = std::make_shared<media::MediaEndpoint>(endpoint_id, tracker, media_session);
+    auto endpoint = std::make_shared<media::SfuEndpoint>(endpoint_id, tracker, media_session);
 
     if (!utils::EndpointManager::Instance().Add(endpoint))
     {

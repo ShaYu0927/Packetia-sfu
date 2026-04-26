@@ -2,7 +2,6 @@
 #define _NTPSTAMP_H_
 
 #include <cstdint>
-#include <memory>
 
 class NtpStamp {
 public:

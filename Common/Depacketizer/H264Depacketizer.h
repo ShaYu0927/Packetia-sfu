@@ -6,8 +6,6 @@
 #include <cstddef>
 #include <vector>
 #include <cstdint>
-
-#include "logger.h"
 #include "SourceBase.h"
 
 
@@ -41,12 +39,9 @@ private:
 
     SourceCOW<iVideoFrame> frameSource;
 
-
-
-
 private:
     void reset_stream(uint32_t ssrc, uint32_t ts);
-    bool flush_frame(); 
+    bool flush_frame();
     bool handle_single_nal(const uint8_t* p, size_t n);
     bool handle_stap_a(const uint8_t* p, size_t n);
     bool handle_fu_a(const uint8_t* p, size_t n);

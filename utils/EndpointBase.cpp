@@ -81,7 +81,6 @@ void EndpointJobHandler::handle(WorkJob& job)
 
 void EndpointBase::ProcessJob(WorkJob& job)
 {
-    LOG_INFO("EndpointBase::ProcessJob called, endpoint_id=", endpoint_id_, " job_key=", job.key, " job_type=", static_cast<int>(job.type));
     switch (job.type)
     {
     case WorkType::Rtp:

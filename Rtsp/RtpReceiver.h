@@ -10,6 +10,7 @@
 #include "RtpTypes.h"
 #include "Rtp.h"
 #include "RtcpReciver.h"
+#include "H264Depacketizer.h"
 
 
 
@@ -76,7 +77,6 @@ protected:
         {
             return false;
         }
-
         ++_stats.received_packets;
         _stats.seen_packet = true;
         EnhancedPacketSortor<RtpPacket::Ptr, uint16_t>::inputPacket(pkt->getSeq(), pkt);
@@ -85,7 +85,8 @@ protected:
 
     bool emitFrame(const FramePtr &frame)
     {
-        if (_on_frame) {
+        if (_on_frame) 
+        {
             _on_frame(frame);
             return true;
         }
@@ -117,6 +118,7 @@ public:
 
     explicit RtpVideoTracker(const TrackInfo &info)
         : RtpReceiverTrack(info)
+        , _depacketizer(std::make_unique<H264Depacketizer>())
     {
     }
 
@@ -135,22 +137,58 @@ public:
     void setOnFir(FirCallback cb) { _on_fir = std::move(cb); }
 
 protected:
-    void onBeforeRtpSorted(const RtpPacket::Ptr &pkt) override
-    {
+    /**
+    * @brief RTP packet pre-process hook after packet sorting.
+    *
+    * This callback is invoked after the RTP packet has been reordered by the
+    * packet sorter, but before it enters the formal video payload processing
+    * flow in onRtpSorted().
+    *
+    * Typical responsibilities:
+    * - Print sorted RTP packet information for debugging.
+    * - Check RTP sequence continuity after sorting.
+    * - Collect packet-level statistics, such as packet count, bitrate,
+    *   timestamp changes, SSRC, payload type, and packet length.
+    * - Detect abnormal RTP packet states before H264/H265 payload parsing.
+    *
+    * Note:
+    * This function should only handle packet-level inspection or statistics.
+    * H264/H265 payload parsing, FU-A/STAP-A reassembly, frame output, and
+    * decoding should be handled in onRtpSorted() or later modules.
+    *
+    * @param pkt Sorted RTP packet output by the packet sorter.
+    */
+    void onBeforeRtpSorted(const RtpPacket::Ptr &pkt) override;
 
-    }
-
-    void onRtpSorted(const RtpPacket::Ptr &pkt) override
-    {
-
-    }
+    /**
+    * @brief Process sorted RTP packet for video payload handling.
+    *
+    * This callback is invoked after the RTP packet has been reordered by the
+    * packet sorter. It is the formal entry point for video RTP payload processing.
+    *
+    * Typical responsibilities:
+    * - Parse video RTP payload according to codec type, such as H264 or H265.
+    * - Handle RTP payload packetization formats, such as Single NALU, FU-A,
+    *   STAP-A for H264, or the corresponding H265 packetization formats.
+    * - Reassemble fragmented RTP packets into complete encoded video frames.
+    * - Output complete H264/H265 encoded frames to downstream modules, such as
+    *   recorder, muxer, decoder, or forwarding pipeline.
+    *
+    * Note:
+    * This function should not normally decode video into YUV/RGB directly.
+    * Its main responsibility is RTP payload depacketization and encoded frame
+    * reassembly. Actual video decoding should be handled by a decoder module.
+    *
+    * @param pkt Sorted RTP packet output by the packet sorter.
+    */
+    void onRtpSorted(const RtpPacket::Ptr &pkt) override;
 
 public:
     void OnReceiverReport(uint32_t sender_ssrc, uint32_t media_ssrc, uint8_t fraction_lost, int32_t cumulative_lost,
                           uint32_t highest_seq, uint32_t jitter, uint32_t lsr, uint32_t dlsr) override
-                          {
-
-                          }
+    {
+        
+    }
 
     void OnSenderReport(uint32_t sender_ssrc, uint64_t ntp, uint32_t rtp_ts, uint32_t packet_count, uint32_t octet_count) override
     {
@@ -189,6 +227,9 @@ private:
     FirCallback _on_fir;
 
     uint32_t _rtt_ms = 0;
+    bool _has_last_seq = false;
+
+    std::unique_ptr<Depacketizer> _depacketizer;
 };
 
 #endif // _RTPRECEIVER_H_

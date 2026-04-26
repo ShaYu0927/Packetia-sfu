@@ -156,36 +156,38 @@ protected:
     bool _has_seq = false;
 };
 
-class RtpHeader 
+class RtpHeader
 {
-
 public:
     static constexpr size_t kSize = 12;
 
-    RtpHeader() {}
-    ~RtpHeader() {}
-
+    bool InputFromBuffer(const uint8_t* buf, size_t len);
     void serialize(uint8_t* out) const;
 
-    uint8_t getVersion() const;
-    void setVersion(uint8_t ver);
+    uint8_t getVersion() const { return _version; }
+    void setVersion(uint8_t ver) { _version = ver; }
 
-    uint8_t getPayloadType() const;
-    void setPayloadType(uint8_t pt);
+    bool getPadding() const { return _padding; }
+    bool getExtension() const { return _extension; }
+    uint8_t getCsrcCount() const { return _csrc; }
 
-    bool getMarker() const;
-    void setMarker(bool marker);
+    uint8_t getPayloadType() const { return _payload_type; }
+    void setPayloadType(uint8_t pt) { _payload_type = pt; }
 
-    uint16_t getSequence() const;
-    void setSequence(uint16_t seq);
+    bool getMarker() const { return _marker; }
+    void setMarker(bool marker) { _marker = marker; }
 
-    uint32_t getTimestamp() const;
-    void setTimestamp(uint32_t ts);
+    uint16_t getSequence() const { return _seq; }
+    void setSequence(uint16_t seq) { _seq = seq; }
 
-    uint32_t getSSRC() const;
-    void setSSRC(uint32_t ssrc);
+    uint32_t getTimestamp() const { return _timestamp; }
+    void setTimestamp(uint32_t ts) { _timestamp = ts; }
 
-	  
+    uint32_t getSSRC() const { return _ssrc; }
+    void setSSRC(uint32_t ssrc) { _ssrc = ssrc; }
+
+    size_t getHeaderSize() const { return kSize + static_cast<size_t>(_csrc) * 4; }
+
 private:
     uint8_t _version = 2;
     bool _padding = false;
@@ -198,7 +200,6 @@ private:
     uint16_t _seq = 0;
     uint32_t _timestamp = 0;
     uint32_t _ssrc = 0;
-    uint16_t pt;
 };
 
 struct RtpTransportTcp 
@@ -238,82 +239,113 @@ struct RtcpStats
 };
 
 
-
 template<typename Packet, typename Seq = uint16_t>
-class EnhancedPacketSortor 
+class EnhancedPacketSortor
 {
 public:
-    using Callback = std::function<void(Seq seq, const Packet& pkt)>;
+    using Callback = std::function<void(Seq seq, Packet pkt)>;
 
-    EnhancedPacketSortor(uint16_t max_gap = 1000, size_t max_cache = 50, uint32_t flush_timeout_ms = 100)
-        : _max_gap(max_gap), _max_cache(max_cache), _flush_timeout(flush_timeout_ms) {}
+    EnhancedPacketSortor(uint16_t max_gap = 1000,
+                         size_t max_cache = 50,
+                         uint32_t flush_timeout_ms = 100)
+        : _max_gap(max_gap),
+          _max_cache(max_cache),
+          _flush_timeout(flush_timeout_ms) {}
 
-    void setOnPacketSorted(Callback cb) 
+    void setOnPacketSorted(Callback cb)
     {
         _cb = std::move(cb);
     }
 
-    void inputPacket(Seq seq, Packet pkt) 
+    void inputPacket(Seq seq, Packet pkt)
     {
         auto now = std::chrono::steady_clock::now();
-#if RTP_DEBUG
-        LOG_INFO("[Sort] in seq=", seq,
-        " next=", _next_seq,
-        " obj=", (void*)(pkt ? pkt.get() : nullptr),
-        " use_count=", (pkt ? pkt.use_count() : 0),
-        " pkt.seq_=", (pkt ? pkt->seq_ : 0),
-        " ts=", (pkt ? pkt->ts : 0),
-        " payload_len=", (pkt ? pkt->size : 0));
-#endif
-
-
-        if (!_started) 
+        if (!_started)
         {
             _next_seq = seq;
             _last_flush_time = now;
             _started = true;
-            emit(seq, pkt);
+            emit(seq, std::move(pkt));
             return;
         }
 
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - _last_flush_time).count() > _flush_timeout) 
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - _last_flush_time).count() > _flush_timeout)
         {
-            flushBuffered();
+            flushTimeout();
             _last_flush_time = now;
         }
 
-        if (seq == _next_seq) 
+        if (seq == _next_seq)
         {
-            emit(seq, pkt);
+            emit(seq, std::move(pkt));
             flushBuffered();
-        } 
-        else if (distance(seq, _next_seq) < _max_gap) 
+            return;
+        }
+
+        if (isOlder(seq, _next_seq))
         {
-            _buffer[seq] = std::move(pkt);
-            if (_buffer.size() > _max_cache) 
+            ++_drop_count;
+            return;
+        }
+
+        if (distance(seq, _next_seq) < _max_gap)
+        {
+            auto [it, inserted] = _buffer.emplace(seq, std::move(pkt));
+            if (!inserted)
+            {
+                ++_drop_count;
+            }
+
+            if (_buffer.size() > _max_cache)
             {
                 ++_lost_count;
-                LOG_INFO("[PacketSortor] too much cache, force drop seq=", _next_seq);
                 ++_next_seq;
                 flushBuffered();
             }
-        } 
-        else 
-        {
-            ++_drop_count;
+            return;
         }
+
+        ++_drop_count;
     }
 
-    void flushBuffered() 
+    void flushBuffered()
     {
-        while (!_buffer.empty()) 
+        while (true)
         {
             auto it = _buffer.find(_next_seq);
             if (it == _buffer.end())
+            {
                 break;
+            }
 
-            emit(it->first, it->second);
+            auto pkt = std::move(it->second);
             _buffer.erase(it);
+            emit(_next_seq, std::move(pkt));
+        }
+    }
+
+    void flushTimeout()
+    {
+        while (!_buffer.empty())
+        {
+            auto it = _buffer.find(_next_seq);
+            if (it != _buffer.end())
+            {
+                auto pkt = std::move(it->second);
+                _buffer.erase(it);
+                emit(_next_seq, std::move(pkt));
+                continue;
+            }
+
+            auto first = _buffer.begin();
+            if (distance(first->first, _next_seq) < _max_gap)
+            {
+                ++_lost_count;
+                ++_next_seq;
+                continue;
+            }
+
+            break;
         }
     }
 
@@ -321,18 +353,23 @@ public:
     size_t getDropCount() const { return _drop_count; }
 
 private:
-    void emit(Seq seq, const Packet& pkt) 
+    void emit(Seq seq, Packet pkt)
     {
-        if (_cb) 
+        if (_cb)
         {
-            _cb(seq, pkt);
+            _cb(seq, std::move(pkt));
         }
         ++_next_seq;
     }
 
-    uint32_t distance(Seq a, Seq b) const 
+    uint32_t distance(Seq a, Seq b) const
     {
         return static_cast<uint16_t>(a - b);
+    }
+
+    bool isOlder(Seq a, Seq b) const
+    {
+        return a != b && distance(a, b) >= 0x8000;
     }
 
 private:
@@ -342,9 +379,9 @@ private:
     std::map<Seq, Packet> _buffer;
     Callback _cb;
 
-    uint16_t _max_gap;
-    size_t _max_cache;
-    uint32_t _flush_timeout; 
+    uint16_t _max_gap = 1000;
+    size_t _max_cache = 50;
+    uint32_t _flush_timeout = 100;
 
     size_t _lost_count = 0;
     size_t _drop_count = 0;
@@ -389,8 +426,16 @@ public:
     uint8_t* getData() { return data_.get(); }
     const uint8_t* getData() const { return data_.get(); }
 
-    uint8_t* getPayload() { return data_ ? data_.get() + payload_off_ : nullptr; }
-    const uint8_t* getPayload() const { return data_ ? data_.get() + payload_off_ : nullptr; }
+    uint8_t* getPayload() 
+    {
+        uint8_t *payload = data_ ? data_.get() + payload_off_ : nullptr;
+        return payload;
+    }
+    const uint8_t* getPayload() const 
+    { 
+        const uint8_t *payload = data_ ? data_.get() + payload_off_ : nullptr;
+        return payload; 
+    }
 
     size_t getSize() const { return size_; }
     size_t getCapacity() const { return capacity_; }
@@ -409,19 +454,15 @@ public:
     void setRecvTimeMs(uint64_t ms) { recv_time_ms_ = ms; }
     uint64_t getRecvTimeMs() const { return recv_time_ms_; }
 
+    void SetSequence(uint16_t seq) { seq_ = seq; }
+
+    void setPayload(const uint8_t* payload, size_t len);
+
+    void setRaw(const uint8_t* data, size_t len);
+
+    bool reserve(size_t capacity);
+
     void reset();
-    bool assign(const uint8_t* ptr, size_t len,
-            uint8_t version,
-            bool padding,
-            bool extension,
-            uint8_t csrcCnt,
-            bool marker,
-            uint8_t pt,
-            uint16_t seq,
-            uint32_t timestamp,
-            uint32_t ssrc,
-            size_t headerLen,
-            size_t payloadLen);
 
 private:
     TrackType type_ = TrackInvalid;
@@ -622,8 +663,10 @@ protected:
 class VideoTrack : public RtpTrack, public RtpRecvStatsBase
 {
 public:
+    using PacketPtr = RtpPacket::Ptr;
     explicit VideoTrack(const TrackInfo& info)
-        : RtpTrack(info) {}
+        : RtpTrack(info) 
+        {}
 
     TrackType type() const override
     {
@@ -635,7 +678,11 @@ public:
     void onInputRtcp(const uint8_t* data, size_t len) override;
 
 private:
+    void onOrderedPacket(uint16_t seq, PacketPtr pkt);
+
+private:
     RtpRecvStatsBase _stats;
+    EnhancedPacketSortor<PacketPtr, uint16_t> sorter_;
 };
 
 

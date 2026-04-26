@@ -31,7 +31,7 @@ public:
     void OnDtls(WorkJob& job) override;
 
 protected:
-    virtual void HandleRtpPacket(Packet* pkt) {}
+    virtual void HandleRtpPacket(Packet* pkt) = 0;
     virtual void HandleRtcpPacket(Packet* pkt) {}
     virtual void HandleStunPacket(Packet* pkt) {}
     virtual void HandleDtlsPacket(Packet* pkt) {}

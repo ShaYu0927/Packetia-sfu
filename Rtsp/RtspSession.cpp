@@ -1,5 +1,8 @@
 #include "RtspSession.h"
 #include "logger.h"
+#include <iomanip>
+
+
 namespace rtsp 
 {
 static inline int FindCrlfCrlf(const char* p, size_t n)
@@ -67,6 +70,20 @@ static inline bool ParseContentLengthFromHeader(const char* header, size_t heade
     }
 
     return true; 
+}
+
+static void DumpBytes(const uint8_t* data, size_t len, size_t max_dump = 16)
+{
+    if (!data)
+        return;
+
+    std::ostringstream oss;
+    size_t n = std::min(len, max_dump);
+    for (size_t i = 0; i < n; ++i)
+    {
+        oss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(data[i]) << " ";
+    }
+    LOG_INFO("RtspSession dump len=", len, " bytes=", oss.str());
 }
 
 bool RtspSession::OnRead(TcpConnection::Ptr conn, BufferReader& buffer)
