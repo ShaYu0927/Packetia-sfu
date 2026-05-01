@@ -3,7 +3,27 @@ project(Packetia)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS ON) 
+set(CMAKE_CXX_EXTENSIONS ON)
+
+set(LIBHV_DIR ${CMAKE_SOURCE_DIR}/third/libhv)
+
+set(BUILD_SHARED OFF CACHE BOOL "" FORCE)
+set(BUILD_STATIC ON CACHE BOOL "" FORCE)
+
+set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(BUILD_UNITTEST OFF CACHE BOOL "" FORCE)
+
+set(WITH_EVPP ON CACHE BOOL "" FORCE)
+set(WITH_HTTP ON CACHE BOOL "" FORCE)
+set(WITH_HTTP_SERVER ON CACHE BOOL "" FORCE)
+set(WITH_HTTP_CLIENT OFF CACHE BOOL "" FORCE)
+
+set(WITH_MQTT OFF CACHE BOOL "" FORCE)
+set(WITH_CURL OFF CACHE BOOL "" FORCE)
+set(WITH_OPENSSL OFF CACHE BOOL "" FORCE)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/third/libhv)
+
+
 find_package(GTest REQUIRED)
 
 if(NOT CMAKE_BUILD_TYPE)
@@ -43,6 +63,14 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/Common/Depacketizer
     ${CMAKE_SOURCE_DIR}/media/endpoint
     ${CMAKE_SOURCE_DIR}/media/track
+    ${LIBHV_DIR}
+    ${LIBHV_DIR}/base
+    ${LIBHV_DIR}/cpputil
+    ${LIBHV_DIR}/event
+    ${LIBHV_DIR}/evpp
+    ${LIBHV_DIR}/ssl
+    ${LIBHV_DIR}/include
+    ${LIBHV_DIR}/http
 )
 
 link_directories(
@@ -64,6 +92,7 @@ add_library(network STATIC
     network/UdpSocket.cpp
     network/UdpServer.cpp
     network/UdpSession.cpp
+    network/websocket/WsServer.cpp
 )
 
 add_library(LOGGER STATIC
@@ -175,14 +204,19 @@ enable_testing()
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/Rtsp/Test)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/utils/test)
 
+
+# test
+
 add_executable(ice_unit_tests
     protocol/ice/test/test_IceChecklist.cpp
 )
 add_executable(Packetia ${CMAKE_SOURCE_DIR}/server/main.cpp)
+
+
 target_link_libraries(Packetia
     PRIVATE
     -Wl,--start-group
-    media rtsp rtp network utils Rtcp LOGGER ROOM_LIB COMMON ICE Interleaved
+    media rtsp rtp network utils Rtcp LOGGER ROOM_LIB COMMON ICE Interleaved hv_static
     -Wl,--end-group
     ${FFMPEG_LIBRARIES}
     pthread
