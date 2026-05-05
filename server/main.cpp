@@ -5,52 +5,96 @@
 #include "UdpSession.h"
 #include "EndpointBase.h"
 #include "IWorkerModule.h"
+#include "ServerLauncher.h"
 
 int main()
 {
+    server::ServerLauncher launcher;
+
     WorkerModuleRegistry registry;
 
-    registry.Add(std::make_shared<MediaWorkerModule>());
+    auto media_module = std::make_shared<MediaWorkerModule>();
+    registry.Add(media_module);
 
-    int ret = registry.RegisterAll();
-    if (ret != 0)
-    {
-        std::cerr << "worker modules init failed\n";
-        return -1;
-    }
+    launcher.AddCustomService(
+        "WorkerModuleRegistry",
+        [&registry]() -> bool {
+            int ret = registry.RegisterAll();
+            if (ret != 0)
+            {
+                LOG_ERROR("worker modules init failed");
+                return false;
+            }
 
-    auto handler = std::make_shared<utils::EndpointJobHandler>(&utils::EndpointManager::Instance());
-    if (WorkerService::create_pool("endpoint_pool", 4, handler, 4096) != 0)
-    {
-        LOG_ERROR("create worker pool failed");
-        return -1;
-    }
+            return true;
+        },
+        [&registry]() {
+
+        }
+    );
+
+    launcher.AddCustomService(
+        "EndpointWorkerPool",
+        []() -> bool {
+            auto handler = std::make_shared<utils::EndpointJobHandler>(
+                &utils::EndpointManager::Instance()
+            );
+
+            if (WorkerService::create_pool("endpoint_pool", 4, handler, 4096) != 0)
+            {
+                LOG_ERROR("create worker pool failed");
+                return false;
+            }
+
+            return true;
+        },
+        []() {
+            WorkerService::destroy_pool("endpoint_pool", true);
+        }
+    );
 
     auto event_loop = std::make_shared<EventLoop>(1);
-    if (!event_loop->Start())
-    {
-        LOG_ERROR("event loop start failed");
-        return -1;
-    }
 
-    auto rtsp_server = std::make_shared<RtspServer>(event_loop.get());
-    if (!rtsp_server->Start("0.0.0.0", 554))
-    {
-        LOG_ERROR("RTSP start failed");
-        return -1;
-    }
+    launcher.AddCustomService(
+        "EventLoop",
+        [event_loop]() -> bool {
+            if (!event_loop->Start())
+            {
+                LOG_ERROR("event loop start failed");
+                return false;
+            }
 
-    auto udp_server = std::make_shared<network::UdpServer>(event_loop.get());
+            return true;
+        },
+        [event_loop]() {
+        }
+    );
+
+    auto rtsp_server = launcher.AddIpPortService<RtspServer>(
+        "RtspServer",
+        "0.0.0.0",
+        554,
+        event_loop.get()
+    );
+
+    auto udp_server = launcher.AddIpPortService<network::UdpServer>(
+        "UdpServer",
+        "0.0.0.0",
+        9000,
+        event_loop.get()
+    );
+
     auto mux_handler = std::make_shared<network::UdpMuxHandler>(udp_server.get());
     udp_server->SetHandler(mux_handler);
-    if (!udp_server->Start("0.0.0.0", 9000))
+
+    if (!launcher.StartAll())
     {
-        LOG_ERROR("UDP start failed");
         return -1;
     }
 
     event_loop->Loop();
 
-    WorkerService::destroy_pool("endpoint_pool", true);
+    launcher.StopAll();
+
     return 0;
 }

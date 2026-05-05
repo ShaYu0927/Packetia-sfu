@@ -63,6 +63,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/Common/Depacketizer
     ${CMAKE_SOURCE_DIR}/media/endpoint
     ${CMAKE_SOURCE_DIR}/media/track
+    ${CMAKE_SOURCE_DIR}/server/Moudle
     ${LIBHV_DIR}
     ${LIBHV_DIR}/base
     ${LIBHV_DIR}/cpputil
@@ -198,7 +199,7 @@ add_library(ROOM_LIB STATIC
     ${ROOM_SRC}
 )
 add_subdirectory(media)
-
+add_subdirectory(server)
 
 enable_testing()
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/Rtsp/Test)

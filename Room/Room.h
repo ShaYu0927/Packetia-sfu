@@ -1,116 +1,98 @@
 #ifndef _ROOM_H_
 #define _ROOM_H_
 
-#include <cstdint>
+#include <memory>
+#include <mutex>
 #include <string>
+#include <functional>
 
+#include "TrackeInfo.h"
+#include "Participant.h"
 
 namespace room 
 {
-using RoomId = std::string;
-using RoomName = std::string;
-using ParticipantId = std::string;
-using ParticipantIdentity = std::string;
-using TrackId = std::string;
-
-enum class ParticipantState 
+enum class RoomState
 {
-    Joining,
+    Created = 0,
     Active,
-    Disconnected,
+    Empty,
+    Closed,
 };
 
-enum class CloseReason
+struct RoomOptions
 {
-    Unknown,
-    RoomClosed,
-    ParticipantLeft,
-    JoinTimeout,
-    DuplicateIdentity,
+    uint32_t max_participants = 0;
+    uint32_t empty_timeout_sec = 60;
+    uint32_t departure_timeout_sec = 30;
+    bool auto_subscribe = true;
 };
 
-struct ParticipantInfo 
+struct RoomInfo
 {
-    ParticipantId id;
-    ParticipantIdentity identity;
-    ParticipantState state = ParticipantState::Joining;
-    bool isPublisher = false;
-    bool hidden = false;
-};
-
-struct RoomInfo 
-{
-    RoomId id;
-    RoomName name;
-
-    uint32_t maxParticipants = 0;
-    uint32_t numParticipants = 0;
-    uint32_t numPublishers = 0;
-
-    uint32_t emptyTimeoutSec = 300;
-    uint32_t departureTimeoutSec = 20;
+    std::string room_id;
+    std::string room_name;
+    uint64_t created_at_ms = 0;
+    uint64_t first_joined_at_ms = 0;
+    uint64_t last_left_at_ms = 0;
+    uint32_t participant_count = 0;
+    RoomState state = RoomState::Created;
 };
 
 
-struct ParticipantOptions 
-{
-    bool autoSubscribe = true;
-};
-
-enum class MediaKind 
-{
-    Audio,
-    Video,
-};
-
-enum class TrackState 
-{
-    New,
-    Active,
-    Muted,
-    Ended,
-};
-
-class MediaTrack 
+class Room : public std::enable_shared_from_this<Room>
 {
 public:
-    MediaTrack(std::string trackId, MediaKind kind, std::string publisherId)
-        : trackId_(std::move(trackId)),
-          kind_(kind),
-          publisherId_(std::move(publisherId)) {}
+    using Ptr = std::shared_ptr<Room>;
 
-    const std::string& Id() const 
-    {
-        return trackId_;
-    }
+    explicit Room(RoomInfo info, RoomOptions options = {});
 
-    MediaKind Kind() const 
-    {
-        return kind_;
-    }
+    ~Room();
 
-    const std::string& PublisherId() const 
-    {
-        return publisherId_;
-    }
+    const std::string& Id() const;
+    const std::string& Name() const;
 
-    TrackState State() const 
-    {
-        return state_;
-    }
+    RoomInfo GetInfo() const;
+    RoomState State() const;
 
-    void SetState(TrackState state) 
-    {
-        state_ = state;
-    }
+    bool IsClosed() const;
+
+    bool Join(const Participant::Ptr& participant);
+    bool Leave(const std::string& participant_id);
+
+    Participant::Ptr GetParticipant(const std::string& participant_id) const;
+    std::vector<Participant::Ptr> GetParticipants() const;
+    size_t ParticipantCount() const;
+
+    bool PublishTrack(const std::string& participant_id,
+                      const media::MediaTrackPtr& track,
+                      uint32_t ssrc,
+                      uint8_t payload_type);
+
+    bool UnpublishTrack(const std::string& track_id);
+
+    media::MediaTrackPtr ResolveTrackForSubscriber(const std::string& subscriber_id,
+                                                    const std::string& track_id);
+
+    void Close();
+
+    void SetOnParticipantChanged(std::function<void(Participant::Ptr)> cb);
+    void SetOnRoomClosed(std::function<void(const std::string& room_id)> cb);
 
 private:
-    std::string trackId_;      // track 唯一 ID
-    MediaKind kind_;           // audio / video
-    std::string publisherId_;  // 发布的这个 track
-    TrackState state_ = TrackState::New;
-};
+    bool CanJoinLocked(const Participant::Ptr& participant) const;
+    void UpdateStateLocked();
 
+private:
+    mutable std::mutex mutex_;
+
+    RoomInfo info_;
+    RoomOptions options_;
+
+    std::unordered_map<std::string, Participant::Ptr> participants_;
+
+    std::function<void(Participant::Ptr)> on_participant_changed_;
+    std::function<void(const std::string& room_id)> on_room_closed_;
+};
 }
 
 

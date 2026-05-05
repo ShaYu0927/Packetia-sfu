@@ -7,6 +7,20 @@
 #include <string>
 #include <vector>
 
+/**
+ * @brief 媒体轨道基础类。
+ *
+ * MediaTrack 是会议 / SFU 业务层中的媒体流对象，
+ * 内部持有一份 TrackInfo，用于描述该媒体流的基本信息
+ *
+ * 该类提供线程安全的 Track 信息读取和更新接口，
+ * 例如获取 Track ID、媒体类型、来源、编码格式、静音状态等
+ *
+ * MediaTrack 本身不直接处理 RTP 数据，后续可以派生出
+ * VideoTrack、AudioTrack 等具体类型，再与 RTP 接收轨道、
+ * 房间管理器和订阅转发逻辑进行关联
+ */
+
 namespace media
 {
     enum class TrackType
@@ -63,7 +77,7 @@ namespace media
         uint32_t bitrate = 0;
 
         /**
-        * RID，例如 low/mid/high 或 q/h/f。
+        * RID，例如 low/mid/high 或 q/h/f
         */
         std::string rid;
     };
@@ -80,12 +94,12 @@ namespace media
         std::string mimeType;
 
         /**
-        * SDP 里的 mid。
+        * SDP 里的 mid
         */
         std::string mid;
 
         /**
-        * 客户端 Track ID / SDP CID。
+        * 客户端 Track ID / SDP CID
         */
         std::string cid;
 
@@ -96,8 +110,8 @@ namespace media
     struct TrackInfo
     {
         /**
-        * 服务端生成的 Track 唯一 ID。
-        * 例如 TR_xxx。
+        * 服务端生成的 Track 唯一 ID
+        * 例如 TR_xxx
         */
         std::string sid;
 

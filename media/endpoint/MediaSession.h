@@ -1,7 +1,6 @@
 #ifndef _MEDIA_SESSION_H_
 #define _MEDIA_SESSION_H_
 
-#include "RtspMediaSession.h"
 
 
 
