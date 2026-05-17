@@ -1,15 +1,22 @@
 cmake_minimum_required(VERSION 3.16)
 
+file(GLOB QUALITY_SRC
+    "${CMAKE_CURRENT_SOURCE_DIR}/quality/*.cpp"
+)
+
 add_library(media STATIC
     endpoint/MediaEndpoint.cpp
     endpoint/MediaSession.cpp
     track/TrackeInfo.h
+    track/StreamContext.cpp
+    track/StreamContext.h
+    ${QUALITY_SRC}
 )
 
 target_include_directories(media
     PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/..
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/..
 )
 
 target_compile_features(media PUBLIC cxx_std_17)

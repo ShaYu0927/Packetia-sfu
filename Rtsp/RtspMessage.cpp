@@ -165,9 +165,9 @@ int RtspRequest::BuildDescribeRes(std::shared_ptr<char> data, int size, const st
 
      std::string res = oss.str() + sdp;
 
-    // 检查是否能写入数据缓冲区
-    if (res.size() > static_cast<size_t>(size)) {
-        return -1; // buffer 太小
+    if (res.size() > static_cast<size_t>(size)) 
+    {
+        return -1;
     }
 
     std::memcpy(data.get(), res.data(), res.size());
@@ -188,18 +188,18 @@ int RtspRequest::BuildNotFoundRes(std::shared_ptr<char> data, int size)
 
 int RtspRequest::BuildServerErrorRes(std::shared_ptr<char> data, int size, const std::string &error_message)
 {
-    // 构造标准 RTSP 错误响应头
     std::ostringstream oss;
     oss << "RTSP/1.0 500 Internal Server Error\r\n";
-    oss << "CSeq: " << this->GetCSeq() << "\r\n";  // 假设你有保存的 CSeq 值
+    oss << "CSeq: " << this->GetCSeq() << "\r\n";  
     oss << "Content-Length: " << error_message.length() << "\r\n";
     oss << "Content-Type: text/plain\r\n";
     oss << "\r\n";
     oss << error_message;
 
     std::string res_str = oss.str();
-    if (res_str.length() > static_cast<size_t>(size)) {
-        return -1; // buffer 太小
+    if (res_str.length() > static_cast<size_t>(size)) 
+    {
+        return -1;
     }
 
     memcpy(data.get(), res_str.c_str(), res_str.length());
@@ -260,11 +260,7 @@ int RtspRequest::BuildRecordRes(const RtspRequestInfo& req,std::shared_ptr<char>
     return ret;
 }
 
-std::string RtspRequest::BuildSetupRes(const std::string& cseq,
-                          const std::string& session_id,
-                          int rtp_channel,
-                          int rtcp_channel,
-                          const std::string& mode)
+std::string RtspRequest::BuildSetupRes(const std::string& cseq, const std::string& session_id, int rtp_channel, int rtcp_channel, const std::string& mode)
 {
     std::ostringstream oss;
 
@@ -657,6 +653,7 @@ std::string RtspRequest::HandleCmdANNOUNCE(RtspRequestInfo& req)
     if (!session)
     {
         session = MediaSession::CreateNew(suffix);
+        session->SetRtspUrl(req.url);
         MediaSessionManager::Instance().AddSession(session, suffix);
     }
 

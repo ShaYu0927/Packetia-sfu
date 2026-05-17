@@ -6,6 +6,7 @@
 #include "EndpointBase.h"
 #include "IWorkerModule.h"
 #include "ServerLauncher.h"
+#include "websocket/WsServer.h"
 
 int main()
 {
@@ -70,22 +71,37 @@ int main()
         }
     );
 
-    auto rtsp_server = launcher.AddIpPortService<RtspServer>(
-        "RtspServer",
-        "0.0.0.0",
-        554,
-        event_loop.get()
-    );
-
-    auto udp_server = launcher.AddIpPortService<network::UdpServer>(
-        "UdpServer",
-        "0.0.0.0",
-        9000,
-        event_loop.get()
-    );
-
+    auto rtsp_server = launcher.AddIpPortService<RtspServer>("RtspServer", "0.0.0.0", 554, event_loop.get());
+    auto udp_server = launcher.AddIpPortService<network::UdpServer>("UdpServer","0.0.0.0", 9000,  event_loop.get());
     auto mux_handler = std::make_shared<network::UdpMuxHandler>(udp_server.get());
     udp_server->SetHandler(mux_handler);
+
+    auto ws_server = std::make_shared<network::websocket::WsServer>();
+
+    ws_server->SetOnOpen([](const network::websocket::WsConnectionInfo& info) {
+        LOG_INFO("ws open, connId=", info.connId);
+    });
+
+    ws_server->SetOnMessage(
+        [](const std::string& connId, const std::string& message) -> std::string {
+            LOG_INFO("ws message, connId=", connId, ", message=", message);
+            return R"({"code":0,"msg":"ok"})";
+        }
+    );
+
+    ws_server->SetOnClose([](const std::string& connId) {
+        LOG_INFO("ws close, connId=", connId);
+    });
+
+    launcher.AddCustomService(
+        "WsServer",
+        [ws_server]() -> bool {
+            return ws_server->Start("0.0.0.0", 8080, 1);
+        },
+        [ws_server]() {
+            ws_server->Stop();
+        }
+    );
 
     if (!launcher.StartAll())
     {
@@ -93,7 +109,6 @@ int main()
     }
 
     event_loop->Loop();
-
     launcher.StopAll();
 
     return 0;

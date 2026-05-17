@@ -322,11 +322,38 @@ bool SdpParser::ParseAttribute(const SdpLine& line, SdpSession& session, SdpMedi
 
     if (current_media)
     {
-        current_media->attributes.push_back(std::move(attr));
+        if (attr.key == "rtpmap")
+        {
+            SdpRtpMap rtpmap;
+            std::string parse_err;
+
+            if (!ParseRtpMapValue(attr.value, rtpmap, parse_err))
+            {
+                err = MakeLineError("a=rtpmap", line, parse_err);
+                return false;
+            }
+
+            current_media->rtpmaps.emplace_back(std::move(rtpmap));
+        }
+        else if (attr.key == "fmtp")
+        {
+            SdpFmtp fmtp;
+            std::string parse_err;
+
+            if (!ParseFmtpValue(attr.value, fmtp, parse_err))
+            {
+                err = MakeLineError("a=fmtp", line, parse_err);
+                return false;
+            }
+
+            current_media->fmtps.emplace_back(std::move(fmtp));
+        }
+
+        current_media->attributes.emplace_back(std::move(attr));
     }
     else
     {
-        session.attributes.push_back(std::move(attr));
+        session.attributes.emplace_back(std::move(attr));
     }
 
     return true;
@@ -347,6 +374,107 @@ SdpAttribute SdpParser::SplitAttribute(const std::string& text)
     attr.key = text.substr(0, pos);
     attr.value = text.substr(pos + 1);
     return attr;
+}
+
+bool SdpParser::ParseRtpMapValue(const std::string& value, SdpRtpMap& rtpmap, std::string& err)
+{
+    std::vector<std::string> parts = SplitBySpace(value);
+    if (parts.size() != 2)
+    {
+        err = "invalid rtpmap format: " + value;
+        return false;
+    }
+
+    try
+    {
+        rtpmap.payloadType = std::stoi(parts[0]);
+    }
+    catch (const std::exception&)
+    {
+        err = "invalid rtpmap payload type: " + parts[0];
+        return false;
+    }
+
+    const std::string& codec_part = parts[1];
+
+    std::vector<std::string> codec_parts;
+    size_t start = 0;
+
+    while (true)
+    {
+        size_t pos = codec_part.find('/', start);
+        if (pos == std::string::npos)
+        {
+            codec_parts.emplace_back(codec_part.substr(start));
+            break;
+        }
+
+        codec_parts.emplace_back(codec_part.substr(start, pos - start));
+        start = pos + 1;
+    }
+
+    if (codec_parts.size() < 2)
+    {
+        err = "invalid rtpmap codec format: " + codec_part;
+        return false;
+    }
+
+    rtpmap.encodingName = codec_parts[0];
+
+    try
+    {
+        rtpmap.clockRate = std::stoi(codec_parts[1]);
+    }
+    catch (const std::exception&)
+    {
+        err = "invalid rtpmap clock rate: " + codec_parts[1];
+        return false;
+    }
+
+    if (codec_parts.size() >= 3)
+    {
+        try
+        {
+            rtpmap.channels = std::stoi(codec_parts[2]);
+        }
+        catch (const std::exception&)
+        {
+            rtpmap.channels = 0;
+        }
+    }
+    else
+    {
+        rtpmap.channels = 0;
+    }
+
+    return true;
+}
+
+
+bool SdpParser::ParseFmtpValue(const std::string& value, SdpFmtp& fmtp, std::string& err)
+{
+    size_t pos = value.find_first_of(" \t");
+    if (pos == std::string::npos)
+    {
+        err = "invalid fmtp format: " + value;
+        return false;
+    }
+
+    std::string pt_str = value.substr(0, pos);
+    std::string params = value.substr(pos + 1);
+
+    try
+    {
+        fmtp.payloadType = std::stoi(pt_str);
+    }
+    catch (const std::exception&)
+    {
+        err = "invalid fmtp payload type: " + pt_str;
+        return false;
+    }
+
+    fmtp.params = params;
+    return true;
 }
 
 }

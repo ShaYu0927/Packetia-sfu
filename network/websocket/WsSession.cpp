@@ -1,5 +1,5 @@
 #include "WsSession.h"
-
+#include "logger.h"
 #include <chrono>
 
 namespace network 
@@ -7,8 +7,8 @@ namespace network
 
 static std::atomic<uint64_t> g_session_index{0};
 
-WsSession::WsSession(const WebSocketChannelPtr& channel)
-    : session_id_(GenerateSessionId()),
+WsSession::WsSession(const std::string& connId, const WebSocketChannelPtr& channel)
+    : session_id_(connId),
       channel_(channel)
 {
 }
@@ -86,6 +86,16 @@ void WsSession::ClearBinding()
 
     room_id_.clear();
     participant_id_.clear();
+}
+
+void WsSession::OnOpen()
+{
+
+}
+
+void WsSession::OnMessage(const std::string& message)
+{
+    LOG_INFO("wssession::onmessage" + message);
 }
 
 } // namespace network

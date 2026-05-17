@@ -72,6 +72,7 @@ include_directories(
     ${LIBHV_DIR}/ssl
     ${LIBHV_DIR}/include
     ${LIBHV_DIR}/http
+    ${CMAKE_SOURCE_DIR}/third
 )
 
 link_directories(
@@ -94,6 +95,8 @@ add_library(network STATIC
     network/UdpServer.cpp
     network/UdpSession.cpp
     network/websocket/WsServer.cpp
+    network/websocket/WsSession.cpp
+    network/websocket/WsSessionManager.cpp
 )
 
 add_library(LOGGER STATIC

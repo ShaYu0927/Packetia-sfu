@@ -1,6 +1,7 @@
 #include "RtspMediaSession.h"
 #include "SdpMode.h"
 #include "RtspUtil.h"
+#include "StreamContext.h"
 
 static uint64_t MakeStreamKey(uint32_t session_id, uint32_t track_id)
 {
@@ -267,6 +268,7 @@ bool MediaSession::ApplySdp(const sdp::SdpSession& sdp, std::string* err)
     std::lock_guard<std::mutex> lock(track_mtx_);
 
     ResetTracks();
+    auto ctx = StreamContextBuilder::BuildFromSdp(sdp, suffix_, url_);
 
     int track_idx = 0;
     for (const auto& media : sdp.medias)
@@ -286,7 +288,6 @@ bool MediaSession::ApplySdp(const sdp::SdpSession& sdp, std::string* err)
             return false;
         }
 
-        // ignore unsupported media types such as application / text
         if (info.type == TrackType::TrackInvalid)
         {
             continue;

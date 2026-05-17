@@ -49,7 +49,7 @@ void MediaEndpoint::OnRtp(WorkJob& job)
 void MediaEndpoint::OnRtcp(WorkJob& job)
 {
     auto* pkt = static_cast<Packet*>(job.pkt);
-    if (!pkt || !IsRunning()) 
+    if (!pkt || !IsRunning())
     {
         return;
     }

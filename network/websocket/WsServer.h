@@ -6,16 +6,7 @@
 #include <memory>
 #include <string>
 
-#include "hv/hsocket.h"
-#include "hv/hloop.h"
-#include "hv/Buffer.h"
-#include "hv/Channel.h"
-
-#ifndef DEFAULT_CONNECT_TIMEOUT
-#define DEFAULT_CONNECT_TIMEOUT DEFAULT_HTTP_CONNECT_TIMEOUT
-#endif
-
-#include "server/WebSocketServer.h"
+#include "WsHeader.h"
 
 namespace network 
 {
@@ -45,7 +36,6 @@ public:
     bool Start(const std::string& ip, uint16_t port, int threadNum = 1);
     void Stop();
 
-    bool SendText(const std::string& connId, const std::string& message);
     bool CloseConnection(const std::string& connId);
 
     void SetOnOpen(OnOpenCallback cb);

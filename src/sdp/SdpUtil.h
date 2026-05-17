@@ -21,6 +21,8 @@ private:
     static bool ParseTiming(const SdpLine& line, SdpSession& session, std::string& err);
     static bool ParseMedia(const SdpLine& line, SdpSession& session, SdpMedia*& current_media, std::string& err);
     static bool ParseAttribute(const SdpLine& line, SdpSession& session, SdpMedia* current_media, std::string& err);
+    static bool ParseRtpMapValue(const std::string& value, SdpRtpMap& rtpmap, std::string& err);
+    static bool ParseFmtpValue(const std::string& value, SdpFmtp& fmtp, std::string& err);
 
     static std::vector<SdpLine> SplitLines(const std::string& text);
 

@@ -44,12 +44,12 @@ struct SdpFmtp
 
 struct SdpMedia
 {
-    std::string media;                              // video / audio
+    std::string media;                              
     int port = 0;
-    std::string proto;                              // RTP/AVP
-    std::vector<std::string> fmts;                  // payload types
+    std::string proto;                              
+    std::vector<std::string> fmts;                  
     std::vector<SdpAttribute> attributes;
-    SdpConnection conn;                             // c=
+    SdpConnection conn;                             
 
     std::vector<SdpRtpMap> rtpmaps;
     std::vector<SdpFmtp> fmtps;
@@ -67,7 +67,6 @@ struct SdpOrigin
     std::string addr_type;
     std::string unicast_address;
 };
-
 
 
 struct SdpSession

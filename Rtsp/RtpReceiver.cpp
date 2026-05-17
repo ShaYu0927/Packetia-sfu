@@ -115,9 +115,7 @@ void RtpVideoTracker::onRtpSorted(const RtpPacket::Ptr &pkt)
 
     if (!_depacketizer) 
     {
-        LOG_INFO("[RtpVideoTracker] no depacketizer, pt=", pkt->getPayloadType(),
-                 " seq=", pkt->getSeq(),
-                 " ssrc=", pkt->getSSRC());
+        LOG_INFO("[RtpVideoTracker] no depacketizer, pt=", pkt->getPayloadType(), " seq=", pkt->getSeq(), " ssrc=", pkt->getSSRC());
         return;
     }
 
@@ -126,8 +124,7 @@ void RtpVideoTracker::onRtpSorted(const RtpPacket::Ptr &pkt)
 
     if (!payload || payload_size == 0) 
     {
-        LOG_INFO("[RtpVideoTracker] empty RTP payload, seq=", pkt->getSeq(),
-                 " ssrc=", pkt->getSSRC());
+        LOG_INFO("[RtpVideoTracker] empty RTP payload, seq=", pkt->getSeq(), " ssrc=", pkt->getSSRC());
         return;
     }
 
@@ -146,10 +143,7 @@ void RtpVideoTracker::onRtpSorted(const RtpPacket::Ptr &pkt)
 
     if (!_depacketizer->input(view)) 
     {
-        LOG_INFO("[RtpVideoTracker] depacketizer input failed, seq=", view.seq,
-                 " ts=", view.ts,
-                 " ssrc=", view.ssrc,
-                 " payload_size=", view.payload_len);
+        LOG_ERROR("[RtpVideoTracker] depacketizer input failed, seq=", view.seq, " ts=", view.ts, " ssrc=", view.ssrc, " payload_size=", view.payload_len);
         return;
     }
 }

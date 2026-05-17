@@ -1,8 +1,8 @@
 #ifndef _WS_SESSION_H_
 #define _WS_SESSION_H_
 
-#include "WsServer.h"
-
+#include "WsHeader.h"
+#include <memory>
 namespace network
 {
 /**
@@ -15,10 +15,11 @@ namespace network
  * - WebSocket channel
  * - Room / Participant 弱引用
  */
-class WsSession : public std::enable_shared_from_this<WsSession> 
+class WsSession : public std::enable_shared_from_this<WsSession>
 {
 public:
-    explicit WsSession(const WebSocketChannelPtr& channel);
+    using Ptr = std::shared_ptr<WsSession>;
+    explicit WsSession(const std::string& connId, const WebSocketChannelPtr& channel);
     ~WsSession();
 
     WsSession(const WsSession&) = delete;
@@ -44,6 +45,10 @@ public:
      * @brief 关闭 WebSocket 连接。
      */
     void Close();
+
+    void OnOpen();
+
+    void OnMessage(const std::string& message);
 
     /**
      * @brief 清理房间和用户绑定关系。

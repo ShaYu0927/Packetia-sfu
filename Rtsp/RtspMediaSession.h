@@ -44,16 +44,13 @@ public:
     MediaSession() = default;
     static Ptr CreateNew(const std::string& suffix);
 
-    bool AddTrack(TrackType type,
-                        const std::string& codec,
-                        const std::string& control,
-                        int payload_type,
-                        int clock_rate);
+    bool AddTrack(TrackType type, const std::string& codec, const std::string& control, int payload_type, int clock_rate);
 
     uint32_t GetId() const { return session_id_; }
     void SetId(uint32_t id) { session_id_ = id; }
     const std::string& GetRtspSuffix() const { return suffix_; }
     void SetRtspSuffix(const std::string& suffix) { suffix_ = suffix; }
+    void SetRtspUrl(const std::string& url) {url_ = url; }
     
     std::shared_ptr<RtpTrack> GetRtpTrack(const std::string& control) const;
 
@@ -89,6 +86,7 @@ public:
     friend class MediaSessionManager;
 private:
     std::string suffix_;
+    std::string url_;
     std::string sdp_;
     uint32_t session_id_{0};
     std::string global_id_;

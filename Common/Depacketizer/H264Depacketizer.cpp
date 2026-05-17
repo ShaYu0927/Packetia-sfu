@@ -1,14 +1,53 @@
 #include "H264Depacketizer.h"
-#include "Rtp.h"    
 #include "logger.h"
 #include <bits/stdint-uintn.h>
 #include <string>
+#include <sstream>
+#include <iomanip>
+#include <algorithm>
 
 
+static std::string DumpPayloadHead(const uint8_t* payload, size_t payload_len, size_t max_bytes = 16)
+{
+    if (!payload || payload_len == 0)
+    {
+        return "empty";
+    }
+
+    std::ostringstream oss;
+    size_t n = std::min(payload_len, max_bytes);
+
+    for (size_t i = 0; i < n; ++i)
+    {
+        if (i > 0)
+        {
+            oss << " ";
+        }
+
+        oss << "0x" << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(payload[i]);
+    }
+
+    return oss.str();
+}
+
+
+static void DumpRtpView(const RtpView& view, const char* tag = "RtpView")
+{
+    LOG_INFO("[", tag, "]",
+             " valid=", view.valid(),
+             " ssrc=", view.ssrc,
+             " seq=", view.seq,
+             " ts=", view.ts,
+             " marker=", view.marker,
+             " payload_len=", view.payload_len,
+             " payload_head=", DumpPayloadHead(view.payload, view.payload_len));
+}
 
 bool H264Depacketizer::input(const RtpView& pkt)
 {
     if (!pkt.valid()) return false;
+
+    DumpRtpView(pkt, "BeforeH264Depacketizer");
 
     const uint8_t* payload = pkt.payload;
     size_t payload_len = pkt.payload_len;
@@ -73,7 +112,7 @@ bool H264Depacketizer::input(const RtpView& pkt)
     }
     else
     {
-        LOG_ERROR("[H264Depacketizer] Unsupported NAL type",
+        LOG_ERROR("Unsupported NAL type",
               " type=", static_cast<int>(type),
               " ssrc=", pkt.ssrc,
               " seq=", pkt.seq,
