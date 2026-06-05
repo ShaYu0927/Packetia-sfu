@@ -96,11 +96,6 @@ bool RtspSession::OnRead(TcpConnection::Ptr conn, BufferReader& buffer)
     
     size_t readable = buffer.ReadableBytes();
 
-    LOG_INFO("[RTSP] OnRead fd=" 
-             + std::to_string(conn->GetSocket()) 
-             + " readable=" 
-             + std::to_string(readable));
-
     while (buffer.ReadableBytes() > 0)
     {
         if (processedBytes >= kByteBudget || processedFrames >= kFrameBudget)
@@ -179,13 +174,14 @@ void RtspSession::OnInterleaved(int channel,const uint8_t*p, int len)
     std::memcpy(job.raw.data, p, static_cast<size_t>(len));
     job.raw.len = static_cast<uint32_t>(len);
     job.enqueue_ts = Timestamp::NowMs();
+    job.deleter = [](WorkJob& job) {
+        delete[] job.raw.data;
+        job.raw.data = nullptr;
+        job.raw.len = 0;
+    };
 
     int ret = WorkerService::post("media",std::move(job));
-    if (ret != 0)
-    {
-        if (job.deleter)
-            job.deleter(job);
-    }
+    (void)ret;
 
 }
 

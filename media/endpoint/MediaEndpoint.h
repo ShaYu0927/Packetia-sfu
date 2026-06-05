@@ -21,9 +21,16 @@ public:
     {
     }
     ~MediaEndpoint() = default;
-    bool Start() override { return true;}
+    bool Start() override
+    {
+        SetState(State::kRunning);
+        return true;
+    }
 
-    void Stop() override { }
+    void Stop() override
+    {
+        SetState(State::kStopped);
+    }
 
     void OnRtp(WorkJob& job) override;
     void OnRtcp(WorkJob& job) override;
@@ -36,7 +43,15 @@ protected:
     virtual void HandleStunPacket(Packet* pkt) {}
     virtual void HandleDtlsPacket(Packet* pkt) {}
 
-    
+    std::shared_ptr<RtpTrack> SourceTrack() const
+    {
+        return tracker_;
+    }
+
+    std::shared_ptr<MediaSession> SourceSession() const
+    {
+        return session_;
+    }
 
 private:
     std::shared_ptr<MediaSession> session_;

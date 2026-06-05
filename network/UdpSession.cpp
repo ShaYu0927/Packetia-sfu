@@ -1,4 +1,6 @@
 #include "UdpSession.h"
+#include "logger.h"
+#include "TimeUtil.h"
 
 
 namespace network
@@ -43,12 +45,13 @@ static HandlerFn DispatchHandler(UdpMuxHandler::UdpProto proto)
 
 bool UdpSession::Start()
 {
+    SetState(State::kRunning);
     return true;
 }
 
 void UdpSession::Stop()
 {
-
+    SetState(State::kStopped);
 }
 
 void UdpSession::OnStun(WorkJob& job)
@@ -73,6 +76,47 @@ void UdpSession::OnRtcp(WorkJob& job)
 
 bool UdpSession::SendTo(const network::SocketAddr& dst, const uint8_t* data, size_t len)
 {
+    return udp_ && udp_->SendTo(dst, data, len);
+}
+
+void UdpSession::ConfigureIce(std::string local_ufrag,
+                              std::string local_pwd,
+                              std::string remote_ufrag,
+                              std::string remote_pwd)
+{
+    ice_agent_.SetLocalCredentials(std::move(local_ufrag), std::move(local_pwd));
+    if (!remote_ufrag.empty() || !remote_pwd.empty())
+    {
+        ice_agent_.SetRemoteCredentials(std::move(remote_ufrag), std::move(remote_pwd));
+    }
+    ice_agent_.SetOnSelectedPeer([this](const network::SocketAddr& peer) {
+        SetSelectedPeer(peer);
+    });
+}
+
+bool UdpSession::HandleStunDatagram(const network::SocketAddr& src,
+                                    const uint8_t* data,
+                                    size_t len)
+{
+    std::vector<uint8_t> response;
+    const auto result = ice_agent_.HandleDatagram(src, data, len, response);
+    if (result == ice::IceAgent::HandleResult::NotStun)
+    {
+        return false;
+    }
+
+    last_rx_ms_ = Timestamp::NowMs();
+    last_stun_ms_ = last_rx_ms_;
+
+    if (!response.empty() && !SendTo(src, response.data(), response.size()))
+    {
+        LOG_ERROR("[ICE] failed to send STUN response, peer=", src.ToString(),
+                  " size=", response.size());
+    }
+
+    LOG_INFO("[ICE] handled STUN datagram, peer=", src.ToString(),
+             " result=", static_cast<int>(result),
+             " response_size=", response.size());
     return true;
 }
 
@@ -118,10 +162,23 @@ void UdpMuxHandler::OnDatagram(const network::SocketAddr& src,
         }
     }
 
+    if (!sess)
+    {
+        LOG_ERROR("udp session not found, proto=", static_cast<int>(proto), " len=", len);
+        return;
+    }
+
+    if (proto == UdpProto::Stun)
+    {
+        sess->HandleStunDatagram(src, data, len);
+        return;
+    }
+
     auto endpoint_id = sess->Id();
     Packet* pkt = PacketPool::instance().acquire();
     if (!pkt)
     {
+        LOG_ERROR("PacketPool acquire failed, endpoint_id=", endpoint_id);
         return;
     }
     pkt->recv_ts = Timestamp::NowMs();
@@ -129,10 +186,14 @@ void UdpMuxHandler::OnDatagram(const network::SocketAddr& src,
 
     WorkJob job{};
     job.key  = endpoint_id;
-    job.type = static_cast<WorkType>(ToWorkJobType(proto));
+    job.type = ToWorkJobType(proto);
     job.pkt  = pkt;
     job.enqueue_ts = pkt->recv_ts;
     job.handler = DispatchHandler(proto);
+    job.deleter = [](WorkJob& job) {
+        WorkerService::realse(job.pkt);
+        job.pkt = nullptr;
+    };
 
     WorkerService::post("endpoint_pool", std::move(job));
   
@@ -169,11 +230,19 @@ inline bool UdpMuxHandler::IsRtcpPacket(const uint8_t *d, size_t n)
     return false;
 }
 
+inline bool UdpMuxHandler::IsRtpPacket(const uint8_t *d, size_t n)
+{
+    if (!d || n < 12) return false;
+    if ((d[0] >> 6) != 2) return false;
+    return !IsRtcpPacket(d, n);
+}
+
 inline UdpMuxHandler::UdpProto UdpMuxHandler::DetectProto(const uint8_t *d, size_t n)
 {
     if (IsStunPacket(d, n)) return UdpProto::Stun;
     if (IsDtlsPacket(d, n)) return UdpProto::Dtls;
     if (IsRtcpPacket(d, n)) return UdpProto::Rtcp;
+    if (IsRtpPacket(d, n)) return UdpProto::Rtp;
     return UdpProto::Unknown;
 }
 
@@ -206,6 +275,7 @@ std::shared_ptr<UdpSession> MediaEngine::CreateSession(const std::string &sessio
 {
     std::uint64_t endpoint_id = std::hash<std::string>{}(session_id);
     auto sess = std::make_shared<UdpSession>(endpoint_id, session_id, udp_.get());
+    sess->ConfigureIce(session_id, session_id + "_ice_pwd");
 
     sess->SetOnSelectedPeer([this](std::shared_ptr<UdpSession> s, const network::SocketAddr& peer) {
         handler_->BindPeer(peer, s);

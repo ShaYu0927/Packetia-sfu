@@ -9,6 +9,7 @@
 #include "Rtp.h"
 #include "RtpTypes.h"
 #include "Sdp.h"
+#include "StreamContext.h"
 
 
 #define MAX_TRACKS 5
@@ -53,6 +54,11 @@ public:
     void SetRtspUrl(const std::string& url) {url_ = url; }
     
     std::shared_ptr<RtpTrack> GetRtpTrack(const std::string& control) const;
+    bool GetTrackInfo(int track_id, TrackInfo* out) const;
+    std::shared_ptr<const StreamContext> GetStreamContext() const;
+    bool FindStreamTrack(int media_index, StreamTrackInfo* out) const;
+    bool FindStreamTrackByChannel(uint8_t channel, StreamTrackInfo* out) const;
+    bool FindPayloadType(uint8_t payload_type, PayloadTypeInfo* out) const;
 
     bool ApplySdp(const sdp::SdpSession& sdp, std::string* err);
     RtpTrack::Ptr CreateTrack(const MediaTrackInfo& info);
@@ -101,6 +107,7 @@ private:
     std::unordered_map<uint32_t, int>                   ssrc_to_track_;
     std::unordered_map<uint64_t, int>                   endpoint_to_track_;
     std::array<ChannelBinding, 256>                     channel_bindings_;
+    std::shared_ptr<StreamContext>                      stream_context_;
 
 };
 

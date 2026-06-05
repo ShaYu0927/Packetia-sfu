@@ -133,7 +133,6 @@ public:
 
 private:
     EndpointManager* mgr_{nullptr};
-    std::shared_ptr<EndpointBase> endpoint;
 };
 
 }

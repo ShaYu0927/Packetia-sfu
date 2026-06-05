@@ -128,6 +128,7 @@ add_library(utils STATIC
     utils/Pip.cpp
     utils/EndpointBase.cpp
     utils/IWorkerModule.cpp
+    utils/utils.cpp
 
 )
 
@@ -141,6 +142,8 @@ add_library(sip STATIC
 )
 
 add_library(Rtcp STATIC
+    protocol/Rtcp/RtcpHealper.cpp
+    protocol/Rtcp/RtcpHealper.h
     protocol/Rtcp/Rtcp.cpp
     protocol/Rtcp/Rtcp.h
     protocol/Rtcp/RtcpContext.cpp
@@ -150,6 +153,8 @@ add_library(Rtcp STATIC
 )
 
 add_library(ICE STATIC
+    protocol/ice/IceAgent.cpp
+    protocol/ice/IceAgent.h
     protocol/ice/IceCandidate.cpp
     protocol/ice/stun/Stun.cpp
     protocol/ice/IceCandidateStore.cpp
@@ -192,6 +197,7 @@ file(GLOB INTERLEAVED_SRCS
 
 file(GLOB ROOM_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/Room/*.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Room/Transports/*.cpp
 )
 
 add_library(Interleaved STATIC
@@ -213,6 +219,7 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/utils/test)
 
 add_executable(ice_unit_tests
     protocol/ice/test/test_IceChecklist.cpp
+    protocol/ice/test/test_IceAgent.cpp
 )
 add_executable(Packetia ${CMAKE_SOURCE_DIR}/server/main.cpp)
 
@@ -230,6 +237,7 @@ target_link_libraries(Packetia
 target_link_libraries(ice_unit_tests
     PRIVATE
     ICE
+    LOGGER
     GTest::gtest
     GTest::gtest_main
     pthread
@@ -247,6 +255,3 @@ target_compile_definitions(Packetia PRIVATE RTP_DEBUG=1)
 
 # cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 # cmake --build build
-
-
-

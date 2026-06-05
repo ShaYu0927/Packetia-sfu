@@ -10,6 +10,10 @@
 #include <condition_variable>
 #include <atomic>
 #include <functional>
+#include <array>
+#include <memory>
+#include <string>
+#include <unordered_map>
 
 #include "PacketPool.h"
 
@@ -21,6 +25,7 @@ enum class WorkType : uint32_t
     Rtp,
     Rtcp,
     Stun,
+    Dtls,
 
     /* 网络原始数据 */
     RawTcp,
@@ -116,9 +121,11 @@ public:
 
     ThreadStats Status() const
     {
+        std::lock_guard<std::mutex> lifecycle_lock(lifecycle_mtx_);
         ThreadStats sum;
         for (auto& up : workers_)
         {
+            std::lock_guard<std::mutex> lock(up->mtx);
             sum.enqueued += up->st.enqueued;
             sum.dequeued += up->st.dequeued;
             sum.dropped  += up->st.dropped;
@@ -153,6 +160,7 @@ private:
     std::size_t max_queue_len_ = 4096;
     DropPolicy drop_policy_ = DropPolicy::DropHead;
     std::atomic<bool> started_{false};
+    mutable std::mutex lifecycle_mtx_;
 
 };
 
@@ -192,7 +200,7 @@ private:
     WorkerService() = delete;
 
     static std::mutex mtx_;
-    static std::array<std::unique_ptr<ShardedWorkerPool>,
+    static std::array<std::shared_ptr<ShardedWorkerPool>,
            static_cast<std::size_t>(WorkerPoolId::Count)> pools_;
 };
 

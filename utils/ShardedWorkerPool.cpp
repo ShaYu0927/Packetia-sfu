@@ -35,8 +35,8 @@ bool ParsePoolName(const std::string& name, PoolId& id)
     return false;
 }
 
-ShardedWorkerPool* GetPoolUnlocked(
-    std::array<std::unique_ptr<ShardedWorkerPool>,
+std::shared_ptr<ShardedWorkerPool> GetPoolUnlocked(
+    std::array<std::shared_ptr<ShardedWorkerPool>,
                static_cast<std::size_t>(PoolId::Count)>& pools,
     const std::string& name)
 {
@@ -46,14 +46,14 @@ ShardedWorkerPool* GetPoolUnlocked(
         return nullptr;
     }
 
-    return pools[ToIndex(id)].get();
+    return pools[ToIndex(id)];
 }
 
 } // namespace
 
 std::mutex WorkerService::mtx_;
 
-std::array<std::unique_ptr<ShardedWorkerPool>,
+std::array<std::shared_ptr<ShardedWorkerPool>,
            static_cast<std::size_t>(WorkerService::WorkerPoolId::Count)>
     WorkerService::pools_ = {};
 
@@ -72,17 +72,30 @@ static inline std::uint64_t simple_hash_u64(std::uint64_t x)
 
 void ShardedWorkerPool::shutdown(bool drain)
 {
-    if (!started_.exchange(false)) return;
-
-    for (auto& up : workers_)
     {
-        Worker& w = *up;
+        std::lock_guard<std::mutex> lifecycle_lock(lifecycle_mtx_);
+
+        if (!started_.exchange(false)) return;
+
+        for (auto& up : workers_)
         {
-            std::unique_lock<std::mutex> lk(w.mtx);
-            w.draining.store(drain);
-            w.running.store(false);
+            Worker& w = *up;
+            {
+                std::unique_lock<std::mutex> lk(w.mtx);
+                w.draining.store(drain);
+                w.running.store(false);
+                if (!drain)
+                {
+                    while (!w.q.empty())
+                    {
+                        WorkJob job = std::move(w.q.front());
+                        w.q.pop_front();
+                        if (job.deleter) job.deleter(job);
+                    }
+                }
+            }
+            w.cv.notify_one();
         }
-        w.cv.notify_one();
     }
 
     for (auto& up : workers_)
@@ -90,18 +103,11 @@ void ShardedWorkerPool::shutdown(bool drain)
         if (up->th.joinable()) up->th.join();
     }
 
-    /* to avoid the need to release residual payloads */
-    if (!drain)
     {
-        for (auto& up : workers_)
-        {
-            std::unique_lock<std::mutex> lk(up->mtx);
-            up->q.clear();
-        }
+        std::lock_guard<std::mutex> lifecycle_lock(lifecycle_mtx_);
+        workers_.clear();
+        handler_.reset();
     }
-
-    workers_.clear();
-    handler_.reset();
 }
 
 static inline void safe_release_job(WorkJob& job)
@@ -111,6 +117,8 @@ static inline void safe_release_job(WorkJob& job)
 
 int ShardedWorkerPool::post(WorkJob&& job)
 {
+    std::lock_guard<std::mutex> lifecycle_lock(lifecycle_mtx_);
+
     if (!started_.load() || workers_.empty())
     {
         LOG_ERROR("[worker post] pool not started, key={}, type={}",
@@ -185,6 +193,8 @@ int ShardedWorkerPool::post(WorkJob&& job)
 
 int ShardedWorkerPool::start(std::size_t worker_count, std::shared_ptr<IJobHandler> handler, std::size_t max_queue_len, DropPolicy drop)
 {
+    std::lock_guard<std::mutex> lifecycle_lock(lifecycle_mtx_);
+
     if(!handler || worker_count == 0) return -1;
 
     if (started_.exchange(true)) return -1;
@@ -263,7 +273,7 @@ int WorkerService::create_pool(const std::string &name, std::size_t worker_count
         return -2;
     }
 
-    auto pool = std::make_unique<ShardedWorkerPool>();
+    auto pool = std::make_shared<ShardedWorkerPool>();
     const int ret = pool->start(worker_count, std::move(handler), max_queue_len, drop);
     if (ret != 0)
     {
@@ -271,14 +281,17 @@ int WorkerService::create_pool(const std::string &name, std::size_t worker_count
         return ret;
     }
 
+    std::shared_ptr<ShardedWorkerPool> old_pool;
     {
         std::lock_guard<std::mutex> lg(mtx_);
         auto& slot = pools_[ToIndex(id)];
-        if (slot)
-        {
-            slot.reset();
-        }
+        old_pool = std::move(slot);
         slot = std::move(pool);
+    }
+
+    if (old_pool)
+    {
+        old_pool->shutdown(true);
     }
 
     std::cout << "[WorkerService] create pool ok, pool=" << name
@@ -289,7 +302,7 @@ int WorkerService::create_pool(const std::string &name, std::size_t worker_count
 
 void WorkerService::destroy_pool(const std::string &name, bool drain)
 {
-     std::unique_ptr<ShardedWorkerPool> pool;
+    std::shared_ptr<ShardedWorkerPool> pool;
 
     {
         std::lock_guard<std::mutex> lg(mtx_);
@@ -310,18 +323,24 @@ void WorkerService::destroy_pool(const std::string &name, bool drain)
         pool = std::move(slot);
     }
 
+    pool->shutdown(drain);
+
     std::cout << "[WorkerService] destroy pool ok, pool=" << name
               << " drain=" << (drain ? "true" : "false") << std::endl;
 }
 
 int WorkerService::post(const std::string &name, WorkJob &&job)
 {
-    std::lock_guard<std::mutex> lg(mtx_);
+    std::shared_ptr<ShardedWorkerPool> pool;
+    {
+        std::lock_guard<std::mutex> lg(mtx_);
+        pool = GetPoolUnlocked(pools_, name);
+    }
 
-    ShardedWorkerPool* pool = GetPoolUnlocked(pools_, name);
     if (!pool)
     {
         std::cerr << "[WorkerService] post failed, pool not found: " << name << std::endl;
+        if (job.deleter) job.deleter(job);
         return -1;
     }
 
@@ -332,13 +351,14 @@ int WorkerService::post(const std::string &name, WorkJob &&job)
 bool WorkerService::exists(const std::string &name)
 {
     std::lock_guard<std::mutex> lg(mtx_);
-    return GetPoolUnlocked(pools_, name) != nullptr;
+    return static_cast<bool>(GetPoolUnlocked(pools_, name));
 }
 
 ShardedWorkerPool *WorkerService::get_pool(const std::string &name)
 {
     std::lock_guard<std::mutex> lg(mtx_);
-    return GetPoolUnlocked(pools_, name);
+    auto pool = GetPoolUnlocked(pools_, name);
+    return pool.get();
 }
 
 void WorkerService::realse(Packet *p)

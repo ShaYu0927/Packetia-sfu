@@ -740,6 +740,12 @@ std::string RtspRequest::HandleCmdSetup(RtspRequestInfo& req)
 
     
     auto endpoint = std::make_shared<media::SfuEndpoint>(endpoint_id, tracker, media_session);
+    if (!endpoint->Start())
+    {
+        LOG_ERROR("Start endpoint failed, endpoint_id={}, session={}, track_id={}",
+                  endpoint_id, session_id, track_id);
+        return "";
+    }
 
     if (!utils::EndpointManager::Instance().Add(endpoint))
     {

@@ -33,14 +33,14 @@ static std::string DumpPayloadHead(const uint8_t* payload, size_t payload_len, s
 
 static void DumpRtpView(const RtpView& view, const char* tag = "RtpView")
 {
-    LOG_INFO("[", tag, "]",
-             " valid=", view.valid(),
-             " ssrc=", view.ssrc,
-             " seq=", view.seq,
-             " ts=", view.ts,
-             " marker=", view.marker,
-             " payload_len=", view.payload_len,
-             " payload_head=", DumpPayloadHead(view.payload, view.payload_len));
+    // LOG_INFO("[", tag, "]",
+    //          " valid=", view.valid(),
+    //          " ssrc=", view.ssrc,
+    //          " seq=", view.seq,
+    //          " ts=", view.ts,
+    //          " marker=", view.marker,
+    //          " payload_len=", view.payload_len,
+    //          " payload_head=", DumpPayloadHead(view.payload, view.payload_len));
 }
 
 bool H264Depacketizer::input(const RtpView& pkt)
@@ -60,7 +60,7 @@ bool H264Depacketizer::input(const RtpView& pkt)
 
     if(!started_  || pkt.ts != cur_ts_ || pkt.ssrc != cur_ssrc_)
     {
-        LOG_INFO("Starting new stream: ssrc=" + std::to_string(ssrc) + "ts=" + std::to_string(ts));
+        // LOG_INFO("Starting new stream: ssrc=" + std::to_string(ssrc) + "ts=" + std::to_string(ts));
         reset_stream(pkt.ts, pkt.ts);
         started_ = true;
         cur_ssrc_ = ssrc;
@@ -71,8 +71,7 @@ bool H264Depacketizer::input(const RtpView& pkt)
 
     if(ts != cur_ts_)
     {
-          LOG_INFO(std::string("[H264Depack][TS_SWITCH] from=") + std::to_string(cur_ts_) +
-             " to=" + std::to_string(ts) + " -> flush");
+        LOG_INFO(std::string("[H264Depack][TS_SWITCH] from=") + std::to_string(cur_ts_) + " to=" + std::to_string(ts) + " -> flush");
         if (!flush_frame())
         {
             LOG_ERROR("Failed to flush frame for ts %u", cur_ts_);
@@ -84,9 +83,7 @@ bool H264Depacketizer::input(const RtpView& pkt)
 
     if(have_last_seq_ && !seq_contiguous(last_seq_, seq))
     {
-        LOG_INFO(std::string("[H264Depack][SEQ_GAP]") +
-                 " got=" + std::to_string(seq) +
-                 " last=" + std::to_string(last_seq_));
+        LOG_INFO(std::string("[H264Depack][SEQ_GAP]") + " got=" + std::to_string(seq) + " last=" + std::to_string(last_seq_));
         reset_stream(ssrc, ts);
         return false;
     }
@@ -243,7 +240,7 @@ bool H264Depacketizer::handle_fu_a(const uint8_t* p, size_t n)
     {
         if (fu_in_progress_)
         {
-            LOG_INFO("Start bit received while FU already in progress, resetting AU state");
+            // LOG_INFO("Start bit received while FU already in progress, resetting AU state");
             reset_au_state();
         }
         fu_nal_type_ = nal_type;

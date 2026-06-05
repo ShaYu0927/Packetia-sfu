@@ -96,6 +96,10 @@ void MediaSession::ResetTracks()
     track_infos_.clear();
     control_to_track_.clear();
     runtime_tracks_.clear();
+    endpoint_to_track_.clear();
+    ssrc_to_track_.clear();
+    channel_bindings_ = {};
+    stream_context_.reset();
     sdp_.clear();
 }
 
@@ -268,7 +272,7 @@ bool MediaSession::ApplySdp(const sdp::SdpSession& sdp, std::string* err)
     std::lock_guard<std::mutex> lock(track_mtx_);
 
     ResetTracks();
-    auto ctx = StreamContextBuilder::BuildFromSdp(sdp, suffix_, url_);
+    stream_context_ = StreamContextBuilder::BuildFromSdp(sdp, suffix_, url_);
 
     int track_idx = 0;
     for (const auto& media : sdp.medias)
@@ -335,6 +339,110 @@ std::shared_ptr<RtpTrack> MediaSession::GetRtpTrack(const std::string& control) 
     return track_it->second;
 }
 
+bool MediaSession::GetTrackInfo(int track_id, TrackInfo* out) const
+{
+    if (!out)
+    {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lk(track_mtx_);
+    auto it = track_infos_.find(track_id);
+    if (it == track_infos_.end())
+    {
+        return false;
+    }
+
+    *out = it->second;
+    return true;
+}
+
+std::shared_ptr<const StreamContext> MediaSession::GetStreamContext() const
+{
+    std::lock_guard<std::mutex> lk(track_mtx_);
+    return stream_context_;
+}
+
+bool MediaSession::FindStreamTrack(int media_index, StreamTrackInfo* out) const
+{
+    if (!out)
+    {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lk(track_mtx_);
+    if (!stream_context_ || media_index < 0)
+    {
+        return false;
+    }
+
+    for (const auto& track : stream_context_->tracks)
+    {
+        if (track.media_index == media_index)
+        {
+            *out = track;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool MediaSession::FindStreamTrackByChannel(uint8_t channel, StreamTrackInfo* out) const
+{
+    if (!out)
+    {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lk(track_mtx_);
+    if (!stream_context_)
+    {
+        return false;
+    }
+
+    auto it = stream_context_->channel_to_media_index.find(channel);
+    if (it == stream_context_->channel_to_media_index.end())
+    {
+        return false;
+    }
+
+    const int media_index = it->second;
+    for (const auto& track : stream_context_->tracks)
+    {
+        if (track.media_index == media_index)
+        {
+            *out = track;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool MediaSession::FindPayloadType(uint8_t payload_type, PayloadTypeInfo* out) const
+{
+    if (!out)
+    {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lk(track_mtx_);
+    if (!stream_context_)
+    {
+        return false;
+    }
+
+    auto it = stream_context_->payload_type_map.find(payload_type);
+    if (it == stream_context_->payload_type_map.end())
+    {
+        return false;
+    }
+
+    *out = it->second;
+    return true;
+}
+
 bool MediaSession::BindInterleavedChannel(uint8_t channel, int track_id, bool is_rtcp, uint64_t endpoint_id)
 {
     std::lock_guard<std::mutex> lk(track_mtx_);
@@ -349,6 +457,31 @@ bool MediaSession::BindInterleavedChannel(uint8_t channel, int track_id, bool is
     b.is_rtcp = is_rtcp;
     b.key = MakeStreamKey(session_id_, static_cast<uint32_t>(track_id));
     b.endpoint_id = endpoint_id;
+
+    if (stream_context_)
+    {
+        stream_context_->channel_to_media_index[channel] = track_id;
+        if (track_id >= 0)
+        {
+            for (auto& track : stream_context_->tracks)
+            {
+                if (track.media_index != track_id)
+                {
+                    continue;
+                }
+
+                if (is_rtcp)
+                {
+                    track.rtcp_channel = channel;
+                }
+                else
+                {
+                    track.rtp_channel = channel;
+                }
+                break;
+            }
+        }
+    }
     return true;
 }
 

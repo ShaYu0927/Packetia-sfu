@@ -3,7 +3,11 @@
 
 #include "UdpServer.h"
 #include "EndpointBase.h"
+#include "IceAgent.h"
 #include <functional>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace network
 {
@@ -33,6 +37,15 @@ public:
     void OnRtcp(WorkJob& job) override;
 
 public:
+    void ConfigureIce(std::string local_ufrag,
+                      std::string local_pwd,
+                      std::string remote_ufrag = {},
+                      std::string remote_pwd = {});
+
+    bool HandleStunDatagram(const network::SocketAddr& src,
+                            const uint8_t* data,
+                            size_t len);
+
     bool SendTo(const network::SocketAddr& dst, const uint8_t* data, size_t len);
 
     bool IsSelectedPeer(const network::SocketAddr& src) const;
@@ -51,6 +64,7 @@ private:
     uint64_t last_rx_ms_{0};
     uint64_t last_stun_ms_{0};
 
+    ice::IceAgent ice_agent_;
     OnSelectedPeerFn on_selected_peer_;
 };
 
@@ -68,6 +82,7 @@ public:
     static inline bool IsStunPacket(const uint8_t* d, size_t n);
     static inline bool IsDtlsPacket(const uint8_t* d, size_t n);
     static inline bool IsRtcpPacket(const uint8_t* d, size_t n);
+    static inline bool IsRtpPacket(const uint8_t* d, size_t n);
     static inline UdpProto DetectProto(const uint8_t* d, size_t n);
 
 
@@ -78,15 +93,15 @@ public:
     void SetPendingSession(const std::shared_ptr<UdpSession>& sess);
     void ClearPendingSession();
 
-    inline uint32_t ToWorkJobType(UdpMuxHandler::UdpProto proto)
+    inline WorkType ToWorkJobType(UdpMuxHandler::UdpProto proto)
     {
         switch (proto)
         {
-            case UdpMuxHandler::UdpProto::Stun: return WORKJOB_TYPE_STUN;
-            case UdpMuxHandler::UdpProto::Dtls: return WORKJOB_TYPE_DTLS;
-            case UdpMuxHandler::UdpProto::Rtp:  return WORKJOB_TYPE_RTP;
-            case UdpMuxHandler::UdpProto::Rtcp: return WORKJOB_TYPE_RTCP;
-            default:                            return WORKJOB_TYPE_UNKNOWN;
+            case UdpMuxHandler::UdpProto::Stun: return WorkType::Stun;
+            case UdpMuxHandler::UdpProto::Dtls: return WorkType::Dtls;
+            case UdpMuxHandler::UdpProto::Rtp:  return WorkType::Rtp;
+            case UdpMuxHandler::UdpProto::Rtcp: return WorkType::Rtcp;
+            default:                            return WorkType::Invalid;
         }
     }
 

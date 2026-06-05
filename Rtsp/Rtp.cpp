@@ -11,6 +11,82 @@ static inline std::string hex8(uint8_t v)
     return s;
 }
 
+void RtpRecvStatsBase::OnFrameCompleted()
+{
+    const uint64_t now_ms = NowMs();
+    if (_first_frame_ms == 0)
+    {
+        _first_frame_ms = now_ms;
+    }
+    _last_frame_ms = now_ms;
+    ++_frame_count;
+}
+
+void RtpRecvStatsBase::CountNack(size_t count)
+{
+    ++_nack_packet_count;
+    _nack_count += count;
+}
+
+void RtpRecvStatsBase::CountPli()
+{
+    ++_pli_count;
+}
+
+void RtpRecvStatsBase::CountFir()
+{
+    ++_fir_count;
+}
+
+void RtpRecvStatsBase::CountBye()
+{
+    ++_bye_count;
+}
+
+void RtpRecvStatsBase::OnSenderReport(uint32_t sender_ssrc,
+                                      uint64_t ntp,
+                                      uint32_t rtp_ts,
+                                      uint32_t packet_count,
+                                      uint32_t octet_count)
+{
+    ++_sr_count;
+    _rtcp_sender_ssrc = sender_ssrc;
+    _last_sr_ntp = ntp;
+    _last_sr_rtp_ts = rtp_ts;
+    _last_sr_packet_count = packet_count;
+    _last_sr_octet_count = octet_count;
+}
+
+void RtpRecvStatsBase::OnReceiverReport(uint32_t sender_ssrc,
+                                        uint32_t media_ssrc,
+                                        uint8_t fraction_lost,
+                                        int32_t cumulative_lost,
+                                        uint32_t highest_seq,
+                                        uint32_t jitter,
+                                        uint32_t lsr,
+                                        uint32_t dlsr)
+{
+    ++_rr_count;
+    _rtcp_sender_ssrc = sender_ssrc;
+    _rtcp_media_ssrc = media_ssrc;
+    _last_rr_fraction_lost = fraction_lost;
+    _last_rr_cumulative_lost = cumulative_lost;
+    _last_rr_highest_seq = highest_seq;
+    _last_rr_lsr = lsr;
+    _last_rr_dlsr = dlsr;
+    SetJitter(jitter);
+}
+
+void RtpRecvStatsBase::SetRttMs(uint32_t rtt_ms)
+{
+    _rtt_ms = rtt_ms;
+}
+
+void RtpRecvStatsBase::SetJitter(uint32_t jitter)
+{
+    _jitter = jitter;
+}
+
 bool RtpHeader::InputFromBuffer(const uint8_t* buf, size_t len)
 {
     if (!buf || len < kSize)
@@ -51,7 +127,7 @@ bool AudioTrack::onInputRtp(uint8_t* data, size_t len)
 
 void AudioTrack::onInputRtcp(const uint8_t* data, size_t len)
 {
-    
+    LOG_INFO("1111");
 }
 
 bool VideoTrack::onInputRtp(uint8_t* data, size_t len)

@@ -81,7 +81,7 @@ bool UdpServer::SendTo(const network::SocketAddr &dst, const uint8_t *data, size
 {
     if (!started_) return false;
     int n = sock_.SendTo(dst, data, len);
-    return n == (int)len;
+    return n == 0;
 }
 void UdpServer::OnReadable()
 {

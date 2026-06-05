@@ -57,6 +57,20 @@ public:
     void CountNack(size_t count);
     void CountPli();
     void CountFir();
+    void CountBye();
+    void OnSenderReport(uint32_t sender_ssrc,
+                        uint64_t ntp,
+                        uint32_t rtp_ts,
+                        uint32_t packet_count,
+                        uint32_t octet_count);
+    void OnReceiverReport(uint32_t sender_ssrc,
+                          uint32_t media_ssrc,
+                          uint8_t fraction_lost,
+                          int32_t cumulative_lost,
+                          uint32_t highest_seq,
+                          uint32_t jitter,
+                          uint32_t lsr,
+                          uint32_t dlsr);
     void SetRttMs(uint32_t rtt_ms);
     void SetJitter(uint32_t jitter);
     void UpdateSequenceStats(uint16_t seq)
@@ -79,8 +93,12 @@ public:
         _out_of_order_packets = 0;
 
         _nack_count = 0;
+        _nack_packet_count = 0;
         _pli_count = 0;
         _fir_count = 0;
+        _bye_count = 0;
+        _sr_count = 0;
+        _rr_count = 0;
 
         _ssrc = 0;
         _payload_type = 0;
@@ -89,6 +107,17 @@ public:
 
         _rtt_ms = 0;
         _jitter = 0;
+        _rtcp_sender_ssrc = 0;
+        _rtcp_media_ssrc = 0;
+        _last_sr_ntp = 0;
+        _last_sr_rtp_ts = 0;
+        _last_sr_packet_count = 0;
+        _last_sr_octet_count = 0;
+        _last_rr_fraction_lost = 0;
+        _last_rr_cumulative_lost = 0;
+        _last_rr_highest_seq = 0;
+        _last_rr_lsr = 0;
+        _last_rr_dlsr = 0;
 
         _has_seq = false;
     }
@@ -107,8 +136,12 @@ public:
     uint64_t GetOutOfOrderPackets() const { return _out_of_order_packets; }
 
     uint64_t GetNackCount() const { return _nack_count; }
+    uint64_t GetNackPacketCount() const { return _nack_packet_count; }
     uint64_t GetPliCount() const { return _pli_count; }
     uint64_t GetFirCount() const { return _fir_count; }
+    uint64_t GetByeCount() const { return _bye_count; }
+    uint64_t GetSenderReportCount() const { return _sr_count; }
+    uint64_t GetReceiverReportCount() const { return _rr_count; }
 
     uint32_t GetSsrc() const { return _ssrc; }
     uint8_t GetPayloadType() const { return _payload_type; }
@@ -117,6 +150,15 @@ public:
 
     uint32_t GetRttMs() const { return _rtt_ms; }
     uint32_t GetJitter() const { return _jitter; }
+    uint32_t GetRtcpSenderSsrc() const { return _rtcp_sender_ssrc; }
+    uint32_t GetRtcpMediaSsrc() const { return _rtcp_media_ssrc; }
+    uint64_t GetLastSrNtp() const { return _last_sr_ntp; }
+    uint32_t GetLastSrRtpTimestamp() const { return _last_sr_rtp_ts; }
+    uint32_t GetLastSrPacketCount() const { return _last_sr_packet_count; }
+    uint32_t GetLastSrOctetCount() const { return _last_sr_octet_count; }
+    uint8_t GetLastRrFractionLost() const { return _last_rr_fraction_lost; }
+    int32_t GetLastRrCumulativeLost() const { return _last_rr_cumulative_lost; }
+    uint32_t GetLastRrHighestSeq() const { return _last_rr_highest_seq; }
 
 protected:
 
@@ -142,8 +184,12 @@ protected:
     uint64_t _out_of_order_packets = 0;
 
     uint64_t _nack_count = 0;
+    uint64_t _nack_packet_count = 0;
     uint64_t _pli_count = 0;
     uint64_t _fir_count = 0;
+    uint64_t _bye_count = 0;
+    uint64_t _sr_count = 0;
+    uint64_t _rr_count = 0;
 
     uint32_t _ssrc = 0;
     uint8_t  _payload_type = 0;
@@ -152,6 +198,17 @@ protected:
 
     uint32_t _rtt_ms = 0;
     uint32_t _jitter = 0;
+    uint32_t _rtcp_sender_ssrc = 0;
+    uint32_t _rtcp_media_ssrc = 0;
+    uint64_t _last_sr_ntp = 0;
+    uint32_t _last_sr_rtp_ts = 0;
+    uint32_t _last_sr_packet_count = 0;
+    uint32_t _last_sr_octet_count = 0;
+    uint8_t _last_rr_fraction_lost = 0;
+    int32_t _last_rr_cumulative_lost = 0;
+    uint32_t _last_rr_highest_seq = 0;
+    uint32_t _last_rr_lsr = 0;
+    uint32_t _last_rr_dlsr = 0;
 
     bool _has_seq = false;
 };
