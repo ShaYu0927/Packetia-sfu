@@ -25,6 +25,7 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/third/libhv)
 
 
 find_package(GTest REQUIRED)
+find_package(OpenSSL REQUIRED)
 
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
@@ -61,8 +62,10 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/Room
     ${CMAKE_SOURCE_DIR}/Common/CallbackEmitter
     ${CMAKE_SOURCE_DIR}/Common/Depacketizer
+    ${CMAKE_SOURCE_DIR}/Common/memory
     ${CMAKE_SOURCE_DIR}/media/endpoint
     ${CMAKE_SOURCE_DIR}/media/track
+    ${CMAKE_SOURCE_DIR}/media/MediaFrame
     ${CMAKE_SOURCE_DIR}/server/Moudle
     ${LIBHV_DIR}
     ${LIBHV_DIR}/base
@@ -109,9 +112,19 @@ add_library(COMMON STATIC
     Common/CallbackEmitter/CallbackEmitter.cpp
     Common/CallbackEmitter/SourceBase.cpp
     Common/CallbackEmitter/SourceBase.h
+
     Common/Depacketizer/Depacketizer.h
     Common/Depacketizer/H264Depacketizer.h
     Common/Depacketizer/H264Depacketizer.cpp
+
+    Common/Depacketizer/H264Payload.h
+    Common/Depacketizer/H264RtpPayloadParser.h
+    Common/Depacketizer/H264RtpPayloadParser.cpp
+    Common/Depacketizer/RtpFrameAssembler.h
+    Common/Depacketizer/RtpFrameAssembler.cpp
+
+    Common/Depacketizer/AudioDepacketizer.h
+    Common/Depacketizer/AudioDepacketizer.cpp
 )
 
 add_library(utils STATIC
@@ -167,6 +180,8 @@ add_library(rtp STATIC
     Rtsp/Rtp.h
     Rtsp/RtpReceiver.cpp
     Rtsp/RtpReceiver.h
+    Rtsp/RtpSenderTrack.cpp
+    Rtsp/RtpSenderTrack.h
     Rtsp/RtpConnection.cpp
     Rtsp/RtpConnection.h
     Rtsp/RtpTypes.h
@@ -227,11 +242,12 @@ add_executable(Packetia ${CMAKE_SOURCE_DIR}/server/main.cpp)
 target_link_libraries(Packetia
     PRIVATE
     -Wl,--start-group
-    media rtsp rtp network utils Rtcp LOGGER ROOM_LIB COMMON ICE Interleaved hv_static
+    media rtsp rtp network utils Rtcp LOGGER ROOM_LIB COMMON ICE Interleaved hv_static 
     -Wl,--end-group
     ${FFMPEG_LIBRARIES}
     pthread
     c
+    OpenSSL::Crypto
 )
 
 target_link_libraries(ice_unit_tests
@@ -242,6 +258,7 @@ target_link_libraries(ice_unit_tests
     GTest::gtest_main
     pthread
     Interleaved
+    OpenSSL::Crypto
 )
 
 target_include_directories(ice_unit_tests PRIVATE

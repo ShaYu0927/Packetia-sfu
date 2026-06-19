@@ -79,12 +79,12 @@ protected:
     void HandleRtcpPacket(Packet* pkt) override;
 
 private:
-    RtpReceiverTrack::Ptr FindTrackBySsrc(uint32_t ssrc);
-    std::shared_ptr<RtpReceiverTrack> GetOrCreateTrack(uint32_t ssrc);
+    rtsp::RtpReceiverTrack::Ptr FindTrackBySsrc(uint32_t ssrc);
+    std::shared_ptr<rtsp::RtpReceiverTrack> GetOrCreateTrack(uint32_t ssrc);
 
 private:
     std::mutex track_mtx_;
-    std::unordered_map<uint32_t, RtpReceiverTrack::Ptr> ssrc_to_track_;
+    std::unordered_map<uint32_t, rtsp::RtpReceiverTrack::Ptr> ssrc_to_track_;
     std::shared_ptr<VideoTrack> video_track_;
 };
 

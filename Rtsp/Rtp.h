@@ -58,19 +58,9 @@ public:
     void CountPli();
     void CountFir();
     void CountBye();
-    void OnSenderReport(uint32_t sender_ssrc,
-                        uint64_t ntp,
-                        uint32_t rtp_ts,
-                        uint32_t packet_count,
-                        uint32_t octet_count);
-    void OnReceiverReport(uint32_t sender_ssrc,
-                          uint32_t media_ssrc,
-                          uint8_t fraction_lost,
-                          int32_t cumulative_lost,
-                          uint32_t highest_seq,
-                          uint32_t jitter,
-                          uint32_t lsr,
-                          uint32_t dlsr);
+    void OnSenderReport(uint32_t sender_ssrc, uint64_t ntp, uint32_t rtp_ts, uint32_t packet_count, uint32_t octet_count);
+    void OnReceiverReport(uint32_t sender_ssrc, uint32_t media_ssrc, 
+        uint8_t fraction_lost, int32_t cumulative_lost, uint32_t highest_seq, uint32_t jitter, uint32_t lsr, uint32_t dlsr);
     void SetRttMs(uint32_t rtt_ms);
     void SetJitter(uint32_t jitter);
     void UpdateSequenceStats(uint16_t seq)
@@ -498,6 +488,12 @@ public:
     size_t getCapacity() const { return capacity_; }
     size_t getHeaderLen() const { return hdr_len_; }
     size_t getPayloadSize() const { return payload_len_; }
+    void setHeaderInfo(size_t header_len, size_t payload_offset, size_t payload_len)
+    {
+        hdr_len_ = header_len;
+        payload_off_ = payload_offset;
+        payload_len_ = payload_len;
+    }
 
     void setTrackType(TrackType type) { type_ = type; }
     TrackType getTrackType() const { return type_; }

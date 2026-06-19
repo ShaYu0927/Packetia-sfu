@@ -166,7 +166,7 @@ void MediaEndpoint::OnDtls(WorkJob& job)
 }
 
 
-RtpReceiverTrack::Ptr SfuEndpoint::FindTrackBySsrc(uint32_t ssrc)
+rtsp::RtpReceiverTrack::Ptr SfuEndpoint::FindTrackBySsrc(uint32_t ssrc)
 {
     std::lock_guard<std::mutex> lock(track_mtx_);
 
@@ -255,7 +255,7 @@ void SfuEndpoint::HandleRtpPacket(Packet* pkt)
     track->inputRtp(track->getTrackType(), sample_rate, pkt->data, pkt->len);
 }
 
-std::shared_ptr<RtpReceiverTrack> SfuEndpoint::GetOrCreateTrack(uint32_t ssrc)
+std::shared_ptr<rtsp::RtpReceiverTrack> SfuEndpoint::GetOrCreateTrack(uint32_t ssrc)
 {
     {
         std::lock_guard<std::mutex> lock(track_mtx_);
@@ -278,7 +278,6 @@ std::shared_ptr<RtpReceiverTrack> SfuEndpoint::GetOrCreateTrack(uint32_t ssrc)
 
     if (info.type != TrackVideo)
     {
-        // LOG_INFO("[TRACK] ignore non-video RTP"," track=", TrackTypeToString(info.type), " codec=", info.codec_name, " pt=", static_cast<int>(info.payload_type), " ssrc=", ssrc);
         return nullptr;
     }
 
@@ -292,7 +291,7 @@ std::shared_ptr<RtpReceiverTrack> SfuEndpoint::GetOrCreateTrack(uint32_t ssrc)
 
     LOG_INFO("[TRACK] track not found, creating video track", " ssrc=", ssrc, " codec=", info.codec_name, " pt=", static_cast<int>(info.payload_type));
 
-    auto new_track = std::make_shared<RtpVideoTracker>(info);
+    auto new_track = std::make_shared<rtsp::RtpVideoTracker>(info);
 
     LOG_INFO("[TRACK] create new track (pre-insert)", "ssrc=", ssrc, "track_ptr=", new_track.get());
 

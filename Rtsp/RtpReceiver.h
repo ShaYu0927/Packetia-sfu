@@ -2,39 +2,116 @@
 #define _RTPRECEIVER_H_
 
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "RtpTypes.h"
 #include "Rtp.h"
 #include "RtcpReciver.h"
+#include "RtpSenderTrack.h"
 #include "H264Depacketizer.h"
 #include "logger.h"
+
+namespace rtsp 
+{
+
 
 class Frame;
 using FramePtr = std::shared_ptr<Frame>;
 
 
+/**
+ * @brief Base class for receiving RTP packets of one media track.
+ *
+ * RtpReceiverTrack is responsible for:
+ *   1. Receiving raw RTP packets from the transport layer.
+ *   2. Parsing RTP packets in derived classes.
+ *   3. Sorting RTP packets by sequence number.
+ *   4. Delivering ordered RTP packets to depacketizers.
+ *   5. Emitting decoded media frames through frame callbacks.
+ *
+ * This class does not implement codec-specific depacketization.
+ * Codec-specific logic should be implemented by derived classes, such as:
+ *   - RtpVideoTracker
+ *   - RtpAudioTracker
+ */
 class RtpReceiverTrack : public EnhancedPacketSortor<RtpPacket::Ptr, uint16_t>
 {
 public:
     using Ptr = std::shared_ptr<RtpReceiverTrack>;
+
+    /**
+     * @brief Callback used when a complete media frame is generated.
+     *
+     * For video, this may be a complete H264/H265 frame.
+     * For audio, this may be one audio access unit or audio frame.
+     */
     using FrameCallback = std::function<void(const FramePtr &)>;
+
+    /**
+     * @brief Callback used to report lost RTP sequence numbers.
+     *
+     * This callback can be used to generate RTCP NACK feedback.
+     */
     using NackCallback = std::function<void(const uint16_t *seqs, size_t count)>;
+
+    /**
+     * @brief Callback used to request a key frame through RTCP PLI.
+     */
     using PliCallback = std::function<void()>;
+
+    /**
+     * @brief Callback used to request a key frame through RTCP FIR.
+     *
+     * seq_nr is the FIR command sequence number.
+     */
     using FirCallback = std::function<void(uint8_t seq_nr)>;
 
 public:
+    /**
+     * @brief Construct a receiver track with basic track information.
+     *
+     * The packet sorter callback is registered here. Once a packet becomes
+     * ordered by sequence number, the following steps are executed:
+     *   1. onBeforeRtpSorted()
+     *   2. onRtpSorted()
+     *   3. Update receive statistics
+     *
+     * @param info Track metadata, including media type, codec, payload type,
+     *             SSRC, and track index.
+     */
     explicit RtpReceiverTrack(const TrackInfo &info)
         : _info(info)
     {
         setOnPacketSorted([this](uint16_t seq, const RtpPacket::Ptr &pkt) {
             (void)seq;
+
+            /*
+             * Hook before handling a sorted RTP packet.
+             *
+             * Derived classes may override this to update statistics,
+             * jitter information, or RTCP receive-side state before
+             * depacketization.
+             */
             this->onBeforeRtpSorted(pkt);
+
+            /*
+             * Handle an ordered RTP packet.
+             *
+             * Derived classes usually perform codec-specific depacketization
+             * here and emit complete media frames when available.
+             */
             this->onRtpSorted(pkt);
+
+            /*
+             * Update common receiver statistics after the packet has been
+             * accepted by the sorter.
+             */
             ++_stats.sorted_packets;
             _stats.last_seq = pkt ? pkt->getSeq() : _stats.last_seq;
             _stats.last_ts = pkt ? pkt->getStamp() : _stats.last_ts;
@@ -44,68 +121,229 @@ public:
     virtual ~RtpReceiverTrack() = default;
 
 public:
+    /**
+     * @brief Get immutable track metadata.
+     */
     const TrackInfo &getTrackInfo() const { return _info; }
 
+    /**
+     * @brief Get media track type, such as audio or video.
+     */
     TrackType getTrackType() const { return _info.type; }
+
+    /**
+     * @brief Get codec identifier.
+     */
     CodecId getCodecId() const { return _info.codec_id; }
+
+    /**
+     * @brief Get codec name string.
+     */
     const std::string &getCodecName() const { return _info.codec_name; }
 
+    /**
+     * @brief Get RTP SSRC of this receiving track.
+     */
     uint32_t getSSRC() const { return _info.ssrc; }
+
+    /**
+     * @brief Get RTP payload type of this track.
+     */
     uint8_t getPayloadType() const { return _info.payload_type; }
+
+    /**
+     * @brief Get media track index.
+     *
+     * For example:
+     *   0 may represent video.
+     *   1 may represent audio.
+     */
     int getTrackIndex() const { return _info.track_index; }
 
+    /**
+     * @brief Set RTP SSRC for this receiving track.
+     */
     void setSSRC(uint32_t ssrc) { _info.ssrc = ssrc; }
+
+    /**
+     * @brief Set RTP payload type for this receiving track.
+     */
     void setPayloadType(uint8_t pt) { _info.payload_type = pt; }
+
+    /**
+     * @brief Set media track index.
+     */
     void setTrackIndex(int index) { _info.track_index = index; }
 
+    /**
+     * @brief Set RTSP transport information.
+     *
+     * This is mainly used in RTSP scenarios, where RTP may be transported
+     * over UDP or interleaved TCP.
+     */
     void setRtspTransport(const RtspTransport &transport) { _rtsp_transport = transport; }
+
+    /**
+     * @brief Get RTSP transport information.
+     */
     const RtspTransport &getRtspTransport() const { return _rtsp_transport; }
 
+    /**
+     * @brief Set callback for receiving complete media frames.
+     *
+     * Derived classes should call emitFrame() after depacketizing RTP packets
+     * into complete media frames.
+     */
     void setOnFrame(FrameCallback cb) { _on_frame = std::move(cb); }
 
+    /**
+     * @brief Get RTP receiving statistics.
+     */
     const RtpTrackStats &getStats() const { return _stats; }
 
-
 public:
+    /**
+     * @brief Input one raw RTP packet.
+     *
+     * Derived classes should implement:
+     *   1. RTP packet parsing.
+     *   2. RTP header validation.
+     *   3. Track matching if necessary.
+     *   4. Calling inputPacket() after a valid RtpPacket is created.
+     *
+     * @param type        Track type, such as audio or video.
+     * @param sample_rate RTP timestamp clock rate.
+     *                    Video is usually 90000.
+     *                    Opus is usually 48000.
+     *                    PCMA/PCMU is usually 8000.
+     * @param ptr         Raw RTP packet buffer.
+     * @param len         Raw RTP packet length.
+     *
+     * @return Parsed RtpPacket on success, nullptr on failure.
+     */
     virtual RtpPacket::Ptr inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len) = 0;
+
+    /**
+     * @brief Input one raw RTCP packet.
+     *
+     * Derived classes may parse RTCP packets such as:
+     *   - Sender Report
+     *   - Receiver Report
+     *   - NACK
+     *   - PLI
+     *   - FIR
+     *   - BYE
+     *
+     * @param ptr Raw RTCP packet buffer.
+     * @param len Raw RTCP packet length.
+     */
     virtual void inputRtcp(const uint8_t *ptr, size_t len) = 0;
+
 protected:
+    /**
+     * @brief Input a parsed RTP packet into the packet sorter.
+     *
+     * This function updates common receive statistics and then passes the
+     * packet to EnhancedPacketSortor. The sorter will reorder packets by RTP
+     * sequence number and call onRtpSorted() when packets become ordered.
+     *
+     * @param pkt Parsed RTP packet.
+     *
+     * @return true if the packet is accepted, false otherwise.
+     */
     bool inputPacket(const RtpPacket::Ptr &pkt)
     {
-        if (!pkt) 
+        if (!pkt)
         {
             return false;
         }
+
         ++_stats.received_packets;
         _stats.seen_packet = true;
+
         EnhancedPacketSortor<RtpPacket::Ptr, uint16_t>::inputPacket(pkt->getSeq(), pkt);
+
         return true;
     }
 
+    /**
+     * @brief Emit a complete media frame to the upper layer.
+     *
+     * This is usually called by derived classes after depacketization.
+     *
+     * @param frame Complete media frame.
+     *
+     * @return true if a frame callback exists and is called, false otherwise.
+     */
     bool emitFrame(const FramePtr &frame)
     {
-        if (_on_frame) 
+        if (_on_frame)
         {
             _on_frame(frame);
             return true;
         }
+
         return false;
     }
 
+    /**
+     * @brief Hook called before handling a sorted RTP packet.
+     *
+     * Derived classes can override this function to update receive-side
+     * statistics, jitter calculation, RTCP state, or debugging information.
+     *
+     * Default implementation does nothing.
+     */
     virtual void onBeforeRtpSorted(const RtpPacket::Ptr &pkt)
     {
-
+        (void)pkt;
     }
+
+    /**
+     * @brief Handle one ordered RTP packet.
+     *
+     * Derived classes should override this function to perform codec-specific
+     * depacketization.
+     *
+     * For example:
+     *   - H264 FU-A/STAP-A depacketization
+     *   - H265 AP/FU depacketization
+     *   - AAC RTP payload parsing
+     *
+     * Default implementation does nothing.
+     */
     virtual void onRtpSorted(const RtpPacket::Ptr &pkt)
     {
-        
+        (void)pkt;
     }
 
 protected:
+    /**
+     * @brief Track metadata.
+     *
+     * Includes track type, codec id, codec name, SSRC, payload type,
+     * and track index.
+     */
     TrackInfo _info;
+
+    /**
+     * @brief RTSP transport information.
+     *
+     * Used when this RTP receiver track belongs to an RTSP session.
+     */
     RtspTransport _rtsp_transport;
+
+    /**
+     * @brief RTP receive statistics.
+     *
+     * Includes received packet count, sorted packet count, last sequence,
+     * last timestamp, and other track-level statistics.
+     */
     RtpTrackStats _stats;
 
+    /**
+     * @brief Callback invoked when a complete media frame is generated.
+     */
     FrameCallback _on_frame;
 };
 
@@ -126,6 +364,11 @@ public:
 public:
     RtpPacket::Ptr inputRtp(TrackType type, int sample_rate, uint8_t* ptr, size_t len) override;
 
+    void inputRtcp(const uint8_t* ptr, size_t len) override
+    {
+        
+    }
+
     void OnRtcpSenderReport(uint32_t sender_ssrc, uint64_t ntp, uint32_t rtp_ts, uint32_t packet_count,uint32_t octet_count)
     {
         RtpRecvStatsBase::OnSenderReport(sender_ssrc, ntp, rtp_ts, packet_count, octet_count);
@@ -142,7 +385,10 @@ protected:
     void onRtpSorted(const RtpPacket::Ptr& pkt) override;
 
 private:
+
+
     std::unique_ptr<Depacketizer> _depacketizer;
+    bool _has_last_seq = false;
 };
 
 /**
@@ -285,5 +531,5 @@ private:
     std::unordered_map<uint32_t, std::weak_ptr<RtpReceiverTrack>> recv_tracks_;
     std::unordered_map<uint32_t, std::weak_ptr<RtpSenderTrack>> send_tracks_;
 };
-
+}
 #endif // _RTPRECEIVER_H_

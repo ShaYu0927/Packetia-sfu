@@ -1,6 +1,34 @@
 #include "RtpReceiver.h"
 #include "logger.h"
 
+#include <chrono>
+
+namespace rtsp 
+{
+
+namespace
+{
+uint64_t NowMs()
+{
+    using namespace std::chrono;
+    return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+}
+
+uint16_t SeqDistance(uint16_t newer, uint16_t older)
+{
+    return static_cast<uint16_t>(newer - older);
+}
+
+bool SeqOlderThan(uint16_t seq, uint16_t expected)
+{
+    return seq != expected && SeqDistance(seq, expected) >= 0x8000;
+}
+
+const char* BoolText(bool value)
+{
+    return value ? "1" : "0";
+}
+}
 
 /* 网络包 转 协议包 */
 RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len)
@@ -65,19 +93,24 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_
     }
 
     auto pkt = std::make_shared<RtpPacket>();
-    pkt->reserve(headerLen + payloadLen);
+    pkt->reserve(len);
     pkt->SetSequence(hdr.getSequence());
     pkt->setStamp(hdr.getTimestamp());
     pkt->setSSRC(hdr.getSSRC());
     pkt->setPayloadType(hdr.getPayloadType());
     pkt->setMarker(hdr.getMarker());
-    pkt->setPayload(ptr + headerLen, payloadLen);
+    pkt->setTrackType(type);
+    pkt->setSampleRate(sample_rate > 0 ? static_cast<uint32_t>(sample_rate) : _info.clock_rate);
+    pkt->setTrackIndex(_info.track_index);
     pkt->setRaw(ptr, len);
-
+    pkt->setHeaderInfo(headerLen, headerLen, payloadLen);
+    pkt->setRecvTimeMs(NowMs());
 
     inputPacket(pkt);
     return pkt;
 }
+
+
 
 
 void RtpVideoTracker::onBeforeRtpSorted(const RtpPacket::Ptr &pkt)
@@ -91,6 +124,7 @@ void RtpVideoTracker::onBeforeRtpSorted(const RtpPacket::Ptr &pkt)
     auto seq = pkt->getSeq();
     auto ts = pkt->getStamp();
     auto ssrc = pkt->getSSRC();
+
 
     if(_has_last_seq)
     {
@@ -146,4 +180,7 @@ void RtpVideoTracker::onRtpSorted(const RtpPacket::Ptr &pkt)
         LOG_ERROR("[RtpVideoTracker] depacketizer input failed, seq=", view.seq, " ts=", view.ts, " ssrc=", view.ssrc, " payload_size=", view.payload_len);
         return;
     }
+}
+
+
 }

@@ -5,6 +5,9 @@
 #include <mutex>
 #include <string>
 #include <functional>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 #include "TrackeInfo.h"
 #include "Participant.h"
@@ -36,6 +39,21 @@ struct RoomInfo
     uint64_t last_left_at_ms = 0;
     uint32_t participant_count = 0;
     RoomState state = RoomState::Created;
+};
+
+struct PublishedTrackInfo
+{
+    std::string publisher_id;
+    media::MediaTrackPtr track;
+    uint32_t ssrc = 0;
+    uint8_t payload_type = 0;
+};
+
+struct SubscriptionInfo
+{
+    std::string subscriber_id;
+    std::string publisher_id;
+    std::string track_id;
 };
 
 
@@ -70,6 +88,16 @@ public:
 
     bool UnpublishTrack(const std::string& track_id);
 
+    bool SubscribeTrack(const std::string& subscriber_id,
+                        const std::string& track_id);
+
+    bool UnsubscribeTrack(const std::string& subscriber_id,
+                          const std::string& track_id);
+
+    std::vector<SubscriptionInfo> GetSubscriptionsByTrack(const std::string& track_id) const;
+    std::vector<SubscriptionInfo> GetSubscriptionsBySubscriber(const std::string& subscriber_id) const;
+    std::vector<Participant::Ptr> GetSubscribers(const std::string& track_id) const;
+
     media::MediaTrackPtr ResolveTrackForSubscriber(const std::string& subscriber_id,
                                                     const std::string& track_id);
 
@@ -81,6 +109,10 @@ public:
 private:
     bool CanJoinLocked(const Participant::Ptr& participant) const;
     void UpdateStateLocked();
+    bool SubscribeTrackLocked(const std::string& subscriber_id,
+                              const std::string& track_id);
+    void UnsubscribeTrackLocked(const std::string& subscriber_id,
+                                const std::string& track_id);
 
 private:
     mutable std::mutex mutex_;
@@ -89,6 +121,9 @@ private:
     RoomOptions options_;
 
     std::unordered_map<std::string, Participant::Ptr> participants_;
+    std::unordered_map<std::string, PublishedTrackInfo> published_tracks_;
+    std::unordered_map<std::string, std::unordered_set<std::string>> track_subscribers_;
+    std::unordered_map<std::string, std::unordered_set<std::string>> participant_subscriptions_;
 
     std::function<void(Participant::Ptr)> on_participant_changed_;
     std::function<void(const std::string& room_id)> on_room_closed_;
