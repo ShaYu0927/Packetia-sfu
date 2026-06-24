@@ -19,12 +19,6 @@ bool H264Depacketizer::input(const RtpView& pkt)
 
     if (!parser_.Parse(pkt, parsed))
     {
-        LOG_ERROR("[H264Depacketizer] parse h264 rtp payload failed",
-                  " ssrc=", pkt.ssrc,
-                  " seq=", pkt.seq,
-                  " ts=", pkt.ts,
-                  " marker=", pkt.marker,
-                  " payload_len=", pkt.payload_len);
         return false;
     }
 

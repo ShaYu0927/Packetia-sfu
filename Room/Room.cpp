@@ -1,19 +1,10 @@
 #include "Room.h"
-
-#include <algorithm>
-#include <chrono>
 #include <utility>
+#include "TimeUtil.h"
+
 
 namespace room
 {
-namespace
-{
-uint64_t NowMs()
-{
-    using namespace std::chrono;
-    return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
-}
-}
 
 Room::Room(RoomInfo info, RoomOptions options)
     : info_(std::move(info)),
@@ -21,7 +12,7 @@ Room::Room(RoomInfo info, RoomOptions options)
 {
     if (info_.created_at_ms == 0)
     {
-        info_.created_at_ms = NowMs();
+        info_.created_at_ms = Timestamp::NowMs();
     }
 }
 
@@ -78,7 +69,7 @@ bool Room::Join(const Participant::Ptr& participant)
 
         if (info_.first_joined_at_ms == 0)
         {
-            info_.first_joined_at_ms = NowMs();
+            info_.first_joined_at_ms = Timestamp::NowMs();
         }
 
         if (options_.auto_subscribe)
@@ -158,7 +149,7 @@ bool Room::Leave(const std::string& participant_id)
         }
 
         participants_.erase(it);
-        info_.last_left_at_ms = NowMs();
+        info_.last_left_at_ms = Timestamp::NowMs();
         UpdateStateLocked();
         cb = on_participant_changed_;
     }
@@ -208,10 +199,7 @@ size_t Room::ParticipantCount() const
     return participants_.size();
 }
 
-bool Room::PublishTrack(const std::string& participant_id,
-                        const media::MediaTrackPtr& track,
-                        uint32_t ssrc,
-                        uint8_t payload_type)
+bool Room::PublishTrack(const std::string& participant_id, const media::MediaTrackPtr& track, uint32_t ssrc, uint8_t payload_type)
 {
     if (!track || track->id().empty())
     {
@@ -219,7 +207,6 @@ bool Room::PublishTrack(const std::string& participant_id,
     }
 
     std::vector<std::string> auto_subscribers;
-
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
@@ -313,15 +300,13 @@ bool Room::UnpublishTrack(const std::string& track_id)
     return true;
 }
 
-bool Room::SubscribeTrack(const std::string& subscriber_id,
-                          const std::string& track_id)
+bool Room::SubscribeTrack(const std::string& subscriber_id, const std::string& track_id)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     return SubscribeTrackLocked(subscriber_id, track_id);
 }
 
-bool Room::UnsubscribeTrack(const std::string& subscriber_id,
-                            const std::string& track_id)
+bool Room::UnsubscribeTrack(const std::string& subscriber_id, const std::string& track_id)
 {
     std::lock_guard<std::mutex> lock(mutex_);
 
@@ -404,8 +389,7 @@ std::vector<Participant::Ptr> Room::GetSubscribers(const std::string& track_id) 
     return result;
 }
 
-media::MediaTrackPtr Room::ResolveTrackForSubscriber(const std::string& subscriber_id,
-                                                     const std::string& track_id)
+media::MediaTrackPtr Room::ResolveTrackForSubscriber(const std::string& subscriber_id, const std::string& track_id)
 {
     std::lock_guard<std::mutex> lock(mutex_);
 
@@ -497,8 +481,7 @@ void Room::UpdateStateLocked()
     info_.state = participants_.empty() ? RoomState::Empty : RoomState::Active;
 }
 
-bool Room::SubscribeTrackLocked(const std::string& subscriber_id,
-                                const std::string& track_id)
+bool Room::SubscribeTrackLocked(const std::string& subscriber_id, const std::string& track_id)
 {
     if (subscriber_id.empty() || track_id.empty())
     {
@@ -529,8 +512,7 @@ bool Room::SubscribeTrackLocked(const std::string& subscriber_id,
     return true;
 }
 
-void Room::UnsubscribeTrackLocked(const std::string& subscriber_id,
-                                  const std::string& track_id)
+void Room::UnsubscribeTrackLocked(const std::string& subscriber_id, const std::string& track_id)
 {
     auto track_it = track_subscribers_.find(track_id);
     if (track_it != track_subscribers_.end())
@@ -557,6 +539,100 @@ void Room::UnsubscribeTrackLocked(const std::string& subscriber_id,
     {
         subscriber_it->second->UnsubscribeTrack(track_id);
     }
+}
+
+
+void RoomCommandHandler::HandleJoin(std::shared_ptr<Room>& room, const RoomCommand& cmd)
+{
+    if (!room) 
+    {
+        return;
+    }
+
+    if (cmd.participant_id.empty()) 
+    {
+        return;
+    }
+
+    auto participant = room->GetParticipant(cmd.participant_id);
+    if (participant) 
+    {
+        return;
+    }
+
+    std::string name = cmd.participant_id;
+    if (name.empty()) 
+    {
+        name = cmd.participant_id;
+    }
+
+    participant = std::make_shared<Participant>(cmd.participant_id, name);
+
+    if (!room->Join(participant)) 
+    {
+        return;
+    }
+}
+
+void RoomCommandHandler::HandlePublish(std::shared_ptr<Room>& room, const RoomCommand& cmd)
+{
+    if (!room) {
+        return;
+    }
+
+    if (cmd.participant_id.empty()) 
+    {
+        return;
+    }
+
+    if (!cmd.track) 
+    {
+        return;
+    }
+
+    auto participant = room->GetParticipant(cmd.participant_id);
+    if (!participant) 
+    {
+        std::string name = cmd.participant_id;
+        if (name.empty()) 
+        {
+            name = cmd.participant_id;
+        }
+
+        participant = std::make_shared<Participant>(cmd.participant_id, name);
+
+        if (!room->Join(participant)) 
+        {
+            return;
+        }
+    }
+
+    if (!room->PublishTrack(cmd.participant_id, cmd.track, cmd.ssrc, cmd.payload_type)) 
+    {
+        return;
+    }
+
+}
+
+void RoomCommandHandler::HandleSubscribe(std::shared_ptr<Room>& room, const RoomCommand& cmd)
+{
+    if (!room || cmd.participant_id.empty() || !cmd.track) 
+    {
+        return;
+    }
+
+    auto participant = room->GetParticipant(cmd.participant_id);
+    if (!participant) 
+    {
+        participant = std::make_shared<Participant>(cmd.participant_id, cmd.participant_id);
+
+        if (!room->Join(participant)) 
+        {
+            return;
+        }
+    }
+
+    room->PublishTrack(cmd.participant_id, cmd.track, cmd.ssrc, cmd.payload_type);
 }
 
 }

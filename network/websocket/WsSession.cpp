@@ -52,7 +52,6 @@ const std::string& WsSession::GetParticipantId() const
     return participant_id_;
 }
 
-
 bool WsSession::IsJoinedRoom() const
 {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -90,7 +89,7 @@ void WsSession::ClearBinding()
 
 void WsSession::OnOpen()
 {
-
+    
 }
 
 void WsSession::OnMessage(const std::string& message)

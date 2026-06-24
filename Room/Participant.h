@@ -35,17 +35,6 @@ enum class ParticipantState
  *
  * Participant 表示会议房间中的一个用户。
  *
- * 它不直接处理 RTP 包，也不直接负责网络收发。
- * 它主要负责维护用户身份、用户状态、绑定的 MediaSession、
- * 已发布的 Track、已订阅的 Track，以及与 Room 之间的事件回调。
- *
- * 在整体架构中的位置：
- *
- * Room
- *   └── Participant
- *         ├── MediaSession
- *         ├── Published Tracks
- *         └── Subscribed Tracks
  */
 class Participant : public std::enable_shared_from_this<Participant>
 {
@@ -138,6 +127,8 @@ public:
      * 这里先只保存订阅关系，后面可以再接 RtpSenderTrack / DownTrack。
      */
     bool SubscribeTrack(const std::string& track_id);
+
+    bool SubscribeTrack(Participant::Ptr subscriber, const std::string& track_id);
 
     /**
      * @brief 取消订阅 Track。

@@ -16,6 +16,7 @@
 #include "RtpSenderTrack.h"
 #include "H264Depacketizer.h"
 #include "logger.h"
+#include "AudioDepacketizer.h"
 
 namespace rtsp 
 {
@@ -389,6 +390,20 @@ private:
 
     std::unique_ptr<Depacketizer> _depacketizer;
     bool _has_last_seq = false;
+};
+
+class RtpAudioTracker : public RtpReceiverTrack
+{
+public:
+    explicit RtpAudioTracker(const TrackInfo& info);
+    RtpPacket::Ptr inputRtp(TrackType type, int sample_rate, uint8_t* ptr, size_t len) override;
+    void inputRtcp(const uint8_t* ptr, size_t len) override;
+
+protected:
+    void onRtpSorted(const RtpPacket::Ptr& pkt) override;
+
+private:
+    std::unique_ptr<media::AudioDepacketizer> depacketizer_;
 };
 
 /**

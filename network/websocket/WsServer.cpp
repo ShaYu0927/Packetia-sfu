@@ -45,13 +45,10 @@ public:
         int ret = server_.start();
         if (ret != 0) 
         {
-            std::cerr << "[WsServer] start failed, ip=" << ip << ", port=" << port << ", ret=" << ret << std::endl;
             return false;
         }
 
         started_.store(true);
-
-        std::cout << "[WsServer] started, ip=" << ip << ", port=" << port << ", threadNum=" << threadNum << std::endl;
 
         return true;
     }
@@ -67,8 +64,6 @@ public:
 
         std::lock_guard<std::mutex> lock(mutex_);
         channelToId_.clear();
-
-        std::cout << "[WsServer] stopped" << std::endl;
     }
 
 
@@ -116,6 +111,10 @@ private:
         std::string connId = CreateConnId();
         auto session = std::make_shared<WsSession>(connId, channel);
 
+        session->SetOnMessage([this](const std::string& sid, const std::string& msg) {
+            OnSessionMessage(sid, msg);
+        });
+
         {
             std::lock_guard<std::mutex> lock(mutex_);
             channelToId_[channel.get()] = connId;
@@ -158,6 +157,8 @@ private:
     {
 
     }
+
+    void OnSessionMessage(const std::string& session_id, const std::string& message);
 
 private:
     hv::WebSocketService service_;

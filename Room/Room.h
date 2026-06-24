@@ -56,6 +56,29 @@ struct SubscriptionInfo
     std::string track_id;
 };
 
+enum class RoomCommandType 
+{
+    Join,
+    Leave,
+    Publish,
+    Subscribe,
+    Unpublish,
+    Unsubscribe,
+    Close,
+};
+
+struct RoomCommand 
+{
+    RoomCommandType type;
+    std::string room_id;
+    std::string room_name;
+    std::string conn_id;
+    std::string participant_id;
+    std::string track_id;
+    media::MediaTrackPtr track;
+    uint32_t ssrc = 0;
+    uint8_t payload_type = 0;
+};
 
 class Room : public std::enable_shared_from_this<Room>
 {
@@ -81,25 +104,19 @@ public:
     std::vector<Participant::Ptr> GetParticipants() const;
     size_t ParticipantCount() const;
 
-    bool PublishTrack(const std::string& participant_id,
-                      const media::MediaTrackPtr& track,
-                      uint32_t ssrc,
-                      uint8_t payload_type);
+    bool PublishTrack(const std::string& participant_id, const media::MediaTrackPtr& track, uint32_t ssrc, uint8_t payload_type);
 
     bool UnpublishTrack(const std::string& track_id);
 
-    bool SubscribeTrack(const std::string& subscriber_id,
-                        const std::string& track_id);
+    bool SubscribeTrack(const std::string& subscriber_id, const std::string& track_id);
 
-    bool UnsubscribeTrack(const std::string& subscriber_id,
-                          const std::string& track_id);
+    bool UnsubscribeTrack(const std::string& subscriber_id, const std::string& track_id);
 
     std::vector<SubscriptionInfo> GetSubscriptionsByTrack(const std::string& track_id) const;
     std::vector<SubscriptionInfo> GetSubscriptionsBySubscriber(const std::string& subscriber_id) const;
     std::vector<Participant::Ptr> GetSubscribers(const std::string& track_id) const;
 
-    media::MediaTrackPtr ResolveTrackForSubscriber(const std::string& subscriber_id,
-                                                    const std::string& track_id);
+    media::MediaTrackPtr ResolveTrackForSubscriber(const std::string& subscriber_id, const std::string& track_id);
 
     void Close();
 
@@ -109,10 +126,8 @@ public:
 private:
     bool CanJoinLocked(const Participant::Ptr& participant) const;
     void UpdateStateLocked();
-    bool SubscribeTrackLocked(const std::string& subscriber_id,
-                              const std::string& track_id);
-    void UnsubscribeTrackLocked(const std::string& subscriber_id,
-                                const std::string& track_id);
+    bool SubscribeTrackLocked(const std::string& subscriber_id, const std::string& track_id);
+    void UnsubscribeTrackLocked(const std::string& subscriber_id, const std::string& track_id);
 
 private:
     mutable std::mutex mutex_;
@@ -128,6 +143,52 @@ private:
     std::function<void(Participant::Ptr)> on_participant_changed_;
     std::function<void(const std::string& room_id)> on_room_closed_;
 };
+
+class RoomManager
+{
+public:
+    std::shared_ptr<Room>  GetOrCreateRoom(std::string room_id, std::string room_name);
+};
+
+class RoomCommandHandler 
+{
+public:
+    explicit RoomCommandHandler(std::shared_ptr<RoomManager> manager)
+        : room_manager_(std::move(manager))
+    {
+    }
+
+    void Handle(const RoomCommand& cmd)
+    {
+        auto room = room_manager_->GetOrCreateRoom(cmd.room_id, cmd.room_name);
+        if (!room) {
+            return;
+        }
+
+        switch (cmd.type) {
+        case RoomCommandType::Join:
+            HandleJoin(room, cmd);
+            break;
+        case RoomCommandType::Publish:
+            HandlePublish(room, cmd);
+            break;
+        case RoomCommandType::Subscribe:
+            HandleSubscribe(room, cmd);
+            break;
+        default:
+            break;
+        }
+    }
+
+private:
+    void HandleJoin(std::shared_ptr<Room>&, const RoomCommand& cmd);
+    void HandlePublish(std::shared_ptr<Room>&, const RoomCommand& cmd);
+    void HandleSubscribe(std::shared_ptr<Room>&, const RoomCommand& cmd);
+
+private:
+    std::shared_ptr<RoomManager> room_manager_;
+};
+
 }
 
 

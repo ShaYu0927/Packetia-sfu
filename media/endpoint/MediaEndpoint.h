@@ -59,6 +59,16 @@ private:
     std::shared_ptr<RtpTrack> tracker_;
 };
 
+class SfuRouter
+{
+public:
+    void AddSubscriber(uint32_t source_ssrc, std::shared_ptr<rtsp::RtpSenderTrack> sender);
+    std::vector<std::shared_ptr<rtsp::RtpSenderTrack>> GetSenderTracks(uint32_t source_ssrc);
+
+private:
+    std::unordered_map<uint32_t, std::vector<std::shared_ptr<rtsp::RtpSenderTrack>>> subscribers_;
+};
+
 class SfuEndpoint : public MediaEndpoint
 {
 public:
@@ -78,6 +88,8 @@ protected:
     void HandleRtpPacket(Packet* pkt) override;
     void HandleRtcpPacket(Packet* pkt) override;
 
+    void ForwardRtpToSubscribers(uint32_t source_ssrc, const uint8_t* data, size_t len);
+
 private:
     rtsp::RtpReceiverTrack::Ptr FindTrackBySsrc(uint32_t ssrc);
     std::shared_ptr<rtsp::RtpReceiverTrack> GetOrCreateTrack(uint32_t ssrc);
@@ -86,6 +98,8 @@ private:
     std::mutex track_mtx_;
     std::unordered_map<uint32_t, rtsp::RtpReceiverTrack::Ptr> ssrc_to_track_;
     std::shared_ptr<VideoTrack> video_track_;
+
+    SfuRouter router_;
 };
 
 

@@ -1,5 +1,6 @@
 #include "ProtocolDetector.h"
 #include "RtspUtil.h"
+#include "SipParser.h"
 
 
 namespace protocol 
@@ -23,6 +24,11 @@ bool ProtocolDetectorSession::OnRead(TcpConnection::Ptr conn, BufferReader& buff
     if (sess_factory_)
     {
         sess = sess_factory_->Create(parser->Name(), conn);
+        if (!sess)
+        {
+            LOG_ERROR("[Detector] Session factory failed, type=", parser->Name());
+            return false;
+        }
 
         LOG_INFO("[Detector] Session created by factory, type=",
                 parser->Name(),
@@ -86,8 +92,7 @@ std::shared_ptr<ProtocolParser> ProtocolDetector::Detect(BufferReader& buffer) c
 #if RTP_DEBUG
     LOG_INFO("[Detect] Enter, readable=", n);
 
-    // 打印前 32 字节（ASCII + HEX）
-    size_t dump_len = std::min(n, (size_t)32);
+    // 打印�?32 字节（ASCII + HEX�?    size_t dump_len = std::min(n, (size_t)32);
 
     std::ostringstream hex;
     std::ostringstream ascii;
@@ -130,7 +135,7 @@ std::shared_ptr<ProtocolParser> ProtocolDetector::Detect(BufferReader& buffer) c
         s.find("sip:") != std::string::npos)
     {
         LOG_INFO("[Detect] Hit SIP protocol");
-        // return std::make_shared<SipParser>();
+        return std::make_shared<sip::SipParser>();
     }
 
     LOG_INFO("[Detect] No protocol matched");

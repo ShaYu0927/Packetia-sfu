@@ -19,6 +19,9 @@ class WsSession : public std::enable_shared_from_this<WsSession>
 {
 public:
     using Ptr = std::shared_ptr<WsSession>;
+    using MessageCallback = std::function<void(const std::string&, const std::string&)>;
+    using CloseCallback   = std::function<void(const std::string&)>;
+
     explicit WsSession(const std::string& connId, const WebSocketChannelPtr& channel);
     ~WsSession();
 
@@ -50,11 +53,9 @@ public:
 
     void OnMessage(const std::string& message);
 
-    /**
-     * @brief 清理房间和用户绑定关系。
-     */
     void ClearBinding();
 
+    void SetOnMessage(MessageCallback cb);
 private:
     static std::string GenerateSessionId();
 

@@ -111,8 +111,6 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_
 }
 
 
-
-
 void RtpVideoTracker::onBeforeRtpSorted(const RtpPacket::Ptr &pkt)
 {
     if(!pkt)
@@ -177,10 +175,186 @@ void RtpVideoTracker::onRtpSorted(const RtpPacket::Ptr &pkt)
 
     if (!_depacketizer->input(view)) 
     {
-        LOG_ERROR("[RtpVideoTracker] depacketizer input failed, seq=", view.seq, " ts=", view.ts, " ssrc=", view.ssrc, " payload_size=", view.payload_len);
         return;
     }
 }
 
+RtpAudioTracker::RtpAudioTracker(const TrackInfo& info)
+    : RtpReceiverTrack(info)
+{
+    media::MediaCodecType codec = media::MediaCodecType::Unknown;
+
+    switch (info.codec_id)
+    {
+    case CodecId::PCMU:
+        codec = media::MediaCodecType::PCMU;
+        break;
+
+    case CodecId::PCMA:
+        codec = media::MediaCodecType::PCMA;
+        break;
+
+    case CodecId::OPUS:
+        codec = media::MediaCodecType::Opus;
+        break;
+
+    case CodecId::AAC:
+        codec = media::MediaCodecType::AAC;
+        break;
+
+    default:
+        codec = media::MediaCodecType::Unknown;
+        break;
+    }
+
+    uint32_t sample_rate = info.clock_rate > 0 ? info.clock_rate : 8000;
+    uint32_t channels = info.channels > 0 ? static_cast<uint32_t>(info.channels) : 1;
+
+    depacketizer_ = std::make_unique<media::AudioDepacketizer>(codec, sample_rate, channels);
+}
+
+RtpPacket::Ptr RtpAudioTracker::inputRtp(TrackType type, int sample_rate, uint8_t* ptr, size_t len)
+{
+     LOG_INFO("[RtpAudioTracker] inputRtp enter",
+             " this=", this,
+             " type_arg=", static_cast<int>(type),
+             " track_type=", static_cast<int>(getTrackType()),
+             " codec=", _info.codec_name,
+             " codec_id=", static_cast<int>(_info.codec_id),
+             " pt_info=", static_cast<int>(_info.payload_type),
+             " sample_rate_arg=", sample_rate,
+             " clock_rate=", _info.clock_rate,
+             " channels=", _info.channels,
+             " len=", len,
+             " ptr=", static_cast<void*>(ptr));
+
+    if (!ptr || len < RtpHeader::kSize)
+    {
+        return nullptr;
+    }
+
+    RtpHeader hdr;
+    if (!hdr.InputFromBuffer(ptr, len))
+    {
+        return nullptr;
+    }
+
+    if (hdr.getVersion() != 2)
+    {
+        return nullptr;
+    }
+
+
+    size_t header_len = hdr.getHeaderSize();
+
+    if (len < header_len)
+    {
+        return nullptr;
+    }
+
+    if (hdr.getExtension())
+    {
+        if (len < header_len + 4)
+        {
+            return nullptr;
+        }
+
+        uint16_t ext_words = (static_cast<uint16_t>(ptr[header_len + 2]) << 8) | static_cast<uint16_t>(ptr[header_len + 3]);
+        size_t ext_total_len = 4 + static_cast<size_t>(ext_words) * 4;
+
+        if (len < header_len + ext_total_len)
+        {
+            return nullptr;
+        }
+
+        header_len += ext_total_len;
+    }
+
+    size_t payload_len = len - header_len;
+
+    if (hdr.getPadding())
+    {
+        uint8_t pad_len = ptr[len - 1];
+
+        if (pad_len == 0 || pad_len > payload_len)
+        {
+            return nullptr;
+        }
+
+        payload_len -= pad_len;
+    }
+
+    if (payload_len == 0)
+    {
+        LOG_ERROR("[RtpAudioTracker] empty payload",
+                  " seq=", hdr.getSequence(),
+                  " ssrc=", hdr.getSSRC(),
+                  " len=", len,
+                  " header_len=", header_len);
+        return nullptr;
+    }
+
+    LOG_INFO("[RtpAudioTracker] RTP payload ready",
+             " seq=", hdr.getSequence(),
+             " ts=", hdr.getTimestamp(),
+             " ssrc=", hdr.getSSRC(),
+             " pt=", static_cast<int>(hdr.getPayloadType()),
+             " header_len=", header_len,
+             " payload_len=", payload_len);
+
+    auto pkt = std::make_shared<RtpPacket>();
+
+    if (!pkt->reserve(len))
+    {
+        LOG_ERROR("[RtpAudioTracker] reserve failed",
+                  " len=", len,
+                  " seq=", hdr.getSequence(),
+                  " ssrc=", hdr.getSSRC());
+        return nullptr;
+    }
+
+    pkt->SetSequence(hdr.getSequence());
+    pkt->setStamp(hdr.getTimestamp());
+    pkt->setSSRC(hdr.getSSRC());
+    pkt->setPayloadType(hdr.getPayloadType());
+    pkt->setMarker(hdr.getMarker());
+
+    pkt->setTrackType(type);
+    pkt->setSampleRate(sample_rate > 0 ? static_cast<uint32_t>(sample_rate)
+                                       : _info.clock_rate);
+    pkt->setTrackIndex(_info.track_index);
+
+    pkt->setRaw(ptr, len);
+    pkt->setHeaderInfo(header_len, header_len, payload_len);
+    pkt->setRecvTimeMs(NowMs());
+
+    LOG_INFO("[RtpAudioTracker] push to sorter",
+             " this=", this,
+             " seq=", pkt->getSeq(),
+             " ts=", pkt->getStamp(),
+             " ssrc=", pkt->getSSRC(),
+             " pt=", static_cast<int>(pkt->getPayloadType()),
+             " payload_size=", pkt->getPayloadSize());
+
+    inputPacket(pkt);
+
+    LOG_INFO("[RtpAudioTracker] inputRtp leave",
+             " this=", this,
+             " seq=", pkt->getSeq(),
+             " ssrc=", pkt->getSSRC());
+
+    return pkt;
+
+}
+
+void RtpAudioTracker::inputRtcp(const uint8_t* ptr, size_t len)
+{
+
+}
+
+void RtpAudioTracker::onRtpSorted(const RtpPacket::Ptr& pkt)
+{
+
+}
 
 }

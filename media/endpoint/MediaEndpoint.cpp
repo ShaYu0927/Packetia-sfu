@@ -266,6 +266,7 @@ std::shared_ptr<rtsp::RtpReceiverTrack> SfuEndpoint::GetOrCreateTrack(uint32_t s
             return it->second;
         }
     }
+    std::shared_ptr<rtsp::RtpReceiverTrack> new_track;
     auto source_track = SourceTrack();
     if (!source_track)
     {
@@ -276,24 +277,19 @@ std::shared_ptr<rtsp::RtpReceiverTrack> SfuEndpoint::GetOrCreateTrack(uint32_t s
     TrackInfo info = source_track->getTrackInfo();
     info.ssrc = ssrc;
 
-    if (info.type != TrackVideo)
+    if (info.type == TrackVideo)
     {
+        new_track = std::make_shared<rtsp::RtpVideoTracker>(info);
+    }
+    else if (info.type == TrackAudio)
+    {
+        new_track = std::make_shared<rtsp::RtpAudioTracker>(info);
+    }
+    else
+    {
+        LOG_ERROR("[TRACK] unsupported track type", " ssrc=", ssrc, " type=", static_cast<int>(info.type));
         return nullptr;
     }
-
-    if (info.codec_id != CodecId::H264)
-    {
-        LOG_ERROR("[TRACK] unsupported video codec for current depacketizer",
-                  " codec=", info.codec_name,
-                  " ssrc=", ssrc);
-        return nullptr;
-    }
-
-    LOG_INFO("[TRACK] track not found, creating video track", " ssrc=", ssrc, " codec=", info.codec_name, " pt=", static_cast<int>(info.payload_type));
-
-    auto new_track = std::make_shared<rtsp::RtpVideoTracker>(info);
-
-    LOG_INFO("[TRACK] create new track (pre-insert)", "ssrc=", ssrc, "track_ptr=", new_track.get());
 
     {
         std::lock_guard<std::mutex> lock(track_mtx_);
@@ -315,7 +311,7 @@ std::shared_ptr<rtsp::RtpReceiverTrack> SfuEndpoint::GetOrCreateTrack(uint32_t s
 
 void SfuEndpoint::HandleRtcpPacket(Packet* pkt)
 {
-    if (!pkt || !pkt->data || pkt->len < 4)
+    if (!pkt || pkt->len < 4)
     {
         LOG_ERROR("invalid rtcp packet");
         return;
@@ -397,4 +393,36 @@ void SfuEndpoint::Stop()
     ssrc_to_track_.clear();
     SetState(State::kStopped);
 }
+
+void SfuRouter::AddSubscriber(uint32_t source_ssrc, std::shared_ptr<rtsp::RtpSenderTrack> sender)
+{
+    subscribers_[source_ssrc].push_back(sender);
+}
+
+std::vector<std::shared_ptr<rtsp::RtpSenderTrack>> SfuRouter::GetSenderTracks(uint32_t source_ssrc)
+{
+    auto it = subscribers_.find(source_ssrc);
+    if (it == subscribers_.end())
+    {
+        return {};
+    }
+
+    return it->second;
+}
+
+void SfuEndpoint::ForwardRtpToSubscribers(uint32_t source_ssrc, const uint8_t* data, size_t len)
+{
+    auto senders = router_.GetSenderTracks(source_ssrc);
+
+    for (auto& sender : senders)
+    {
+        if (!sender)
+        {
+            continue;
+        }
+
+        sender->InputRtpPacket(data, len);
+    }
+}
+
 }

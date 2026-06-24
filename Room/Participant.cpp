@@ -187,6 +187,41 @@ bool Participant::SubscribeTrack(const std::string& track_id)
     return ret.second;
 }
 
+bool Participant::SubscribeTrack(Participant::Ptr subscriber, const std::string& track_id)
+{
+    if (!subscriber)
+    {
+        return false;
+    }
+
+    if (!subscriber->SubscribeTrack(track_id))
+    {
+        return false;
+    }
+/*
+    auto source_track = FindPublishedTrack(track_id);
+    if (!source_track)
+    {
+        return false;
+    }
+
+     // 3. 找订阅者自己的发送通道
+    auto session = subscriber->GetSession();
+    if (!session)
+    {
+        return false;
+    }
+
+    auto packet_sender = session->GetPacketSender();
+
+    // 4. 创建下游发送轨道
+    auto sender_track = RtpSenderTrackFactory::Create(source_track->getTrackInfo(), packet_sender);
+
+    sfu_endpoint_->AddSubscriber(source_track->ssrc(), sender_track);
+*/
+    return true;
+}
+
 bool Participant::UnsubscribeTrack(const std::string& track_id)
 {
     std::lock_guard<std::mutex> lock(mutex_);

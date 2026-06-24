@@ -11,6 +11,7 @@ TcpServer::TcpServer(EventLoop *event_loop)
 	, port_(0)
 	, acceptor_(new Acceptor(event_loop_))
 	, is_started_(false)
+    , proto_detector_(std::make_shared<protocol::ProtocolDetector>())
 {
     acceptor_->SetNewConnectionCallback([this](int sockfd) 
     {

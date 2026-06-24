@@ -145,36 +145,6 @@ add_library(utils STATIC
 
 )
 
-add_library(sip STATIC
-    protocol/sip/sip.cpp
-    protocol/sip/sip.h
-    protocol/sip/SipMessage.cpp
-    protocol/sip/SipMessage.h
-    protocol/sip/SipParse.cpp
-    protocol/sip/SipParse.h
-)
-
-add_library(Rtcp STATIC
-    protocol/Rtcp/RtcpHealper.cpp
-    protocol/Rtcp/RtcpHealper.h
-    protocol/Rtcp/Rtcp.cpp
-    protocol/Rtcp/Rtcp.h
-    protocol/Rtcp/RtcpContext.cpp
-    protocol/Rtcp/RtcpContext.h
-    protocol/Rtcp/RtcpReciver.h
-    protocol/Rtcp/RtcpReciver.cpp
-)
-
-add_library(ICE STATIC
-    protocol/ice/IceAgent.cpp
-    protocol/ice/IceAgent.h
-    protocol/ice/IceCandidate.cpp
-    protocol/ice/stun/Stun.cpp
-    protocol/ice/IceCandidateStore.cpp
-    protocol/ice/IceChecklist.cpp
-    protocol/ice/IceContext.cpp
-)
-
 add_library(rtp STATIC
     Rtsp/Rtp.cpp
     Rtsp/Rtp.h
@@ -222,6 +192,7 @@ add_library(Interleaved STATIC
 add_library(ROOM_LIB STATIC
     ${ROOM_SRC}
 )
+add_subdirectory(protocol)
 add_subdirectory(media)
 add_subdirectory(server)
 
@@ -242,7 +213,7 @@ add_executable(Packetia ${CMAKE_SOURCE_DIR}/server/main.cpp)
 target_link_libraries(Packetia
     PRIVATE
     -Wl,--start-group
-    media rtsp rtp network utils Rtcp LOGGER ROOM_LIB COMMON ICE Interleaved hv_static 
+    media rtsp rtp sip network utils Rtcp LOGGER ROOM_LIB COMMON ICE WebRtc Interleaved hv_static 
     -Wl,--end-group
     ${FFMPEG_LIBRARIES}
     pthread
