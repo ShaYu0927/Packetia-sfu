@@ -21,6 +21,7 @@ target_include_directories(media
     ${CMAKE_CURRENT_SOURCE_DIR}/MediaFrame
     ${CMAKE_CURRENT_SOURCE_DIR}/track
     ${CMAKE_CURRENT_SOURCE_DIR}/quality
+    ${CMAKE_CURRENT_SOURCE_DIR}/quality/bwe
     ${CMAKE_CURRENT_SOURCE_DIR}/endpoint
 )
 

@@ -215,19 +215,6 @@ RtpAudioTracker::RtpAudioTracker(const TrackInfo& info)
 
 RtpPacket::Ptr RtpAudioTracker::inputRtp(TrackType type, int sample_rate, uint8_t* ptr, size_t len)
 {
-     LOG_INFO("[RtpAudioTracker] inputRtp enter",
-             " this=", this,
-             " type_arg=", static_cast<int>(type),
-             " track_type=", static_cast<int>(getTrackType()),
-             " codec=", _info.codec_name,
-             " codec_id=", static_cast<int>(_info.codec_id),
-             " pt_info=", static_cast<int>(_info.payload_type),
-             " sample_rate_arg=", sample_rate,
-             " clock_rate=", _info.clock_rate,
-             " channels=", _info.channels,
-             " len=", len,
-             " ptr=", static_cast<void*>(ptr));
-
     if (!ptr || len < RtpHeader::kSize)
     {
         return nullptr;
@@ -355,6 +342,35 @@ void RtpAudioTracker::inputRtcp(const uint8_t* ptr, size_t len)
 void RtpAudioTracker::onRtpSorted(const RtpPacket::Ptr& pkt)
 {
 
+}
+
+
+void RtcpDispatcher::OnNack(uint32_t sender_ssrc, uint32_t media_ssrc, const uint16_t* seqs, size_t count)
+{
+    if(!seqs || count == 0)
+    {
+        return;
+    }
+
+    auto it = send_tracks_.find(media_ssrc);
+
+    if (it == send_tracks_.end()) 
+    {
+        LOG_INFO("[RTCP][NACK] sender track not found", " media_ssrc=", media_ssrc, " count=", count);
+        return;
+    }
+
+    auto track = it->second.lock();
+    if(!track)
+    {
+        LOG_INFO("[RTCP][NACK] sender track expired", " media_ssrc=", media_ssrc, " count=", count);
+        return;
+    }
+
+    std::vector<uint16_t> lost_seqs(seqs, seqs + count);
+    LOG_INFO("[RTCP][NACK] retransmit request", " media_ssrc=", media_ssrc, " count=", lost_seqs.size());
+
+    track->OnRtcpNack(lost_seqs);
 }
 
 }

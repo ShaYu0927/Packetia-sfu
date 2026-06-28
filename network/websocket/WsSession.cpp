@@ -97,4 +97,9 @@ void WsSession::OnMessage(const std::string& message)
     LOG_INFO("wssession::onmessage" + message);
 }
 
+void WsSession::SetOnMessage(MessageCallback cb)
+{
+    
+}
+
 } // namespace network

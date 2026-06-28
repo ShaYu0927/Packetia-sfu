@@ -133,7 +133,6 @@ private:
     void OnMessage(const WebSocketChannelPtr& channel, const std::string& message) 
     {
         WsSession::Ptr session;
-
         {
             std::lock_guard<std::mutex> lock(mutex_);
 
@@ -142,12 +141,12 @@ private:
             {
                 return;
             }
-            auto session = session_manager_->GetSession(it->second);
+
+            session = session_manager_->GetSession(it->second);
             if (!session)
             {
                 return;
             }
-
         }
 
         session->OnMessage(message);
@@ -195,7 +194,6 @@ void WsServer::Stop()
     impl_->Stop();
 }
 
-
 bool WsServer::CloseConnection(const std::string& connId) 
 {
     return impl_->CloseConnection(connId);
@@ -216,7 +214,13 @@ void WsServer::SetOnClose(OnCloseCallback cb)
     impl_->SetOnClose(std::move(cb));
 }
 
-
+void WsServer::Impl::OnSessionMessage(const std::string& session_id, const std::string& message)
+{
+    if (onMessage_) 
+    {
+        onMessage_(session_id, message);
+    }
+}
 
 }
 }
