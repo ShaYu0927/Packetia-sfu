@@ -252,6 +252,8 @@ struct NetworkStatsSnapshot
     uint64_t pli_count = 0;
     uint64_t fir_count = 0;
 
+    uint64_t update_time_ms = 0;
+
     uint32_t data_in_flight_bytes = 0;
 
     NetworkQualityLevel quality = NetworkQualityLevel::Unknown;

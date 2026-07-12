@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 
 file(GLOB QUALITY_SRC
     "${CMAKE_CURRENT_SOURCE_DIR}/quality/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/quality/bwe/*.cpp"
 )
 
 add_library(media STATIC

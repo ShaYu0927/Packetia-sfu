@@ -33,6 +33,23 @@ namespace rtcpx
         int32_t  rtt_ms = -1;
     };
 
+    struct TransportFeedbackPacket
+    {
+        uint16_t transport_sequence = 0;
+        bool received = false;
+        uint64_t receive_time_ms = 0;
+    };
+
+    struct TransportFeedbackReport
+    {
+        uint32_t sender_ssrc = 0;
+        uint32_t media_ssrc = 0;
+        uint16_t base_sequence = 0;
+        uint16_t packet_status_count = 0;
+        uint8_t feedback_packet_count = 0;
+        uint64_t reference_time_ms = 0;
+        std::vector<TransportFeedbackPacket> packets;
+    };
     // Lightweight inspection result used before full dispatch.
     // RTCP compound packets may contain several sub-packets; these fields keep
     // the first packet type for logging and the best media SSRC found for route.
@@ -88,6 +105,9 @@ public:
     virtual void OnFir(uint32_t sender_ssrc,
                        uint32_t media_ssrc,
                        uint8_t seq_nr) = 0;
+    // Transport-wide congestion-control feedback, RTPFB FMT=15.
+    virtual void OnTransportFeedback(const TransportFeedbackReport& report) { (void)report; }
+
 
     // BYE indicates a participant/source is leaving.
     virtual void OnBye(uint32_t sender_ssrc) = 0;

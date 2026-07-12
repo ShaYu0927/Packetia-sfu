@@ -26,6 +26,32 @@ void WriteUint32(uint8_t* out, uint32_t value)
     out[2] = static_cast<uint8_t>((value >> 8) & 0xFF);
     out[3] = static_cast<uint8_t>(value & 0xFF);
 }
+
+uint32_t CompactNtpNow()
+{
+    using namespace std::chrono;
+    const auto now = system_clock::now().time_since_epoch();
+    const auto seconds = duration_cast<std::chrono::seconds>(now);
+    const auto nanos = duration_cast<std::chrono::nanoseconds>(now - seconds);
+
+    constexpr uint64_t kNtpUnixEpochOffset = 2208988800ULL;
+    const uint64_t ntp_seconds = static_cast<uint64_t>(seconds.count()) + kNtpUnixEpochOffset;
+    const uint64_t ntp_fraction = (static_cast<uint64_t>(nanos.count()) << 32) / 1000000000ULL;
+
+    return static_cast<uint32_t>(((ntp_seconds & 0xFFFFULL) << 16) | ((ntp_fraction >> 16) & 0xFFFFULL));
+}
+
+uint32_t CalculateRttMs(uint32_t lsr, uint32_t dlsr)
+{
+    if (lsr == 0)
+    {
+        return 0;
+    }
+
+    const uint32_t arrival = CompactNtpNow();
+    const uint32_t rtt_ntp = arrival - lsr - dlsr;
+    return static_cast<uint32_t>((static_cast<uint64_t>(rtt_ntp) * 1000ULL + 32768ULL) / 65536ULL);
+}
 }
 
 RtpSenderTrack::RtpSenderTrack(const RtpSenderTrackConfig& config, IPacketSender* sender)
@@ -59,6 +85,15 @@ bool RtpSenderTrack::InputRtpPacket(const uint8_t* data, size_t len)
     if (!SendRtpPacket(packet, out_seq))
     {
         return false;
+    }
+
+    if (_packet_sent_cb)
+    {
+        _packet_sent_cb(out_seq,
+                        _config.local_ssrc,
+                        out_seq,
+                        NowMs(),
+                        static_cast<uint32_t>(packet.size()));
     }
 
     CacheRtpPacket(out_seq, packet);
@@ -112,6 +147,36 @@ void RtpSenderTrack::OnRtcpNack(const std::vector<uint16_t>& lost_seqs)
     }
 }
 
+void RtpSenderTrack::OnRtcpReceiverReport(uint32_t reporter_ssrc,
+                                           uint32_t media_ssrc,
+                                           uint8_t fraction_lost,
+                                           int32_t cumulative_lost,
+                                           uint32_t highest_seq,
+                                           uint32_t jitter,
+                                           uint32_t lsr,
+                                           uint32_t dlsr)
+{
+    ++_rr_count;
+    _last_rr_reporter_ssrc = reporter_ssrc;
+    _last_rr_media_ssrc = media_ssrc;
+    _last_rr_fraction_lost = fraction_lost;
+    _last_rr_cumulative_lost = cumulative_lost;
+    _last_rr_highest_seq = highest_seq;
+    _last_rr_jitter = jitter;
+    _last_rr_lsr = lsr;
+    _last_rr_dlsr = dlsr;
+    _rtt_ms = CalculateRttMs(lsr, dlsr);
+
+    LOG_INFO("[RTCP][RR] sender report feedback",
+             " reporter_ssrc=", reporter_ssrc,
+             " media_ssrc=", media_ssrc,
+             " fraction_lost=", static_cast<int>(fraction_lost),
+             " cumulative_lost=", cumulative_lost,
+             " highest_seq=", highest_seq,
+             " jitter=", jitter,
+             " rtt_ms=", _rtt_ms);
+}
+
 void RtpSenderTrack::OnRtcpPli()
 {
     const uint64_t now_ms = NowMs();
@@ -142,6 +207,11 @@ void RtpSenderTrack::Tick(uint64_t now_ms)
 void RtpSenderTrack::SetKeyFrameRequestCallback(KeyFrameRequestCallback cb)
 {
     _keyframe_cb = std::move(cb);
+}
+
+void RtpSenderTrack::SetPacketSentCallback(PacketSentCallback cb)
+{
+    _packet_sent_cb = std::move(cb);
 }
 
 bool RtpSenderTrack::ParseRtpHeader(const uint8_t* data, size_t len, RtpHeader& header)

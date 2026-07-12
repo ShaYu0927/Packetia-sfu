@@ -1,17 +1,10 @@
 #include "H264Depacketizer.h"
-#include "logger.h"
 
 
 bool H264Depacketizer::input(const RtpView& pkt)
 {
     if (!pkt.valid())
     {
-        LOG_ERROR("[H264Depacketizer] invalid rtp view",
-                  " ssrc=", pkt.ssrc,
-                  " seq=", pkt.seq,
-                  " ts=", pkt.ts,
-                  " marker=", pkt.marker,
-                  " payload_len=", pkt.payload_len);
         return false;
     }
 
@@ -24,40 +17,42 @@ bool H264Depacketizer::input(const RtpView& pkt)
 
     if (!parsed.valid)
     {
-        LOG_ERROR("[H264Depacketizer] parsed packet is invalid",
-                  " ssrc=", pkt.ssrc,
-                  " seq=", pkt.seq,
-                  " ts=", pkt.ts);
         return false;
     }
 
-    if (!assembler_.Input(parsed))
+    auto result = packet_buffer_.InsertPacket(std::move(parsed));
+    for (auto& frame : result.frames)
     {
-        LOG_ERROR("[H264Depacketizer] assemble frame failed",
-                  " ssrc=", parsed.ssrc,
-                  " seq=", parsed.seq,
-                  " ts=", parsed.timestamp,
-                  " marker=", parsed.marker);
-        return false;
+        parameter_sets_.UpdateAccessUnit(frame);
+        ready_frames_.emplace_back(std::move(frame));
     }
 
-    return true;
+    return result.inserted || result.duplicate;
 }
 
 bool H264Depacketizer::hasFrame() const
 {
-    return true;
+    return !ready_frames_.empty();
 }
 
 std::vector<uint8_t> H264Depacketizer::popFrame()
 {
-    std::vector<uint8_t> r;
-    return r;
+    if (ready_frames_.empty())
+    {
+        return {};
+    }
+    media::H264AccessUnit au = std::move(ready_frames_.front());
+    ready_frames_.pop_front();
+    return au.ToAnnexB();
 }
 
-
-
-
-
+bool H264Depacketizer::popAccessUnit(media::H264AccessUnit& out)
+{
+    if (ready_frames_.empty())
+        return false;
+    out = std::move(ready_frames_.front());
+    ready_frames_.pop_front();
+    return true;
+}
 
 

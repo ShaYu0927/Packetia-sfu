@@ -2,6 +2,7 @@
 #define _INCOMING_BITRATE_ESTIMATOR_H_
 
 #include <cstdint>
+#include <cstddef>
 #include <deque>
 
 /*

@@ -6,6 +6,120 @@
 
 namespace
 {
+uint32_t ReadUint24BE(const uint8_t* p)
+{
+    return (static_cast<uint32_t>(p[0]) << 16) |
+           (static_cast<uint32_t>(p[1]) << 8) |
+           static_cast<uint32_t>(p[2]);
+}
+
+bool ParseTransportFeedback(const uint8_t* p, size_t len, rtcpx::TransportFeedbackReport& report)
+{
+    if (!p || len < 20)
+    {
+        return false;
+    }
+
+    report = rtcpx::TransportFeedbackReport{};
+    report.sender_ssrc = utils::Utils::ReadUint32BE(p + 4);
+    report.media_ssrc = utils::Utils::ReadUint32BE(p + 8);
+    report.base_sequence = utils::Utils::ReadUint16BE(p + 12);
+    report.packet_status_count = utils::Utils::ReadUint16BE(p + 14);
+    report.reference_time_ms = static_cast<uint64_t>(ReadUint24BE(p + 16)) * 64ULL;
+    report.feedback_packet_count = p[19];
+
+    std::vector<uint8_t> statuses;
+    statuses.reserve(report.packet_status_count);
+
+    size_t off = 20;
+    while (statuses.size() < report.packet_status_count && off + 2 <= len)
+    {
+        const uint16_t chunk = utils::Utils::ReadUint16BE(p + off);
+        off += 2;
+
+        if ((chunk & 0x8000) == 0)
+        {
+            const uint8_t symbol = static_cast<uint8_t>((chunk >> 13) & 0x03);
+            const uint16_t run_length = static_cast<uint16_t>(chunk & 0x1FFF);
+            for (uint16_t i = 0; i < run_length && statuses.size() < report.packet_status_count; ++i)
+            {
+                statuses.push_back(symbol);
+            }
+            continue;
+        }
+
+        const bool two_bit_symbols = (chunk & 0x4000) != 0;
+        if (two_bit_symbols)
+        {
+            for (int shift = 12; shift >= 0 && statuses.size() < report.packet_status_count; shift -= 2)
+            {
+                statuses.push_back(static_cast<uint8_t>((chunk >> shift) & 0x03));
+            }
+        }
+        else
+        {
+            for (int shift = 13; shift >= 0 && statuses.size() < report.packet_status_count; --shift)
+            {
+                statuses.push_back(static_cast<uint8_t>((chunk >> shift) & 0x01));
+            }
+        }
+    }
+
+    if (statuses.size() < report.packet_status_count)
+    {
+        return false;
+    }
+
+    int64_t receive_delta_us = 0;
+    report.packets.reserve(statuses.size());
+
+    for (size_t i = 0; i < statuses.size(); ++i)
+    {
+        rtcpx::TransportFeedbackPacket packet;
+        packet.transport_sequence = static_cast<uint16_t>(report.base_sequence + static_cast<uint16_t>(i));
+
+        const uint8_t status = statuses[i];
+        if (status == 0)
+        {
+            packet.received = false;
+            report.packets.push_back(packet);
+            continue;
+        }
+
+        int32_t delta_us = 0;
+        if (status == 1)
+        {
+            if (off + 1 > len)
+            {
+                return false;
+            }
+            delta_us = static_cast<int32_t>(p[off]) * 250;
+            off += 1;
+        }
+        else if (status == 2)
+        {
+            if (off + 2 > len)
+            {
+                return false;
+            }
+            const int16_t delta = static_cast<int16_t>(utils::Utils::ReadUint16BE(p + off));
+            delta_us = static_cast<int32_t>(delta) * 250;
+            off += 2;
+        }
+        else
+        {
+            return false;
+        }
+
+        receive_delta_us += delta_us;
+        packet.received = true;
+        packet.receive_time_ms = report.reference_time_ms +
+                                 static_cast<uint64_t>(receive_delta_us >= 0 ? receive_delta_us : 0) / 1000ULL;
+        report.packets.push_back(packet);
+    }
+
+    return true;
+}
 void ExpandNackPair(uint16_t pid, uint16_t blp, std::vector<uint16_t>& seqs)
 {
     seqs.push_back(pid);
@@ -247,6 +361,14 @@ void rtcpx::RtcpReceiverImpl::HandleSingleRtcpPacket(const uint8_t* p, size_t le
             if (!seqs.empty())
             {
                 observer_->OnNack(sender_ssrc, media_ssrc, seqs.data(), seqs.size());
+            }
+        }
+        else if (len >= 20 && fmt == 15)
+        {
+            rtcpx::TransportFeedbackReport report;
+            if (ParseTransportFeedback(p, len, report))
+            {
+                observer_->OnTransportFeedback(report);
             }
         }
         break;

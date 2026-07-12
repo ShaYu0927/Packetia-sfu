@@ -3,6 +3,11 @@
 
 #include <stdint.h>
 
+static constexpr uint8_t  RTCP_VERSION      = 2;
+static constexpr uint8_t  RTCP_FMT_NACK     = 1;
+static constexpr uint8_t  RTCP_PT_RTPFB     = 205;
+
+
 enum rtcp_type_t
 {
     RTCP_FIR    = 192, // RFC2032, Reserved (Historic-FIR)

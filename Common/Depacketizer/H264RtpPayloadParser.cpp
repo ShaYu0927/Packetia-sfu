@@ -1,5 +1,4 @@
 #include "H264RtpPayloadParser.h"
-#include "logger.h"
 
 namespace media
 {
@@ -54,13 +53,6 @@ bool H264RtpPayloadParser::Parse(const RtpView& view, H264ParsedPacket& out)
         return ParseFuA(view, out);
     }
 
-    LOG_ERROR("[H264Parser] unsupported nal type",
-              " type=", static_cast<int>(nal_type),
-              " seq=", view.seq,
-              " ts=", view.ts,
-              " ssrc=", view.ssrc,
-              " payload_len=", view.payload_len);
-
     out.malformed = true;
     return false;
 }
@@ -79,7 +71,7 @@ bool H264RtpPayloadParser::ParseSingleNalu(const RtpView& view, H264ParsedPacket
 
     // Single NAL packet can be a complete frame by itself,
     // but final frame completion should still be decided by assembler.
-    out.begins_frame = true;
+    out.begins_frame = false;
     out.ends_frame = view.marker;
 
     return true;
@@ -87,33 +79,74 @@ bool H264RtpPayloadParser::ParseSingleNalu(const RtpView& view, H264ParsedPacket
 
 bool H264RtpPayloadParser::ParseStapA(const RtpView& view, H264ParsedPacket& out)
 {
-    // TODO:
-    // STAP-A format:
-    // [STAP-A header][NAL size][NAL data][NAL size][NAL data]...
-    //
-    // Today only define framework.
-    // Implement in next step.
+    size_t offset = 1;
+    while (offset + 2 <= view.payload_len)
+    {
+        const size_t nalu_size = (static_cast<size_t>(view.payload[offset]) << 8) |
+                                 view.payload[offset + 1];
+        offset += 2;
+        if (nalu_size == 0 || offset + nalu_size > view.payload_len)
+        {
+            out.malformed = true;
+            return false;
+        }
 
-    (void)view;
-    (void)out;
+        H264PayloadUnit unit;
+        unit.unit_type = H264PayloadUnitType::StapANalu;
+        unit.nal_type = H264GetNalType(view.payload[offset]);
+        if (unit.nal_type == 0 || unit.nal_type >= 24)
+        {
+            out.malformed = true;
+            return false;
+        }
+        unit.data.assign(view.payload + offset, view.payload + offset + nalu_size);
+        UpdateKeyInfo(out, unit);
+        out.units.emplace_back(std::move(unit));
+        offset += nalu_size;
+    }
 
-    return false;
+    if (offset != view.payload_len || out.units.empty())
+    {
+        out.malformed = true;
+        return false;
+    }
+    out.valid = true;
+    out.ends_frame = view.marker;
+    return true;
 }
 
 bool H264RtpPayloadParser::ParseFuA(const RtpView& view, H264ParsedPacket& out)
 {
-    // TODO:
-    // FU-A format:
-    // [FU indicator][FU header][fragment payload]
-    //
-    // Parser should only parse FU metadata and fragment payload.
-    // Full NAL reassembly should be done by RtpFrameAssembler.
+    if (view.payload_len < 3)
+    {
+        out.malformed = true;
+        return false;
+    }
 
-    (void)view;
-    (void)out;
+    const uint8_t indicator = view.payload[0];
+    const uint8_t header = view.payload[1];
+    const bool start = (header & 0x80) != 0;
+    const bool end = (header & 0x40) != 0;
+    const uint8_t nal_type = header & 0x1F;
+    if ((header & 0x20) != 0 || (start && end) || nal_type == 0 || nal_type >= 24)
+    {
+        out.malformed = true;
+        return false;
+    }
 
-    return false;
+    H264PayloadUnit unit;
+    unit.unit_type = H264PayloadUnitType::FuAFragment;
+    unit.nal_type = nal_type;
+    unit.fu_start = start;
+    unit.fu_end = end;
+    unit.reconstructed_nal_header = (indicator & 0xE0) | nal_type;
+    unit.data.assign(view.payload + 2, view.payload + view.payload_len);
+    UpdateKeyInfo(out, unit);
+    out.units.emplace_back(std::move(unit));
+    out.valid = true;
+    out.begins_frame = start;
+    out.ends_frame = end && view.marker;
+    return true;
 }
 
 } // namespace media
-

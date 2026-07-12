@@ -4,6 +4,7 @@
 #include "EndpointBase.h"
 #include "RtpReceiver.h"
 #include "RtspMediaSession.h"
+#include <mutex>
 
 namespace media 
 {
@@ -66,6 +67,7 @@ public:
     std::vector<std::shared_ptr<rtsp::RtpSenderTrack>> GetSenderTracks(uint32_t source_ssrc);
 
 private:
+    std::mutex mutex_;
     std::unordered_map<uint32_t, std::vector<std::shared_ptr<rtsp::RtpSenderTrack>>> subscribers_;
 };
 

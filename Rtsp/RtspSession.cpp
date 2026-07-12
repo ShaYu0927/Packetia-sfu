@@ -1,5 +1,6 @@
 #include "RtspSession.h"
 #include "logger.h"
+#include "MediaStreamAffinity.h"
 #include <iomanip>
 
 
@@ -167,9 +168,14 @@ void RtspSession::OnInterleaved(int channel,const uint8_t*p, int len)
     }
 
 
-    WorkJob job;
-    job.key = binding.endpoint_id;
+    WorkJob job{};
+    job.target_id = binding.endpoint_id;
     job.type = binding.is_rtcp ? WorkType::Rtcp : WorkType::Rtp;
+    job.key = binding.is_rtcp
+        ? media_affinity::ResolveRtcpKey(binding.endpoint_id, p,
+                                         static_cast<size_t>(len))
+        : media_affinity::ResolveRtpKey(binding.endpoint_id, p,
+                                        static_cast<size_t>(len));
     job.raw.data = new uint8_t[len];
     std::memcpy(job.raw.data, p, static_cast<size_t>(len));
     job.raw.len = static_cast<uint32_t>(len);

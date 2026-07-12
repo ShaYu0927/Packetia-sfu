@@ -1,6 +1,7 @@
 #include "MediaEndpoint.h"
 #include "logger.h"
 #include "RtcpContext.h"
+#include "MediaStreamAffinity.h"
 #include <iomanip>
 #include <mutex>
 
@@ -21,23 +22,6 @@ static void DumpBytes(const uint8_t* data, size_t len, size_t max_dump = 16)
     LOG_INFO("packet dump len=", len, " bytes=", oss.str());
 }
 
-static bool TryGetRtpSsrc(const uint8_t* data, size_t len, uint32_t& ssrc)
-{
-    if (!data || len < 12)
-    {
-        return false;
-    }
-
-    const uint8_t version = (data[0] >> 6) & 0x03;
-    if (version != 2)
-    {
-        return false;
-    }
-
-    ssrc = (static_cast<uint32_t>(data[8]) << 24) | (static_cast<uint32_t>(data[9]) << 16) | (static_cast<uint32_t>(data[10]) << 8) | static_cast<uint32_t>(data[11]);
-    return true;
-}
-
 static uint16_t ReadUint16BE(const uint8_t* data)
 {
     return (static_cast<uint16_t>(data[0]) << 8) | static_cast<uint16_t>(data[1]);
@@ -49,66 +33,6 @@ static uint32_t ReadUint32BE(const uint8_t* data)
            (static_cast<uint32_t>(data[1]) << 16) |
            (static_cast<uint32_t>(data[2]) << 8) |
            static_cast<uint32_t>(data[3]);
-}
-
-static bool TryGetRtcpMediaSsrc(const uint8_t* data, size_t len, uint32_t& ssrc)
-{
-    if (!data || len < 4)
-    {
-        return false;
-    }
-
-    size_t offset = 0;
-    while (offset + 4 <= len)
-    {
-        const uint8_t* p = data + offset;
-        if (((p[0] >> 6) & 0x03) != 2)
-        {
-            return false;
-        }
-
-        const uint8_t count_or_fmt = p[0] & 0x1F;
-        const uint8_t pt = p[1];
-        const size_t pkt_len = (static_cast<size_t>(ReadUint16BE(p + 2)) + 1) * 4;
-        if (pkt_len < 4 || offset + pkt_len > len)
-        {
-            return false;
-        }
-
-        if ((pt == 205 || pt == 206) && pkt_len >= 12)
-        {
-            ssrc = ReadUint32BE(p + 8);
-            return true;
-        }
-
-        if (pt == 201 && count_or_fmt > 0 && pkt_len >= 32)
-        {
-            ssrc = ReadUint32BE(p + 8);
-            return true;
-        }
-
-        if (pt == 201 && pkt_len >= 8)
-        {
-            ssrc = ReadUint32BE(p + 4);
-            return true;
-        }
-
-        if (pt == 200 && count_or_fmt > 0 && pkt_len >= 52)
-        {
-            ssrc = ReadUint32BE(p + 28);
-            return true;
-        }
-
-        if (pt == 200 && pkt_len >= 28)
-        {
-            ssrc = ReadUint32BE(p + 4);
-            return true;
-        }
-
-        offset += pkt_len;
-    }
-
-    return false;
 }
 
 /* 网络协议包 转成 RtpPacket */
@@ -206,7 +130,7 @@ void SfuEndpoint::HandleRtpPacket(Packet* pkt)
 
     uint32_t ssrc = (uint32_t(data[8]) << 24) | (uint32_t(data[9]) << 16) | (uint32_t(data[10]) << 8) | data[11];
 
-    TryGetRtpSsrc(pkt->data, pkt->len, ssrc);
+    media_affinity::TryGetRtpSsrc(pkt->data, pkt->len, ssrc);
 
     auto source_track = SourceTrack();
     auto source_session = SourceSession();
@@ -396,11 +320,13 @@ void SfuEndpoint::Stop()
 
 void SfuRouter::AddSubscriber(uint32_t source_ssrc, std::shared_ptr<rtsp::RtpSenderTrack> sender)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     subscribers_[source_ssrc].push_back(sender);
 }
 
 std::vector<std::shared_ptr<rtsp::RtpSenderTrack>> SfuRouter::GetSenderTracks(uint32_t source_ssrc)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     auto it = subscribers_.find(source_ssrc);
     if (it == subscribers_.end())
     {

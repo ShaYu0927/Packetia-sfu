@@ -25,11 +25,16 @@ private:
     bool StartNewFrame(const H264ParsedPacket& packet);
     bool AppendPacket(const H264ParsedPacket& packet);
     bool FinishCurrentFrame();
-
+    bool IsSameFrame(const H264ParsedPacket& packet) const;
     bool IsSeqContinuous(uint16_t prev, uint16_t cur) const
     {
         return static_cast<uint16_t>(prev + 1) == cur;
     }
+
+    void DropCurrentFrame();
+    void MarkCurrentBroken();
+    void UpdateLastSeq(uint16_t seq);
+
 
 private:
     bool has_current_ = false;

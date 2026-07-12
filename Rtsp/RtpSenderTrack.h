@@ -84,6 +84,11 @@ class RtpSenderTrack
 public:
     using Ptr = std::shared_ptr<RtpSenderTrack>;
     using KeyFrameRequestCallback = std::function<void()>;
+    using PacketSentCallback = std::function<void(uint16_t transport_sequence,
+                                                  uint32_t ssrc,
+                                                  uint16_t rtp_sequence,
+                                                  uint64_t send_time_ms,
+                                                  uint32_t size_bytes)>;
 
 public:
     RtpSenderTrack(const RtpSenderTrackConfig& config, IPacketSender* sender);
@@ -94,6 +99,15 @@ public:
     bool InputRtpPacket(const uint8_t* data, size_t len);
     void OnRtcpNack(const std::vector<uint16_t>& lost_seqs);
 
+    void OnRtcpReceiverReport(uint32_t reporter_ssrc,
+                              uint32_t media_ssrc,
+                              uint8_t fraction_lost,
+                              int32_t cumulative_lost,
+                              uint32_t highest_seq,
+                              uint32_t jitter,
+                              uint32_t lsr,
+                              uint32_t dlsr);
+
     void OnRtcpPli();
 
     void OnRtcpFir();
@@ -101,12 +115,25 @@ public:
     void Tick(uint64_t now_ms);
 
     void SetKeyFrameRequestCallback(KeyFrameRequestCallback cb);
+    void SetPacketSentCallback(PacketSentCallback cb);
 
     uint32_t GetSsrc() const { return _config.local_ssrc; }
 
     uint64_t GetPacketCount() const { return _packet_count; }
 
     uint64_t GetOctetCount() const { return _octet_count; }
+
+    uint64_t GetReceiverReportCount() const { return _rr_count; }
+
+    uint8_t GetLastRrFractionLost() const { return _last_rr_fraction_lost; }
+
+    int32_t GetLastRrCumulativeLost() const { return _last_rr_cumulative_lost; }
+
+    uint32_t GetLastRrHighestSeq() const { return _last_rr_highest_seq; }
+
+    uint32_t GetLastRrJitter() const { return _last_rr_jitter; }
+
+    uint32_t GetRttMs() const { return _rtt_ms; }
 
 
 private:
@@ -212,6 +239,17 @@ private:
      */
     uint64_t _last_tick_ms = 0;
 
+    uint64_t _rr_count = 0;
+    uint32_t _last_rr_reporter_ssrc = 0;
+    uint32_t _last_rr_media_ssrc = 0;
+    uint8_t _last_rr_fraction_lost = 0;
+    int32_t _last_rr_cumulative_lost = 0;
+    uint32_t _last_rr_highest_seq = 0;
+    uint32_t _last_rr_jitter = 0;
+    uint32_t _last_rr_lsr = 0;
+    uint32_t _last_rr_dlsr = 0;
+    uint32_t _rtt_ms = 0;
+
     /*
      * Last time a PLI/FIR key frame request was forwarded upstream.
      *
@@ -252,6 +290,7 @@ private:
      * Usually only meaningful for video tracks.
      */
     KeyFrameRequestCallback _keyframe_cb;
+    PacketSentCallback _packet_sent_cb;
 };
 
 

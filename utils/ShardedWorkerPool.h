@@ -38,7 +38,10 @@ enum class WorkType : uint32_t
 
 struct WorkJob
 {
-    uint64_t key;
+    // key selects a worker shard. target_id identifies the endpoint/session
+    // that owns the job; keeping them separate allows per-stream affinity.
+    uint64_t key = 0;
+    uint64_t target_id = 0;
     WorkType type = WorkType::Invalid;
 
     union

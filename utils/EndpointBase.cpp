@@ -63,11 +63,13 @@ void EndpointJobHandler::handle(WorkJob& job)
         return;
     }
 
-    auto endpoint = mgr_->Find(job.key);
+    const uint64_t endpoint_id = job.target_id != 0 ? job.target_id : job.key;
+    auto endpoint = mgr_->Find(endpoint_id);
     if (!endpoint)
     {
         if (job.deleter) job.deleter(job);
-        LOG_ERROR("endpoint not found, key=", job.key);
+        LOG_ERROR("endpoint not found, target_id=", endpoint_id,
+                  " affinity_key=", job.key);
         return;
     }
 

@@ -7,6 +7,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <mutex>
 #include <unordered_map>
 #include <vector>
 
@@ -17,6 +18,7 @@
 #include "H264Depacketizer.h"
 #include "logger.h"
 #include "AudioDepacketizer.h"
+#include "MediaFrame.h"
 
 namespace rtsp 
 {
@@ -45,6 +47,7 @@ class RtpReceiverTrack : public EnhancedPacketSortor<RtpPacket::Ptr, uint16_t>
 {
 public:
     using Ptr = std::shared_ptr<RtpReceiverTrack>;
+    using EncodedFramePtr = std::shared_ptr<media::MediaFrame>;
 
     /**
      * @brief Callback used when a complete media frame is generated.
@@ -53,6 +56,7 @@ public:
      * For audio, this may be one audio access unit or audio frame.
      */
     using FrameCallback = std::function<void(const FramePtr &)>;
+    using EncodedFrameCallback = std::function<void(const EncodedFramePtr&)>;
 
     /**
      * @brief Callback used to report lost RTP sequence numbers.
@@ -117,6 +121,7 @@ public:
             _stats.last_seq = pkt ? pkt->getSeq() : _stats.last_seq;
             _stats.last_ts = pkt ? pkt->getStamp() : _stats.last_ts;
         });
+
     }
 
     virtual ~RtpReceiverTrack() = default;
@@ -196,6 +201,7 @@ public:
      * into complete media frames.
      */
     void setOnFrame(FrameCallback cb) { _on_frame = std::move(cb); }
+    void setOnEncodedFrame(EncodedFrameCallback cb) { _on_encoded_frame = std::move(cb); }
 
     /**
      * @brief Get RTP receiving statistics.
@@ -261,7 +267,6 @@ protected:
 
         ++_stats.received_packets;
         _stats.seen_packet = true;
-
         EnhancedPacketSortor<RtpPacket::Ptr, uint16_t>::inputPacket(pkt->getSeq(), pkt);
 
         return true;
@@ -281,6 +286,17 @@ protected:
         if (_on_frame)
         {
             _on_frame(frame);
+            return true;
+        }
+
+        return false;
+    }
+
+    bool emitEncodedFrame(const EncodedFramePtr& frame)
+    {
+        if (_on_encoded_frame)
+        {
+            _on_encoded_frame(frame);
             return true;
         }
 
@@ -346,6 +362,7 @@ protected:
      * @brief Callback invoked when a complete media frame is generated.
      */
     FrameCallback _on_frame;
+    EncodedFrameCallback _on_encoded_frame;
 };
 
 
@@ -388,7 +405,7 @@ protected:
 private:
 
 
-    std::unique_ptr<Depacketizer> _depacketizer;
+    std::unique_ptr<H264Depacketizer> _depacketizer;
     bool _has_last_seq = false;
 };
 
@@ -396,6 +413,7 @@ class RtpAudioTracker : public RtpReceiverTrack
 {
 public:
     explicit RtpAudioTracker(const TrackInfo& info);
+    ~RtpAudioTracker() override = default;
     RtpPacket::Ptr inputRtp(TrackType type, int sample_rate, uint8_t* ptr, size_t len) override;
     void inputRtcp(const uint8_t* ptr, size_t len) override;
 
@@ -430,6 +448,7 @@ private:
 class RtcpDispatcher : public rtcpx::IRtcpObserver
 {
 public:
+    using TransportFeedbackCallback = std::function<void(const rtcpx::TransportFeedbackReport&)>;
     /**
      * @brief Add a receiver track for RTCP dispatching.
      *
@@ -451,6 +470,7 @@ public:
      * @param track Sender track instance.
      */
     void AddSenderTrack(uint32_t media_ssrc, std::weak_ptr<RtpSenderTrack> track);
+    void SetTransportFeedbackCallback(TransportFeedbackCallback cb);
 
      /**
      * @brief Handle RTCP Sender Report.
@@ -541,10 +561,12 @@ public:
      * @param seq_nr FIR command sequence number.
      */
     void OnFir(uint32_t sender_ssrc, uint32_t media_ssrc, uint8_t seq_nr) override;
+    void OnTransportFeedback(const rtcpx::TransportFeedbackReport& report) override;
 
 private:
     std::unordered_map<uint32_t, std::weak_ptr<RtpReceiverTrack>> recv_tracks_;
     std::unordered_map<uint32_t, std::weak_ptr<RtpSenderTrack>> send_tracks_;
+    TransportFeedbackCallback transport_feedback_cb_;
 };
 }
 #endif // _RTPRECEIVER_H_

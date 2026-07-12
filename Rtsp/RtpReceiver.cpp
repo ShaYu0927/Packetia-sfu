@@ -30,7 +30,7 @@ const char* BoolText(bool value)
 }
 }
 
-/* 网络包 转 协议包 */
+/* 网络�?�?协议�?*/
 RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len)
 {
     if (!ptr || len < RtpHeader::kSize)
@@ -106,7 +106,10 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_
     pkt->setHeaderInfo(headerLen, headerLen, payloadLen);
     pkt->setRecvTimeMs(NowMs());
 
-    inputPacket(pkt);
+    if (!inputPacket(pkt))
+    {
+        return nullptr;
+    }
     return pkt;
 }
 
@@ -176,6 +179,26 @@ void RtpVideoTracker::onRtpSorted(const RtpPacket::Ptr &pkt)
     if (!_depacketizer->input(view)) 
     {
         return;
+    }
+
+    media::H264AccessUnit au;
+    while (_depacketizer->popAccessUnit(au))
+    {
+        auto frame = std::make_shared<media::MediaFrame>();
+        frame->type = media::MediaFrameType::Video;
+        frame->codec = media::MediaCodecType::H264;
+        frame->ssrc = au.ssrc;
+        frame->timestamp = au.timestamp;
+        frame->first_seq = au.first_seq;
+        frame->last_seq = au.last_seq;
+        frame->sample_rate = pkt->getSampleRate();
+        frame->keyframe = au.keyframe;
+        frame->complete = au.complete;
+        frame->broken = au.broken;
+        frame->data = au.ToAnnexB();
+
+        OnFrameCompleted();
+        emitEncodedFrame(frame);
     }
 }
 
@@ -281,14 +304,6 @@ RtpPacket::Ptr RtpAudioTracker::inputRtp(TrackType type, int sample_rate, uint8_
         return nullptr;
     }
 
-    LOG_INFO("[RtpAudioTracker] RTP payload ready",
-             " seq=", hdr.getSequence(),
-             " ts=", hdr.getTimestamp(),
-             " ssrc=", hdr.getSSRC(),
-             " pt=", static_cast<int>(hdr.getPayloadType()),
-             " header_len=", header_len,
-             " payload_len=", payload_len);
-
     auto pkt = std::make_shared<RtpPacket>();
 
     if (!pkt->reserve(len))
@@ -315,21 +330,10 @@ RtpPacket::Ptr RtpAudioTracker::inputRtp(TrackType type, int sample_rate, uint8_
     pkt->setHeaderInfo(header_len, header_len, payload_len);
     pkt->setRecvTimeMs(NowMs());
 
-    LOG_INFO("[RtpAudioTracker] push to sorter",
-             " this=", this,
-             " seq=", pkt->getSeq(),
-             " ts=", pkt->getStamp(),
-             " ssrc=", pkt->getSSRC(),
-             " pt=", static_cast<int>(pkt->getPayloadType()),
-             " payload_size=", pkt->getPayloadSize());
-
-    inputPacket(pkt);
-
-    LOG_INFO("[RtpAudioTracker] inputRtp leave",
-             " this=", this,
-             " seq=", pkt->getSeq(),
-             " ssrc=", pkt->getSSRC());
-
+    if (!inputPacket(pkt))
+    {
+        return nullptr;
+    }
     return pkt;
 
 }
@@ -345,6 +349,20 @@ void RtpAudioTracker::onRtpSorted(const RtpPacket::Ptr& pkt)
 }
 
 
+void RtcpDispatcher::AddReceiverTrack(uint32_t media_ssrc, std::weak_ptr<RtpReceiverTrack> track)
+{
+    recv_tracks_[media_ssrc] = std::move(track);
+}
+
+void RtcpDispatcher::AddSenderTrack(uint32_t media_ssrc, std::weak_ptr<RtpSenderTrack> track)
+{
+    send_tracks_[media_ssrc] = std::move(track);
+}
+
+void RtcpDispatcher::SetTransportFeedbackCallback(TransportFeedbackCallback cb)
+{
+    transport_feedback_cb_ = std::move(cb);
+}
 void RtcpDispatcher::OnNack(uint32_t sender_ssrc, uint32_t media_ssrc, const uint16_t* seqs, size_t count)
 {
     if(!seqs || count == 0)
@@ -371,6 +389,50 @@ void RtcpDispatcher::OnNack(uint32_t sender_ssrc, uint32_t media_ssrc, const uin
     LOG_INFO("[RTCP][NACK] retransmit request", " media_ssrc=", media_ssrc, " count=", lost_seqs.size());
 
     track->OnRtcpNack(lost_seqs);
+}
+
+void RtcpDispatcher::OnReceiverReport(uint32_t reporter_ssrc, uint32_t media_ssrc, uint8_t fraction_lost, int32_t cumulative_lost, uint32_t highest_seq, uint32_t jitter, uint32_t lsr, uint32_t dlsr)
+{
+    auto it = send_tracks_.find(media_ssrc);
+    if (it == send_tracks_.end())
+    {
+        LOG_INFO("[RTCP][RR] sender track not found", " media_ssrc=", media_ssrc);
+        return;
+    }
+
+    auto track = it->second.lock();
+    if (!track)
+    {
+        LOG_INFO("[RTCP][RR] sender track expired", " media_ssrc=", media_ssrc);
+        return;
+    }
+
+    track->OnRtcpReceiverReport(reporter_ssrc,
+                                media_ssrc,
+                                fraction_lost,
+                                cumulative_lost,
+                                highest_seq,
+                                jitter,
+                                lsr,
+                                dlsr);
+}
+
+
+void RtcpDispatcher::OnTransportFeedback(const rtcpx::TransportFeedbackReport& report)
+{
+    if (transport_feedback_cb_)
+    {
+        transport_feedback_cb_(report);
+    }
+}
+void RtcpDispatcher::OnPli(uint32_t sender_ssrc, uint32_t media_ssrc)
+{
+
+}
+
+void RtcpDispatcher::OnFir(uint32_t sender_ssrc, uint32_t media_ssrc, uint8_t seq_nr)
+{
+
 }
 
 }

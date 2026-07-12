@@ -120,6 +120,10 @@ add_library(COMMON STATIC
     Common/Depacketizer/H264Payload.h
     Common/Depacketizer/H264RtpPayloadParser.h
     Common/Depacketizer/H264RtpPayloadParser.cpp
+    Common/Depacketizer/H264ParameterSetTracker.h
+    Common/Depacketizer/H264ParameterSetTracker.cpp
+    Common/Depacketizer/H26xPacketBuffer.h
+    Common/Depacketizer/H26xPacketBuffer.cpp
     Common/Depacketizer/RtpFrameAssembler.h
     Common/Depacketizer/RtpFrameAssembler.cpp
 
@@ -136,6 +140,7 @@ add_library(utils STATIC
     utils/ShardedWorkerPool.cpp
     utils/PacketPool.cpp
     utils/ShardedWorkerPool.h
+    utils/MediaStreamAffinity.h
     utils/EventLoop.cpp
     utils/Acceptor.cpp
     utils/Pip.cpp

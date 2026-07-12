@@ -43,16 +43,8 @@ bool RtpFrameAssembler::Input(const H264ParsedPacket& packet)
         return StartNewFrame(packet);
     }
 
-    // Timestamp changed before marker arrived.
-    // Current frame is incomplete, drop it and start a new one.
     if (packet.timestamp != current_.timestamp || packet.ssrc != current_.ssrc)
     {
-        LOG_INFO("[FrameAssembler] timestamp/ssrc switch before frame complete",
-                 " old_ssrc=", current_.ssrc,
-                 " old_ts=", current_.timestamp,
-                 " new_ssrc=", packet.ssrc,
-                 " new_ts=", packet.timestamp);
-
         has_current_ = false;
         broken_ = false;
         has_last_seq_ = false;
@@ -80,8 +72,8 @@ bool RtpFrameAssembler::StartNewFrame(const H264ParsedPacket& packet)
 
     has_current_ = true;
     broken_ = false;
-    has_last_seq_ = true;
-    last_seq_ = packet.seq;
+    has_last_seq_ = false;
+    last_seq_ = 0;
 
     return AppendPacket(packet);
 }
@@ -90,16 +82,11 @@ bool RtpFrameAssembler::AppendPacket(const H264ParsedPacket& packet)
 {
     if (has_last_seq_ && !IsSeqContinuous(last_seq_, packet.seq))
     {
-        LOG_INFO("[FrameAssembler] seq gap",
-                 " last=", last_seq_,
-                 " cur=", packet.seq,
-                 " ssrc=", packet.ssrc,
-                 " ts=", packet.timestamp);
-
         broken_ = true;
     }
 
     last_seq_ = packet.seq;
+    has_last_seq_ = true;
     current_.last_seq = packet.seq;
 
     current_.keyframe = current_.keyframe || packet.has_key_nalu;
@@ -109,8 +96,6 @@ bool RtpFrameAssembler::AppendPacket(const H264ParsedPacket& packet)
 
     for (const auto& unit : packet.units)
     {
-        // Today only accept complete NAL units.
-        // FU-A reassembly can be added in the next step.
         if (unit.unit_type == H264PayloadUnitType::SingleNalu ||
             unit.unit_type == H264PayloadUnitType::StapANalu)
         {
@@ -138,12 +123,6 @@ bool RtpFrameAssembler::FinishCurrentFrame()
     }
     else
     {
-        LOG_INFO("[FrameAssembler] drop broken frame",
-                 " ssrc=", current_.ssrc,
-                 " ts=", current_.timestamp,
-                 " first_seq=", current_.first_seq,
-                 " last_seq=", current_.last_seq,
-                 " nalu_count=", current_.nalus.size());
     }
 
     current_ = H264AccessUnit{};
