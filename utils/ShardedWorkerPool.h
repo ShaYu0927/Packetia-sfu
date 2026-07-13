@@ -10,9 +10,10 @@
 #include <condition_variable>
 #include <atomic>
 #include <functional>
-#include <array>
+#include <shared_mutex>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 
 #include "PacketPool.h"
@@ -33,7 +34,10 @@ enum class WorkType : uint32_t
 
     /* 控制/系统类 */
     Timer,
-    Control
+    Control,
+
+    // Type-erased C++ task for globally managed business worker pools.
+    Function
 };
 
 struct WorkJob
@@ -46,7 +50,7 @@ struct WorkJob
 
     union
     {
-        Packet* pkt;                 // RTP / RTCP / STUN
+        Packet* pkt = nullptr;       // RTP / RTCP / STUN
         struct
         {
             uint8_t* data;
@@ -54,10 +58,12 @@ struct WorkJob
         } raw;                      // TCP / UDP
     };
 
-    uint64_t enqueue_ts;
+    uint64_t enqueue_ts = 0;
 
-    void (*handler)(WorkJob&, void* ctx);
+    void (*handler)(WorkJob&, void* ctx) = nullptr;
     void (*deleter)(WorkJob&) = nullptr;
+
+    std::function<void()> function;
 };
 
 struct SessionEntry
@@ -106,6 +112,8 @@ public:
         std::uint64_t dequeued = 0;
         std::uint64_t dropped  = 0;
         std::size_t   max_depth_seen = 0;
+        std::size_t   queue_depth = 0;
+        std::size_t   worker_count = 0;
     }ThreadStats;
 
     ShardedWorkerPool() = default;
@@ -126,12 +134,14 @@ public:
     {
         std::lock_guard<std::mutex> lifecycle_lock(lifecycle_mtx_);
         ThreadStats sum;
+        sum.worker_count = workers_.size();
         for (auto& up : workers_)
         {
             std::lock_guard<std::mutex> lock(up->mtx);
             sum.enqueued += up->st.enqueued;
             sum.dequeued += up->st.dequeued;
             sum.dropped  += up->st.dropped;
+            sum.queue_depth += up->q.size();
             if (up->st.max_depth_seen > sum.max_depth_seen)
                 sum.max_depth_seen = up->st.max_depth_seen;
         }
@@ -181,30 +191,51 @@ public:
         Count,
     };
 
+    struct PoolStatus
+    {
+        std::string name;
+        ShardedWorkerPool::ThreadStats stats;
+    };
+
     static int create_pool(const std::string& name,
                            std::size_t worker_count,
                            std::shared_ptr<IJobHandler> handler,
                            std::size_t max_queue_len = 2048,
                            ShardedWorkerPool::DropPolicy drop = ShardedWorkerPool::DropPolicy::DropHead);
 
-    static void destroy_pool(const std::string& name, bool drain);
+    static int create_function_pool(
+        std::string_view name,
+        std::size_t worker_count,
+        std::size_t max_queue_len = 2048,
+        ShardedWorkerPool::DropPolicy drop = ShardedWorkerPool::DropPolicy::DropTail);
 
-    static int post(const std::string& name, WorkJob&& job);
+    static void destroy_pool(std::string_view name, bool drain);
+    static void destroy_all(bool drain = true);
 
-    static int post_fn(const std::string& name, std::function<void()> fn);
+    static int post(std::string_view name, WorkJob&& job);
 
-    static bool exists(const std::string& name);
+    static int post_fn(std::string_view name, std::function<void()> fn);
+    static int post_fn(std::string_view name, std::uint64_t affinity_key,
+                       std::function<void()> fn);
 
-    static ShardedWorkerPool* get_pool(const std::string& name);
+    static bool exists(std::string_view name);
+
+    static std::shared_ptr<ShardedWorkerPool> get_pool_shared(std::string_view name);
+    [[deprecated("use get_pool_shared() for lifetime safety")]]
+    static ShardedWorkerPool* get_pool(std::string_view name);
+
+    static std::vector<PoolStatus> status();
+    static std::vector<std::string> pool_names();
 
     static void realse(Packet* p);
 
 private:
     WorkerService() = delete;
 
-    static std::mutex mtx_;
-    static std::array<std::shared_ptr<ShardedWorkerPool>,
-           static_cast<std::size_t>(WorkerPoolId::Count)> pools_;
+    static std::string NormalizeName(std::string_view name);
+
+    static std::shared_mutex mtx_;
+    static std::unordered_map<std::string, std::shared_ptr<ShardedWorkerPool>> pools_;
 };
 
 struct WorkerModuleConfig

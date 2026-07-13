@@ -4,19 +4,26 @@
 #include "logger.h"
 #include "UdpServer.h"
 #include "UdpSession.h"
-#include "EndpointBase.h"
 #include "IWorkerModule.h"
 #include "ServerLauncher.h"
 #include "websocket/WsServer.h"
 
+#include <algorithm>
+#include <thread>
+
 int main()
 {
     server::ServerLauncher launcher;
-
     WorkerModuleRegistry registry;
 
     auto media_module = std::make_shared<MediaWorkerModule>();
     registry.Add(media_module);
+    registry.Add(std::make_shared<EndpointWorkerModule>());
+    registry.Add(std::make_shared<FunctionWorkerModule>("recording", 2, 2048, ShardedWorkerPool::DropPolicy::DropTail));
+
+    const auto hardware_threads = std::thread::hardware_concurrency();
+    const auto transcode_threads = std::clamp<std::size_t>(hardware_threads / 2, 1, 4);
+    registry.Add(std::make_shared<FunctionWorkerModule>("transcode", transcode_threads, 512, ShardedWorkerPool::DropPolicy::DropTail));
 
     launcher.AddCustomService(
         "WorkerModuleRegistry",
@@ -31,27 +38,7 @@ int main()
             return true;
         },
         [&registry]() {
-
-        }
-    );
-
-    launcher.AddCustomService(
-        "EndpointWorkerPool",
-        []() -> bool {
-            auto handler = std::make_shared<utils::EndpointJobHandler>(
-                &utils::EndpointManager::Instance()
-            );
-
-            if (WorkerService::create_pool("endpoint_pool", 4, handler, 4096) != 0)
-            {
-                LOG_ERROR("create worker pool failed");
-                return false;
-            }
-
-            return true;
-        },
-        []() {
-            WorkerService::destroy_pool("endpoint_pool", true);
+            registry.UnregisterAll(true);
         }
     );
 
@@ -73,9 +60,9 @@ int main()
     );
 
     auto rtsp_server = launcher.AddIpPortService<RtspServer>("RtspServer", "0.0.0.0", 554, event_loop.get());
-    auto sip_server = launcher.AddIpPortService<SipServer>("SipServer", "0.0.0.0", 5060, event_loop.get());
-    auto udp_server = launcher.AddIpPortService<network::UdpServer>("UdpServer","0.0.0.0", 9000,  event_loop.get());
-    auto mux_handler = std::make_shared<network::UdpMuxHandler>(udp_server.get());
+    auto sip_server   = launcher.AddIpPortService<SipServer>("SipServer", "0.0.0.0", 5060, event_loop.get());
+    auto udp_server   = launcher.AddIpPortService<network::UdpServer>("UdpServer","0.0.0.0", 9000,  event_loop.get());
+    auto mux_handler                              = std::make_shared<network::UdpMuxHandler>(udp_server.get());
     udp_server->SetHandler(mux_handler);
 
     auto ws_server = std::make_shared<network::websocket::WsServer>();

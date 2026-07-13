@@ -412,8 +412,21 @@ private:
 class RtpAudioTracker : public RtpReceiverTrack
 {
 public:
+    using Ptr = std::shared_ptr<RtpAudioTracker>;
+
     explicit RtpAudioTracker(const TrackInfo& info);
     ~RtpAudioTracker() override = default;
+
+    /**
+     * Create an independent audio receiver track that mirrors future valid
+     * RTP packets received by this track.
+     *
+     * Runtime state (packet sorter, statistics, depacketizer and callbacks)
+     * is intentionally not copied. The clone starts empty and remains
+     * attached only while its owner keeps the returned shared_ptr alive.
+     */
+    Ptr Clone();
+
     RtpPacket::Ptr inputRtp(TrackType type, int sample_rate, uint8_t* ptr, size_t len) override;
     void inputRtcp(const uint8_t* ptr, size_t len) override;
 
@@ -421,7 +434,11 @@ protected:
     void onRtpSorted(const RtpPacket::Ptr& pkt) override;
 
 private:
+    std::vector<Ptr> SnapshotClones();
+
     std::unique_ptr<media::AudioDepacketizer> depacketizer_;
+    std::mutex clones_mutex_;
+    std::vector<std::weak_ptr<RtpAudioTracker>> clones_;
 };
 
 /**

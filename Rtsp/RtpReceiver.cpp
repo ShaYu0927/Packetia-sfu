@@ -1,6 +1,7 @@
 #include "RtpReceiver.h"
 #include "logger.h"
 
+#include <algorithm>
 #include <chrono>
 
 namespace rtsp 
@@ -236,6 +237,43 @@ RtpAudioTracker::RtpAudioTracker(const TrackInfo& info)
     depacketizer_ = std::make_unique<media::AudioDepacketizer>(codec, sample_rate, channels);
 }
 
+RtpAudioTracker::Ptr RtpAudioTracker::Clone()
+{
+    auto clone = std::make_shared<RtpAudioTracker>(_info);
+
+    std::lock_guard<std::mutex> lock(clones_mutex_);
+    clones_.erase(
+        std::remove_if(clones_.begin(), clones_.end(),
+                       [](const std::weak_ptr<RtpAudioTracker>& item) {
+                           return item.expired();
+                       }),
+        clones_.end());
+    clones_.push_back(clone);
+    return clone;
+}
+
+std::vector<RtpAudioTracker::Ptr> RtpAudioTracker::SnapshotClones()
+{
+    std::vector<Ptr> result;
+    std::lock_guard<std::mutex> lock(clones_mutex_);
+
+    auto it = clones_.begin();
+    while (it != clones_.end())
+    {
+        if (auto clone = it->lock())
+        {
+            result.push_back(std::move(clone));
+            ++it;
+        }
+        else
+        {
+            it = clones_.erase(it);
+        }
+    }
+
+    return result;
+}
+
 RtpPacket::Ptr RtpAudioTracker::inputRtp(TrackType type, int sample_rate, uint8_t* ptr, size_t len)
 {
     if (!ptr || len < RtpHeader::kSize)
@@ -334,6 +372,14 @@ RtpPacket::Ptr RtpAudioTracker::inputRtp(TrackType type, int sample_rate, uint8_
     {
         return nullptr;
     }
+
+    // Each clone owns its own RTP packet copy and receiver state. Snapshot the
+    // weak registry first so callbacks/destruction cannot invalidate iteration.
+    for (const auto& clone : SnapshotClones())
+    {
+        clone->inputRtp(type, sample_rate, ptr, len);
+    }
+
     return pkt;
 
 }

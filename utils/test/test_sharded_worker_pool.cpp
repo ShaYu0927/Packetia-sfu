@@ -1,12 +1,17 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <future>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
+#include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "ShardedWorkerPool.h"
@@ -88,6 +93,88 @@ private:
     std::size_t handled_count_{0};
     std::vector<uint32_t> handled_types_;
 };
+
+class GlobalPoolGuard
+{
+public:
+    explicit GlobalPoolGuard(std::string name) : name_(std::move(name))
+    {
+        WorkerService::destroy_pool(name_, false);
+    }
+
+    ~GlobalPoolGuard()
+    {
+        WorkerService::destroy_pool(name_, true);
+    }
+
+private:
+    std::string name_;
+};
+
+TEST(WorkerServiceGlobalTest, SupportsDynamicNamedFunctionPoolsAndAffinity)
+{
+    constexpr const char* kPoolName = "Recording_Test";
+    GlobalPoolGuard guard(kPoolName);
+
+    ASSERT_EQ(0, WorkerService::create_function_pool(kPoolName, 2, 64));
+    EXPECT_TRUE(WorkerService::exists("recording_test"));
+
+    std::mutex values_mutex;
+    std::vector<int> values;
+    auto completed = std::make_shared<std::promise<void>>();
+    auto future = completed->get_future();
+
+    for (int value = 0; value < 3; ++value)
+    {
+        ASSERT_EQ(0, WorkerService::post_fn(
+                         kPoolName, 9527,
+                         [&, value, completed] {
+                             {
+                                 std::lock_guard<std::mutex> lock(values_mutex);
+                                 values.push_back(value);
+                             }
+                             if (value == 2)
+                             {
+                                 completed->set_value();
+                             }
+                         }));
+    }
+
+    ASSERT_EQ(std::future_status::ready,
+              future.wait_for(std::chrono::seconds(2)));
+    EXPECT_EQ((std::vector<int>{0, 1, 2}), values);
+
+    const auto statuses = WorkerService::status();
+    auto status = std::find_if(
+        statuses.begin(), statuses.end(),
+        [](const WorkerService::PoolStatus& item) {
+            return item.name == "recording_test";
+        });
+    ASSERT_NE(statuses.end(), status);
+    EXPECT_EQ(2u, status->stats.worker_count);
+    EXPECT_EQ(3u, status->stats.enqueued);
+    EXPECT_EQ(3u, status->stats.dequeued);
+}
+
+TEST(WorkerServiceGlobalTest, FunctionExceptionDoesNotStopWorker)
+{
+    constexpr const char* kPoolName = "transcode_test";
+    GlobalPoolGuard guard(kPoolName);
+
+    ASSERT_EQ(0, WorkerService::create_function_pool(kPoolName, 1, 16));
+
+    auto completed = std::make_shared<std::promise<void>>();
+    auto future = completed->get_future();
+    ASSERT_EQ(0, WorkerService::post_fn(kPoolName, 1, [] {
+        throw std::runtime_error("expected test exception");
+    }));
+    ASSERT_EQ(0, WorkerService::post_fn(kPoolName, 1, [completed] {
+        completed->set_value();
+    }));
+
+    EXPECT_EQ(std::future_status::ready,
+              future.wait_for(std::chrono::seconds(2)));
+}
 
 // class ShardedWorkerPoolTest : public ::testing::Test
 // {
