@@ -18,12 +18,12 @@ bool AudioDepacketizer::Input(const RtpView& view)
 
     switch (codec_)
     {
-    case MediaCodecType::PCMU:
-    case MediaCodecType::PCMA:
-    case MediaCodecType::Opus:
+    case CodecType::PCMU:
+    case CodecType::PCMA:
+    case CodecType::Opus:
         return InputSimplePayload(view);
 
-    case MediaCodecType::AAC:
+    case CodecType::AAC:
         LOG_ERROR("[AudioDepacketizer] AAC not supported yet",
                   " seq=", view.seq,
                   " ts=", view.ts);
@@ -39,19 +39,33 @@ bool AudioDepacketizer::Input(const RtpView& view)
 
 bool AudioDepacketizer::InputSimplePayload(const RtpView& view)
 {
-    MediaFrame frame;
-    frame.type = MediaFrameType::Audio;
-    frame.codec = codec_;
-    frame.ssrc = view.ssrc;
-    frame.timestamp = view.ts;
-    frame.first_seq = view.seq;
-    frame.last_seq = view.seq;
+    EncodedFrame frame;
+    frame.info.media_type = MediaType::Audio;
+    frame.info.codec = codec_;
+    frame.info.timestamp.dts = view.ts;
+    frame.info.timestamp.pts = view.ts;
+    frame.info.timestamp.time_base_num = 1;
+    frame.info.timestamp.time_base_den = sample_rate_ > 0 ? sample_rate_ : 1;
+    frame.info.integrity = FrameIntegrity::Complete;
+
+    frame.rtp.ssrc = view.ssrc;
+    frame.rtp.rtp_timestamp = view.ts;
+    frame.rtp.first_sequence = view.seq;
+    frame.rtp.last_sequence = view.seq;
+    frame.rtp.packet_count = 1;
+
+    frame.frame_type = EncodedFrameType::Audio;
     frame.sample_rate = sample_rate_;
     frame.channels = channels_;
-    frame.complete = true;
-    frame.broken = false;
+    if (codec_ == CodecType::PCMU || codec_ == CodecType::PCMA)
+    {
+        frame.sample_count = static_cast<uint32_t>(view.payload_len);
+    }
 
-    frame.data.assign(view.payload, view.payload + view.payload_len);
+    auto buffer = std::make_shared<std::vector<uint8_t>>(view.payload,
+                                                         view.payload + view.payload_len);
+    frame.buffer = std::move(buffer);
+    frame.size = view.payload_len;
 
     frames_.push_back(std::move(frame));
     return true;
@@ -62,7 +76,7 @@ bool AudioDepacketizer::HasFrame() const
     return !frames_.empty();
 }
 
-bool AudioDepacketizer::PopFrame(MediaFrame& out)
+bool AudioDepacketizer::PopFrame(EncodedFrame& out)
 {
     if (frames_.empty())
     {

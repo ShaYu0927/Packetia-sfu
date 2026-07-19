@@ -47,7 +47,7 @@ class RtpReceiverTrack : public EnhancedPacketSortor<RtpPacket::Ptr, uint16_t>
 {
 public:
     using Ptr = std::shared_ptr<RtpReceiverTrack>;
-    using EncodedFramePtr = std::shared_ptr<media::MediaFrame>;
+    using EncodedFramePtr = media::EncodedFrame::Ptr;
 
     /**
      * @brief Callback used when a complete media frame is generated.

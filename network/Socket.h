@@ -18,8 +18,12 @@
 #include <sys/types.h>
 #include <unistd.h>
 #define SOCKET int
+#ifndef INVALID_SOCKET
 #define INVALID_SOCKET (-1)
+#endif
+#ifndef SOCKET_ERROR
 #define SOCKET_ERROR (-1)
+#endif
 
 #elif defined(WIN32) || defined(_WIN32)
 #define FD_SETSIZE 1024

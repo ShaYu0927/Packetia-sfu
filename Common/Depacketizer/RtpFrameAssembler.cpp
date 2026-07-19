@@ -1,5 +1,4 @@
 #include "RtpFrameAssembler.h"
-#include "logger.h"
 
 namespace media
 {
@@ -58,22 +57,22 @@ bool RtpFrameAssembler::Input(const H264ParsedPacket& packet)
 
 bool RtpFrameAssembler::StartNewFrame(const H264ParsedPacket& packet)
 {
-    current_ = H264AccessUnit{};
-    current_.ssrc = packet.ssrc;
-    current_.timestamp = packet.timestamp;
-    current_.first_seq = packet.seq;
-    current_.last_seq = packet.seq;
-    current_.marker = packet.marker;
+    current_            = H264AccessUnit{};
+    current_.ssrc       = packet.ssrc;
+    current_.timestamp  = packet.timestamp;
+    current_.first_seq  = packet.seq;
+    current_.last_seq   = packet.seq;
+    current_.marker     = packet.marker;
 
-    current_.keyframe = packet.has_key_nalu;
-    current_.has_sps = packet.has_sps;
-    current_.has_pps = packet.has_pps;
-    current_.has_idr = packet.has_idr;
+    current_.keyframe   = packet.has_key_nalu;
+    current_.has_sps    = packet.has_sps;
+    current_.has_pps    = packet.has_pps;
+    current_.has_idr    = packet.has_idr;
 
-    has_current_ = true;
-    broken_ = false;
-    has_last_seq_ = false;
-    last_seq_ = 0;
+    has_current_        = true;
+    broken_             = false;
+    has_last_seq_       = false;
+    last_seq_           = 0;
 
     return AppendPacket(packet);
 }
@@ -85,9 +84,9 @@ bool RtpFrameAssembler::AppendPacket(const H264ParsedPacket& packet)
         broken_ = true;
     }
 
-    last_seq_ = packet.seq;
-    has_last_seq_ = true;
-    current_.last_seq = packet.seq;
+    last_seq_           = packet.seq;
+    has_last_seq_       = true;
+    current_.last_seq   = packet.seq;
 
     current_.keyframe = current_.keyframe || packet.has_key_nalu;
     current_.has_sps = current_.has_sps || packet.has_sps;

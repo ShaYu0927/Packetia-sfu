@@ -199,6 +199,7 @@ add_library(ROOM_LIB STATIC
 )
 add_subdirectory(protocol)
 add_subdirectory(media)
+add_subdirectory(service)
 add_subdirectory(server)
 
 enable_testing()

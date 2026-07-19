@@ -185,18 +185,36 @@ void RtpVideoTracker::onRtpSorted(const RtpPacket::Ptr &pkt)
     media::H264AccessUnit au;
     while (_depacketizer->popAccessUnit(au))
     {
-        auto frame = std::make_shared<media::MediaFrame>();
-        frame->type = media::MediaFrameType::Video;
-        frame->codec = media::MediaCodecType::H264;
-        frame->ssrc = au.ssrc;
-        frame->timestamp = au.timestamp;
-        frame->first_seq = au.first_seq;
-        frame->last_seq = au.last_seq;
+        auto frame = std::make_shared<media::EncodedFrame>();
+        frame->info.track_id = _info.track_index >= 0
+                                   ? static_cast<media::TrackId>(_info.track_index)
+                                   : 0;
+        frame->info.media_type = media::MediaType::Video;
+        frame->info.codec = media::CodecType::H264;
+        frame->info.timestamp.dts = au.timestamp;
+        frame->info.timestamp.pts = au.timestamp;
+        frame->info.timestamp.time_base_num = 1;
+        frame->info.timestamp.time_base_den = pkt->getSampleRate() > 0
+                                                   ? pkt->getSampleRate()
+                                                   : 90000;
+        frame->info.timestamp.capture_time_ms = pkt->getRecvTimeMs();
+        frame->info.integrity = au.broken
+                                    ? media::FrameIntegrity::Corrupted
+                                    : (au.complete ? media::FrameIntegrity::Complete
+                                                   : media::FrameIntegrity::Incomplete);
+
+        frame->rtp.ssrc = au.ssrc;
+        frame->rtp.rtp_timestamp = au.timestamp;
+        frame->rtp.first_sequence = au.first_seq;
+        frame->rtp.last_sequence = au.last_seq;
+        frame->rtp.packet_count = static_cast<uint16_t>(au.last_seq - au.first_seq) + 1;
+
+        frame->frame_type = au.keyframe ? media::EncodedFrameType::Key
+                                        : media::EncodedFrameType::Delta;
         frame->sample_rate = pkt->getSampleRate();
-        frame->keyframe = au.keyframe;
-        frame->complete = au.complete;
-        frame->broken = au.broken;
-        frame->data = au.ToAnnexB();
+        auto buffer = std::make_shared<std::vector<uint8_t>>(au.ToAnnexB());
+        frame->buffer = std::move(buffer);
+        frame->size = frame->buffer->size();
 
         OnFrameCompleted();
         emitEncodedFrame(frame);
@@ -206,28 +224,28 @@ void RtpVideoTracker::onRtpSorted(const RtpPacket::Ptr &pkt)
 RtpAudioTracker::RtpAudioTracker(const TrackInfo& info)
     : RtpReceiverTrack(info)
 {
-    media::MediaCodecType codec = media::MediaCodecType::Unknown;
+    media::CodecType codec = media::CodecType::Unknown;
 
     switch (info.codec_id)
     {
     case CodecId::PCMU:
-        codec = media::MediaCodecType::PCMU;
+        codec = media::CodecType::PCMU;
         break;
 
     case CodecId::PCMA:
-        codec = media::MediaCodecType::PCMA;
+        codec = media::CodecType::PCMA;
         break;
 
     case CodecId::OPUS:
-        codec = media::MediaCodecType::Opus;
+        codec = media::CodecType::Opus;
         break;
 
     case CodecId::AAC:
-        codec = media::MediaCodecType::AAC;
+        codec = media::CodecType::AAC;
         break;
 
     default:
-        codec = media::MediaCodecType::Unknown;
+        codec = media::CodecType::Unknown;
         break;
     }
 
@@ -391,6 +409,40 @@ void RtpAudioTracker::inputRtcp(const uint8_t* ptr, size_t len)
 
 void RtpAudioTracker::onRtpSorted(const RtpPacket::Ptr& pkt)
 {
+    if (!pkt || !depacketizer_)
+    {
+        return;
+    }
+
+    const uint8_t* payload = pkt->getPayload();
+    const size_t payload_size = pkt->getPayloadSize();
+    if (!payload || payload_size == 0)
+    {
+        return;
+    }
+
+    RtpView view;
+    view.ssrc = pkt->getSSRC();
+    view.seq = pkt->getSeq();
+    view.ts = pkt->getStamp();
+    view.marker = pkt->getMarker();
+    view.payload = payload;
+    view.payload_len = payload_size;
+
+    if (!depacketizer_->Input(view))
+    {
+        return;
+    }
+
+    media::EncodedFrame completed;
+    while (depacketizer_->PopFrame(completed))
+    {
+        completed.info.track_id = _info.track_index >= 0
+                                      ? static_cast<media::TrackId>(_info.track_index)
+                                      : 0;
+        completed.info.timestamp.capture_time_ms = pkt->getRecvTimeMs();
+        emitEncodedFrame(std::make_shared<media::EncodedFrame>(std::move(completed)));
+    }
 
 }
 

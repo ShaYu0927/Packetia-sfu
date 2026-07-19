@@ -11,7 +11,7 @@ namespace media
 class AudioDepacketizer
 {
 public:
-    AudioDepacketizer(MediaCodecType codec, uint32_t sample_rate, uint32_t channels = 1)
+    AudioDepacketizer(CodecType codec, uint32_t sample_rate, uint16_t channels = 1)
         : codec_(codec),
           sample_rate_(sample_rate),
           channels_(channels)
@@ -21,17 +21,17 @@ public:
     bool Input(const RtpView& view);
 
     bool HasFrame() const;
-    bool PopFrame(MediaFrame& out);
+    bool PopFrame(EncodedFrame& out);
 
 private:
     bool InputSimplePayload(const RtpView& view);
 
 private:
-    MediaCodecType codec_ = MediaCodecType::Unknown;
+    CodecType codec_ = CodecType::Unknown;
     uint32_t sample_rate_ = 0;
-    uint32_t channels_ = 1;
+    uint16_t channels_ = 1;
 
-    std::deque<MediaFrame> frames_;
+    std::deque<EncodedFrame> frames_;
 };
 
 } // namespace media
