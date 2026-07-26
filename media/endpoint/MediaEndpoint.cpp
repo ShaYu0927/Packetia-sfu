@@ -150,7 +150,7 @@ void SfuEndpoint::HandleRtpPacket(Packet* pkt)
         if (source_session)
         {
             PayloadTypeInfo pt_info;
-            if (source_session->FindPayloadType(payload_type, &pt_info))
+            if (source_session->FindPayloadType(info.track_index, payload_type, &pt_info))
             {
                 const bool track_type_mismatch =
                     (info.type == TrackVideo && pt_info.track_type != StreamTrackType::Video) ||

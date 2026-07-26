@@ -31,7 +31,7 @@ const char* BoolText(bool value)
 }
 }
 
-/* 网络�?�?协议�?*/
+
 RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len)
 {
     if (!ptr || len < RtpHeader::kSize)
@@ -93,8 +93,11 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_
         payloadLen -= padLen;
     }
 
-    auto pkt = std::make_shared<RtpPacket>();
-    pkt->reserve(len);
+    auto pkt = acquirePacket(len);
+    if (!pkt)
+    {
+        return nullptr;
+    }
     pkt->SetSequence(hdr.getSequence());
     pkt->setStamp(hdr.getTimestamp());
     pkt->setSSRC(hdr.getSSRC());
@@ -145,13 +148,11 @@ void RtpVideoTracker::onRtpSorted(const RtpPacket::Ptr &pkt)
 {
     if (!pkt) 
     {
-        LOG_INFO("[RtpVideoTracker] onRtpSorted failed, pkt is null");
         return;
     }
 
     if (!_depacketizer) 
     {
-        LOG_INFO("[RtpVideoTracker] no depacketizer, pt=", pkt->getPayloadType(), " seq=", pkt->getSeq(), " ssrc=", pkt->getSSRC());
         return;
     }
 
@@ -160,7 +161,6 @@ void RtpVideoTracker::onRtpSorted(const RtpPacket::Ptr &pkt)
 
     if (!payload || payload_size == 0) 
     {
-        LOG_INFO("[RtpVideoTracker] empty RTP payload, seq=", pkt->getSeq(), " ssrc=", pkt->getSSRC());
         return;
     }
 
@@ -186,35 +186,30 @@ void RtpVideoTracker::onRtpSorted(const RtpPacket::Ptr &pkt)
     while (_depacketizer->popAccessUnit(au))
     {
         auto frame = std::make_shared<media::EncodedFrame>();
-        frame->info.track_id = _info.track_index >= 0
-                                   ? static_cast<media::TrackId>(_info.track_index)
-                                   : 0;
+        frame->info.track_id = _info.track_index >= 0 ? static_cast<media::TrackId>(_info.track_index) : 0;
         frame->info.media_type = media::MediaType::Video;
         frame->info.codec = media::CodecType::H264;
         frame->info.timestamp.dts = au.timestamp;
         frame->info.timestamp.pts = au.timestamp;
         frame->info.timestamp.time_base_num = 1;
-        frame->info.timestamp.time_base_den = pkt->getSampleRate() > 0
-                                                   ? pkt->getSampleRate()
-                                                   : 90000;
+        frame->info.timestamp.time_base_den = pkt->getSampleRate() > 0 ? pkt->getSampleRate() : 90000;
         frame->info.timestamp.capture_time_ms = pkt->getRecvTimeMs();
         frame->info.integrity = au.broken
                                     ? media::FrameIntegrity::Corrupted
                                     : (au.complete ? media::FrameIntegrity::Complete
                                                    : media::FrameIntegrity::Incomplete);
 
-        frame->rtp.ssrc = au.ssrc;
-        frame->rtp.rtp_timestamp = au.timestamp;
-        frame->rtp.first_sequence = au.first_seq;
-        frame->rtp.last_sequence = au.last_seq;
-        frame->rtp.packet_count = static_cast<uint16_t>(au.last_seq - au.first_seq) + 1;
+        frame->rtp.ssrc              = au.ssrc;
+        frame->rtp.rtp_timestamp     = au.timestamp;
+        frame->rtp.first_sequence    = au.first_seq;
+        frame->rtp.last_sequence     = au.last_seq;
+        frame->rtp.packet_count      = static_cast<uint16_t>(au.last_seq - au.first_seq) + 1;
 
-        frame->frame_type = au.keyframe ? media::EncodedFrameType::Key
-                                        : media::EncodedFrameType::Delta;
-        frame->sample_rate = pkt->getSampleRate();
-        auto buffer = std::make_shared<std::vector<uint8_t>>(au.ToAnnexB());
-        frame->buffer = std::move(buffer);
-        frame->size = frame->buffer->size();
+        frame->frame_type            = au.keyframe ? media::EncodedFrameType::Key : media::EncodedFrameType::Delta;
+        frame->sample_rate           = pkt->getSampleRate();
+        auto buffer                  = std::make_shared<std::vector<uint8_t>>(au.ToAnnexB());
+        frame->buffer                = std::move(buffer);
+        frame->size                  = frame->buffer->size();
 
         OnFrameCompleted();
         emitEncodedFrame(frame);
@@ -249,10 +244,9 @@ RtpAudioTracker::RtpAudioTracker(const TrackInfo& info)
         break;
     }
 
-    uint32_t sample_rate = info.clock_rate > 0 ? info.clock_rate : 8000;
-    uint32_t channels = info.channels > 0 ? static_cast<uint32_t>(info.channels) : 1;
-
-    depacketizer_ = std::make_unique<media::AudioDepacketizer>(codec, sample_rate, channels);
+    uint32_t sample_rate  = info.clock_rate > 0 ? info.clock_rate : 8000;
+    uint32_t channels     = info.channels > 0 ? static_cast<uint32_t>(info.channels) : 1;
+    depacketizer_         = std::make_unique<media::AudioDepacketizer>(codec, sample_rate, channels);
 }
 
 RtpAudioTracker::Ptr RtpAudioTracker::Clone()
@@ -352,22 +346,12 @@ RtpPacket::Ptr RtpAudioTracker::inputRtp(TrackType type, int sample_rate, uint8_
 
     if (payload_len == 0)
     {
-        LOG_ERROR("[RtpAudioTracker] empty payload",
-                  " seq=", hdr.getSequence(),
-                  " ssrc=", hdr.getSSRC(),
-                  " len=", len,
-                  " header_len=", header_len);
         return nullptr;
     }
 
-    auto pkt = std::make_shared<RtpPacket>();
-
-    if (!pkt->reserve(len))
+    auto pkt = acquirePacket(len);
+    if (!pkt)
     {
-        LOG_ERROR("[RtpAudioTracker] reserve failed",
-                  " len=", len,
-                  " seq=", hdr.getSequence(),
-                  " ssrc=", hdr.getSSRC());
         return nullptr;
     }
 
@@ -391,8 +375,6 @@ RtpPacket::Ptr RtpAudioTracker::inputRtp(TrackType type, int sample_rate, uint8_
         return nullptr;
     }
 
-    // Each clone owns its own RTP packet copy and receiver state. Snapshot the
-    // weak registry first so callbacks/destruction cannot invalidate iteration.
     for (const auto& clone : SnapshotClones())
     {
         clone->inputRtp(type, sample_rate, ptr, len);
@@ -461,6 +443,7 @@ void RtcpDispatcher::SetTransportFeedbackCallback(TransportFeedbackCallback cb)
 {
     transport_feedback_cb_ = std::move(cb);
 }
+
 void RtcpDispatcher::OnNack(uint32_t sender_ssrc, uint32_t media_ssrc, const uint16_t* seqs, size_t count)
 {
     if(!seqs || count == 0)
@@ -472,19 +455,16 @@ void RtcpDispatcher::OnNack(uint32_t sender_ssrc, uint32_t media_ssrc, const uin
 
     if (it == send_tracks_.end()) 
     {
-        LOG_INFO("[RTCP][NACK] sender track not found", " media_ssrc=", media_ssrc, " count=", count);
         return;
     }
 
     auto track = it->second.lock();
     if(!track)
     {
-        LOG_INFO("[RTCP][NACK] sender track expired", " media_ssrc=", media_ssrc, " count=", count);
         return;
     }
 
     std::vector<uint16_t> lost_seqs(seqs, seqs + count);
-    LOG_INFO("[RTCP][NACK] retransmit request", " media_ssrc=", media_ssrc, " count=", lost_seqs.size());
 
     track->OnRtcpNack(lost_seqs);
 }

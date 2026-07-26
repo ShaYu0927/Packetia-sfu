@@ -59,6 +59,7 @@ public:
     bool FindStreamTrack(int media_index, StreamTrackInfo* out) const;
     bool FindStreamTrackByChannel(uint8_t channel, StreamTrackInfo* out) const;
     bool FindPayloadType(uint8_t payload_type, PayloadTypeInfo* out) const;
+    bool FindPayloadType(int track_id, uint8_t payload_type, PayloadTypeInfo* out) const;
 
     bool ApplySdp(const sdp::SdpSession& sdp, std::string* err);
     RtpTrack::Ptr CreateTrack(const MediaTrackInfo& info);

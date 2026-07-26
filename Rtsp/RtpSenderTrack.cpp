@@ -126,8 +126,7 @@ void RtpSenderTrack::OnRtcpNack(const std::vector<uint16_t>& lost_seqs)
         }
 
         CachedRtpPacket& cached = it->second;
-        if (_config.max_retransmit_count > 0 &&
-            cached.retransmit_count >= _config.max_retransmit_count)
+        if (_config.max_retransmit_count > 0 && cached.retransmit_count >= _config.max_retransmit_count)
         {
             continue;
         }
@@ -147,14 +146,7 @@ void RtpSenderTrack::OnRtcpNack(const std::vector<uint16_t>& lost_seqs)
     }
 }
 
-void RtpSenderTrack::OnRtcpReceiverReport(uint32_t reporter_ssrc,
-                                           uint32_t media_ssrc,
-                                           uint8_t fraction_lost,
-                                           int32_t cumulative_lost,
-                                           uint32_t highest_seq,
-                                           uint32_t jitter,
-                                           uint32_t lsr,
-                                           uint32_t dlsr)
+void RtpSenderTrack::OnRtcpReceiverReport(uint32_t reporter_ssrc, uint32_t media_ssrc, uint8_t fraction_lost, int32_t cumulative_lost, uint32_t highest_seq, uint32_t jitter, uint32_t lsr, uint32_t dlsr)
 {
     ++_rr_count;
     _last_rr_reporter_ssrc = reporter_ssrc;
@@ -166,23 +158,12 @@ void RtpSenderTrack::OnRtcpReceiverReport(uint32_t reporter_ssrc,
     _last_rr_lsr = lsr;
     _last_rr_dlsr = dlsr;
     _rtt_ms = CalculateRttMs(lsr, dlsr);
-
-    LOG_INFO("[RTCP][RR] sender report feedback",
-             " reporter_ssrc=", reporter_ssrc,
-             " media_ssrc=", media_ssrc,
-             " fraction_lost=", static_cast<int>(fraction_lost),
-             " cumulative_lost=", cumulative_lost,
-             " highest_seq=", highest_seq,
-             " jitter=", jitter,
-             " rtt_ms=", _rtt_ms);
 }
 
 void RtpSenderTrack::OnRtcpPli()
 {
     const uint64_t now_ms = NowMs();
-    if (_last_pli_ms != 0 &&
-        now_ms >= _last_pli_ms &&
-        now_ms - _last_pli_ms < _pli_interval_ms)
+    if (_last_pli_ms != 0 && now_ms >= _last_pli_ms && now_ms - _last_pli_ms < _pli_interval_ms)
     {
         return;
     }
@@ -239,9 +220,7 @@ bool RtpSenderTrack::ParseRtpHeader(const uint8_t* data, size_t len, RtpHeader& 
             return false;
         }
 
-        const uint16_t ext_words =
-            (static_cast<uint16_t>(data[header_size + 2]) << 8) |
-            static_cast<uint16_t>(data[header_size + 3]);
+        const uint16_t ext_words = (static_cast<uint16_t>(data[header_size + 2]) << 8) | static_cast<uint16_t>(data[header_size + 3]);
         const size_t ext_size = 4 + static_cast<size_t>(ext_words) * 4;
         if (len < header_size + ext_size)
         {
@@ -261,10 +240,7 @@ bool RtpSenderTrack::ParseRtpHeader(const uint8_t* data, size_t len, RtpHeader& 
     return true;
 }
 
-bool RtpSenderTrack::RewriteRtpPacket(std::vector<uint8_t>& packet,
-                                      const RtpHeader& in_header,
-                                      uint16_t& out_seq,
-                                      uint32_t& out_timestamp)
+bool RtpSenderTrack::RewriteRtpPacket(std::vector<uint8_t>& packet, const RtpHeader& in_header, uint16_t& out_seq, uint32_t& out_timestamp)
 {
     if (packet.size() < RtpHeader::kSize)
     {

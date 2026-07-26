@@ -22,10 +22,74 @@
 
 namespace rtsp 
 {
+class RtpPacketPool : public std::enable_shared_from_this<RtpPacketPool>
+{
+public:
+    using Ptr = std::shared_ptr<RtpPacketPool>;
 
+    explicit RtpPacketPool(size_t capacity, size_t packet_capacity = RtpPacket::kRtpMaxSize)
+    {
+        packets_.reserve(capacity);
+        free_.reserve(capacity);
+        for (size_t i = 0; i < capacity; ++i)
+        {
+            auto packet = std::make_unique<RtpPacket>();
+            if (!packet->reserve(packet_capacity))
+            {
+                continue;
+            }
+            free_.push_back(packet.get());
+            packets_.push_back(std::move(packet));
+        }
+    }
 
-class Frame;
-using FramePtr = std::shared_ptr<Frame>;
+    RtpPacket::Ptr Acquire()
+    {
+        RtpPacket* packet = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (free_.empty())
+            {
+                return nullptr;
+            }
+            packet = free_.back();
+            free_.pop_back();
+        }
+
+        auto self = shared_from_this();
+        return RtpPacket::Ptr(packet, [self](RtpPacket* item) {
+            self->Release(item);
+        });
+    }
+
+    size_t Capacity() const noexcept
+    {
+        return packets_.size();
+    }
+
+    size_t Available() const
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return free_.size();
+    }
+
+private:
+    void Release(RtpPacket* packet)
+    {
+        if (!packet)
+        {
+            return;
+        }
+
+        packet->resetForReuse();
+        std::lock_guard<std::mutex> lock(mutex_);
+        free_.push_back(packet);
+    }
+
+    mutable std::mutex mutex_;
+    std::vector<std::unique_ptr<RtpPacket>> packets_;
+    std::vector<RtpPacket*> free_;
+};
 
 
 /**
@@ -91,7 +155,8 @@ public:
      *             SSRC, and track index.
      */
     explicit RtpReceiverTrack(const TrackInfo &info)
-        : _info(info)
+        : _info(info),
+          packet_pool_(std::make_shared<RtpPacketPool>(kPacketPoolCapacity))
     {
         setOnPacketSorted([this](uint16_t seq, const RtpPacket::Ptr &pkt) {
             (void)seq;
@@ -272,6 +337,24 @@ protected:
         return true;
     }
 
+    RtpPacket::Ptr acquirePacket(size_t packet_size)
+    {
+        EnhancedPacketSortor<RtpPacket::Ptr, uint16_t>::flushExpired();
+
+        if (packet_size > RtpPacket::kRtpMaxSize)
+        {
+            ++_stats.oversized_packets;
+            return nullptr;
+        }
+
+        auto packet = packet_pool_ ? packet_pool_->Acquire() : nullptr;
+        if (!packet)
+        {
+            ++_stats.pool_exhausted_packets;
+        }
+        return packet;
+    }
+
     /**
      * @brief Emit a complete media frame to the upper layer.
      *
@@ -335,6 +418,8 @@ protected:
     }
 
 protected:
+    static constexpr size_t kPacketPoolCapacity = 64;
+
     /**
      * @brief Track metadata.
      *
@@ -342,6 +427,7 @@ protected:
      * and track index.
      */
     TrackInfo _info;
+    RtpPacketPool::Ptr packet_pool_;
 
     /**
      * @brief RTSP transport information.

@@ -86,11 +86,58 @@ TEST(RtpAudioTrackerCloneTest, ReleasedCloneDetachesAutomatically)
     EXPECT_EQ(1u, source->getStats().received_packets);
 }
 
+TEST(RtpPacketPoolTest, IsBoundedAndReusesPacketStorage)
+{
+    auto pool = std::make_shared<rtsp::RtpPacketPool>(2, 1500);
+    EXPECT_EQ(2u, pool->Capacity());
+    EXPECT_EQ(2u, pool->Available());
+
+    auto first = pool->Acquire();
+    auto second = pool->Acquire();
+    ASSERT_NE(nullptr, first);
+    ASSERT_NE(nullptr, second);
+    EXPECT_EQ(0u, pool->Available());
+    EXPECT_EQ(nullptr, pool->Acquire());
+
+    auto* released_address = first.get();
+    first.reset();
+    EXPECT_EQ(1u, pool->Available());
+
+    auto reused = pool->Acquire();
+    ASSERT_NE(nullptr, reused);
+    EXPECT_EQ(released_address, reused.get());
+    EXPECT_GE(reused->getCapacity(), 1500u);
+}
+
+TEST(RtpPacketPoolTest, RejectsOversizedPacketBeforeAllocation)
+{
+    auto tracker = std::make_shared<rtsp::RtpAudioTracker>(MakeAudioTrackInfo());
+    std::array<uint8_t, RtpPacket::kRtpMaxSize + 1> oversized{};
+    oversized[0] = 0x80;
+    oversized[1] = 111;
+
+    EXPECT_EQ(nullptr, tracker->inputRtp(
+        TrackAudio, 48000, oversized.data(), oversized.size()));
+    EXPECT_EQ(1u, tracker->getStats().oversized_packets);
+    EXPECT_EQ(0u, tracker->getStats().received_packets);
+}
+
+TEST(RtpPacketSortorTest, ReorderBufferNeverExceedsConfiguredLimit)
+{
+    EnhancedPacketSortor<std::shared_ptr<int>, uint16_t> sorter(1000, 8, 100);
+    sorter.setOnPacketSorted([](uint16_t, std::shared_ptr<int>) {});
+    sorter.inputPacket(0, std::make_shared<int>(0));
+
+    for (uint16_t seq = 100; seq < 140; ++seq)
+    {
+        sorter.inputPacket(seq, std::make_shared<int>(seq));
+        EXPECT_LE(sorter.getBufferedCount(), 8u);
+    }
+}
+
 int main(int argc, char** argv)
 {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
 }
-
-
 

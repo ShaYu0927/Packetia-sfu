@@ -1,5 +1,6 @@
 add_executable(test_rtp_input
     test_rtp_input.cpp
+    test_sdp_track_binding.cpp
 )
 
 target_link_libraries(test_rtp_input
@@ -11,6 +12,8 @@ target_link_libraries(test_rtp_input
     utils
     LOGGER
     COMMON
+    media
+    Interleaved
     pthread
     GTest::gtest
     GTest::gtest_main

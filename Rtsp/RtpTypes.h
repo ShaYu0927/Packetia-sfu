@@ -2,9 +2,8 @@
 
 
 #include <algorithm>
-#include <bits/stdint-uintn.h>
+#include <cstdint>
 #include <string>
-#include <unistd.h>
 #include <vector>
 #include <memory>
 #include <array>
@@ -220,6 +219,8 @@ struct RtpTrackStats
     uint64_t lost_packets = 0;
     uint64_t duplicate_packets = 0;
     uint64_t out_of_order_packets = 0;
+    uint64_t pool_exhausted_packets = 0;
+    uint64_t oversized_packets = 0;
 
     uint16_t last_seq = 0;
     uint32_t last_ts = 0;

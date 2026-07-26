@@ -284,13 +284,7 @@ void rtcpx::RtcpReceiverImpl::HandleSingleRtcpPacket(const uint8_t* p, size_t le
             const uint32_t packet_count = utils::Utils::ReadUint32BE(p + 20);
             const uint32_t octet_count = utils::Utils::ReadUint32BE(p + 24);
 
-            observer_->OnSenderReport(
-                    sender_ssrc,
-                    ntp,
-                    rtp_ts,
-                    packet_count,
-                    octet_count
-                );
+            observer_->OnSenderReport(sender_ssrc, ntp, rtp_ts, packet_count, octet_count);
 
             size_t off = 28;
             for (uint8_t i = 0; i < fmt && off + 24 <= len; ++i, off += 24)

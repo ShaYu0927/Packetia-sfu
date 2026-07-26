@@ -10,10 +10,10 @@
 struct RtpWorkJob
 {
     std::uint64_t key = 0;
-    std::uint32_t type = 0;           // 0=RTP, 1=RTCP
-    void*         payload = nullptr;  // Packet*
+    std::uint32_t type = 0;           
+    void*         payload = nullptr;  
     std::size_t   payload_len = 0;
-    std::uint64_t enqueue_ts = 0;     // 可选：外部填充
+    std::uint64_t enqueue_ts = 0;     
 };
 
 typedef struct RtpQueueStats
@@ -39,8 +39,7 @@ class SpscRing
 {
 public:
     static_assert(CapacityPow2 >= 2, "Capacity must be >= 2");
-    static_assert((CapacityPow2 & (CapacityPow2 - 1)) == 0,
-                  "CapacityPow2 must be power of two");
+    static_assert((CapacityPow2 & (CapacityPow2 - 1)) == 0, "CapacityPow2 must be power of two");
 
     SpscRing() = default;
 
@@ -64,7 +63,7 @@ private:
 
 };
 
-#endif /* _RTP_RING_BUFFER_H_ */
+
 
 template <typename T, std::size_t CapacityPow2>
 inline bool SpscRing<T, CapacityPow2>::push(T &&item)
@@ -122,20 +121,6 @@ inline void SpscRing<T, CapacityPow2>::reset_stats()
     st_ = RtpQueueStats{};
 }
 
-
-
-/*
- * RTP 专用双队列：
- * - RTCP 高优先级队列（建议容量小一些）
- * - RTP  普通队列（容量大一些）
- *
- * 消费顺序：
- *   try_pop(): 先 RTCP 后 RTP
- *
- * 上层建议：
- * - IO/生产者线程根据 is_rtcp 决定 push 到哪个队列
- * - Worker/消费者线程循环 try_pop
- */
 template<std::size_t RtpCapPow2, std::size_t RtcpCapPow2>
 class RtpRingBuffer
 {
@@ -146,21 +131,18 @@ public:
         typename SpscRing<RtpWorkJob, RtcpCapPow2>::Stats rtcp;
     };
 
-    // push RTP：满时返回 false（上层负责 drop + release Packet）
     bool push_rtp(RtpWorkJob&& job)
     {
         job.type = RTP_JOB_RTP;
         return rtp_.push(std::move(job));
     }
 
-    // push RTCP：满时返回 false（上层负责 drop + release Packet）
     bool push_rtcp(RtpWorkJob&& job)
     {
         job.type = RTP_JOB_RTCP;
         return rtcp_.push(std::move(job));
     }
 
-    // 优先弹出 RTCP，其次 RTP
     bool try_pop(RtpWorkJob& out)
     {
         if (rtcp_.pop(out)) return true;
@@ -188,4 +170,4 @@ private:
     SpscRing<RtpWorkJob, RtpCapPow2>  rtp_;
     SpscRing<RtpWorkJob, RtcpCapPow2> rtcp_;
 };
-
+#endif /* _RTP_RING_BUFFER_H_ */

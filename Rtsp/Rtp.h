@@ -343,7 +343,7 @@ public:
                 ++_drop_count;
             }
 
-            if (_buffer.size() > _max_cache)
+            while (_buffer.size() > _max_cache)
             {
                 ++_lost_count;
                 ++_next_seq;
@@ -398,6 +398,23 @@ public:
 
     size_t getLostCount() const { return _lost_count; }
     size_t getDropCount() const { return _drop_count; }
+    size_t getBufferedCount() const { return _buffer.size(); }
+
+    void flushExpired()
+    {
+        if (!_started)
+        {
+            return;
+        }
+
+        const auto now = std::chrono::steady_clock::now();
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - _last_flush_time).count() > _flush_timeout)
+        {
+            flushTimeout();
+            _last_flush_time = now;
+        }
+    }
 
 private:
     void emit(Seq seq, Packet pkt)
@@ -516,6 +533,7 @@ public:
     bool reserve(size_t capacity);
 
     void reset();
+    void resetForReuse();
 
 private:
     TrackType type_ = TrackInvalid;

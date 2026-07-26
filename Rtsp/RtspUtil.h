@@ -20,6 +20,7 @@ public:
     static bool ParseTransport(const std::string& text, RtspTransport& out);
     static std::string StripFmtpPayloadPrefix(const std::string& fmtp_line);
     static bool ParseRtpMapLine(const std::string& line, int* payload_type, std::string* codec_name, uint32_t* clock_rate, int* channels);
+    static uint16_t Unwrap(uint16_t sequence_number);
 };
 
 
@@ -40,6 +41,17 @@ public:
         return protocol::ProtocolParser::ParseResult::NeedMoreData;
     }
     const char* Name() const override { return "RTSP"; }
+};
+
+class RtpSequenceNumberUnwrapper
+{
+public:
+    int64_t Unwrap(uint16_t sequence_number);
+    void Reset();
+
+private:
+    bool initialized_ = false;
+    int64_t last_unwrapped_ = 0;
 };
 
 }

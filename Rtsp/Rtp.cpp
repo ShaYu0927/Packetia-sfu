@@ -189,13 +189,18 @@ void RtpPacket::setRaw(const uint8_t* data, size_t len)
 
 void RtpPacket::reset()
 {
+    resetForReuse();
+    data_.reset();
+    capacity_ = 0;
+}
+
+void RtpPacket::resetForReuse()
+{
     type_ = TrackInvalid;
     sample_rate_ = 90000;
     ntp_stamp_ms_ = 0;
     track_index_ = -1;
 
-    data_.reset();
-    capacity_ = 0;
     size_ = 0;
 
     hdr_len_ = kRtpHeaderSize;

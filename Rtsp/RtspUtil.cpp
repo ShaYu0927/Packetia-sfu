@@ -199,16 +199,8 @@ bool RtspUtil::ParseTransport(const std::string& text, RtspTransport& out)
     return true;
 }
 
-bool RtspUtil::ParseRtpMapLine(const std::string& line,
-                            int* payload_type,
-                            std::string* codec_name,
-                            uint32_t* clock_rate,
-                            int* channels)
+bool RtspUtil::ParseRtpMapLine(const std::string& line, int* payload_type, std::string* codec_name, uint32_t* clock_rate, int* channels)
 {
-    // line examples:
-    // "96 H264/90000"
-    // "97 MPEG4-GENERIC/44100/2"
-
     if (!payload_type || !codec_name || !clock_rate || !channels)
     {
         return false;
@@ -237,9 +229,6 @@ bool RtspUtil::ParseRtpMapLine(const std::string& line,
         return false;
     }
 
-    // enc examples:
-    // H264/90000
-    // MPEG4-GENERIC/44100/2
     size_t p1 = enc.find('/');
     if (p1 == std::string::npos)
     {
@@ -272,15 +261,50 @@ bool RtspUtil::ParseRtpMapLine(const std::string& line,
 
 std::string RtspUtil::StripFmtpPayloadPrefix(const std::string& fmtp_line)
 {
-    // "96 packetization-mode=1; profile-level-id=..."
-    // -> "packetization-mode=1; profile-level-id=..."
-
     auto sp = fmtp_line.find(' ');
     if (sp == std::string::npos)
     {
         return fmtp_line;
     }
     return fmtp_line.substr(sp + 1);
+}
+
+int64_t RtpSequenceNumberUnwrapper::Unwrap(uint16_t sequence_number)
+{
+    if (!initialized_)
+    {
+        initialized_ = true;
+        last_unwrapped_ = sequence_number;
+        return last_unwrapped_;
+    }
+
+    const uint16_t last_sequence = static_cast<uint16_t>(last_unwrapped_ & 0xFFFF);
+    int delta = static_cast<uint16_t>(sequence_number) - static_cast<uint16_t> (last_sequence);
+
+    if (delta < -32768)
+    {
+        delta += 65536;
+    }
+    else if (delta > 32768)
+    {
+        delta -= 65536;
+    }
+
+    const int64_t candidate = last_unwrapped_ + delta;
+    if (candidate > last_unwrapped_)
+    {
+        last_unwrapped_ = candidate;
+    }
+
+    return candidate;
+
+}
+
+
+void RtpSequenceNumberUnwrapper::Reset()
+{
+    initialized_ = false;
+    last_unwrapped_ = 0;
 }
 
 }

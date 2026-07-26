@@ -3,6 +3,62 @@
 #include "RtspUtil.h"
 #include "StreamContext.h"
 
+#include <algorithm>
+
+namespace
+{
+std::string NormalizeControlKey(const std::string& control)
+{
+    if (control.empty())
+    {
+        return {};
+    }
+
+    std::string value = control;
+    const auto query = value.find_first_of("?#");
+    if (query != std::string::npos)
+    {
+        value.erase(query);
+    }
+
+    while (!value.empty() && value.back() == '/')
+    {
+        value.pop_back();
+    }
+
+    const auto slash = value.find_last_of('/');
+    return slash == std::string::npos ? value : value.substr(slash + 1);
+}
+
+bool FillStaticPayloadType(int pt, TrackType type, TrackInfo* info)
+{
+    if (!info || type != TrackType::TrackAudio)
+    {
+        return false;
+    }
+
+    if (pt == 0)
+    {
+        info->codec_name = "PCMU";
+        info->codec_id = CodecId::PCMU;
+    }
+    else if (pt == 8)
+    {
+        info->codec_name = "PCMA";
+        info->codec_id = CodecId::PCMA;
+    }
+    else
+    {
+        return false;
+    }
+
+    info->payload_type = static_cast<uint8_t>(pt);
+    info->clock_rate = 8000;
+    info->channels = 1;
+    return true;
+}
+}
+
 static uint64_t MakeStreamKey(uint32_t session_id, uint32_t track_id)
 {
     return (static_cast<uint64_t>(session_id) << 32) |
@@ -135,65 +191,56 @@ bool MediaSession::ParseTrackInfoFromMedia(const sdp::SdpMedia& media, int track
         return false;
     }
 
-    info->control = media.GetAttribute("control");
+    info->control = NormalizeControlKey(media.GetAttribute("control"));
 
-    if (!media.fmtps.empty())
+    bool got_payload = false;
+    for (const auto& fmt : media.fmts)
     {
-        info->fmtp = media.fmtps[0].params;
-    }
-    else
-    {
-        std::string raw_fmtp = media.GetAttribute("fmtp");
-        if (!raw_fmtp.empty())
+        int pt = -1;
+        if (!StreamContextBuilder::ParsePayloadType(fmt, pt) || pt < 0 || pt > 127)
         {
-            info->fmtp = rtsp::RtspUtil::StripFmtpPayloadPrefix(raw_fmtp);
+            continue;
         }
-    }
 
-    bool got_rtpmap = false;
+        auto rtpmap = std::find_if(media.rtpmaps.begin(), media.rtpmaps.end(),
+            [pt](const sdp::SdpRtpMap& item) { return item.payloadType == pt; });
 
-    if (!media.rtpmaps.empty())
-    {
-        const auto& rtpmap = media.rtpmaps[0];
-
-        info->payload_type = static_cast<uint8_t>(rtpmap.payloadType);
-        info->codec_name   = rtpmap.encodingName;
-        info->codec_id     = StringToCodecId(info->codec_name);
-        info->clock_rate   = static_cast<uint32_t>(rtpmap.clockRate);
-        info->channels     = rtpmap.channels;
-        got_rtpmap = true;
-    }
-    else
-    {
-        std::string raw_rtpmap = media.GetAttribute("rtpmap");
-        if (!raw_rtpmap.empty())
+        TrackInfo candidate = *info;
+        if (rtpmap != media.rtpmaps.end())
         {
-            int payload_type = -1;
-            std::string codec_name;
-            uint32_t clock_rate = 0;
-            int channels = 0;
-
-            if (rtsp::RtspUtil::ParseRtpMapLine(raw_rtpmap,
-                                &payload_type,
-                                &codec_name,
-                                &clock_rate,
-                                &channels))
-            {
-                info->payload_type = static_cast<uint8_t>(payload_type);
-                info->codec_name   = codec_name;
-                info->codec_id     = StringToCodecId(info->codec_name);
-                info->clock_rate   = clock_rate;
-                info->channels     = channels;
-                got_rtpmap = true;
-            }
+            candidate.payload_type = static_cast<uint8_t>(pt);
+            candidate.codec_name = rtpmap->encodingName;
+            candidate.codec_id = StringToCodecId(candidate.codec_name);
+            candidate.clock_rate = static_cast<uint32_t>(rtpmap->clockRate);
+            candidate.channels = rtpmap->channels;
         }
+        else if (!FillStaticPayloadType(pt, info->type, &candidate))
+        {
+            continue;
+        }
+
+        if (candidate.codec_id == CodecId::Unknown)
+        {
+            continue;
+        }
+
+        auto fmtp = std::find_if(media.fmtps.begin(), media.fmtps.end(),
+            [pt](const sdp::SdpFmtp& item) { return item.payloadType == pt; });
+        if (fmtp != media.fmtps.end())
+        {
+            candidate.fmtp = fmtp->params;
+        }
+
+        *info = std::move(candidate);
+        got_payload = true;
+        break;
     }
 
-    if (!got_rtpmap)
+    if (!got_payload)
     {
         if (err)
         {
-            *err = "missing rtpmap for track index " + std::to_string(track_index);
+            *err = "no supported payload in media track index " + std::to_string(track_index);
         }
         return false;
     }
@@ -310,7 +357,17 @@ bool MediaSession::ApplySdp(const sdp::SdpSession& sdp, std::string* err)
                  " clock_rate=", info.clock_rate);
 
         track_infos_[track_idx] = info;
-        control_to_track_[info.control] = track_idx;
+        const std::string control_key = NormalizeControlKey(info.control);
+        if (control_to_track_.find(control_key) != control_to_track_.end())
+        {
+            if (err)
+            {
+                *err = "duplicate media control: " + control_key;
+            }
+            ResetTracks();
+            return false;
+        }
+        control_to_track_[control_key] = track_idx;
         runtime_tracks_[track_idx] = track;
 
         ++track_idx;
@@ -326,7 +383,8 @@ RtpTrack::Ptr MediaSession::BuildTrackFromInfo(const TrackInfo& info, std::strin
 
 std::shared_ptr<RtpTrack> MediaSession::GetRtpTrack(const std::string& control) const
 {
-    auto it = control_to_track_.find(control);
+    std::lock_guard<std::mutex> lk(track_mtx_);
+    auto it = control_to_track_.find(NormalizeControlKey(control));
     if (it == control_to_track_.end())
         return nullptr;
 
@@ -441,6 +499,39 @@ bool MediaSession::FindPayloadType(uint8_t payload_type, PayloadTypeInfo* out) c
 
     *out = it->second;
     return true;
+}
+
+bool MediaSession::FindPayloadType(int track_id, uint8_t payload_type, PayloadTypeInfo* out) const
+{
+    if (!out)
+    {
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lk(track_mtx_);
+    if (!stream_context_)
+    {
+        return false;
+    }
+
+    for (const auto& track : stream_context_->tracks)
+    {
+        if (track.media_index != track_id)
+        {
+            continue;
+        }
+
+        for (const auto& payload : track.payloads)
+        {
+            if (payload.payload_type == payload_type)
+            {
+                *out = payload;
+                return true;
+            }
+        }
+        return false;
+    }
+    return false;
 }
 
 bool MediaSession::BindInterleavedChannel(uint8_t channel, int track_id, bool is_rtcp, uint64_t endpoint_id)

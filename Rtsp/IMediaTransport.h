@@ -45,9 +45,7 @@ public:
         return true;
     }
 
-    virtual SendResult SendPacket(const uint8_t* data,
-                                  size_t size,
-                                  const SendOptions& options)
+    virtual SendResult SendPacket(const uint8_t* data, size_t size, const SendOptions& options)
     {
         (void)data;
         (void)size;

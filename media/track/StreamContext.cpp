@@ -31,6 +31,24 @@ void StreamContextBuilder::FillRtpMap(const sdp::SdpMedia& media, uint8_t pt, Pa
         return;
     }
 
+    if (info.track_type == StreamTrackType::Audio && pt == 0)
+    {
+        info.codec_name = "PCMU";
+        info.codec_type = CodecType::PCMU;
+        info.sample_rate = 8000;
+        info.channels = 1;
+        return;
+    }
+
+    if (info.track_type == StreamTrackType::Audio && pt == 8)
+    {
+        info.codec_name = "PCMA";
+        info.codec_type = CodecType::PCMA;
+        info.sample_rate = 8000;
+        info.channels = 1;
+        return;
+    }
+
     LOG_INFO("[SDP] rtpmap not found", " media=", media.media, " pt=", static_cast<int>(pt));
 }
 
