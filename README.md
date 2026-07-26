@@ -448,3 +448,108 @@ WIP: scaffold ICE/STUN message layer and refactor RTSP parsing
 NOTE:
 ICE connectivity check not implemented yet.
 Attribute parsing currently incomplete (no integrity/fingerprint validation).
+
+## 2026-07-26 — RTP 分轨绑定与 Tracker 内存管理
+
+### 本次完成
+
+- 修正 SDP 音视频 Track 与 Payload Type 的绑定逻辑。
+- 按具体 media track 查询 PT，避免多路流及音视频重复 PT 相互覆盖。
+- 支持绝对、相对 RTSP `a=control` 地址匹配。
+- 支持静态音频 PT 0/8（PCMU/PCMA）。
+- 检测重复 control，避免后注册 Track 静默覆盖已有 Track。
+- 每个 RTP Tracker 使用独立、有界的 Packet Pool。
+- 每个 Tracker 默认预分配 64 个 RTP Packet，复用 payload 内存。
+- 音频、视频及不同 SSRC 的 Packet Pool 和排序 Buffer 相互隔离。
+- 增加内存池耗尽、超大 RTP 包统计。
+- 严格限制 RTP 乱序缓存大小，并增加超时清理。
+- 补充 SDP Track 绑定、Packet Pool 和排序缓存回归测试。
+
+### 当前 RTP 上行链路
+
+```text
+RTSP interleaved 接收
+  → channel / Endpoint 分轨
+  → SDP Track 与 PT 校验
+  → 按 SSRC 创建 Audio/Video Tracker
+  → Tracker 独立 Packet Pool
+  → RTP 排序 Buffer
+  → 音视频 Depacketizer
+  → EncodedFrame
+```
+
+### 当前弱网与 RTCP 状态
+
+- RTP 有界排序、基本丢包发现和发送端 RTP 重传缓存已经具备。
+- RTCP SR/RR、NACK、PLI/FIR、Transport-CC 和 BWE 解析或算法组件已经存在。
+- 接收端 NACK 生成、`RtcpDispatcher` 注册、音频 RTCP、PLI/FIR 转发及 BWE 控制动作尚未接入真实媒体链路。
+- 下一阶段将优先完成：
+  1. RTP 缺包检测 → RTCP NACK → RTP Cache 重传闭环。
+  2. SR/RR、RTT、Jitter 与丢包率统计。
+  3. PLI/FIR 关键帧恢复。
+  4. Transport-CC、BWE 与弱网码率控制。
+
+### 后续待完善
+
+- 修复 RTP 网络入口超过 1500 字节时可能发生的静默截断。
+- 减少 `WorkJob → Packet → Tracker Pool` 的中间内存复制。
+- 将 `EncodedFrame` 接入录制、播放、转码或其他业务消费 Buffer。
+- 接通原始 RTP SFU 订阅转发链路。
+
+## 2026-07-26 — RTP Track Binding and Tracker Memory Management
+
+### Completed
+
+- Fixed SDP audio/video track and Payload Type binding.
+- Scoped PT lookup to the corresponding media track, preventing collisions
+  between multiple streams or audio/video tracks that reuse the same PT.
+- Added support for matching both absolute and relative RTSP `a=control` URLs.
+- Added support for static audio PT 0/8 (PCMU/PCMA).
+- Added duplicate control detection to prevent a later track from silently
+  replacing an existing track.
+- Added an independent, bounded Packet Pool to every RTP Tracker.
+- Each Tracker preallocates 64 RTP packets by default and reuses payload memory.
+- Audio, video, and different SSRCs now have isolated Packet Pools and reorder
+  buffers.
+- Added counters for Packet Pool exhaustion and oversized RTP packets.
+- Enforced the RTP reorder-buffer limit and added timeout-based cleanup.
+- Added regression tests for SDP track binding, Packet Pool reuse, and reorder
+  buffer limits.
+
+### Current RTP Ingress Pipeline
+
+```text
+RTSP interleaved input
+  → channel / Endpoint track routing
+  → SDP Track and PT validation
+  → Audio/Video Tracker creation per SSRC
+  → per-Tracker Packet Pool
+  → RTP reorder buffer
+  → audio/video depacketizer
+  → EncodedFrame
+```
+
+### Current Weak-Network and RTCP Status
+
+- Bounded RTP reordering, basic packet-loss detection, and the sender-side RTP
+  retransmission cache are available.
+- Parsing or algorithm components exist for RTCP SR/RR, NACK, PLI/FIR,
+  Transport-CC, and BWE.
+- Receiver-side NACK generation, `RtcpDispatcher` registration, audio RTCP,
+  PLI/FIR forwarding, and BWE control actions are not yet connected to the
+  production media pipeline.
+- The next phase will prioritize:
+  1. Closing the RTP loss detection → RTCP NACK → RTP cache retransmission loop.
+  2. Integrating SR/RR, RTT, jitter, and packet-loss statistics.
+  3. Adding PLI/FIR-based key-frame recovery.
+  4. Connecting Transport-CC, BWE, and weak-network bitrate control.
+
+### Remaining Work
+
+- Fix possible silent truncation of RTP packets larger than 1500 bytes at the
+  network ingress boundary.
+- Reduce intermediate memory copies across
+  `WorkJob → Packet → Tracker Pool`.
+- Connect `EncodedFrame` output to recording, playback, transcoding, or another
+  application-level consumer buffer.
+- Connect the raw RTP SFU subscription and forwarding pipeline.
