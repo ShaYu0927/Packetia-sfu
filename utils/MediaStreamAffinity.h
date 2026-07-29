@@ -3,9 +3,20 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
+#include <utility>
+
+#include "ShardedWorkerPool.h"
 
 namespace media_affinity
 {
+
+struct MediaStreamHandle
+{
+    uint64_t endpoint_id = 0;
+    uint32_t ssrc = 0;
+    uint64_t affinity_key = 0;
+};
 
 inline uint16_t ReadUint16BE(const uint8_t* data)
 {
@@ -46,8 +57,7 @@ inline bool TryGetRtcpMediaSsrc(const uint8_t* data, size_t len, uint32_t& ssrc)
             return false;
         const uint8_t count_or_fmt = packet[0] & 0x1F;
         const uint8_t packet_type = packet[1];
-        const size_t packet_len =
-            (static_cast<size_t>(ReadUint16BE(packet + 2)) + 1) * 4;
+        const size_t packet_len = (static_cast<size_t>(ReadUint16BE(packet + 2)) + 1) * 4;
         if (packet_len < 4 || offset + packet_len > len)
             return false;
 
@@ -93,24 +103,36 @@ inline uint64_t MakeStreamKey(uint64_t endpoint_id, uint32_t ssrc)
     return value ^ (value >> 31);
 }
 
-inline uint64_t ResolveRtpKey(uint64_t endpoint_id,
-                              const uint8_t* data,
-                              size_t len)
+inline MediaStreamHandle MakeStreamHandle(uint64_t endpoint_id, uint32_t ssrc)
 {
-    uint32_t ssrc = 0;
-    return TryGetRtpSsrc(data, len, ssrc)
-        ? MakeStreamKey(endpoint_id, ssrc)
-        : endpoint_id;
+    return MediaStreamHandle{endpoint_id, ssrc, MakeStreamKey(endpoint_id, ssrc)};
 }
 
-inline uint64_t ResolveRtcpKey(uint64_t endpoint_id,
-                               const uint8_t* data,
-                               size_t len)
+// All mutable state belonging to one media stream must be accessed from tasks
+// posted through this function. The stable affinity key makes one media worker
+// the owner of the (endpoint, SSRC) pair and preserves FIFO ordering.
+inline int PostToMediaStream(const MediaStreamHandle& stream, std::function<void()> fn)
+{
+    if (stream.endpoint_id == 0 || !fn)
+        return -1;
+    return WorkerService::post_fn("media", stream.affinity_key, std::move(fn));
+}
+
+inline int PostToMediaStream(uint64_t endpoint_id, uint32_t ssrc, std::function<void()> fn)
+{
+    return PostToMediaStream(MakeStreamHandle(endpoint_id, ssrc), std::move(fn));
+}
+
+inline uint64_t ResolveRtpKey(uint64_t endpoint_id, const uint8_t* data, size_t len)
 {
     uint32_t ssrc = 0;
-    return TryGetRtcpMediaSsrc(data, len, ssrc)
-        ? MakeStreamKey(endpoint_id, ssrc)
-        : endpoint_id;
+    return TryGetRtpSsrc(data, len, ssrc) ? MakeStreamKey(endpoint_id, ssrc) : endpoint_id;
+}
+
+inline uint64_t ResolveRtcpKey(uint64_t endpoint_id, const uint8_t* data, size_t len)
+{
+    uint32_t ssrc = 0;
+    return TryGetRtcpMediaSsrc(data, len, ssrc) ? MakeStreamKey(endpoint_id, ssrc) : endpoint_id;
 }
 
 } // namespace media_affinity

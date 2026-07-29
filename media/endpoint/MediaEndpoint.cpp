@@ -4,6 +4,7 @@
 #include "MediaStreamAffinity.h"
 #include <iomanip>
 #include <mutex>
+#include <algorithm>
 
 namespace media 
 {
@@ -215,22 +216,25 @@ std::shared_ptr<rtsp::RtpReceiverTrack> SfuEndpoint::GetOrCreateTrack(uint32_t s
         return nullptr;
     }
 
-    {
-        std::lock_guard<std::mutex> lock(track_mtx_);
+    std::weak_ptr<SfuEndpoint> Weak_self = weak_from_this();
 
-        auto it = ssrc_to_track_.find(ssrc);
-        if (it != ssrc_to_track_.end())
+    new_track->setSendNackCallback(
+    [Weak_self](uint32_t media_ssrc, const std::vector<uint16_t>& lost_seqs) {
+        auto self = Weak_self.lock();
+        if (!self || lost_seqs.empty()) 
         {
-            LOG_ERROR("[TRACK] race detected, track already created by another thread", "ssrc=", ssrc, "exist_ptr=", it->second.get(), "new_ptr=", new_track.get());
-            return it->second;
+            return;
         }
 
+        self->OnTrackNack(media_ssrc, lost_seqs);
+    });
+
+    {
+        std::lock_guard<std::mutex> lock(track_mtx_);
         ssrc_to_track_[ssrc] = new_track;
-
-        LOG_INFO("[TRACK] insert new track", "ssrc=", ssrc, "track_ptr=", new_track.get(), "total_tracks=", ssrc_to_track_.size());
-
-        return new_track;
     }
+
+    return new_track;
 }
 
 void SfuEndpoint::HandleRtcpPacket(Packet* pkt)
@@ -313,15 +317,76 @@ bool SfuEndpoint::Start()
 
 void SfuEndpoint::Stop()
 {
-    std::lock_guard<std::mutex> lock(track_mtx_);
-    ssrc_to_track_.clear();
-    SetState(State::kStopped);
+    SetState(State::kStopping);
+
+    std::vector<uint32_t> streams;
+    {
+        std::lock_guard<std::mutex> lock(track_mtx_);
+        streams.reserve(ssrc_to_track_.size());
+        for (const auto& item : ssrc_to_track_)
+        {
+            streams.push_back(item.first);
+        }
+    }
+
+    if (streams.empty())
+    {
+        SetState(State::kStopped);
+        return;
+    }
+
+    auto remaining = std::make_shared<std::atomic<size_t>>(streams.size());
+    std::weak_ptr<SfuEndpoint> weak_self = weak_from_this();
+    for (uint32_t ssrc : streams)
+    {
+        const int ret = media_affinity::PostToMediaStream(
+            Id(), ssrc, [weak_self, remaining, ssrc] {
+                if (auto self = weak_self.lock())
+                {
+                    self->RemoveMediaStreamOnOwner(ssrc);
+                    if (remaining->fetch_sub(1) == 1)
+                    {
+                        self->SetState(State::kStopped);
+                    }
+                }
+            });
+        if (ret != 0 && remaining->fetch_sub(1) == 1)
+        {
+            SetState(State::kStopped);
+        }
+    }
 }
 
 void SfuRouter::AddSubscriber(uint32_t source_ssrc, std::shared_ptr<rtsp::RtpSenderTrack> sender)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     subscribers_[source_ssrc].push_back(sender);
+}
+
+void SfuRouter::RemoveSubscriber(uint32_t source_ssrc, const rtsp::RtpSenderTrack* sender)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = subscribers_.find(source_ssrc);
+    if (it == subscribers_.end())
+    {
+        return;
+    }
+    auto& tracks = it->second;
+    tracks.erase(std::remove_if(tracks.begin(), tracks.end(),
+                                [sender](const auto& item) {
+                                    return !item || item.get() == sender;
+                                }),
+                 tracks.end());
+    if (tracks.empty())
+    {
+        subscribers_.erase(it);
+    }
+}
+
+void SfuRouter::RemoveStream(uint32_t source_ssrc)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    subscribers_.erase(source_ssrc);
 }
 
 std::vector<std::shared_ptr<rtsp::RtpSenderTrack>> SfuRouter::GetSenderTracks(uint32_t source_ssrc)
@@ -334,6 +399,63 @@ std::vector<std::shared_ptr<rtsp::RtpSenderTrack>> SfuRouter::GetSenderTracks(ui
     }
 
     return it->second;
+}
+
+int SfuEndpoint::AddSubscriber(
+    uint32_t source_ssrc,
+    std::shared_ptr<rtsp::RtpSenderTrack> sender)
+{
+    if (!sender)
+    {
+        return -1;
+    }
+    std::weak_ptr<SfuEndpoint> weak_self = weak_from_this();
+    return media_affinity::PostToMediaStream(
+        Id(), source_ssrc,
+        [weak_self, source_ssrc, sender = std::move(sender)] {
+            if (auto self = weak_self.lock())
+            {
+                self->router_.AddSubscriber(source_ssrc, sender);
+            }
+        });
+}
+
+int SfuEndpoint::RemoveSubscriber(uint32_t source_ssrc, const std::shared_ptr<rtsp::RtpSenderTrack>& sender)
+{
+    if (!sender)
+    {
+        return -1;
+    }
+    std::weak_ptr<SfuEndpoint> weak_self = weak_from_this();
+    const auto* sender_ptr = sender.get();
+    return media_affinity::PostToMediaStream(
+        Id(), source_ssrc, [weak_self, source_ssrc, sender_ptr] {
+            if (auto self = weak_self.lock())
+            {
+                self->router_.RemoveSubscriber(source_ssrc, sender_ptr);
+            }
+        });
+}
+
+int SfuEndpoint::RemoveMediaStream(uint32_t source_ssrc)
+{
+    std::weak_ptr<SfuEndpoint> weak_self = weak_from_this();
+    return media_affinity::PostToMediaStream(
+        Id(), source_ssrc, [weak_self, source_ssrc] {
+            if (auto self = weak_self.lock())
+            {
+                self->RemoveMediaStreamOnOwner(source_ssrc);
+            }
+        });
+}
+
+void SfuEndpoint::RemoveMediaStreamOnOwner(uint32_t source_ssrc)
+{
+    {
+        std::lock_guard<std::mutex> lock(track_mtx_);
+        ssrc_to_track_.erase(source_ssrc);
+    }
+    router_.RemoveStream(source_ssrc);
 }
 
 void SfuEndpoint::ForwardRtpToSubscribers(uint32_t source_ssrc, const uint8_t* data, size_t len)

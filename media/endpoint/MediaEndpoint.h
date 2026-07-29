@@ -64,6 +64,8 @@ class SfuRouter
 {
 public:
     void AddSubscriber(uint32_t source_ssrc, std::shared_ptr<rtsp::RtpSenderTrack> sender);
+    void RemoveSubscriber(uint32_t source_ssrc, const rtsp::RtpSenderTrack* sender);
+    void RemoveStream(uint32_t source_ssrc);
     std::vector<std::shared_ptr<rtsp::RtpSenderTrack>> GetSenderTracks(uint32_t source_ssrc);
 
 private:
@@ -71,7 +73,8 @@ private:
     std::unordered_map<uint32_t, std::vector<std::shared_ptr<rtsp::RtpSenderTrack>>> subscribers_;
 };
 
-class SfuEndpoint : public MediaEndpoint
+class SfuEndpoint : public MediaEndpoint,
+                    public std::enable_shared_from_this<SfuEndpoint>
 {
 public:
     using MediaEndpoint::MediaEndpoint;
@@ -79,12 +82,21 @@ public:
     bool Start() override;
     void Stop() override;
 
+    // Stream mutations are asynchronous and execute on the same media worker
+    // as RTP/RTCP for source_ssrc.
+    int AddSubscriber(uint32_t source_ssrc,
+                      std::shared_ptr<rtsp::RtpSenderTrack> sender);
+    int RemoveSubscriber(uint32_t source_ssrc,
+                         const std::shared_ptr<rtsp::RtpSenderTrack>& sender);
+    int RemoveMediaStream(uint32_t source_ssrc);
+
     void SetVideoTrack(const std::shared_ptr<VideoTrack>& track)
     {
         video_track_ = track;
     }
 
     bool InitTracks(const std::vector<TrackInfo>& infos);
+    void OnTrackNack(uint32_t media_ssrc, const std::vector<uint16_t>& lost_seqs);
 
 protected:
     void HandleRtpPacket(Packet* pkt) override;
@@ -95,6 +107,7 @@ protected:
 private:
     rtsp::RtpReceiverTrack::Ptr FindTrackBySsrc(uint32_t ssrc);
     std::shared_ptr<rtsp::RtpReceiverTrack> GetOrCreateTrack(uint32_t ssrc);
+    void RemoveMediaStreamOnOwner(uint32_t source_ssrc);
 
 private:
     std::mutex track_mtx_;

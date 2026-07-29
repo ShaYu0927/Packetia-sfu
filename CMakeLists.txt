@@ -50,6 +50,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/log
     ${CMAKE_SOURCE_DIR}/network
     ${CMAKE_SOURCE_DIR}/Rtsp
+    ${CMAKE_SOURCE_DIR}/Rtsp/Rtp
     ${CMAKE_SOURCE_DIR}/Common
     ${CMAKE_SOURCE_DIR}/src/net
     ${CMAKE_SOURCE_DIR}/protocol/sip
@@ -153,6 +154,8 @@ add_library(utils STATIC
 add_library(rtp STATIC
     Rtsp/Rtp.cpp
     Rtsp/Rtp.h
+    Rtsp/Rtp/NackRequester.cpp
+    Rtsp/Rtp/NackRequester.h
     Rtsp/RtpReceiver.cpp
     Rtsp/RtpReceiver.h
     Rtsp/RtpSenderTrack.cpp

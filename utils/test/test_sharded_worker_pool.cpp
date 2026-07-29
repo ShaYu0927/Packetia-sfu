@@ -16,6 +16,7 @@
 
 #include "ShardedWorkerPool.h"
 #include "EndpointBase.h"
+#include "MediaStreamAffinity.h"
 
 namespace utils
 {
@@ -174,6 +175,57 @@ TEST(WorkerServiceGlobalTest, FunctionExceptionDoesNotStopWorker)
 
     EXPECT_EQ(std::future_status::ready,
               future.wait_for(std::chrono::seconds(2)));
+}
+
+TEST(MediaStreamAffinityTest, StreamHandleIsStableAndSeparatesEndpoints)
+{
+    const auto first = media_affinity::MakeStreamHandle(100, 0x11223344);
+    const auto again = media_affinity::MakeStreamHandle(100, 0x11223344);
+    const auto other_endpoint =
+        media_affinity::MakeStreamHandle(101, 0x11223344);
+
+    EXPECT_EQ(first.endpoint_id, 100u);
+    EXPECT_EQ(first.ssrc, 0x11223344u);
+    EXPECT_EQ(first.affinity_key, again.affinity_key);
+    EXPECT_NE(first.affinity_key, other_endpoint.affinity_key);
+}
+
+TEST(MediaStreamAffinityTest, UnifiedPostPreservesStreamOrderAndOwnerThread)
+{
+    GlobalPoolGuard guard("media");
+    ASSERT_EQ(0, WorkerService::create_function_pool("media", 4, 64));
+
+    std::mutex mutex;
+    std::vector<int> values;
+    std::vector<std::thread::id> threads;
+    auto completed = std::make_shared<std::promise<void>>();
+    auto future = completed->get_future();
+
+    for (int value = 0; value < 4; ++value)
+    {
+        ASSERT_EQ(0, media_affinity::PostToMediaStream(
+                         77, 0xaabbccdd,
+                         [&, value, completed] {
+                             {
+                                 std::lock_guard<std::mutex> lock(mutex);
+                                 values.push_back(value);
+                                 threads.push_back(std::this_thread::get_id());
+                             }
+                             if (value == 3)
+                             {
+                                 completed->set_value();
+                             }
+                         }));
+    }
+
+    ASSERT_EQ(std::future_status::ready,
+              future.wait_for(std::chrono::seconds(2)));
+    EXPECT_EQ((std::vector<int>{0, 1, 2, 3}), values);
+    ASSERT_EQ(threads.size(), 4u);
+    EXPECT_TRUE(std::all_of(threads.begin(), threads.end(),
+                            [&](std::thread::id id) {
+                                return id == threads.front();
+                            }));
 }
 
 // class ShardedWorkerPoolTest : public ::testing::Test

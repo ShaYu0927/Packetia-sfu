@@ -156,6 +156,14 @@ void RtpVideoTracker::onRtpSorted(const RtpPacket::Ptr &pkt)
         return;
     }
 
+    if(_nack_receiver)
+    {
+        const uint64_t now_ms = pkt->getRecvTimeMs();
+
+        _nack_receiver->OnReceivedPacket(pkt->getSeq(), now_ms);
+        _nack_receiver->Process(now_ms);
+    }
+
     const uint8_t *payload = pkt->getPayload();
     size_t payload_size = pkt->getPayloadSize();
 
@@ -210,9 +218,6 @@ void RtpVideoTracker::onRtpSorted(const RtpPacket::Ptr &pkt)
         auto buffer                  = std::make_shared<std::vector<uint8_t>>(au.ToAnnexB());
         frame->buffer                = std::move(buffer);
         frame->size                  = frame->buffer->size();
-
-        OnFrameCompleted();
-        emitEncodedFrame(frame);
     }
 }
 
@@ -494,7 +499,6 @@ void RtcpDispatcher::OnReceiverReport(uint32_t reporter_ssrc, uint32_t media_ssr
                                 lsr,
                                 dlsr);
 }
-
 
 void RtcpDispatcher::OnTransportFeedback(const rtcpx::TransportFeedbackReport& report)
 {

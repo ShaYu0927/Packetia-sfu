@@ -171,11 +171,17 @@ void RtspSession::OnInterleaved(int channel,const uint8_t*p, int len)
     WorkJob job{};
     job.target_id = binding.endpoint_id;
     job.type = binding.is_rtcp ? WorkType::Rtcp : WorkType::Rtp;
-    job.key = binding.is_rtcp
-        ? media_affinity::ResolveRtcpKey(binding.endpoint_id, p,
-                                         static_cast<size_t>(len))
-        : media_affinity::ResolveRtpKey(binding.endpoint_id, p,
-                                        static_cast<size_t>(len));
+    uint32_t media_ssrc = 0;
+    const bool has_media_ssrc = binding.is_rtcp
+        ? media_affinity::TryGetRtcpMediaSsrc(
+              reinterpret_cast<const uint8_t*>(p), static_cast<size_t>(len),
+              media_ssrc)
+        : media_affinity::TryGetRtpSsrc(
+              reinterpret_cast<const uint8_t*>(p), static_cast<size_t>(len),
+              media_ssrc);
+    job.key = has_media_ssrc
+        ? media_affinity::MakeStreamHandle(binding.endpoint_id, media_ssrc).affinity_key
+        : binding.endpoint_id;
     job.raw.data = new uint8_t[len];
     std::memcpy(job.raw.data, p, static_cast<size_t>(len));
     job.raw.len = static_cast<uint32_t>(len);

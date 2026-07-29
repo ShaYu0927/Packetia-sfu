@@ -19,6 +19,7 @@
 #include "logger.h"
 #include "AudioDepacketizer.h"
 #include "MediaFrame.h"
+#include "NackRequester.h"
 
 namespace rtsp 
 {
@@ -140,6 +141,8 @@ public:
      * seq_nr is the FIR command sequence number.
      */
     using FirCallback = std::function<void(uint8_t seq_nr)>;
+
+    using SendNackCallback = std::function<void(uint32_t ssrc, const std::vector<uint16_t>& lost_seq)>;
 
 public:
     /**
@@ -417,6 +420,9 @@ protected:
         (void)pkt;
     }
 
+public:
+    void setSendNackCallback(SendNackCallback cb) { _on_send_nack = std::move(cb);}
+
 protected:
     static constexpr size_t kPacketPoolCapacity = 64;
 
@@ -449,6 +455,8 @@ protected:
      */
     FrameCallback _on_frame;
     EncodedFrameCallback _on_encoded_frame;
+
+    SendNackCallback _on_send_nack;
 };
 
 
@@ -460,7 +468,22 @@ public:
     explicit RtpVideoTracker(const TrackInfo& info)
         : RtpReceiverTrack(info)
         , _depacketizer(std::make_unique<H264Depacketizer>())
+        , _nack_receiver(std::make_unique<NackRequester>(NackRequester::Config{}))
     {
+        _nack_receiver->SetNackCallback([this](const std::vector<uint16_t> &lost_seq){
+            /* notify nack request*/
+            if(lost_seq.empty())
+            {
+                return;
+            }
+
+            CountNack(lost_seq.size());
+
+            if (_on_send_nack) 
+            {
+                _on_send_nack(getSSRC(), lost_seq);
+            }
+        });
     }
 
     ~RtpVideoTracker() override = default;
@@ -480,7 +503,6 @@ public:
 
     void OnRtcpBye(uint32_t sender_ssrc)
     {
-        LOG_INFO("[RTCP][BYE]", " sender_ssrc=", sender_ssrc);
         CountBye();
     }
 
@@ -493,6 +515,8 @@ private:
 
     std::unique_ptr<H264Depacketizer> _depacketizer;
     bool _has_last_seq = false;
+
+    std::unique_ptr<NackRequester> _nack_receiver;
 };
 
 class RtpAudioTracker : public RtpReceiverTrack

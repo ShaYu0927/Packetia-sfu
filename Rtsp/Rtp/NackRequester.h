@@ -8,21 +8,6 @@
 
 namespace rtsp 
 {
-/*
-
-    收到 RTP
-      │
-      ▼
-    发现丢包
-        │
-        ▼
-    维护缺包列表
-        │
-        ▼
-    定时生成 NACK
-
-*/
-
 class NackRequester
 {
 public:
