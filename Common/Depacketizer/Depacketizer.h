@@ -1,6 +1,7 @@
 #ifndef _DEPACKETIZER_H__
 #define _DEPACKETIZER_H__
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 

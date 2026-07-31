@@ -670,6 +670,8 @@ std::string RtspRequest::HandleCmdANNOUNCE(RtspRequestInfo& req)
 
 std::string RtspRequest::HandleCmdSetup(RtspRequestInfo& req)
 {
+    last_setup_endpoint_id_ = 0;
+    last_setup_rtcp_channel_ = 0;
     std::string session_id,url,control, suffix;
     std::shared_ptr<RtpTrack> track_ptr;
     std::shared_ptr<char> response(new char[10240], std::default_delete<char[]>());
@@ -754,21 +756,16 @@ std::string RtspRequest::HandleCmdSetup(RtspRequestInfo& req)
         return "";
     }
 
-    if (!media_session->BindTrackEndpoint(static_cast<uint8_t>(pTranOut.interleaved_rtp), endpoint_id))
+    if (!media_session->BindTrackEndpoint(track_id, endpoint_id))
     {
-        LOG_ERROR("Bind RTP channel endpoint failed, endpoint_id={}, channel={}",
-                  endpoint_id, pTranOut.interleaved_rtp);
+        LOG_ERROR("Bind track endpoint failed, endpoint_id={}, track_id={}",
+                  endpoint_id, track_id);
         utils::EndpointManager::Instance().Remove(endpoint_id);
         return "";
     }
 
-    if (!media_session->BindTrackEndpoint(static_cast<uint8_t>(pTranOut.interleaved_rtcp), endpoint_id))
-    {
-        LOG_ERROR("Bind RTCP channel endpoint failed, endpoint_id={}, channel={}",
-                  endpoint_id, pTranOut.interleaved_rtcp);
-        utils::EndpointManager::Instance().Remove(endpoint_id);
-        return "";
-    }
+    last_setup_endpoint_id_ = endpoint_id;
+    last_setup_rtcp_channel_ = static_cast<uint8_t>(pTranOut.interleaved_rtcp);
 
     std::string str = BuildSetupRes(std::to_string(req.cseq), session_id,pTranOut.interleaved_rtp, pTranOut.interleaved_rtcp,"record");
     LOG_INFO(str);

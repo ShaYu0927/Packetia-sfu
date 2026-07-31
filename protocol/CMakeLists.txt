@@ -31,6 +31,10 @@ add_library(Rtcp STATIC
     Rtcp/RtcpContext.h
     Rtcp/RtcpReciver.h
     Rtcp/RtcpReciver.cpp
+    Rtcp/RtcpNack.h
+    Rtcp/RtcpNack.cpp
+    Rtcp/RtcpFeedback.h
+    Rtcp/RtcpFeedback.cpp
 )
 
 target_include_directories(Rtcp

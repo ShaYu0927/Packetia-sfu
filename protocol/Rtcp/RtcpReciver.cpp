@@ -13,6 +13,16 @@ uint32_t ReadUint24BE(const uint8_t* p)
            static_cast<uint32_t>(p[2]);
 }
 
+int32_t ReadInt24BE(const uint8_t* p)
+{
+    uint32_t value = ReadUint24BE(p);
+    if ((value & 0x00800000U) != 0)
+    {
+        value |= 0xFF000000U;
+    }
+    return static_cast<int32_t>(value);
+}
+
 bool ParseTransportFeedback(const uint8_t* p, size_t len, rtcpx::TransportFeedbackReport& report)
 {
     if (!p || len < 20)
@@ -294,7 +304,7 @@ void rtcpx::RtcpReceiverImpl::HandleSingleRtcpPacket(const uint8_t* p, size_t le
                 observer_->OnReceiverReport(sender_ssrc,
                                             utils::Utils::ReadUint32BE(rb),
                                             rb[4],
-                                            utils::Utils::ReadUint32BE(rb + 5),
+                                            ReadInt24BE(rb + 5),
                                             utils::Utils::ReadUint32BE(rb + 8),
                                             utils::Utils::ReadUint32BE(rb + 12),
                                             utils::Utils::ReadUint32BE(rb + 16),
@@ -313,7 +323,7 @@ void rtcpx::RtcpReceiverImpl::HandleSingleRtcpPacket(const uint8_t* p, size_t le
                 observer_->OnReceiverReport(sender_ssrc,
                                             utils::Utils::ReadUint32BE(rb),
                                             rb[4],
-                                            utils::Utils::ReadUint32BE(rb + 5),
+                                            ReadInt24BE(rb + 5),
                                             utils::Utils::ReadUint32BE(rb + 8),
                                             utils::Utils::ReadUint32BE(rb + 12),
                                             utils::Utils::ReadUint32BE(rb + 16),

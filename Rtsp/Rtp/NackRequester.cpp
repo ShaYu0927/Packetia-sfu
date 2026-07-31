@@ -1,8 +1,15 @@
 #include "NackRequester.h"
+#include <algorithm>
+#include <utility>
 
 
 namespace rtsp
 {
+
+NackRequester::NackRequester(Config config)
+    : config_(std::move(config))
+{
+}
 
 // Register the callback used to send NACK feedback.
 void NackRequester::SetNackCallback(NackCallback cb)
@@ -114,12 +121,12 @@ void NackRequester::Process(uint64_t now_ms)
         }
         ++it;
 
-        if (!nack_batch.empty() && nack_callback_)
-        {
-            nack_callback_(nack_batch);
-        }
     }
 
+    if (!nack_batch.empty() && nack_callback_)
+    {
+        nack_callback_(nack_batch);
+    }
 }
 
 // Reset all runtime states and clear the pending NACK list.

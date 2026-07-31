@@ -20,3 +20,4 @@ test_rtp_input
 
 build/
 out/
+build-win/

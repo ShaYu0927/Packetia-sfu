@@ -1,6 +1,8 @@
 add_executable(test_rtp_input
     test_rtp_input.cpp
     test_sdp_track_binding.cpp
+    test_rtcp_chain.cpp
+    test_audio_depacketizer.cpp
 )
 
 target_link_libraries(test_rtp_input

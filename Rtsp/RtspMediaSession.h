@@ -36,7 +36,7 @@ public:
         bool valid = false;
         int track_id = -1;
         bool is_rtcp = false;
-        uint32_t endpoint_id;
+        uint64_t endpoint_id = 0;
         uint64_t key = 0;
     };
 

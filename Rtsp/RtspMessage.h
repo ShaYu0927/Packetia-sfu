@@ -161,6 +161,8 @@ public:
         return "";
     }
     MediaSession::Ptr GetMediaSession() const { return media_session; }
+    uint64_t GetLastSetupEndpointId() const { return last_setup_endpoint_id_; }
+    uint8_t GetLastSetupRtcpChannel() const { return last_setup_rtcp_channel_; }
    
     const uint16_t GetRtpChannel() { return rtp_channel_; }
     const uint16_t GetRtcpChannel() { return rtcp_channel_; }
@@ -254,6 +256,8 @@ private:
     std::unordered_map<std::string, std::pair<std::string, uint32_t>> header_line_param_;
 
     MediaSession::Ptr media_session;
+    uint64_t last_setup_endpoint_id_ = 0;
+    uint8_t last_setup_rtcp_channel_ = 0;
 
 public:
     std::shared_ptr<Sdp> sdp_;

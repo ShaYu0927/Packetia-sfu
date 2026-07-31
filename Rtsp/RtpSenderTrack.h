@@ -147,7 +147,7 @@ private:
 
     void CacheRtpPacket(uint16_t out_seq, const std::vector<uint8_t>& packet);
 
-    bool SendRtpPacket(const std::vector<uint8_t>& packet, uint16_t out_seq);
+    bool SendRtpPacket(const std::vector<uint8_t>& packet, uint16_t out_seq, bool retransmit = false);
 
 private:
     struct CachedRtpPacket

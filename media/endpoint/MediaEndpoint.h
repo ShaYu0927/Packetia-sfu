@@ -4,6 +4,8 @@
 #include "EndpointBase.h"
 #include "RtpReceiver.h"
 #include "RtspMediaSession.h"
+#include "RtcpContext.h"
+#include <functional>
 #include <mutex>
 
 namespace media 
@@ -78,6 +80,7 @@ class SfuEndpoint : public MediaEndpoint,
 {
 public:
     using MediaEndpoint::MediaEndpoint;
+    using SendRtcpCallback = std::function<bool(const uint8_t*, size_t)>;
 
     bool Start() override;
     void Stop() override;
@@ -97,6 +100,8 @@ public:
 
     bool InitTracks(const std::vector<TrackInfo>& infos);
     void OnTrackNack(uint32_t media_ssrc, const std::vector<uint16_t>& lost_seqs);
+    void OnTrackPli(uint32_t media_ssrc);
+    void SetRtcpSendCallback(SendRtcpCallback cb);
 
 protected:
     void HandleRtpPacket(Packet* pkt) override;
@@ -115,6 +120,11 @@ private:
     std::shared_ptr<VideoTrack> video_track_;
 
     SfuRouter router_;
+    std::unique_ptr<rtsp::RtcpDispatcher> rtcp_dispatcher_;
+    std::unique_ptr<rtcpx::IRtcpReceiver> rtcp_receiver_;
+    std::mutex rtcp_send_mutex_;
+    SendRtcpCallback send_rtcp_cb_;
+    uint32_t local_rtcp_ssrc_ = 0;
 };
 
 

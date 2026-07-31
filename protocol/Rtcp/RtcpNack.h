@@ -2,6 +2,7 @@
 #define _RTCP_NACK_H_
 
 #include <cstdint>
+#include <cstddef>
 #include <vector>
 
 namespace rtcpx 

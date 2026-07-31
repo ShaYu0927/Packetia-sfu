@@ -251,7 +251,10 @@ RtpAudioTracker::RtpAudioTracker(const TrackInfo& info)
 
     uint32_t sample_rate  = info.clock_rate > 0 ? info.clock_rate : 8000;
     uint32_t channels     = info.channels > 0 ? static_cast<uint32_t>(info.channels) : 1;
-    depacketizer_         = std::make_unique<media::AudioDepacketizer>(codec, sample_rate, channels);
+    depacketizer_         = std::make_unique<media::AudioDepacketizer>(codec,
+                                                                       sample_rate,
+                                                                       channels,
+                                                                       info.fmtp);
 }
 
 RtpAudioTracker::Ptr RtpAudioTracker::Clone()
@@ -389,11 +392,6 @@ RtpPacket::Ptr RtpAudioTracker::inputRtp(TrackType type, int sample_rate, uint8_
 
 }
 
-void RtpAudioTracker::inputRtcp(const uint8_t* ptr, size_t len)
-{
-
-}
-
 void RtpAudioTracker::onRtpSorted(const RtpPacket::Ptr& pkt)
 {
     if (!pkt || !depacketizer_)
@@ -436,60 +434,104 @@ void RtpAudioTracker::onRtpSorted(const RtpPacket::Ptr& pkt)
 
 void RtcpDispatcher::AddReceiverTrack(uint32_t media_ssrc, std::weak_ptr<RtpReceiverTrack> track)
 {
+    std::lock_guard<std::mutex> lock(tracks_mutex_);
     recv_tracks_[media_ssrc] = std::move(track);
+}
+
+void RtcpDispatcher::RemoveReceiverTrack(uint32_t media_ssrc)
+{
+    std::lock_guard<std::mutex> lock(tracks_mutex_);
+    recv_tracks_.erase(media_ssrc);
 }
 
 void RtcpDispatcher::AddSenderTrack(uint32_t media_ssrc, std::weak_ptr<RtpSenderTrack> track)
 {
+    std::lock_guard<std::mutex> lock(tracks_mutex_);
     send_tracks_[media_ssrc] = std::move(track);
+}
+
+void RtcpDispatcher::RemoveSenderTrack(uint32_t media_ssrc)
+{
+    std::lock_guard<std::mutex> lock(tracks_mutex_);
+    send_tracks_.erase(media_ssrc);
 }
 
 void RtcpDispatcher::SetTransportFeedbackCallback(TransportFeedbackCallback cb)
 {
+    std::lock_guard<std::mutex> lock(tracks_mutex_);
     transport_feedback_cb_ = std::move(cb);
+}
+
+void RtcpDispatcher::OnSenderReport(uint32_t sender_ssrc,
+                                    uint64_t ntp,
+                                    uint32_t rtp_ts,
+                                    uint32_t packet_count,
+                                    uint32_t octet_count)
+{
+    std::shared_ptr<RtpReceiverTrack> track;
+    {
+        std::lock_guard<std::mutex> lock(tracks_mutex_);
+        auto it = recv_tracks_.find(sender_ssrc);
+        if (it == recv_tracks_.end())
+        {
+            return;
+        }
+        track = it->second.lock();
+        if (!track)
+        {
+            recv_tracks_.erase(it);
+            return;
+        }
+    }
+    track->OnRtcpSenderReport(sender_ssrc, ntp, rtp_ts, packet_count, octet_count);
 }
 
 void RtcpDispatcher::OnNack(uint32_t sender_ssrc, uint32_t media_ssrc, const uint16_t* seqs, size_t count)
 {
+    (void)sender_ssrc;
     if(!seqs || count == 0)
     {
         return;
     }
 
-    auto it = send_tracks_.find(media_ssrc);
-
-    if (it == send_tracks_.end()) 
+    std::shared_ptr<RtpSenderTrack> track;
     {
-        return;
+        std::lock_guard<std::mutex> lock(tracks_mutex_);
+        auto it = send_tracks_.find(media_ssrc);
+        if (it == send_tracks_.end())
+        {
+            return;
+        }
+        track = it->second.lock();
+        if (!track)
+        {
+            send_tracks_.erase(it);
+            return;
+        }
     }
-
-    auto track = it->second.lock();
-    if(!track)
-    {
-        return;
-    }
-
     std::vector<uint16_t> lost_seqs(seqs, seqs + count);
-
     track->OnRtcpNack(lost_seqs);
 }
 
 void RtcpDispatcher::OnReceiverReport(uint32_t reporter_ssrc, uint32_t media_ssrc, uint8_t fraction_lost, int32_t cumulative_lost, uint32_t highest_seq, uint32_t jitter, uint32_t lsr, uint32_t dlsr)
 {
-    auto it = send_tracks_.find(media_ssrc);
-    if (it == send_tracks_.end())
+    std::shared_ptr<RtpSenderTrack> track;
     {
-        LOG_INFO("[RTCP][RR] sender track not found", " media_ssrc=", media_ssrc);
-        return;
+        std::lock_guard<std::mutex> lock(tracks_mutex_);
+        auto it = send_tracks_.find(media_ssrc);
+        if (it == send_tracks_.end())
+        {
+            LOG_INFO("[RTCP][RR] sender track not found", " media_ssrc=", media_ssrc);
+            return;
+        }
+        track = it->second.lock();
+        if (!track)
+        {
+            send_tracks_.erase(it);
+            LOG_INFO("[RTCP][RR] sender track expired", " media_ssrc=", media_ssrc);
+            return;
+        }
     }
-
-    auto track = it->second.lock();
-    if (!track)
-    {
-        LOG_INFO("[RTCP][RR] sender track expired", " media_ssrc=", media_ssrc);
-        return;
-    }
-
     track->OnRtcpReceiverReport(reporter_ssrc,
                                 media_ssrc,
                                 fraction_lost,
@@ -502,19 +544,82 @@ void RtcpDispatcher::OnReceiverReport(uint32_t reporter_ssrc, uint32_t media_ssr
 
 void RtcpDispatcher::OnTransportFeedback(const rtcpx::TransportFeedbackReport& report)
 {
-    if (transport_feedback_cb_)
+    TransportFeedbackCallback cb;
     {
-        transport_feedback_cb_(report);
+        std::lock_guard<std::mutex> lock(tracks_mutex_);
+        cb = transport_feedback_cb_;
+    }
+    if (cb)
+    {
+        cb(report);
     }
 }
 void RtcpDispatcher::OnPli(uint32_t sender_ssrc, uint32_t media_ssrc)
 {
-
+    (void)sender_ssrc;
+    std::shared_ptr<RtpSenderTrack> track;
+    {
+        std::lock_guard<std::mutex> lock(tracks_mutex_);
+        auto it = send_tracks_.find(media_ssrc);
+        if (it == send_tracks_.end())
+        {
+            return;
+        }
+        track = it->second.lock();
+        if (!track)
+        {
+            send_tracks_.erase(it);
+            return;
+        }
+    }
+    track->OnRtcpPli();
 }
 
 void RtcpDispatcher::OnFir(uint32_t sender_ssrc, uint32_t media_ssrc, uint8_t seq_nr)
 {
+    (void)sender_ssrc;
+    (void)seq_nr;
+    std::shared_ptr<RtpSenderTrack> track;
+    {
+        std::lock_guard<std::mutex> lock(tracks_mutex_);
+        auto it = send_tracks_.find(media_ssrc);
+        if (it == send_tracks_.end())
+        {
+            return;
+        }
+        track = it->second.lock();
+        if (!track)
+        {
+            send_tracks_.erase(it);
+            return;
+        }
+    }
+    track->OnRtcpFir();
+}
 
+void RtcpDispatcher::OnBye(uint32_t sender_ssrc)
+{
+    std::shared_ptr<RtpReceiverTrack> track;
+    {
+        std::lock_guard<std::mutex> lock(tracks_mutex_);
+        auto it = recv_tracks_.find(sender_ssrc);
+        if (it == recv_tracks_.end())
+        {
+            return;
+        }
+        track = it->second.lock();
+        recv_tracks_.erase(it);
+    }
+    if (track)
+    {
+        track->OnRtcpBye(sender_ssrc);
+    }
+}
+
+void RtcpDispatcher::OnRttUpdated(uint32_t media_ssrc, uint32_t rtt_ms)
+{
+    (void)media_ssrc;
+    (void)rtt_ms;
 }
 
 }

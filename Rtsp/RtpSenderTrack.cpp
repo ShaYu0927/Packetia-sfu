@@ -138,7 +138,7 @@ void RtpSenderTrack::OnRtcpNack(const std::vector<uint16_t>& lost_seqs)
             continue;
         }
 
-        if (SendRtpPacket(cached.packet, seq))
+        if (SendRtpPacket(cached.packet, seq, true))
         {
             cached.last_retransmit_ms = now_ms;
             ++cached.retransmit_count;
@@ -312,7 +312,7 @@ void RtpSenderTrack::CacheRtpPacket(uint16_t out_seq, const std::vector<uint8_t>
     }
 }
 
-bool RtpSenderTrack::SendRtpPacket(const std::vector<uint8_t>& packet, uint16_t out_seq)
+bool RtpSenderTrack::SendRtpPacket(const std::vector<uint8_t>& packet, uint16_t out_seq, bool retransmit)
 {
     if (!_sender || packet.empty())
     {
@@ -324,6 +324,7 @@ bool RtpSenderTrack::SendRtpPacket(const std::vector<uint8_t>& packet, uint16_t 
     options.allow_queue = true;
     options.ssrc = _config.local_ssrc;
     options.seq = out_seq;
+    options.retransmit = retransmit;
 
     return _sender->SendPacket(packet.data(), packet.size(), options) == SendResult::Ok;
 }

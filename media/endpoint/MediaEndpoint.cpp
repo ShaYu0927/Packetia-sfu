@@ -1,7 +1,11 @@
 #include "MediaEndpoint.h"
 #include "logger.h"
 #include "RtcpContext.h"
+#include "RtcpReciver.h"
+#include "RtcpHealper.h"
 #include "MediaStreamAffinity.h"
+#include "RtcpNack.h"
+#include "RtcpFeedback.h"
 #include <iomanip>
 #include <mutex>
 #include <algorithm>
@@ -191,6 +195,7 @@ std::shared_ptr<rtsp::RtpReceiverTrack> SfuEndpoint::GetOrCreateTrack(uint32_t s
             return it->second;
         }
     }
+
     std::shared_ptr<rtsp::RtpReceiverTrack> new_track;
     auto source_track = SourceTrack();
     if (!source_track)
@@ -231,7 +236,16 @@ std::shared_ptr<rtsp::RtpReceiverTrack> SfuEndpoint::GetOrCreateTrack(uint32_t s
 
     {
         std::lock_guard<std::mutex> lock(track_mtx_);
-        ssrc_to_track_[ssrc] = new_track;
+        auto result = ssrc_to_track_.emplace(ssrc, new_track);
+        if (!result.second)
+        {
+            return result.first->second;
+        }
+    }
+
+    if (rtcp_dispatcher_)
+    {
+        rtcp_dispatcher_->AddReceiverTrack(ssrc, new_track);
     }
 
     return new_track;
@@ -257,14 +271,6 @@ void SfuEndpoint::HandleRtcpPacket(Packet* pkt)
              " count_or_fmt=", static_cast<int>(count_or_fmt),
              " length_words=", length_words);
 
-    auto source_track = SourceTrack();
-    if (source_track && source_track->getTrackInfo().type != TrackVideo)
-    {
-        const auto& info = source_track->getTrackInfo();
-        LOG_INFO("[RTCP] ignore non-video RTCP", " track=", TrackTypeToString(info.type), " codec=", info.codec_name, " len=", pkt->len);
-        return;
-    }
-
     rtcpx::RtcpPacketInfo rtcp_info;
     if (!rtcpx::InspectRtcpPacket(pkt->data, pkt->len, &rtcp_info))
     {
@@ -272,28 +278,18 @@ void SfuEndpoint::HandleRtcpPacket(Packet* pkt)
         return;
     }
 
-    if (!rtcp_info.has_media_ssrc)
+    if (rtcp_info.has_media_ssrc &&
+        (rtcp_info.first_packet_type == rtcpx::RTCP_PT_SR ||
+         rtcp_info.first_packet_type == rtcpx::RTCP_PT_SDES ||
+         rtcp_info.first_packet_type == rtcpx::RTCP_PT_BYE))
     {
-        LOG_ERROR("[RTCP] failed to get media ssrc",
-                  " len=", pkt->len,
-                  " pt=", static_cast<int>(rtcp_info.first_packet_type),
-                  " fmt=", static_cast<int>(rtcp_info.first_count_or_fmt));
-        return;
+        GetOrCreateTrack(rtcp_info.media_ssrc);
     }
 
-    uint32_t media_ssrc = rtcp_info.media_ssrc;
-    auto track = FindTrackBySsrc(media_ssrc);
-    if (!track)
+    if (!rtcp_receiver_ || !rtcp_receiver_->OnRtcpPacket(pkt->data, pkt->len))
     {
-        track = GetOrCreateTrack(media_ssrc);
-        if (!track)
-        {
-            LOG_INFO("[RTCP] track not found yet, media_ssrc=", media_ssrc, " len=", pkt->len);
-            return;
-        }
+        LOG_ERROR("[RTCP] parse failed, len=", pkt->len);
     }
-
-    track->inputRtcp(pkt->data, pkt->len);
 }
 
 bool SfuEndpoint::InitTracks(const std::vector<TrackInfo>& infos)
@@ -311,8 +307,72 @@ bool SfuEndpoint::InitTracks(const std::vector<TrackInfo>& infos)
 
 bool SfuEndpoint::Start()
 {
+    if (!rtcp_dispatcher_)
+    {
+        rtcp_dispatcher_ = std::make_unique<rtsp::RtcpDispatcher>();
+    }
+    if (!rtcp_receiver_)
+    {
+        rtcp_receiver_ = std::make_unique<rtcpx::RtcpReceiverImpl>(rtcp_dispatcher_.get());
+    }
+    local_rtcp_ssrc_ = static_cast<uint32_t>(Id() ^ (Id() >> 32));
+    if (local_rtcp_ssrc_ == 0)
+    {
+        local_rtcp_ssrc_ = 1;
+    }
+    rtcp_receiver_->SetLocalSsrc(local_rtcp_ssrc_);
     SetState(State::kRunning);
     return true;
+}
+
+void SfuEndpoint::SetRtcpSendCallback(SendRtcpCallback cb)
+{
+    std::lock_guard<std::mutex> lock(rtcp_send_mutex_);
+    send_rtcp_cb_ = std::move(cb);
+}
+
+void SfuEndpoint::OnTrackNack(uint32_t media_ssrc, const std::vector<uint16_t>& lost_seqs)
+{
+    if (lost_seqs.empty())
+    {
+        return;
+    }
+
+    SendRtcpCallback send;
+    {
+        std::lock_guard<std::mutex> lock(rtcp_send_mutex_);
+        send = send_rtcp_cb_;
+    }
+    if (!send)
+    {
+        return;
+    }
+
+    const auto packet = rtcpx::RtRtcpNack::Build(local_rtcp_ssrc_, media_ssrc, lost_seqs);
+    if (packet.empty() || !send(packet.data(), packet.size()))
+    {
+        LOG_ERROR("[RTCP][NACK] send failed", " media_ssrc=", media_ssrc,
+                  " count=", lost_seqs.size());
+    }
+}
+
+void SfuEndpoint::OnTrackPli(uint32_t media_ssrc)
+{
+    SendRtcpCallback send;
+    {
+        std::lock_guard<std::mutex> lock(rtcp_send_mutex_);
+        send = send_rtcp_cb_;
+    }
+    if (!send)
+    {
+        return;
+    }
+
+    const auto packet = rtcpx::RtcpFeedback::BuildPli(local_rtcp_ssrc_, media_ssrc);
+    if (!send(packet.data(), packet.size()))
+    {
+        LOG_ERROR("[RTCP][PLI] send failed", " media_ssrc=", media_ssrc);
+    }
 }
 
 void SfuEndpoint::Stop()
@@ -415,6 +475,17 @@ int SfuEndpoint::AddSubscriber(
         [weak_self, source_ssrc, sender = std::move(sender)] {
             if (auto self = weak_self.lock())
             {
+                std::weak_ptr<SfuEndpoint> sender_weak_self = self;
+                sender->SetKeyFrameRequestCallback([sender_weak_self, source_ssrc] {
+                    if (auto endpoint = sender_weak_self.lock())
+                    {
+                        endpoint->OnTrackPli(source_ssrc);
+                    }
+                });
+                if (self->rtcp_dispatcher_)
+                {
+                    self->rtcp_dispatcher_->AddSenderTrack(sender->GetSsrc(), sender);
+                }
                 self->router_.AddSubscriber(source_ssrc, sender);
             }
         });
@@ -428,11 +499,16 @@ int SfuEndpoint::RemoveSubscriber(uint32_t source_ssrc, const std::shared_ptr<rt
     }
     std::weak_ptr<SfuEndpoint> weak_self = weak_from_this();
     const auto* sender_ptr = sender.get();
+    const uint32_t sender_ssrc = sender->GetSsrc();
     return media_affinity::PostToMediaStream(
-        Id(), source_ssrc, [weak_self, source_ssrc, sender_ptr] {
+        Id(), source_ssrc, [weak_self, source_ssrc, sender_ptr, sender_ssrc] {
             if (auto self = weak_self.lock())
             {
                 self->router_.RemoveSubscriber(source_ssrc, sender_ptr);
+                if (self->rtcp_dispatcher_)
+                {
+                    self->rtcp_dispatcher_->RemoveSenderTrack(sender_ssrc);
+                }
             }
         });
 }
@@ -454,6 +530,17 @@ void SfuEndpoint::RemoveMediaStreamOnOwner(uint32_t source_ssrc)
     {
         std::lock_guard<std::mutex> lock(track_mtx_);
         ssrc_to_track_.erase(source_ssrc);
+    }
+    if (rtcp_dispatcher_)
+    {
+        rtcp_dispatcher_->RemoveReceiverTrack(source_ssrc);
+        for (const auto& sender : router_.GetSenderTracks(source_ssrc))
+        {
+            if (sender)
+            {
+                rtcp_dispatcher_->RemoveSenderTrack(sender->GetSsrc());
+            }
+        }
     }
     router_.RemoveStream(source_ssrc);
 }

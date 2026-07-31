@@ -298,21 +298,23 @@ public:
      */
     virtual RtpPacket::Ptr inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len) = 0;
 
-    /**
-     * @brief Input one raw RTCP packet.
-     *
-     * Derived classes may parse RTCP packets such as:
-     *   - Sender Report
-     *   - Receiver Report
-     *   - NACK
-     *   - PLI
-     *   - FIR
-     *   - BYE
-     *
-     * @param ptr Raw RTCP packet buffer.
-     * @param len Raw RTCP packet length.
-     */
-    virtual void inputRtcp(const uint8_t *ptr, size_t len) = 0;
+    virtual void OnRtcpSenderReport(uint32_t sender_ssrc,
+                                    uint64_t ntp,
+                                    uint32_t rtp_ts,
+                                    uint32_t packet_count,
+                                    uint32_t octet_count)
+    {
+        (void)sender_ssrc;
+        (void)ntp;
+        (void)rtp_ts;
+        (void)packet_count;
+        (void)octet_count;
+    }
+
+    virtual void OnRtcpBye(uint32_t sender_ssrc)
+    {
+        (void)sender_ssrc;
+    }
 
 protected:
     /**
@@ -491,17 +493,12 @@ public:
 public:
     RtpPacket::Ptr inputRtp(TrackType type, int sample_rate, uint8_t* ptr, size_t len) override;
 
-    void inputRtcp(const uint8_t* ptr, size_t len) override
-    {
-        
-    }
-
-    void OnRtcpSenderReport(uint32_t sender_ssrc, uint64_t ntp, uint32_t rtp_ts, uint32_t packet_count,uint32_t octet_count)
+    void OnRtcpSenderReport(uint32_t sender_ssrc, uint64_t ntp, uint32_t rtp_ts, uint32_t packet_count,uint32_t octet_count) override
     {
         RtpRecvStatsBase::OnSenderReport(sender_ssrc, ntp, rtp_ts, packet_count, octet_count);
     }
 
-    void OnRtcpBye(uint32_t sender_ssrc)
+    void OnRtcpBye(uint32_t sender_ssrc) override
     {
         CountBye();
     }
@@ -538,8 +535,6 @@ public:
     Ptr Clone();
 
     RtpPacket::Ptr inputRtp(TrackType type, int sample_rate, uint8_t* ptr, size_t len) override;
-    void inputRtcp(const uint8_t* ptr, size_t len) override;
-
 protected:
     void onRtpSorted(const RtpPacket::Ptr& pkt) override;
 
@@ -586,6 +581,7 @@ public:
      * @param track Receiver track instance.
      */
     void AddReceiverTrack(uint32_t media_ssrc, std::weak_ptr<RtpReceiverTrack> track);
+    void RemoveReceiverTrack(uint32_t media_ssrc);
 
     /**
      * @brief Add a sender track for RTCP feedback dispatching.
@@ -597,6 +593,7 @@ public:
      * @param track Sender track instance.
      */
     void AddSenderTrack(uint32_t media_ssrc, std::weak_ptr<RtpSenderTrack> track);
+    void RemoveSenderTrack(uint32_t media_ssrc);
     void SetTransportFeedbackCallback(TransportFeedbackCallback cb);
 
      /**
@@ -689,8 +686,11 @@ public:
      */
     void OnFir(uint32_t sender_ssrc, uint32_t media_ssrc, uint8_t seq_nr) override;
     void OnTransportFeedback(const rtcpx::TransportFeedbackReport& report) override;
+    void OnBye(uint32_t sender_ssrc) override;
+    void OnRttUpdated(uint32_t media_ssrc, uint32_t rtt_ms) override;
 
 private:
+    std::mutex tracks_mutex_;
     std::unordered_map<uint32_t, std::weak_ptr<RtpReceiverTrack>> recv_tracks_;
     std::unordered_map<uint32_t, std::weak_ptr<RtpSenderTrack>> send_tracks_;
     TransportFeedbackCallback transport_feedback_cb_;

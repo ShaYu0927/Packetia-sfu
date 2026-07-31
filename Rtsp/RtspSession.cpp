@@ -1,7 +1,11 @@
 #include "RtspSession.h"
 #include "logger.h"
 #include "MediaStreamAffinity.h"
+#include "MediaEndpoint.h"
+#include <algorithm>
 #include <iomanip>
+#include <limits>
+#include <vector>
 
 
 namespace rtsp 
@@ -369,6 +373,51 @@ void RtspSession::HandleCmdSetup(RtspRequest::RtspRequestInfo& req)
 {
     std::string res  = rtsp_request_->HandleCmdSetup(req);
     media_session_ = rtsp_request_->GetMediaSession();
+
+    const uint64_t endpoint_id = rtsp_request_->GetLastSetupEndpointId();
+    if (endpoint_id != 0)
+    {
+        auto endpoint = std::dynamic_pointer_cast<media::SfuEndpoint>(
+            utils::EndpointManager::Instance().Find(endpoint_id));
+        if (endpoint)
+        {
+            const uint8_t rtcp_channel = rtsp_request_->GetLastSetupRtcpChannel();
+            std::weak_ptr<RtspConnection> weak_conn = conn_;
+            endpoint->SetRtcpSendCallback(
+                [weak_conn, rtcp_channel](const uint8_t* data, size_t len) -> bool {
+                    if (!data || len == 0 || len > std::numeric_limits<uint16_t>::max())
+                    {
+                        return false;
+                    }
+
+                    auto conn = weak_conn.lock();
+                    if (!conn || conn->IsClosed())
+                    {
+                        return false;
+                    }
+                    TaskScheduler* scheduler = conn->GetTaskScheduler();
+                    if (!scheduler)
+                    {
+                        return false;
+                    }
+
+                    std::vector<uint8_t> frame(4 + len);
+                    frame[0] = '$';
+                    frame[1] = rtcp_channel;
+                    frame[2] = static_cast<uint8_t>((len >> 8) & 0xFF);
+                    frame[3] = static_cast<uint8_t>(len & 0xFF);
+                    std::copy(data, data + len, frame.begin() + 4);
+
+                    return scheduler->Post([weak_conn, frame = std::move(frame)] {
+                        if (auto conn = weak_conn.lock())
+                        {
+                            conn->Send(reinterpret_cast<const char*>(frame.data()),
+                                       static_cast<uint32_t>(frame.size()));
+                        }
+                    });
+                });
+        }
+    }
     this->SendRaw(res,(size_t)res.size());
 }
 void RtspSession::HandleCmdRecord(RtspRequest::RtspRequestInfo& req)
