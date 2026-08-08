@@ -10,6 +10,7 @@
 #include "RtpTypes.h"
 #include "Sdp.h"
 #include "StreamContext.h"
+#include "../media/core/EncodedFrameRouter.h"
 
 
 #define MAX_TRACKS 5
@@ -76,6 +77,8 @@ public:
 
     bool BindTrackEndpoint(int track_id, uint64_t endpoint_id);
     uint64_t FindEndpointByTrack(int track_id) const;
+    void SetFramePublisher(std::shared_ptr<media::IEncodedFramePublisher> publisher);
+    std::shared_ptr<media::IEncodedFramePublisher> GetFramePublisher() const;
 
 private:
     void ResetTracks();
@@ -109,6 +112,7 @@ private:
     std::unordered_map<uint64_t, int>                   endpoint_to_track_;
     std::array<ChannelBinding, 256>                     channel_bindings_;
     std::shared_ptr<StreamContext>                      stream_context_;
+    std::shared_ptr<media::IEncodedFramePublisher>      frame_publisher_;
 
 };
 
@@ -128,6 +132,7 @@ public:
     MediaSession::Ptr GetSessionById(const uint32_t& id);
     MediaSession::Ptr GetSessionBySuffix(const std::string& suffix);
     void RemoveSession(const uint32_t& id);
+    void SetFramePublisher(std::shared_ptr<media::IEncodedFramePublisher> publisher);
 
     static std::string GenerateGlobalId();
 
@@ -137,4 +142,5 @@ private:
     std::unordered_map<uint32_t, MediaSession::Ptr> sessions_;       // id -> session
     std::unordered_map<std::string, MediaSession::Ptr> suffix_map_; // suffix -> session
     std::atomic_uint64_t last_id_{0};
+    std::shared_ptr<media::IEncodedFramePublisher> frame_publisher_;
 };

@@ -7,6 +7,9 @@
 #include "IWorkerModule.h"
 #include "ServerLauncher.h"
 #include "websocket/WsServer.h"
+#include "AIService/AIService.h"
+#include "AIService/UnavailableModelProvider.h"
+#include "core/EncodedFrameRouter.h"
 
 #include <algorithm>
 #include <thread>
@@ -56,6 +59,24 @@ int main()
             return true;
         },
         [event_loop]() {
+        }
+    );
+
+    auto frame_router = std::make_shared<media::EncodedFrameRouter>();
+    MediaSessionManager::Instance().SetFramePublisher(frame_router);
+
+    auto ai_service = std::make_shared<service::ai::AIService>(
+        std::make_shared<service::ai::UnavailableModelProvider>(),
+        frame_router);
+
+    launcher.AddCustomService(
+        "AIService",
+        [ai_service]() -> bool {
+            return ai_service->Init() && ai_service->Start();
+        },
+        [ai_service]() {
+            ai_service->Stop();
+            ai_service->Shutdown();
         }
     );
 

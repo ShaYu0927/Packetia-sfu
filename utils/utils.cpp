@@ -25,25 +25,17 @@ uint8_t Utils::ReadUint8(const uint8_t* data)
 
 uint16_t Utils::ReadUint16BE(const uint8_t* data)
 {
-    return static_cast<uint16_t>(
-        (static_cast<uint16_t>(data[0]) << 8) |
-        (static_cast<uint16_t>(data[1]))
-    );
+    return static_cast<uint16_t>((static_cast<uint16_t>(data[0]) << 8) | (static_cast<uint16_t>(data[1])));
 }
 
 uint32_t Utils::ReadUint24BE(const uint8_t* data)
 {
-    return  (static_cast<uint32_t>(data[0]) << 16) |
-            (static_cast<uint32_t>(data[1]) << 8)  |
-            (static_cast<uint32_t>(data[2]));
+    return  (static_cast<uint32_t>(data[0]) << 16) | (static_cast<uint32_t>(data[1]) << 8)  | (static_cast<uint32_t>(data[2]));
 }
 
 uint32_t Utils::ReadUint32BE(const uint8_t* data)
 {
-    return  (static_cast<uint32_t>(data[0]) << 24) |
-            (static_cast<uint32_t>(data[1]) << 16) |
-            (static_cast<uint32_t>(data[2]) << 8)  |
-            (static_cast<uint32_t>(data[3]));
+    return  (static_cast<uint32_t>(data[0]) << 24) | (static_cast<uint32_t>(data[1]) << 16) | (static_cast<uint32_t>(data[2]) << 8)  | (static_cast<uint32_t>(data[3]));
 }
 
 uint64_t Utils::ReadUint64BE(const uint8_t* data)

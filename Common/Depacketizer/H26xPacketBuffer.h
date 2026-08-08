@@ -73,8 +73,7 @@ private:
     bool MaybeAssembleFrame(int64_t end_seq, H264AccessUnit& frame, int64_t& start_seq);
     bool FindFrameStart(int64_t end_seq, int64_t& start_seq) const;
     bool AssembleFrame(int64_t start_seq, int64_t end_seq, H264AccessUnit& frame) const;
-    bool AppendPacketUnits(const H264ParsedPacket& packet, bool& fu_active,
-                           std::vector<uint8_t>& fu_nalu, H264AccessUnit& frame) const;
+    bool AppendPacketUnits(const H264ParsedPacket& packet, bool& fu_active, std::vector<uint8_t>& fu_nalu, H264AccessUnit& frame) const;
     void ClearPackets(int64_t start_seq, int64_t end_seq);
     void ClearFrameByTimestamp(uint32_t ssrc, uint32_t timestamp);
     void DropExpiredFrames(int64_t now_ms, InsertResult& result);

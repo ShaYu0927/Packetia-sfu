@@ -3,10 +3,11 @@
 
 TaskScheduler::TaskScheduler(int id)
      : id_(id)
+    , is_shutdown_(false)
     , shutdown_(false)
     , started_(false)
     , wakeup_pipe_(new Pip())
-    , pending_tasks_(kMaxTriggetEvents)
+    , trigger_events_(new RingBuffer<TriggerEvent>(kMaxTriggetEvents))
 {
     static std::once_flag flag;
     std::call_once(flag,[]{
@@ -23,6 +24,8 @@ TaskScheduler::TaskScheduler(int id)
         wakeup_channel_.reset(new Channel(wakeup_pipe_->ReadFd()));
         wakeup_channel_->EnableReading();
         wakeup_channel_->SetReadCallback([this] {
+            this->DrainWakeupPipe();
+            this->HandleTriggerEvent();
             this->HandlePendingTasks();
         });
     }
@@ -63,15 +66,22 @@ void TaskScheduler::RemoveTimer(TimeId timerId)
 
 bool TaskScheduler::AddTriggerEvent(TriggerEvent callback)
 {
-    if(trigger_events_->Size() < kMaxTriggetEvents)
+    if (!callback || !trigger_events_)
+    {
+        return false;
+    }
+
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        char event = kTriggetEvent;
-        trigger_events_->Push(std::move(callback));
-        wakeup_pipe_->Write(&event,1);
-        return true;
+        if (trigger_events_->Size() >= kMaxTriggetEvents ||
+            !trigger_events_->Push(std::move(callback)))
+        {
+            return false;
+        }
     }
-    return false;
+
+    char event = kTriggetEvent;
+    return wakeup_pipe_ && wakeup_pipe_->Write(&event, 1) == 1;
 }
 
 void TaskScheduler::Wake()
@@ -137,6 +147,6 @@ bool TaskScheduler::Post(Task task)
         pending_tasks_.push_back(std::move(task));
     }
 
-    Wake();
-    return true;
+    char event = kTriggetEvent;
+    return wakeup_pipe_ && wakeup_pipe_->Write(&event, 1) == 1;
 }

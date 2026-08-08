@@ -81,9 +81,9 @@ std::shared_ptr<StreamContext> StreamContextBuilder::BuildFromSdp(const sdp::Sdp
         const sdp::SdpMedia& media = session.medias[i];
         
         StreamTrackInfo track;
-        track.media_index = static_cast<int>(i);
-        track.track_type = ParseTrackType(media.media);
-        track.control = media.GetAttribute("control");
+        track.media_index       = static_cast<int>(i);
+        track.track_type        = ParseTrackType(media.media);
+        track.control           = media.GetAttribute("control");
 
         for (const std::string& fmt : media.fmts)
         {
@@ -111,15 +111,6 @@ std::shared_ptr<StreamContext> StreamContextBuilder::BuildFromSdp(const sdp::Sdp
 
             track.payloads.push_back(pt_info);
             ctx->payload_type_map[pt] = pt_info;
-
-            LOG_INFO("[SDP] register payload type",
-                         " media_index=", track.media_index,
-                         " media=", media.media,
-                         " pt=", static_cast<int>(pt),
-                         " codec=", pt_info.codec_name,
-                         " sample_rate=", pt_info.sample_rate,
-                         " channels=", pt_info.channels,
-                         " control=", track.control);
         }
 
         ctx->tracks.push_back(std::move(track));

@@ -91,7 +91,7 @@ public:
                                                   uint32_t size_bytes)>;
 
 public:
-    RtpSenderTrack(const RtpSenderTrackConfig& config, IPacketSender* sender);
+    RtpSenderTrack(const RtpSenderTrackConfig& config, std::shared_ptr<IMediaTransport> transport);
 
     ~RtpSenderTrack() = default;
 
@@ -147,7 +147,8 @@ private:
 
     void CacheRtpPacket(uint16_t out_seq, const std::vector<uint8_t>& packet);
 
-    bool SendRtpPacket(const std::vector<uint8_t>& packet, uint16_t out_seq, bool retransmit = false);
+    bool SendRtpPacket(const std::vector<uint8_t>& packet,
+                       bool retransmit = false);
 
 private:
     struct CachedRtpPacket
@@ -166,16 +167,13 @@ private:
     RtpSenderTrackConfig _config;
 
     /*
-     * Underlying packet sender.
+     * Underlying media transport.
      *
-     * This object is responsible for sending RTP/RTCP bytes to the downstream
-     * peer. It may be implemented by UDP, TCP, WebSocket, SRTP, etc.
-     *
-     * Note:
-     *   RtpSenderTrack does not own this pointer.
-     *   The owner must make sure the sender outlives this track.
+     * The session owns the transport. Keeping a weak reference prevents this
+     * track from extending the connection lifetime and avoids dangling raw
+     * pointers when the session is closed first.
      */
-    IPacketSender* _sender = nullptr;
+    std::weak_ptr<IMediaTransport> _transport;
 
     /*
      * Whether the first RTP packet has been received.
@@ -239,16 +237,16 @@ private:
      */
     uint64_t _last_tick_ms = 0;
 
-    uint64_t _rr_count = 0;
-    uint32_t _last_rr_reporter_ssrc = 0;
-    uint32_t _last_rr_media_ssrc = 0;
-    uint8_t _last_rr_fraction_lost = 0;
-    int32_t _last_rr_cumulative_lost = 0;
-    uint32_t _last_rr_highest_seq = 0;
-    uint32_t _last_rr_jitter = 0;
-    uint32_t _last_rr_lsr = 0;
-    uint32_t _last_rr_dlsr = 0;
-    uint32_t _rtt_ms = 0;
+    uint64_t _rr_count = 0;                  // Number of RR packets received.
+    uint32_t _last_rr_reporter_ssrc = 0;     // SSRC of the sender that generated the latest RR.
+    uint32_t _last_rr_media_ssrc = 0;        // SSRC of the media stream reported in the latest RR.
+    uint8_t  _last_rr_fraction_lost = 0;     // Fraction of RTP packets lost since the previous RR (8-bit fixed point).
+    int32_t  _last_rr_cumulative_lost = 0;   // Total number of RTP packets lost since the beginning of reception.
+    uint32_t _last_rr_highest_seq = 0;       // Highest extended RTP sequence number received by the reporter.
+    uint32_t _last_rr_jitter = 0;            // Estimated RTP packet inter-arrival jitter reported by RR.
+    uint32_t _last_rr_lsr = 0;               // NTP timestamp middle 32 bits from the last Sender Report (for RTT calculation).
+    uint32_t _last_rr_dlsr = 0;              // Delay since last Sender Report, used together with LSR to calculate RTT.
+    uint32_t _rtt_ms = 0;                    // Estimated round-trip time in milliseconds.
 
     /*
      * Last time a PLI/FIR key frame request was forwarded upstream.
@@ -290,7 +288,7 @@ private:
      * Usually only meaningful for video tracks.
      */
     KeyFrameRequestCallback _keyframe_cb;
-    PacketSentCallback _packet_sent_cb;
+    PacketSentCallback      _packet_sent_cb;
 };
 
 

@@ -9,6 +9,7 @@
 #include <iomanip>
 #include <mutex>
 #include <algorithm>
+#include "utils.h"
 
 namespace media 
 {
@@ -112,7 +113,6 @@ void SfuEndpoint::HandleRtpPacket(Packet* pkt)
 {
     if (!pkt || pkt->len < 12)
     {
-        LOG_ERROR("[RTP] invalid packet: pkt=%p len=%u", pkt, pkt ? pkt->len : 0);
         return;
     }
 
@@ -121,12 +121,12 @@ void SfuEndpoint::HandleRtpPacket(Packet* pkt)
     uint8_t vpxcc = data[0];
     uint8_t mpt   = data[1];
 
-    uint8_t version = (vpxcc >> 6) & 0x03;
-    uint8_t padding = (vpxcc >> 5) & 0x01;
-    uint8_t extension = (vpxcc >> 4) & 0x01;
-    uint8_t csrc_count = vpxcc & 0x0F;
+    uint8_t version      = (vpxcc >> 6) & 0x03;
+    uint8_t padding      = (vpxcc >> 5) & 0x01;
+    uint8_t extension    = (vpxcc >> 4) & 0x01;
+    uint8_t csrc_count   = vpxcc & 0x0F;
 
-    uint8_t marker = (mpt >> 7) & 0x01;
+    uint8_t marker       = (mpt >> 7) & 0x01;
     uint8_t payload_type = mpt & 0x7F;
 
     uint16_t seq = (data[2] << 8) | data[3];
@@ -144,11 +144,6 @@ void SfuEndpoint::HandleRtpPacket(Packet* pkt)
         const auto& info = source_track->getTrackInfo();
         if (info.payload_type != 0xFF && payload_type != info.payload_type)
         {
-            LOG_ERROR("[RTP] payload type mismatch, expected=", static_cast<int>(info.payload_type),
-                      " actual=", static_cast<int>(payload_type),
-                      " track=", TrackTypeToString(info.type),
-                      " codec=", info.codec_name,
-                      " ssrc=", ssrc);
             return;
         }
 
@@ -181,7 +176,21 @@ void SfuEndpoint::HandleRtpPacket(Packet* pkt)
 
     const auto& track_info = track->getTrackInfo();
     const int sample_rate = track_info.clock_rate > 0 ? static_cast<int>(track_info.clock_rate) : 90000;
-    track->inputRtp(track->getTrackType(), sample_rate, pkt->data, pkt->len);
+    if (track_info.type == TrackAudio)
+    {
+        LOG_DEBUG("[AUDIO][RTP] received",
+                  " track=", track_info.track_index,
+                  " codec=", track_info.codec_name,
+                  " pt=", static_cast<int>(payload_type),
+                  " ssrc=", ssrc,
+                  " seq=", seq,
+                  " rtp_ts=", timestamp,
+                  " bytes=", pkt->len);
+    }
+    if (track->inputRtp(track->getTrackType(), sample_rate, pkt->data, pkt->len))
+    {
+        ForwardRtpToSubscribers(ssrc, pkt->data, pkt->len);
+    }
 }
 
 std::shared_ptr<rtsp::RtpReceiverTrack> SfuEndpoint::GetOrCreateTrack(uint32_t ssrc)
@@ -214,6 +223,13 @@ std::shared_ptr<rtsp::RtpReceiverTrack> SfuEndpoint::GetOrCreateTrack(uint32_t s
     else if (info.type == TrackAudio)
     {
         new_track = std::make_shared<rtsp::RtpAudioTracker>(info);
+        LOG_INFO("[AUDIO][TRACK] created",
+                 " track=", info.track_index,
+                 " codec=", info.codec_name,
+                 " pt=", static_cast<int>(info.payload_type),
+                 " ssrc=", ssrc,
+                 " clock_rate=", info.clock_rate,
+                 " channels=", info.channels);
     }
     else
     {
@@ -233,6 +249,14 @@ std::shared_ptr<rtsp::RtpReceiverTrack> SfuEndpoint::GetOrCreateTrack(uint32_t s
 
         self->OnTrackNack(media_ssrc, lost_seqs);
     });
+
+    new_track->setOnEncodedFrame(
+        [Weak_self](const rtsp::RtpReceiverTrack::EncodedFramePtr& frame) {
+            if (auto self = Weak_self.lock())
+            {
+                self->DispatchEncodedFrame(frame);
+            }
+        });
 
     {
         std::lock_guard<std::mutex> lock(track_mtx_);
@@ -259,17 +283,11 @@ void SfuEndpoint::HandleRtcpPacket(Packet* pkt)
         return;
     }
 
-    const uint8_t first_byte = pkt->data[0];
-    const uint8_t version = (first_byte >> 6) & 0x03;
-    const uint8_t count_or_fmt = first_byte & 0x1F;
-    const uint8_t packet_type = pkt->data[1];
-    const uint16_t length_words = ReadUint16BE(pkt->data + 2);
-    LOG_INFO("[RTCP] HandleRtcpPacket enter",
-             " len=", pkt->len,
-             " version=", static_cast<int>(version),
-             " pt=", static_cast<int>(packet_type),
-             " count_or_fmt=", static_cast<int>(count_or_fmt),
-             " length_words=", length_words);
+    const uint8_t first_byte    = pkt->data[0];
+    const uint8_t version       = (first_byte >> 6) & 0x03;
+    const uint8_t count_or_fmt  = first_byte & 0x1F;
+    const uint8_t packet_type   = pkt->data[1];
+    const uint16_t length_words = utils::Utils::ReadUint16BE(pkt->data + 2);
 
     rtcpx::RtcpPacketInfo rtcp_info;
     if (!rtcpx::InspectRtcpPacket(pkt->data, pkt->len, &rtcp_info))
@@ -331,6 +349,81 @@ void SfuEndpoint::SetRtcpSendCallback(SendRtcpCallback cb)
     send_rtcp_cb_ = std::move(cb);
 }
 
+SfuEndpoint::FrameSubscriptionId SfuEndpoint::AddEncodedFrameCallback(EncodedFrameCallback cb)
+{
+    if (!cb)
+    {
+        return 0;
+    }
+
+    const FrameSubscriptionId id = next_frame_subscription_id_.fetch_add(1);
+    std::lock_guard<std::mutex> lock(frame_callbacks_mutex_);
+    frame_callbacks_[id] = std::move(cb);
+    return id;
+}
+
+void SfuEndpoint::RemoveEncodedFrameCallback(FrameSubscriptionId id)
+{
+    if (id == 0)
+    {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(frame_callbacks_mutex_);
+    frame_callbacks_.erase(id);
+}
+
+void SfuEndpoint::DispatchEncodedFrame(const media::EncodedFrame::Ptr& frame)
+{
+    if (!frame || !frame->Valid())
+    {
+        return;
+    }
+
+    std::vector<EncodedFrameCallback> callbacks;
+    {
+        std::lock_guard<std::mutex> lock(frame_callbacks_mutex_);
+        callbacks.reserve(frame_callbacks_.size());
+        for (const auto& entry : frame_callbacks_)
+        {
+            callbacks.push_back(entry.second);
+        }
+    }
+
+    const media::EncodedFrame::ConstPtr immutable_frame = frame;
+    if (frame_publisher_)
+    {
+        EncodedFrameEvent event;
+        event.source.endpoint_id = Id();
+        event.source.track_id = frame->info.track_id;
+        event.source.ssrc = frame->rtp.ssrc;
+        if (const auto session = SourceSession())
+        {
+            event.source.session_id = std::to_string(session->GetId());
+            event.source.stream_id = session->GetRtspSuffix();
+        }
+        event.frame = immutable_frame;
+        const size_t accepted = frame_publisher_->Publish(event);
+        const uint64_t count = published_frame_count_.fetch_add(1) + 1;
+        if (count == 1 || count % 300 == 0)
+        {
+            LOG_INFO("[FRAME_SOURCE] encoded frame published, count=", count,
+                     ", endpoint_id=", event.source.endpoint_id,
+                     ", session_id=", event.source.session_id,
+                     ", stream_id=", event.source.stream_id,
+                     ", track_id=", event.source.track_id,
+                     ", ssrc=", event.source.ssrc,
+                     ", media_type=", static_cast<int>(frame->info.media_type),
+                     ", codec=", static_cast<int>(frame->info.codec),
+                     ", bytes=", frame->size,
+                     ", accepted_sinks=", accepted);
+        }
+    }
+    for (const auto& callback : callbacks)
+    {
+        callback(immutable_frame);
+    }
+}
+
 void SfuEndpoint::OnTrackNack(uint32_t media_ssrc, const std::vector<uint16_t>& lost_seqs)
 {
     if (lost_seqs.empty())
@@ -351,8 +444,7 @@ void SfuEndpoint::OnTrackNack(uint32_t media_ssrc, const std::vector<uint16_t>& 
     const auto packet = rtcpx::RtRtcpNack::Build(local_rtcp_ssrc_, media_ssrc, lost_seqs);
     if (packet.empty() || !send(packet.data(), packet.size()))
     {
-        LOG_ERROR("[RTCP][NACK] send failed", " media_ssrc=", media_ssrc,
-                  " count=", lost_seqs.size());
+        LOG_ERROR("[RTCP][NACK] send failed", " media_ssrc=", media_ssrc, " count=", lost_seqs.size());
     }
 }
 
@@ -461,9 +553,7 @@ std::vector<std::shared_ptr<rtsp::RtpSenderTrack>> SfuRouter::GetSenderTracks(ui
     return it->second;
 }
 
-int SfuEndpoint::AddSubscriber(
-    uint32_t source_ssrc,
-    std::shared_ptr<rtsp::RtpSenderTrack> sender)
+int SfuEndpoint::AddSubscriber(uint32_t source_ssrc, std::shared_ptr<rtsp::RtpSenderTrack> sender)
 {
     if (!sender)
     {
@@ -548,6 +638,18 @@ void SfuEndpoint::RemoveMediaStreamOnOwner(uint32_t source_ssrc)
 void SfuEndpoint::ForwardRtpToSubscribers(uint32_t source_ssrc, const uint8_t* data, size_t len)
 {
     auto senders = router_.GetSenderTracks(source_ssrc);
+
+    if (!senders.empty())
+    {
+        auto source = FindTrackBySsrc(source_ssrc);
+        if (source && source->getTrackType() == TrackAudio)
+        {
+            LOG_DEBUG("[AUDIO][RTP] forwarding",
+                      " ssrc=", source_ssrc,
+                      " subscribers=", senders.size(),
+                      " bytes=", len);
+        }
+    }
 
     for (auto& sender : senders)
     {

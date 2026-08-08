@@ -46,7 +46,11 @@ struct FrameTimestamp
     int32_t time_base_num = 1;
     int32_t time_base_den = 1000;
 
+    // Local arrival time retained for latency measurement and fallback.
+    int64_t receive_time_ms = 0;
+    // Sender wall-clock time derived from an RTCP SR RTP/NTP mapping.
     int64_t capture_time_ms = 0;
+    bool capture_time_valid = false;
 
     bool Valid() const noexcept
     {
@@ -63,6 +67,16 @@ struct RtpFrameInfo
     uint16_t first_sequence = 0;
     uint16_t last_sequence = 0;
     uint32_t packet_count = 0;
+};
+
+struct VideoFrameInfo
+{
+    bool is_idr = false;
+    bool has_sps = false;
+    bool has_pps = false;
+    bool parameter_sets_injected = false;
+    int32_t width = -1;
+    int32_t height = -1;
 };
 
 struct MediaFrameInfo
@@ -96,6 +110,7 @@ struct EncodedFrame
     MediaFrameInfo info;
 
     RtpFrameInfo rtp;
+    VideoFrameInfo video;
 
     EncodedFrameType frame_type     = EncodedFrameType::Unknown;
     uint32_t sample_count           = 0;

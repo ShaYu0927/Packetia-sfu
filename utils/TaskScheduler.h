@@ -26,7 +26,7 @@ public:
 	virtual bool HandleEvent(int timeout) { return false; };
 
     int GetId() const { return id_; }
-    bool IsStopped() { return started_.load(); }
+    bool IsStopped() const { return shutdown_.load(); }
     bool IsStarted() const { return started_.load(); }
 
 

@@ -54,5 +54,3 @@ bool H264Depacketizer::popAccessUnit(media::H264AccessUnit& out)
     ready_frames_.pop_front();
     return true;
 }
-
-

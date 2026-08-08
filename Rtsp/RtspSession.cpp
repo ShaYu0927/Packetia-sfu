@@ -2,9 +2,11 @@
 #include "logger.h"
 #include "MediaStreamAffinity.h"
 #include "MediaEndpoint.h"
+#include "RtcpContext.h"
 #include <algorithm>
 #include <iomanip>
 #include <limits>
+#include <unordered_set>
 #include <vector>
 
 
@@ -131,7 +133,8 @@ void RtspSession::Start()
 
 void RtspSession::OnClosed(int reason)
 {
-    
+    (void)reason;
+    CloseMediaTransports();
 }
 
 void RtspSession::SendRaw(std::string_view s,size_t size)
@@ -149,56 +152,13 @@ void RtspSession::OnInterleaved(int channel,const uint8_t*p, int len)
         return;
     }
 
-    auto media = media_session_;
-    if (!media)
+    auto it = media_transports_.find(static_cast<uint8_t>(channel));
+    if (it == media_transports_.end() || !it->second || !it->second->transport)
     {
-        LOG_ERROR("invalid media session");
+        LOG_ERROR("transport binding not found, channel=", channel);
         return;
     }
-
-    MediaSession::ChannelBinding binding;
-    if (!media->GetChannelBinding(static_cast<uint8_t>(channel), &binding))
-    {
-        LOG_ERROR("channel binding not found, channel=", channel,
-                  " session_id=", media->GetId());
-        return;
-    }
-
-    if (!binding.valid)
-    {
-        LOG_ERROR("channel binding invalid, channel=", channel,
-                  " session_id=", media->GetId());
-        return;
-    }
-
-
-    WorkJob job{};
-    job.target_id = binding.endpoint_id;
-    job.type = binding.is_rtcp ? WorkType::Rtcp : WorkType::Rtp;
-    uint32_t media_ssrc = 0;
-    const bool has_media_ssrc = binding.is_rtcp
-        ? media_affinity::TryGetRtcpMediaSsrc(
-              reinterpret_cast<const uint8_t*>(p), static_cast<size_t>(len),
-              media_ssrc)
-        : media_affinity::TryGetRtpSsrc(
-              reinterpret_cast<const uint8_t*>(p), static_cast<size_t>(len),
-              media_ssrc);
-    job.key = has_media_ssrc
-        ? media_affinity::MakeStreamHandle(binding.endpoint_id, media_ssrc).affinity_key
-        : binding.endpoint_id;
-    job.raw.data = new uint8_t[len];
-    std::memcpy(job.raw.data, p, static_cast<size_t>(len));
-    job.raw.len = static_cast<uint32_t>(len);
-    job.enqueue_ts = Timestamp::NowMs();
-    job.deleter = [](WorkJob& job) {
-        delete[] job.raw.data;
-        job.raw.data = nullptr;
-        job.raw.len = 0;
-    };
-
-    int ret = WorkerService::post("media",std::move(job));
-    (void)ret;
-
+    (void)it->second->transport->InputInterleaved(static_cast<uint8_t>(channel), p, static_cast<size_t>(len), Timestamp::NowMs());
 }
 
 void RtspSession::Dispatch(const char* p, size_t total)
@@ -381,40 +341,24 @@ void RtspSession::HandleCmdSetup(RtspRequest::RtspRequestInfo& req)
             utils::EndpointManager::Instance().Find(endpoint_id));
         if (endpoint)
         {
+            const uint8_t rtp_channel = rtsp_request_->GetLastSetupRtpChannel();
             const uint8_t rtcp_channel = rtsp_request_->GetLastSetupRtcpChannel();
-            std::weak_ptr<RtspConnection> weak_conn = conn_;
+            auto transport = std::make_shared<media::transport::RtspInterleavedTransport>(
+                endpoint_id, conn_, rtp_channel, rtcp_channel);
+            auto ingress = std::make_shared<media::transport::MediaEndpointIngress>(endpoint_id);
+            transport->SetPacketSink(ingress);
+
+            auto binding = std::make_shared<TransportBinding>();
+            binding->transport = transport;
+            binding->ingress = ingress;
+            media_transports_[rtp_channel] = binding;
+            media_transports_[rtcp_channel] = binding;
+
+            std::weak_ptr<IMediaTransport> weak_transport = transport;
             endpoint->SetRtcpSendCallback(
-                [weak_conn, rtcp_channel](const uint8_t* data, size_t len) -> bool {
-                    if (!data || len == 0 || len > std::numeric_limits<uint16_t>::max())
-                    {
-                        return false;
-                    }
-
-                    auto conn = weak_conn.lock();
-                    if (!conn || conn->IsClosed())
-                    {
-                        return false;
-                    }
-                    TaskScheduler* scheduler = conn->GetTaskScheduler();
-                    if (!scheduler)
-                    {
-                        return false;
-                    }
-
-                    std::vector<uint8_t> frame(4 + len);
-                    frame[0] = '$';
-                    frame[1] = rtcp_channel;
-                    frame[2] = static_cast<uint8_t>((len >> 8) & 0xFF);
-                    frame[3] = static_cast<uint8_t>(len & 0xFF);
-                    std::copy(data, data + len, frame.begin() + 4);
-
-                    return scheduler->Post([weak_conn, frame = std::move(frame)] {
-                        if (auto conn = weak_conn.lock())
-                        {
-                            conn->Send(reinterpret_cast<const char*>(frame.data()),
-                                       static_cast<uint32_t>(frame.size()));
-                        }
-                    });
+                [weak_transport](const uint8_t* data, size_t len) -> bool {
+                    auto transport = weak_transport.lock();
+                    return transport && transport->SendRtcp(data, len) == SendResult::Ok;
                 });
         }
     }
@@ -434,5 +378,22 @@ void RtspSession::HandleCmdPause(RtspRequest::RtspRequestInfo& req)
 }
 void RtspSession::HandleCmdTeardown(RtspRequest::RtspRequestInfo& req)
 {
+    (void)req;
+    CloseMediaTransports();
+}
+
+void RtspSession::CloseMediaTransports()
+{
+    std::unordered_set<IMediaTransport*> closed;
+    for (auto& entry : media_transports_)
+    {
+        auto& binding = entry.second;
+        if (binding && binding->transport &&
+            closed.insert(binding->transport.get()).second)
+        {
+            binding->transport->Close();
+        }
+    }
+    media_transports_.clear();
 }
 }

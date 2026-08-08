@@ -1,18 +1,13 @@
 cmake_minimum_required(VERSION 3.16)
 
-file(GLOB SERVER_SRC
-    "${CMAKE_CURRENT_SOURCE_DIR}/Moudle/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp"
-)
-
-add_library(server STATIC
-    ${SERVER_SRC}
-)
+# The executable entry point is defined once by the root Packetia target.
+# This target only publishes server-side headers to potential consumers.
+add_library(server INTERFACE)
 
 target_include_directories(server
-    PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/..
+    INTERFACE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/..
 )
 
-target_compile_features(server PUBLIC cxx_std_17)
+target_compile_features(server INTERFACE cxx_std_17)

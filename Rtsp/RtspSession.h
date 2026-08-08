@@ -5,8 +5,11 @@
 #include "RtspMessage.h"
 #include "ShardedWorkerPool.h"
 #include "RtspConnection.h"
+#include "RtspInterleavedTransport.h"
+#include "MediaEndpointIngress.h"
 #include <cstddef>
 #include "Sdp.h"
+#include <unordered_map>
 
 namespace rtsp 
 {
@@ -83,6 +86,14 @@ public:
     void Start() override;
 
 private:
+    struct TransportBinding
+    {
+        std::shared_ptr<media::transport::RtspInterleavedTransport> transport;
+        std::shared_ptr<media::transport::MediaEndpointIngress> ingress;
+    };
+
+    void CloseMediaTransports();
+
     TaskScheduler* task_scheduler_;
     RtspConnection::Ptr conn_;
     std::unique_ptr<RtspRequest> rtsp_request_;
@@ -94,6 +105,8 @@ private:
     SessionMode mode_ = RTSP_SERVER;
     SessionState state_ = INIT;
     MediaSession::Ptr media_session_;
+    std::unordered_map<uint8_t, std::shared_ptr<TransportBinding>>
+        media_transports_;
 };
 }
 

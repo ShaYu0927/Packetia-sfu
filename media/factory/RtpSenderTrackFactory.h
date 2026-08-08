@@ -3,11 +3,14 @@
 
 #include "RtpSenderTrack.h"
 #include "IMediaTransport.h"
+#include <utility>
 
 class RtpSenderTrackFactory
 {
 public:
-    static std::shared_ptr<rtsp::RtpSenderTrack> Create(const TrackInfo& source_info, IPacketSender* sender)
+    static std::shared_ptr<rtsp::RtpSenderTrack> Create(
+        const TrackInfo& source_info,
+        std::shared_ptr<IMediaTransport> transport)
     {
         rtsp::RtpSenderTrackConfig config;
         config.local_ssrc = GenerateSsrc();
@@ -16,7 +19,7 @@ public:
         config.sample_rate = source_info.clock_rate > 0 ? source_info.clock_rate : 90000;
         config.rtp_cache_size = 512;
 
-        return std::make_shared<rtsp::RtpSenderTrack>(config, sender);
+        return std::make_shared<rtsp::RtpSenderTrack>(config, std::move(transport));
     }
 
 private:

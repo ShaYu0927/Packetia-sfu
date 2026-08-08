@@ -9,6 +9,19 @@ namespace rtsp
 
 namespace
 {
+const uint8_t kAnnexBStartCode[] = {0, 0, 0, 1};
+
+void AppendAnnexBNalu(std::vector<uint8_t>& out, const std::vector<uint8_t>& nalu)
+{
+    if (nalu.empty())
+    {
+        return;
+    }
+    out.insert(out.end(), kAnnexBStartCode,
+               kAnnexBStartCode + sizeof(kAnnexBStartCode));
+    out.insert(out.end(), nalu.begin(), nalu.end());
+}
+
 uint64_t NowMs()
 {
     using namespace std::chrono;
@@ -137,6 +150,11 @@ void RtpVideoTracker::onBeforeRtpSorted(const RtpPacket::Ptr &pkt)
         if (seq != expected) 
         {
             LOG_ERROR("[RtpVideoTracker] packet lost after sorted, expected=", expected, " actual=", seq);
+            if (_broken_timestamps.size() >= 64)
+            {
+                _broken_timestamps.clear();
+            }
+            _broken_timestamps.insert(ts);
         }
 
     }
@@ -180,11 +198,6 @@ void RtpVideoTracker::onRtpSorted(const RtpPacket::Ptr &pkt)
     view.payload = payload;
     view.payload_len = payload_size;
 
-    if (view.payload && view.payload_len > 0) 
-    {
-        uint8_t nal_type = view.payload[0] & 0x1F;
-    } 
-
     if (!_depacketizer->input(view)) 
     {
         return;
@@ -193,6 +206,12 @@ void RtpVideoTracker::onRtpSorted(const RtpPacket::Ptr &pkt)
     media::H264AccessUnit au;
     while (_depacketizer->popAccessUnit(au))
     {
+        if (_broken_timestamps.erase(au.timestamp) > 0)
+        {
+            au.broken = true;
+            au.complete = false;
+        }
+
         auto frame = std::make_shared<media::EncodedFrame>();
         frame->info.track_id = _info.track_index >= 0 ? static_cast<media::TrackId>(_info.track_index) : 0;
         frame->info.media_type = media::MediaType::Video;
@@ -201,7 +220,7 @@ void RtpVideoTracker::onRtpSorted(const RtpPacket::Ptr &pkt)
         frame->info.timestamp.pts = au.timestamp;
         frame->info.timestamp.time_base_num = 1;
         frame->info.timestamp.time_base_den = pkt->getSampleRate() > 0 ? pkt->getSampleRate() : 90000;
-        frame->info.timestamp.capture_time_ms = pkt->getRecvTimeMs();
+        frame->info.timestamp.receive_time_ms = pkt->getRecvTimeMs();
         frame->info.integrity = au.broken
                                     ? media::FrameIntegrity::Corrupted
                                     : (au.complete ? media::FrameIntegrity::Complete
@@ -213,11 +232,58 @@ void RtpVideoTracker::onRtpSorted(const RtpPacket::Ptr &pkt)
         frame->rtp.last_sequence     = au.last_seq;
         frame->rtp.packet_count      = static_cast<uint16_t>(au.last_seq - au.first_seq) + 1;
 
-        frame->frame_type            = au.keyframe ? media::EncodedFrameType::Key : media::EncodedFrameType::Delta;
+        frame->video.is_idr          = au.has_idr;
+        frame->video.has_sps         = au.has_sps;
+        frame->video.has_pps         = au.has_pps;
+        if (const auto* sps = _depacketizer->parameterSets().LatestSps())
+        {
+            frame->video.width = sps->width;
+            frame->video.height = sps->height;
+        }
+
+        const bool config_only = !au.has_idr && (au.has_sps || au.has_pps) &&
+            std::all_of(au.nalus.begin(), au.nalus.end(), [](const std::vector<uint8_t>& nalu) {
+                if (nalu.empty()) return false;
+                const uint8_t type = media::H264GetNalType(nalu[0]);
+                return type == static_cast<uint8_t>(media::H264NalType::Sps) ||
+                       type == static_cast<uint8_t>(media::H264NalType::Pps);
+            });
+        frame->frame_type = config_only
+                                ? media::EncodedFrameType::Config
+                                : (au.has_idr ? media::EncodedFrameType::Key
+                                              : media::EncodedFrameType::Delta);
         frame->sample_rate           = pkt->getSampleRate();
-        auto buffer                  = std::make_shared<std::vector<uint8_t>>(au.ToAnnexB());
+
+        auto buffer = std::make_shared<std::vector<uint8_t>>();
+        if (au.has_idr)
+        {
+            if (!au.has_sps)
+            {
+                if (const auto* sps = _depacketizer->parameterSets().LatestSps())
+                {
+                    AppendAnnexBNalu(*buffer, sps->payload);
+                    frame->video.has_sps = true;
+                    frame->video.parameter_sets_injected = true;
+                }
+            }
+            if (!au.has_pps)
+            {
+                if (const auto* pps = _depacketizer->parameterSets().LatestPps())
+                {
+                    AppendAnnexBNalu(*buffer, pps->payload);
+                    frame->video.has_pps = true;
+                    frame->video.parameter_sets_injected = true;
+                }
+            }
+        }
+        for (const auto& nalu : au.nalus)
+        {
+            AppendAnnexBNalu(*buffer, nalu);
+        }
         frame->buffer                = std::move(buffer);
         frame->size                  = frame->buffer->size();
+
+        emitEncodedFrame(frame);
     }
 }
 
@@ -250,11 +316,35 @@ RtpAudioTracker::RtpAudioTracker(const TrackInfo& info)
     }
 
     uint32_t sample_rate  = info.clock_rate > 0 ? info.clock_rate : 8000;
-    uint32_t channels     = info.channels > 0 ? static_cast<uint32_t>(info.channels) : 1;
-    depacketizer_         = std::make_unique<media::AudioDepacketizer>(codec,
-                                                                       sample_rate,
-                                                                       channels,
-                                                                       info.fmtp);
+    uint16_t channels     = info.channels > 0 ? static_cast<uint16_t>(info.channels) : 1;
+    depacketizer_ = media::AudioRtpDepacketizerFactory::Create(
+        codec, info.codec_name, sample_rate, channels, info.fmtp);
+    if (!depacketizer_)
+    {
+        LOG_ERROR("[RtpAudioTracker] failed to create audio RTP depacketizer",
+                  " codec=", info.codec_name,
+                  " pt=", static_cast<int>(info.payload_type));
+    }
+    else
+    {
+        LOG_INFO("[AUDIO][TRACK] depacketizer ready",
+                 " track=", info.track_index,
+                 " codec=", info.codec_name,
+                 " pt=", static_cast<int>(info.payload_type),
+                 " clock_rate=", sample_rate,
+                 " channels=", channels);
+    }
+}
+
+RtpAudioTracker::~RtpAudioTracker()
+{
+    LOG_INFO("[AUDIO][TRACK] summary",
+             " track=", _info.track_index,
+             " codec=", _info.codec_name,
+             " ssrc=", _info.ssrc,
+             " packets=", audio_packets_seen_,
+             " frames=", audio_frames_completed_,
+             " failures=", audio_depacketize_failures_);
 }
 
 RtpAudioTracker::Ptr RtpAudioTracker::Clone()
@@ -414,6 +504,19 @@ void RtpAudioTracker::onRtpSorted(const RtpPacket::Ptr& pkt)
     view.payload = payload;
     view.payload_len = payload_size;
 
+    ++audio_packets_seen_;
+    if (audio_packets_seen_ == 1)
+    {
+        LOG_INFO("[AUDIO][RTP] first packet accepted",
+                 " track=", _info.track_index,
+                 " codec=", _info.codec_name,
+                 " pt=", static_cast<int>(pkt->getPayloadType()),
+                 " ssrc=", pkt->getSSRC(),
+                 " seq=", pkt->getSeq(),
+                 " rtp_ts=", pkt->getStamp(),
+                 " payload_bytes=", payload_size);
+    }
+
     if (!depacketizer_->Input(view))
     {
         return;
@@ -422,10 +525,10 @@ void RtpAudioTracker::onRtpSorted(const RtpPacket::Ptr& pkt)
     media::EncodedFrame completed;
     while (depacketizer_->PopFrame(completed))
     {
+        ++audio_frames_completed_;
         completed.info.track_id = _info.track_index >= 0
                                       ? static_cast<media::TrackId>(_info.track_index)
                                       : 0;
-        completed.info.timestamp.capture_time_ms = pkt->getRecvTimeMs();
         emitEncodedFrame(std::make_shared<media::EncodedFrame>(std::move(completed)));
     }
 
@@ -521,14 +624,12 @@ void RtcpDispatcher::OnReceiverReport(uint32_t reporter_ssrc, uint32_t media_ssr
         auto it = send_tracks_.find(media_ssrc);
         if (it == send_tracks_.end())
         {
-            LOG_INFO("[RTCP][RR] sender track not found", " media_ssrc=", media_ssrc);
             return;
         }
         track = it->second.lock();
         if (!track)
         {
             send_tracks_.erase(it);
-            LOG_INFO("[RTCP][RR] sender track expired", " media_ssrc=", media_ssrc);
             return;
         }
     }

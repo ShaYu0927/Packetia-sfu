@@ -54,9 +54,10 @@ uint32_t CalculateRttMs(uint32_t lsr, uint32_t dlsr)
 }
 }
 
-RtpSenderTrack::RtpSenderTrack(const RtpSenderTrackConfig& config, IPacketSender* sender)
+RtpSenderTrack::RtpSenderTrack(const RtpSenderTrackConfig& config,
+                               std::shared_ptr<IMediaTransport> transport)
     : _config(config),
-      _sender(sender)
+      _transport(std::move(transport))
 {
 }
 
@@ -68,7 +69,8 @@ bool RtpSenderTrack::InputRtpPacket(const uint8_t* data, size_t len)
         return false;
     }
 
-    if (!_sender || _sender->IsClosed() || !_sender->IsWritable())
+    const auto transport = _transport.lock();
+    if (!transport || transport->IsClosed() || !transport->IsWritable())
     {
         return false;
     }
@@ -82,7 +84,7 @@ bool RtpSenderTrack::InputRtpPacket(const uint8_t* data, size_t len)
         return false;
     }
 
-    if (!SendRtpPacket(packet, out_seq))
+    if (!SendRtpPacket(packet))
     {
         return false;
     }
@@ -110,7 +112,8 @@ bool RtpSenderTrack::InputRtpPacket(const uint8_t* data, size_t len)
 
 void RtpSenderTrack::OnRtcpNack(const std::vector<uint16_t>& lost_seqs)
 {
-    if (!_sender || _sender->IsClosed() || lost_seqs.empty())
+    const auto transport = _transport.lock();
+    if (!transport || transport->IsClosed() || !transport->IsWritable() || lost_seqs.empty())
     {
         return;
     }
@@ -138,7 +141,7 @@ void RtpSenderTrack::OnRtcpNack(const std::vector<uint16_t>& lost_seqs)
             continue;
         }
 
-        if (SendRtpPacket(cached.packet, seq, true))
+        if (SendRtpPacket(cached.packet, true))
         {
             cached.last_retransmit_ms = now_ms;
             ++cached.retransmit_count;
@@ -312,21 +315,16 @@ void RtpSenderTrack::CacheRtpPacket(uint16_t out_seq, const std::vector<uint8_t>
     }
 }
 
-bool RtpSenderTrack::SendRtpPacket(const std::vector<uint8_t>& packet, uint16_t out_seq, bool retransmit)
+bool RtpSenderTrack::SendRtpPacket(const std::vector<uint8_t>& packet,
+                                   bool retransmit)
 {
-    if (!_sender || packet.empty())
+    const auto transport = _transport.lock();
+    if (!transport || packet.empty() || !transport->IsWritable())
     {
         return false;
     }
 
-    SendOptions options;
-    options.type = PacketType::Rtp;
-    options.allow_queue = true;
-    options.ssrc = _config.local_ssrc;
-    options.seq = out_seq;
-    options.retransmit = retransmit;
-
-    return _sender->SendPacket(packet.data(), packet.size(), options) == SendResult::Ok;
+    return transport->SendRtp(packet.data(), packet.size(), retransmit) == SendResult::Ok;
 }
 
 }

@@ -5,7 +5,9 @@
 #include "RtpReceiver.h"
 #include "RtspMediaSession.h"
 #include "RtcpContext.h"
+#include "core/EncodedFrameRouter.h"
 #include <functional>
+#include <atomic>
 #include <mutex>
 
 namespace media 
@@ -79,8 +81,17 @@ class SfuEndpoint : public MediaEndpoint,
                     public std::enable_shared_from_this<SfuEndpoint>
 {
 public:
-    using MediaEndpoint::MediaEndpoint;
+    SfuEndpoint(uint64_t id,
+                std::shared_ptr<RtpTrack> tracker,
+                std::shared_ptr<MediaSession> session,
+                std::shared_ptr<IEncodedFramePublisher> frame_publisher)
+        : MediaEndpoint(id, std::move(tracker), std::move(session)),
+          frame_publisher_(std::move(frame_publisher))
+    {
+    }
     using SendRtcpCallback = std::function<bool(const uint8_t*, size_t)>;
+    using EncodedFrameCallback = std::function<void(const media::EncodedFrame::ConstPtr&)>;
+    using FrameSubscriptionId = uint64_t;
 
     bool Start() override;
     void Stop() override;
@@ -102,6 +113,8 @@ public:
     void OnTrackNack(uint32_t media_ssrc, const std::vector<uint16_t>& lost_seqs);
     void OnTrackPli(uint32_t media_ssrc);
     void SetRtcpSendCallback(SendRtcpCallback cb);
+    FrameSubscriptionId AddEncodedFrameCallback(EncodedFrameCallback cb);
+    void RemoveEncodedFrameCallback(FrameSubscriptionId id);
 
 protected:
     void HandleRtpPacket(Packet* pkt) override;
@@ -113,6 +126,7 @@ private:
     rtsp::RtpReceiverTrack::Ptr FindTrackBySsrc(uint32_t ssrc);
     std::shared_ptr<rtsp::RtpReceiverTrack> GetOrCreateTrack(uint32_t ssrc);
     void RemoveMediaStreamOnOwner(uint32_t source_ssrc);
+    void DispatchEncodedFrame(const media::EncodedFrame::Ptr& frame);
 
 private:
     std::mutex track_mtx_;
@@ -125,6 +139,11 @@ private:
     std::mutex rtcp_send_mutex_;
     SendRtcpCallback send_rtcp_cb_;
     uint32_t local_rtcp_ssrc_ = 0;
+    std::mutex frame_callbacks_mutex_;
+    std::unordered_map<FrameSubscriptionId, EncodedFrameCallback> frame_callbacks_;
+    std::atomic<FrameSubscriptionId> next_frame_subscription_id_{1};
+    std::shared_ptr<IEncodedFramePublisher> frame_publisher_;
+    std::atomic<uint64_t> published_frame_count_{0};
 };
 
 

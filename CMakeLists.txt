@@ -67,6 +67,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/media/endpoint
     ${CMAKE_SOURCE_DIR}/media/track
     ${CMAKE_SOURCE_DIR}/media/MediaFrame
+    ${CMAKE_SOURCE_DIR}/media/transport
     ${CMAKE_SOURCE_DIR}/server/Moudle
     ${LIBHV_DIR}
     ${LIBHV_DIR}/base
@@ -130,6 +131,8 @@ add_library(COMMON STATIC
 
     Common/Depacketizer/AudioDepacketizer.h
     Common/Depacketizer/AudioDepacketizer.cpp
+    Common/Depacketizer/AudioRtpDepacketizerFactory.h
+    Common/Depacketizer/AudioRtpDepacketizerFactory.cpp
 )
 
 add_library(utils STATIC
@@ -158,6 +161,8 @@ add_library(rtp STATIC
     Rtsp/Rtp/NackRequester.h
     Rtsp/RtpReceiver.cpp
     Rtsp/RtpReceiver.h
+    Rtsp/TrackClock.cpp
+    Rtsp/TrackClock.h
     Rtsp/RtpSenderTrack.cpp
     Rtsp/RtpSenderTrack.h
     Rtsp/RtpConnection.cpp
@@ -180,6 +185,13 @@ add_library(rtsp STATIC
     Rtsp/RtspConnection.h
     Rtsp/RtspSession.cpp
     Rtsp/RtspUtil.cpp
+)
+
+# RtspMessage/RtspMediaSession consume media endpoint headers.  The media
+# target cannot propagate these paths back to rtsp because media itself links
+# rtsp, so expose the required header root explicitly at this boundary.
+target_include_directories(rtsp PRIVATE
+    ${CMAKE_SOURCE_DIR}/media
 )
 
 file(GLOB INTERLEAVED_SRCS
@@ -222,7 +234,7 @@ add_executable(Packetia ${CMAKE_SOURCE_DIR}/server/main.cpp)
 target_link_libraries(Packetia
     PRIVATE
     -Wl,--start-group
-    media rtsp rtp sip network utils Rtcp LOGGER ROOM_LIB COMMON ICE WebRtc Interleaved hv_static 
+    media rtsp rtp sip network utils Rtcp LOGGER ROOM_LIB COMMON ICE WebRtc Interleaved service hv_static
     -Wl,--end-group
     ${FFMPEG_LIBRARIES}
     pthread

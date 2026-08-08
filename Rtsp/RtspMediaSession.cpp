@@ -103,6 +103,7 @@ uint32_t MediaSessionManager::AddSession(MediaSession::Ptr session, const std::s
 
     uint32_t id = ++last_id_;
     session->session_id_ = id;
+    session->frame_publisher_ = frame_publisher_;
 
     if (session->global_id_.empty())
         session->global_id_ = GenerateGlobalId();
@@ -110,6 +111,28 @@ uint32_t MediaSessionManager::AddSession(MediaSession::Ptr session, const std::s
     sessions_[id] = session;
     suffix_map_[suffix] = session;
     return id;
+}
+
+void MediaSessionManager::SetFramePublisher(std::shared_ptr<media::IEncodedFramePublisher> publisher)
+{
+    std::lock_guard<std::mutex> lock(mtx_);
+    frame_publisher_ = std::move(publisher);
+    for (auto& entry : sessions_)
+    {
+        entry.second->SetFramePublisher(frame_publisher_);
+    }
+}
+
+void MediaSession::SetFramePublisher(std::shared_ptr<media::IEncodedFramePublisher> publisher)
+{
+    std::lock_guard<std::mutex> lock(track_mtx_);
+    frame_publisher_ = std::move(publisher);
+}
+
+std::shared_ptr<media::IEncodedFramePublisher> MediaSession::GetFramePublisher() const
+{
+    std::lock_guard<std::mutex> lock(track_mtx_);
+    return frame_publisher_;
 }
 
 MediaSession::Ptr MediaSessionManager::GetSessionById(const uint32_t& id)

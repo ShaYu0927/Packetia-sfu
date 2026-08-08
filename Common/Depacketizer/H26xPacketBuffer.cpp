@@ -220,8 +220,7 @@ bool H26xPacketBuffer::MaybeAssembleFrame(int64_t end_seq, H264AccessUnit& frame
     return true;
 }
 
-bool H26xPacketBuffer::AssembleFrame(int64_t start_seq, int64_t end_seq,
-                                     H264AccessUnit& frame) const
+bool H26xPacketBuffer::AssembleFrame(int64_t start_seq, int64_t end_seq, H264AccessUnit& frame) const
 {
     const auto* first = GetPacket(start_seq);
     if (!first)

@@ -671,6 +671,7 @@ std::string RtspRequest::HandleCmdANNOUNCE(RtspRequestInfo& req)
 std::string RtspRequest::HandleCmdSetup(RtspRequestInfo& req)
 {
     last_setup_endpoint_id_ = 0;
+    last_setup_rtp_channel_ = 0;
     last_setup_rtcp_channel_ = 0;
     std::string session_id,url,control, suffix;
     std::shared_ptr<RtpTrack> track_ptr;
@@ -741,7 +742,8 @@ std::string RtspRequest::HandleCmdSetup(RtspRequestInfo& req)
     }
 
     
-    auto endpoint = std::make_shared<media::SfuEndpoint>(endpoint_id, tracker, media_session);
+    auto endpoint = std::make_shared<media::SfuEndpoint>(
+        endpoint_id, tracker, media_session, media_session->GetFramePublisher());
     if (!endpoint->Start())
     {
         LOG_ERROR("Start endpoint failed, endpoint_id={}, session={}, track_id={}",
@@ -765,6 +767,7 @@ std::string RtspRequest::HandleCmdSetup(RtspRequestInfo& req)
     }
 
     last_setup_endpoint_id_ = endpoint_id;
+    last_setup_rtp_channel_ = static_cast<uint8_t>(pTranOut.interleaved_rtp);
     last_setup_rtcp_channel_ = static_cast<uint8_t>(pTranOut.interleaved_rtcp);
 
     std::string str = BuildSetupRes(std::to_string(req.cseq), session_id,pTranOut.interleaved_rtp, pTranOut.interleaved_rtcp,"record");

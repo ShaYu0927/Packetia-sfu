@@ -143,12 +143,14 @@ public:
         virtual bool GenerateRtcp(uint32_t media_ssrc, std::vector<uint8_t>& out) = 0;
 
         /* Build a PSFB PLI packet (PT=206, FMT=1). Returns bytes to send. */
-        virtual std::vector<uint8_t> BuildPli(uint32_t sender_ssrc,
-                                        uint32_t media_ssrc) = 0;
-
-        std::unique_ptr<IRtcpReceiver> CreateRtcpReceiver();
-        std::unique_ptr<IRtcpSender>   CreateRtcpSender(); 
+        virtual std::vector<uint8_t> BuildPli(uint32_t sender_ssrc, uint32_t media_ssrc) = 0;
     };
+
+    // Factories for the default parser and packet generator implementations.
+    // The observer is not owned by the receiver and may be replaced later via
+    // IRtcpReceiver::SetObserver().
+    std::unique_ptr<IRtcpReceiver> CreateRtcpReceiver(IRtcpObserver* observer = nullptr);
+    std::unique_ptr<IRtcpSender> CreateRtcpSender();
 
 }
 

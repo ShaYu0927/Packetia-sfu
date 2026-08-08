@@ -9,13 +9,21 @@
 namespace media
 {
 
-class AudioDepacketizer
+class IAudioRtpDepacketizer
 {
 public:
-    AudioDepacketizer(CodecType codec,
-                      uint32_t sample_rate,
-                      uint16_t channels = 1,
-                      const std::string& fmtp = {})
+    virtual ~IAudioRtpDepacketizer() = default;
+    virtual bool Input(const RtpView& view) = 0;
+    virtual bool HasFrame() const = 0;
+    virtual bool PopFrame(EncodedFrame& out) = 0;
+    virtual void Reset() = 0;
+};
+
+
+class AudioDepacketizer : public IAudioRtpDepacketizer
+{
+public:
+    AudioDepacketizer(CodecType codec, uint32_t sample_rate, uint16_t channels = 1, const std::string& fmtp = {})
         : codec_(codec),
           sample_rate_(sample_rate),
           channels_(channels)
@@ -23,21 +31,17 @@ public:
         ParseAacFmtp(fmtp);
     }
 
-    bool Input(const RtpView& view);
+    bool Input(const RtpView& view) override;
 
-    bool HasFrame() const;
-    bool PopFrame(EncodedFrame& out);
+    bool HasFrame() const override;
+    bool PopFrame(EncodedFrame& out) override;
+    void Reset() override;
 
 private:
     bool InputSimplePayload(const RtpView& view);
     bool InputAac(const RtpView& view);
     void ParseAacFmtp(const std::string& fmtp);
-    void EmitAacFrame(const uint8_t* data,
-                      size_t len,
-                      uint32_t timestamp,
-                      uint32_t ssrc,
-                      uint16_t first_seq,
-                      uint16_t last_seq);
+    void EmitAacFrame(const uint8_t* data,  size_t len, uint32_t timestamp, uint32_t ssrc, uint16_t first_seq, uint16_t last_seq);
     void ResetAacFragment();
 
     struct AacPayloadConfig

@@ -9,15 +9,18 @@
 #include <string>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "RtpTypes.h"
 #include "Rtp.h"
 #include "RtcpReciver.h"
+#include "TrackClock.h"
 #include "RtpSenderTrack.h"
 #include "H264Depacketizer.h"
 #include "logger.h"
 #include "AudioDepacketizer.h"
+#include "AudioRtpDepacketizerFactory.h"
 #include "MediaFrame.h"
 #include "NackRequester.h"
 
@@ -159,7 +162,10 @@ public:
      */
     explicit RtpReceiverTrack(const TrackInfo &info)
         : _info(info),
-          packet_pool_(std::make_shared<RtpPacketPool>(kPacketPoolCapacity))
+          packet_pool_(std::make_shared<RtpPacketPool>(kPacketPoolCapacity)),
+          track_clock_(info.clock_rate > 0
+                           ? static_cast<uint32_t>(info.clock_rate)
+                           : (info.type == TrackVideo ? 90000U : 0U))
     {
         setOnPacketSorted([this](uint16_t seq, const RtpPacket::Ptr &pkt) {
             (void)seq;
@@ -305,10 +311,9 @@ public:
                                     uint32_t octet_count)
     {
         (void)sender_ssrc;
-        (void)ntp;
-        (void)rtp_ts;
         (void)packet_count;
         (void)octet_count;
+        track_clock_.UpdateSenderReport(ntp, rtp_ts);
     }
 
     virtual void OnRtcpBye(uint32_t sender_ssrc)
@@ -382,6 +387,27 @@ protected:
 
     bool emitEncodedFrame(const EncodedFramePtr& frame)
     {
+        if (frame)
+        {
+            if (frame->info.timestamp.receive_time_ms == 0)
+            {
+                frame->info.timestamp.receive_time_ms = frame->info.timestamp.capture_time_ms;
+            }
+
+            const auto mapped = track_clock_.Map(frame->rtp.rtp_timestamp);
+            if (mapped.valid)
+            {
+                frame->info.timestamp.capture_time_ms = mapped.unix_time_us / 1000;
+                frame->info.timestamp.capture_time_valid = true;
+            }
+            else if (frame->info.timestamp.capture_time_ms == 0)
+            {
+                // Preserve the previous arrival-time fallback until the first
+                // valid SR establishes a sender clock mapping.
+                frame->info.timestamp.capture_time_ms = frame->info.timestamp.receive_time_ms;
+            }
+        }
+
         if (_on_encoded_frame)
         {
             _on_encoded_frame(frame);
@@ -459,6 +485,7 @@ protected:
     EncodedFrameCallback _on_encoded_frame;
 
     SendNackCallback _on_send_nack;
+    media::TrackClock track_clock_;
 };
 
 
@@ -495,6 +522,7 @@ public:
 
     void OnRtcpSenderReport(uint32_t sender_ssrc, uint64_t ntp, uint32_t rtp_ts, uint32_t packet_count,uint32_t octet_count) override
     {
+        RtpReceiverTrack::OnRtcpSenderReport(sender_ssrc, ntp, rtp_ts, packet_count, octet_count);
         RtpRecvStatsBase::OnSenderReport(sender_ssrc, ntp, rtp_ts, packet_count, octet_count);
     }
 
@@ -512,6 +540,7 @@ private:
 
     std::unique_ptr<H264Depacketizer> _depacketizer;
     bool _has_last_seq = false;
+    std::unordered_set<uint32_t> _broken_timestamps;
 
     std::unique_ptr<NackRequester> _nack_receiver;
 };
@@ -522,7 +551,7 @@ public:
     using Ptr = std::shared_ptr<RtpAudioTracker>;
 
     explicit RtpAudioTracker(const TrackInfo& info);
-    ~RtpAudioTracker() override = default;
+    ~RtpAudioTracker() override;
 
     /**
      * Create an independent audio receiver track that mirrors future valid
@@ -541,7 +570,10 @@ protected:
 private:
     std::vector<Ptr> SnapshotClones();
 
-    std::unique_ptr<media::AudioDepacketizer> depacketizer_;
+    std::unique_ptr<media::IAudioRtpDepacketizer> depacketizer_;
+    uint64_t audio_packets_seen_ = 0;
+    uint64_t audio_frames_completed_ = 0;
+    uint64_t audio_depacketize_failures_ = 0;
     std::mutex clones_mutex_;
     std::vector<std::weak_ptr<RtpAudioTracker>> clones_;
 };

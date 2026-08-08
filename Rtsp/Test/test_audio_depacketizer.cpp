@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "AudioDepacketizer.h"
+#include "AudioRtpDepacketizerFactory.h"
 
 namespace
 {
@@ -91,4 +92,53 @@ TEST(AudioDepacketizerTest, RejectsBrokenAacHeader)
     const std::vector<uint8_t> payload{0x00, 0x20, 0x00, 0x20};
     EXPECT_FALSE(depacketizer.Input(MakeView(payload, 40, 4000)));
     EXPECT_FALSE(depacketizer.HasFrame());
+}
+
+TEST(AudioRtpDepacketizerFactoryTest, CreatesG711Depacketizer)
+{
+    auto depacketizer = media::AudioRtpDepacketizerFactory::Create(
+        media::CodecType::PCMU, "PCMU", 8000, 1);
+    ASSERT_NE(depacketizer, nullptr);
+
+    const std::vector<uint8_t> payload(160, 0x7f);
+    ASSERT_TRUE(depacketizer->Input(MakeView(payload, 50, 8000)));
+    media::EncodedFrame frame;
+    ASSERT_TRUE(depacketizer->PopFrame(frame));
+    EXPECT_EQ(frame.info.codec, media::CodecType::PCMU);
+    EXPECT_EQ(frame.sample_count, 160U);
+}
+
+TEST(AudioRtpDepacketizerFactoryTest, CreatesOpusDepacketizer)
+{
+    auto depacketizer = media::AudioRtpDepacketizerFactory::Create(
+        media::CodecType::Opus, "opus", 48000, 2);
+    ASSERT_NE(depacketizer, nullptr);
+
+    const std::vector<uint8_t> payload{0x78, 0x01, 0x02};
+    ASSERT_TRUE(depacketizer->Input(MakeView(payload, 51, 48000)));
+    media::EncodedFrame frame;
+    ASSERT_TRUE(depacketizer->PopFrame(frame));
+    EXPECT_EQ(frame.info.codec, media::CodecType::Opus);
+    EXPECT_EQ(frame.sample_rate, 48000U);
+    EXPECT_EQ(frame.channels, 2U);
+    EXPECT_EQ(frame.sample_count, 960U);
+}
+
+TEST(AudioRtpDepacketizerFactoryTest, RejectsMalformedOpusPacket)
+{
+    auto depacketizer = media::AudioRtpDepacketizerFactory::Create(
+        media::CodecType::Opus, "opus", 48000, 2);
+    ASSERT_NE(depacketizer, nullptr);
+
+    // Code 3 requires a second byte carrying the frame count.
+    const std::vector<uint8_t> payload{0x7b};
+    EXPECT_FALSE(depacketizer->Input(MakeView(payload, 52, 48960)));
+    EXPECT_FALSE(depacketizer->HasFrame());
+}
+
+TEST(AudioRtpDepacketizerFactoryTest, RejectsLatmUntilImplemented)
+{
+    auto depacketizer = media::AudioRtpDepacketizerFactory::Create(
+        media::CodecType::AAC, "MP4A-LATM", 48000, 2);
+    EXPECT_EQ(depacketizer, nullptr);
 }

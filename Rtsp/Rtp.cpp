@@ -43,11 +43,7 @@ void RtpRecvStatsBase::CountBye()
     ++_bye_count;
 }
 
-void RtpRecvStatsBase::OnSenderReport(uint32_t sender_ssrc,
-                                      uint64_t ntp,
-                                      uint32_t rtp_ts,
-                                      uint32_t packet_count,
-                                      uint32_t octet_count)
+void RtpRecvStatsBase::OnSenderReport(uint32_t sender_ssrc, uint64_t ntp, uint32_t rtp_ts, uint32_t packet_count, uint32_t octet_count)
 {
     ++_sr_count;
     _rtcp_sender_ssrc = sender_ssrc;
@@ -57,14 +53,7 @@ void RtpRecvStatsBase::OnSenderReport(uint32_t sender_ssrc,
     _last_sr_octet_count = octet_count;
 }
 
-void RtpRecvStatsBase::OnReceiverReport(uint32_t sender_ssrc,
-                                        uint32_t media_ssrc,
-                                        uint8_t fraction_lost,
-                                        int32_t cumulative_lost,
-                                        uint32_t highest_seq,
-                                        uint32_t jitter,
-                                        uint32_t lsr,
-                                        uint32_t dlsr)
+void RtpRecvStatsBase::OnReceiverReport(uint32_t sender_ssrc, uint32_t media_ssrc, uint8_t fraction_lost, int32_t cumulative_lost, uint32_t highest_seq, uint32_t jitter, uint32_t lsr, uint32_t dlsr)
 {
     ++_rr_count;
     _rtcp_sender_ssrc = sender_ssrc;
@@ -97,20 +86,19 @@ bool RtpHeader::InputFromBuffer(const uint8_t* buf, size_t len)
     const uint8_t vpxcc = buf[0];
     const uint8_t mpt   = buf[1];
 
-    _version      = (vpxcc >> 6) & 0x03;
+    _version      = (vpxcc >> 6)  & 0x03;
     _padding      = ((vpxcc >> 5) & 0x01) != 0;
     _extension    = ((vpxcc >> 4) & 0x01) != 0;
-    _csrc         = vpxcc & 0x0F;
+    _csrc         = vpxcc         & 0x0F;
 
-    _marker       = ((mpt >> 7) & 0x01) != 0;
-    _payload_type = mpt & 0x7F;
+    _marker       = ((mpt >> 7)   & 0x01) != 0;
+    _payload_type = mpt           & 0x7F;
 
     _seq = (static_cast<uint16_t>(buf[2]) << 8) | static_cast<uint16_t>(buf[3]);
 
     _timestamp = (static_cast<uint32_t>(buf[4]) << 24) | (static_cast<uint32_t>(buf[5]) << 16) | (static_cast<uint32_t>(buf[6]) << 8)  | static_cast<uint32_t>(buf[7]);
 
     _ssrc = (static_cast<uint32_t>(buf[8]) << 24) | (static_cast<uint32_t>(buf[9]) << 16) | (static_cast<uint32_t>(buf[10]) << 8) | static_cast<uint32_t>(buf[11]);
-
     return true;
 }
 

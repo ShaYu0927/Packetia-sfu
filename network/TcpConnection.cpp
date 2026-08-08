@@ -7,7 +7,7 @@
 TcpConnection::TcpConnection(TaskScheduler *task_scheduler, SOCKET sockfd)
     : task_scheduler_(task_scheduler)
 	, read_buffer_(new BufferReader)
-	, write_buffer_(new BufferWirte(500))
+	, write_buffer_(new BufferWirte())
 	, channel_(new Channel(sockfd))
 {
     is_closed_ = false;
@@ -120,22 +120,19 @@ void TcpConnection::HandleRead()
     
     if (bytes_cb_)
     {
-        LOG_DEBUG("[TcpConnection] bytes_cb_ branch, fd=",
-              GetSocket(),
-              " readable=", n);
-        size_t n = read_buffer_->ReadableBytes();
-        if (n > 0)
+        const size_t readable = read_buffer_->ReadableBytes();
+        LOG_DEBUG("[TcpConnection] bytes_cb_ branch, fd=", GetSocket(), " readable=", readable);
+        if (readable > 0)
         {
             auto p = reinterpret_cast<const uint8_t*>(read_buffer_->Peek());
-            bytes_cb_(shared_from_this(), p, n);
-            read_buffer_->Retrieve(n); 
+            bytes_cb_(shared_from_this(), p, readable);
+            read_buffer_->Retrieve(readable);
         }
     }
     else if (read_cb_)
     {
-        LOG_DEBUG("[TcpConnection] read_cb_ branch, fd=",
-              GetSocket(),
-              " readable=", n);
+        const size_t readable = read_buffer_->ReadableBytes();
+        LOG_DEBUG("[TcpConnection] read_cb_ branch, fd=", GetSocket(), " readable=", readable);
         read_cb_(shared_from_this(), *read_buffer_);
     }
 

@@ -553,3 +553,38 @@ RTSP interleaved input
 - Connect `EncodedFrame` output to recording, playback, transcoding, or another
   application-level consumer buffer.
 - Connect the raw RTP SFU subscription and forwarding pipeline.
+
+## 2026-08-08 — 收紧媒体传输接口并统一 RTSP RTP 接收链路
+
+### 本次完成
+
+- 统一 `IMediaTransport` 的发送、接收、连接状态和生命周期接口。
+- 新增 `ReceivedMediaPacket`，使用拥有型负载保证接收包能够安全跨线程传递。
+- 新增 `IMediaPacketSource` 和 `IMediaPacketSink`，分离网络接收与媒体消费。
+- 新增 `MediaTransportBase`，统一管理 Transport ID、原子状态和线程安全的 Sink。
+- 实现 `RtspInterleavedTransport`，负责 RTP/RTCP channel 映射及 `$` 帧封装。
+- 实现 `UdpMediaTransport`，负责 selected peer 校验和 UDP 数据发送。
+- 新增 `MediaEndpointIngress`，统一 endpoint、SSRC、worker affinity 和媒体任务投递。
+- 将 RTSP interleaved RTP/RTCP 接收接入 Transport/Ingress 链路。
+- 使用 `WorkJob::owner` 管理异步任务引用的接收包内存，移除手工 `new[]/delete[]`。
+- 将 RTCP NACK/PLI 发送改为通过 Transport 投递回 TCP IO 线程。
+- 在 RTSP 断连和 `TEARDOWN` 时关闭并清理对应 Transport。
+- 修复相关 CMake include 依赖和 TCP 接收日志变量错误。
+
+### 当前接收链路
+
+```text
+TcpConnection
+  → RtspSession（RTSP / '$' 分帧）
+  → RtspInterleavedTransport
+  → ReceivedMediaPacket
+  → MediaEndpointIngress
+  → media worker
+  → SfuEndpoint / RTP Track
+```
+
+### 后续工作
+
+- 由信令层建立 `UdpSession → SfuEndpoint` 的明确绑定后，将 UDP RTP/RTCP 接入同一个 `MediaEndpointIngress`。
+- 减少 `MediaEndpoint::OnRtp()` 到 Tracker Packet Pool 之间的剩余内存复制。
+- 接通 Room/SFU 的订阅发送链路，使 `RtpSenderTrack` 通过具体 Transport 完成下行转发。

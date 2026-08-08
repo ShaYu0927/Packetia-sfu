@@ -9,6 +9,36 @@ namespace media
 {
 namespace
 {
+
+/*
+
+收到 AAC RTP payload
+        ↓
+读取 AU-headers-length
+        ↓
+解析 AU Header，得到 au_sizes
+        ↓
+au_sizes 数量？
+   ┌────┴──────────────┐
+ 多个 AU              一个 AU
+   ↓                    ↓
+验证长度总和       是否有活动分片？
+   ↓              ┌────┴─────┐
+逐个切分输出       有          无
+                  ↓           ↓
+           检查 SSRC/TS/seq   比较实际长度
+                  ↓        ┌────┼────────┐
+              追加数据      大于  等于    小于
+                  ↓          ↓    ↓       ↓
+             达到完整大小？ 失败  直接输出 创建分片
+              ┌───┴───┐
+             是       否
+             ↓        ↓
+           输出帧   marker=1？
+                    ↓
+                   丢弃
+*/
+
 class BitReader
 {
 public:
@@ -28,8 +58,7 @@ public:
         for (size_t i = 0; i < bits; ++i)
         {
             const size_t pos = bit_offset_ + i;
-            value = (value << 1) |
-                    ((data_[pos / 8] >> (7 - (pos % 8))) & 0x01U);
+            value = (value << 1) | ((data_[pos / 8] >> (7 - (pos % 8))) & 0x01U);
         }
         bit_offset_ += bits;
         return true;
@@ -148,8 +177,7 @@ bool AudioDepacketizer::InputAac(const RtpView& view)
         return false;
     }
 
-    const size_t header_bits = (static_cast<size_t>(view.payload[0]) << 8) |
-                               static_cast<size_t>(view.payload[1]);
+    const size_t header_bits = (static_cast<size_t>(view.payload[0]) << 8) | static_cast<size_t>(view.payload[1]);
     const size_t header_bytes = (header_bits + 7) / 8;
     if (2 + header_bytes > view.payload_len)
     {
@@ -163,9 +191,7 @@ bool AudioDepacketizer::InputAac(const RtpView& view)
 
     if (header_bits == 0)
     {
-        au_sizes.push_back(aac_config_.constant_size > 0
-                               ? aac_config_.constant_size
-                               : static_cast<uint32_t>(au_data_size));
+        au_sizes.push_back(aac_config_.constant_size > 0 ? aac_config_.constant_size : static_cast<uint32_t>(au_data_size));
     }
     else
     {
@@ -401,6 +427,12 @@ bool AudioDepacketizer::PopFrame(EncodedFrame& out)
     out = std::move(frames_.front());
     frames_.pop_front();
     return true;
+}
+
+void AudioDepacketizer::Reset()
+{
+    frames_.clear();
+    ResetAacFragment();
 }
 
 } // namespace media

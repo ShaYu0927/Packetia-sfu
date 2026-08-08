@@ -60,6 +60,11 @@ struct WorkJob
 
     uint64_t enqueue_ts = 0;
 
+    // Optional type-erased owner for memory referenced by pkt/raw. Keeping
+    // ownership on the job makes cross-thread views safe without coupling the
+    // generic worker layer to a protocol-specific packet type.
+    std::shared_ptr<void> owner;
+
     void (*handler)(WorkJob&, void* ctx) = nullptr;
     void (*deleter)(WorkJob&) = nullptr;
 

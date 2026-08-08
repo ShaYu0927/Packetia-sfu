@@ -1,48 +1,55 @@
 #include "BufferWrite.h"
 #include "SocketUtil.h"
 #include <cstring>
+#include <utility>
 #include "Socket.h"
 
-BufferWirte::BufferWirte(int capacity)
-    :max_queue_size(capacity)
+BufferWirte::BufferWirte(std::size_t max_queued_bytes)
+    : max_queued_bytes_(max_queued_bytes == 0
+          ? KDefaultMaxQueuedBytes
+          : max_queued_bytes)
 {
 }
 
 bool BufferWirte::Append(std::shared_ptr<char> data, uint32_t size, uint32_t index)
 {
-    if(size < index)
+    if (!data || size == 0 || index >= size)
     {
         return false;
     }
 
-    if(size > max_queue_size)
+    const std::size_t remaining = static_cast<std::size_t>(size - index);
+    if (remaining > max_queued_bytes_ - queued_bytes_)
     {
         return false;
     }
 
-    Packet pkt = {data,size,index};
-    buffer_.emplace(pkt);
+    Packet pkt = {std::move(data), size, index};
+    buffer_.emplace(std::move(pkt));
+    queued_bytes_ += remaining;
     return true;
 }
 
 bool BufferWirte::Append(const char* data,uint32_t size,uint32_t index)
 {
-    if(size < index)
+    if (!data || size == 0 || index >= size)
     {
         return false;
     }
 
-    if(size > max_queue_size)
+    const std::size_t remaining = static_cast<std::size_t>(size - index);
+    if (remaining > max_queued_bytes_ - queued_bytes_)
     {
         return false;
     }
 
     Packet pkt;
-    pkt.data.reset(new char[size+512], std::default_delete<char[]>());
+    pkt.data.reset(new char[size], std::default_delete<char[]>());
 	memcpy(pkt.data.get(), data, size);
 	pkt.size = size;
 	pkt.writeIndex = index;
 	buffer_.emplace(std::move(pkt));
+    queued_bytes_ += remaining;
     return true;
 }
 
@@ -53,18 +60,23 @@ int  BufferWirte::Send(int socketfd,int timeOut)
         SocketUtil::SetBlock(socketfd,timeOut);
     }
 
-    int ret   = 0;
-    int count = 0;
-
    while (!buffer_.empty()) 
    {
         Packet &pkt = buffer_.front();
-        int ret = send(socketfd, pkt.data.get() + pkt.writeIndex, pkt.size - pkt.writeIndex, 0);
+        const int ret = send(socketfd, pkt.data.get() + pkt.writeIndex, pkt.size - pkt.writeIndex, 0);
         if (ret > 0) 
         {
-            pkt.writeIndex += ret;
-            if (pkt.writeIndex == pkt.size) buffer_.pop();
+            pkt.writeIndex += static_cast<uint32_t>(ret);
+            queued_bytes_ -= static_cast<std::size_t>(ret);
+            if (pkt.writeIndex == pkt.size)
+            {
+                buffer_.pop();
+            }
         } 
+        else if (ret == 0)
+        {
+            return -1;
+        }
         else if (ret < 0) 
         {
 #if defined(__linux__) || defined(__linux__)
