@@ -101,7 +101,6 @@ void TcpConnection::close()
 void TcpConnection::HandleRead()
 {
     bool peer_closed = false;
-    int  fatal_errno = 0;
 
     while (true)
     {
@@ -112,7 +111,6 @@ void TcpConnection::HandleRead()
 
         if (errno == EAGAIN || errno == EWOULDBLOCK) break;
 
-        fatal_errno = errno;
         peer_closed = true;
         break;
     }
@@ -131,16 +129,69 @@ void TcpConnection::HandleRead()
     }
     else if (read_cb_)
     {
+        if (peer_closed)
+        {
+            peer_read_closed_ = true;
+        }
         const size_t readable = read_buffer_->ReadableBytes();
         LOG_DEBUG("[TcpConnection] read_cb_ branch, fd=", GetSocket(), " readable=", readable);
-        read_cb_(shared_from_this(), *read_buffer_);
+        DispatchReadCallback();
     }
 
-    if (peer_closed) 
+    if (peer_closed && !read_cb_)
     {
         this->close();
         return;
     }    
+}
+
+bool TcpConnection::RequestReadContinuation()
+{
+    if (is_closed_ || !task_scheduler_)
+    {
+        return false;
+    }
+
+    bool expected = false;
+    if (!read_continuation_pending_.compare_exchange_strong(expected, true))
+    {
+        return true;
+    }
+
+    std::weak_ptr<TcpConnection> weak_self = shared_from_this();
+    if (!task_scheduler_->Post([weak_self] {
+            if (auto self = weak_self.lock())
+            {
+                self->read_continuation_pending_.store(false);
+                self->DispatchReadCallback();
+            }
+        }))
+    {
+        read_continuation_pending_.store(false);
+        return false;
+    }
+    return true;
+}
+
+void TcpConnection::DispatchReadCallback()
+{
+    if (is_closed_ || !read_cb_)
+    {
+        return;
+    }
+
+    if (!read_cb_(shared_from_this(), *read_buffer_))
+    {
+        close();
+        return;
+    }
+
+    // If EOF arrived together with a large buffered batch, let budgeted
+    // continuations drain it before closing the connection.
+    if (peer_read_closed_ && !read_continuation_pending_.load())
+    {
+        close();
+    }
 }
 
 

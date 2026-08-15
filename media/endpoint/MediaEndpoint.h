@@ -6,6 +6,7 @@
 #include "RtspMediaSession.h"
 #include "RtcpContext.h"
 #include "core/EncodedFrameRouter.h"
+#include "quality/WeakNetController.h"
 #include <functional>
 #include <atomic>
 #include <mutex>
@@ -127,6 +128,15 @@ private:
     std::shared_ptr<rtsp::RtpReceiverTrack> GetOrCreateTrack(uint32_t ssrc);
     void RemoveMediaStreamOnOwner(uint32_t source_ssrc);
     void DispatchEncodedFrame(const media::EncodedFrame::Ptr& frame);
+    void EvaluateReceiveQuality(uint32_t source_ssrc);
+
+    struct ReceiveQualityState
+    {
+        WeakNetController controller;
+        RtpRecvStatsBase::ReceiverReport latest_report;
+        NetworkQualityLevel quality = NetworkQualityLevel::Unknown;
+        uint64_t update_time_ms = 0;
+    };
 
 private:
     std::mutex track_mtx_;
@@ -144,6 +154,8 @@ private:
     std::atomic<FrameSubscriptionId> next_frame_subscription_id_{1};
     std::shared_ptr<IEncodedFramePublisher> frame_publisher_;
     std::atomic<uint64_t> published_frame_count_{0};
+    std::mutex quality_mutex_;
+    std::unordered_map<uint32_t, ReceiveQualityState> receive_quality_;
 };
 
 

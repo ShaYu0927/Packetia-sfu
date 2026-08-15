@@ -101,19 +101,20 @@ bool RtspSession::OnRead(TcpConnection::Ptr conn, BufferReader& buffer)
     size_t processedBytes = 0;
     size_t processedFrames = 0;
     
-    size_t readable = buffer.ReadableBytes();
-
-    while (buffer.ReadableBytes() > 0)
+    while (true)
     {
-        if (processedBytes >= kByteBudget || processedFrames >= kFrameBudget)
-            break;
+        const size_t before = buffer.ReadableBytes();
+        if (before == 0)
+            return true;
 
-        size_t before = buffer.ReadableBytes();
+        if (processedBytes >= kByteBudget || processedFrames >= kFrameBudget)
+            return conn && conn->RequestReadContinuation();
+
         auto r = TryConsumeOneFrame(buffer);
         if (r == ParseResult::NEED_MORE) break;
         if (r == ParseResult::ERROR) return false;
 
-        size_t after = buffer.ReadableBytes();
+        const size_t after = buffer.ReadableBytes();
 
         if (after >= before)
         {

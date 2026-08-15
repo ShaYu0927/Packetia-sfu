@@ -7,8 +7,6 @@ add_library(sip STATIC
     sip/SipMessage.h
     sip/SipParse.cpp
     sip/SipParse.h
-    sip/SipParser.cpp
-    sip/SipParser.h
     sip/SipSession.cpp
     sip/SipSession.h
     sip/SipServer.cpp

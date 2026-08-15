@@ -26,6 +26,7 @@
 
 namespace rtsp 
 {
+
 class RtpPacketPool : public std::enable_shared_from_this<RtpPacketPool>
 {
 public:
@@ -111,7 +112,8 @@ private:
  *   - RtpVideoTracker
  *   - RtpAudioTracker
  */
-class RtpReceiverTrack : public EnhancedPacketSortor<RtpPacket::Ptr, uint16_t>
+class RtpReceiverTrack : public EnhancedPacketSortor<RtpPacket::Ptr, uint16_t>,
+                         public RtpRecvStatsBase
 {
 public:
     using Ptr = std::shared_ptr<RtpReceiverTrack>;
@@ -304,16 +306,12 @@ public:
      */
     virtual RtpPacket::Ptr inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len) = 0;
 
-    virtual void OnRtcpSenderReport(uint32_t sender_ssrc,
-                                    uint64_t ntp,
-                                    uint32_t rtp_ts,
-                                    uint32_t packet_count,
-                                    uint32_t octet_count)
+    virtual void OnRtcpSenderReport(uint32_t sender_ssrc, uint64_t ntp, uint32_t rtp_ts, uint32_t packet_count, uint32_t octet_count)
     {
-        (void)sender_ssrc;
-        (void)packet_count;
-        (void)octet_count;
         track_clock_.UpdateSenderReport(ntp, rtp_ts);
+        RtpRecvStatsBase::OnSenderReport(
+            sender_ssrc, ntp, rtp_ts, packet_count, octet_count,
+            NowMs(), track_clock_.ClockRate());
     }
 
     virtual void OnRtcpBye(uint32_t sender_ssrc)
@@ -342,6 +340,9 @@ protected:
 
         ++_stats.received_packets;
         _stats.seen_packet = true;
+        OnRtpPacket(pkt->getSSRC(), pkt->getPayloadType(), pkt->getSeq(),
+                    pkt->getStamp(), pkt->getPayloadSize(), pkt->getRecvTimeMs(),
+                    pkt->getSampleRate());
         EnhancedPacketSortor<RtpPacket::Ptr, uint16_t>::inputPacket(pkt->getSeq(), pkt);
 
         return true;
@@ -489,7 +490,7 @@ protected:
 };
 
 
-class RtpVideoTracker : public RtpReceiverTrack, public RtpRecvStatsBase
+class RtpVideoTracker : public RtpReceiverTrack
 {
 public:
     using Ptr = std::shared_ptr<RtpVideoTracker>;
@@ -519,12 +520,6 @@ public:
 
 public:
     RtpPacket::Ptr inputRtp(TrackType type, int sample_rate, uint8_t* ptr, size_t len) override;
-
-    void OnRtcpSenderReport(uint32_t sender_ssrc, uint64_t ntp, uint32_t rtp_ts, uint32_t packet_count,uint32_t octet_count) override
-    {
-        RtpReceiverTrack::OnRtcpSenderReport(sender_ssrc, ntp, rtp_ts, packet_count, octet_count);
-        RtpRecvStatsBase::OnSenderReport(sender_ssrc, ntp, rtp_ts, packet_count, octet_count);
-    }
 
     void OnRtcpBye(uint32_t sender_ssrc) override
     {
@@ -603,6 +598,7 @@ class RtcpDispatcher : public rtcpx::IRtcpObserver
 {
 public:
     using TransportFeedbackCallback = std::function<void(const rtcpx::TransportFeedbackReport&)>;
+    using SenderReportCallback = std::function<void(uint32_t media_ssrc)>;
     /**
      * @brief Add a receiver track for RTCP dispatching.
      *
@@ -627,6 +623,7 @@ public:
     void AddSenderTrack(uint32_t media_ssrc, std::weak_ptr<RtpSenderTrack> track);
     void RemoveSenderTrack(uint32_t media_ssrc);
     void SetTransportFeedbackCallback(TransportFeedbackCallback cb);
+    void SetSenderReportCallback(SenderReportCallback cb);
 
      /**
      * @brief Handle RTCP Sender Report.
@@ -726,6 +723,7 @@ private:
     std::unordered_map<uint32_t, std::weak_ptr<RtpReceiverTrack>> recv_tracks_;
     std::unordered_map<uint32_t, std::weak_ptr<RtpSenderTrack>> send_tracks_;
     TransportFeedbackCallback transport_feedback_cb_;
+    SenderReportCallback sender_report_cb_;
 };
 }
 #endif // _RTPRECEIVER_H_

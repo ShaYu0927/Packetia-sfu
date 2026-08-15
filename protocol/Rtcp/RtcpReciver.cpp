@@ -2,6 +2,7 @@
 #include "BufferRead.h"
 #include "utils.h"
 #include "RtcpHealper.h"
+#include "logger.h"
 #include <vector>
 
 namespace
@@ -204,6 +205,16 @@ void rtcpx::RtcpReceiverImpl::HandleSingleRtcpPacket(const uint8_t* p, size_t le
             const uint32_t rtp_ts = utils::Utils::ReadUint32BE(p + 16);
             const uint32_t packet_count = utils::Utils::ReadUint32BE(p + 20);
             const uint32_t octet_count = utils::Utils::ReadUint32BE(p + 24);
+            const uint32_t ntp_seconds = static_cast<uint32_t>(ntp >> 32);
+            const uint32_t ntp_fraction = static_cast<uint32_t>(ntp);
+
+            LOG_INFO("[RTCP][SR] sender_ssrc=", sender_ssrc,
+                     " ntp_seconds=", ntp_seconds,
+                     " ntp_fraction=", ntp_fraction,
+                     " rtp_ts=", rtp_ts,
+                     " packets=", packet_count,
+                     " octets=", octet_count,
+                     " report_blocks=", static_cast<uint32_t>(fmt));
 
             observer_->OnSenderReport(sender_ssrc, ntp, rtp_ts, packet_count, octet_count);
 
@@ -227,14 +238,26 @@ void rtcpx::RtcpReceiverImpl::HandleSingleRtcpPacket(const uint8_t* p, size_t le
         if (len >= 8)
         {
             const uint32_t sender_ssrc = utils::Utils::ReadUint32BE(p + 4);
+            LOG_INFO("[RTCP][RR] reporter_ssrc=", sender_ssrc,
+                     " report_blocks=", static_cast<uint32_t>(fmt));
+
             size_t off = 8;
             for (uint8_t i = 0; i < fmt && off + 24 <= len; ++i, off += 24)
             {
                 const uint8_t* rb = p + off;
+                const uint32_t media_ssrc = utils::Utils::ReadUint32BE(rb);
+                const uint8_t fraction_lost = rb[4];
+                const int32_t cumulative_lost = ReadInt24BE(rb + 5);
+
+                LOG_INFO("[RTCP][RR] reporter_ssrc=", sender_ssrc,
+                         " media_ssrc=", media_ssrc,
+                         " fraction_lost=", static_cast<uint32_t>(fraction_lost),
+                         " cumulative_lost=", cumulative_lost);
+
                 observer_->OnReceiverReport(sender_ssrc,
-                                            utils::Utils::ReadUint32BE(rb),
-                                            rb[4],
-                                            ReadInt24BE(rb + 5),
+                                            media_ssrc,
+                                            fraction_lost,
+                                            cumulative_lost,
                                             utils::Utils::ReadUint32BE(rb + 8),
                                             utils::Utils::ReadUint32BE(rb + 12),
                                             utils::Utils::ReadUint32BE(rb + 16),

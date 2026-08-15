@@ -26,7 +26,7 @@ struct WeakNetFeedback
 class WeakNetController
 {
 public:
-    WeakNetController();
+    WeakNetController() = default;
 
     void SetBitrateConstraints(const BitrateConstraints& constraints);
 

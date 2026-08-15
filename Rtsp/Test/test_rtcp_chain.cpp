@@ -172,6 +172,62 @@ TEST(RtcpChainTest, ReceiverReportUsesSigned24BitCumulativeLoss)
     EXPECT_EQ(observer.highest, 0x00010020U);
 }
 
+TEST(RtcpChainTest, ReceiveStatsCalculateSrMetricsAndReceiverReport)
+{
+    RtpRecvStatsBase stats;
+
+    stats.OnRtpPacket(0x11223344, 96, 100, 90000, 1000, 1000, 90000);
+    stats.OnRtpPacket(0x11223344, 96, 102, 96000, 1000, 1066, 90000);
+
+    constexpr uint64_t kNtpUnixOffset = 2208988800ULL;
+    const uint64_t first_ntp = (kNtpUnixOffset + 10ULL) << 32;
+    const uint64_t second_ntp = (kNtpUnixOffset + 15ULL) << 32;
+    stats.OnSenderReport(0x11223344, first_ntp, 90000, 100, 100000,
+                         1000, 90000);
+    stats.OnSenderReport(0x11223344, second_ntp, 540000, 200, 600000,
+                         6000, 90000);
+
+    EXPECT_DOUBLE_EQ(stats.GetSrIntervalMs(), 5000.0);
+    EXPECT_DOUBLE_EQ(stats.GetSenderBitrateBps(), 800000.0);
+    EXPECT_DOUBLE_EQ(stats.GetSenderPacketRate(), 20.0);
+    EXPECT_DOUBLE_EQ(stats.GetMeasuredClockRate(), 90000.0);
+    EXPECT_DOUBLE_EQ(stats.GetClockDriftPpm(), 0.0);
+
+    const auto report = stats.BuildReceiverReport(7000);
+    EXPECT_EQ(report.media_ssrc, 0x11223344U);
+    EXPECT_EQ(report.extended_highest_seq, 102U);
+    EXPECT_EQ(report.cumulative_lost, 1);
+    EXPECT_EQ(report.fraction_lost, 85);
+    EXPECT_EQ(report.lsr, static_cast<uint32_t>((second_ntp >> 16) & 0xFFFFFFFFULL));
+    EXPECT_EQ(report.dlsr, 65536U);
+}
+
+TEST(RtcpChainTest, DispatcherNotifiesQualityPathAfterSenderReport)
+{
+    TrackInfo info;
+    info.type = TrackVideo;
+    info.ssrc = 0x11223344;
+    info.clock_rate = 90000;
+    auto track = std::make_shared<rtsp::RtpVideoTracker>(info);
+
+    rtsp::RtcpDispatcher dispatcher;
+    dispatcher.AddReceiverTrack(info.ssrc, track);
+
+    uint32_t notified_ssrc = 0;
+    dispatcher.SetSenderReportCallback(
+        [&notified_ssrc](uint32_t media_ssrc) {
+            notified_ssrc = media_ssrc;
+        });
+
+    constexpr uint64_t kNtpUnixOffset = 2208988800ULL;
+    dispatcher.OnSenderReport(info.ssrc,
+                              (kNtpUnixOffset + 10ULL) << 32,
+                              90000, 10, 1000);
+
+    EXPECT_EQ(track->GetSenderReportCount(), 1U);
+    EXPECT_EQ(notified_ssrc, info.ssrc);
+}
+
 TEST(RtcpChainTest, DispatcherRoutesNackAndPliToSenderTrack)
 {
     auto transport = std::make_shared<CaptureTransport>();

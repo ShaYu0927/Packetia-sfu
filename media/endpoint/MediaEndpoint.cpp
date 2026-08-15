@@ -9,10 +9,31 @@
 #include <iomanip>
 #include <mutex>
 #include <algorithm>
+#include <chrono>
+#include <limits>
 #include "utils.h"
 
 namespace media 
 {
+
+namespace
+{
+uint64_t SteadyNowMs()
+{
+    using namespace std::chrono;
+    return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+}
+
+uint32_t ClampToUint32(double value)
+{
+    if (value <= 0.0)
+    {
+        return 0;
+    }
+    const double maximum = static_cast<double>(std::numeric_limits<uint32_t>::max());
+    return static_cast<uint32_t>(std::min(value, maximum));
+}
+}
 
 static void DumpBytes(const uint8_t* data, size_t len, size_t max_dump = 16)
 {
@@ -333,6 +354,14 @@ bool SfuEndpoint::Start()
     {
         rtcp_receiver_ = std::make_unique<rtcpx::RtcpReceiverImpl>(rtcp_dispatcher_.get());
     }
+    std::weak_ptr<SfuEndpoint> weak_self = weak_from_this();
+    rtcp_dispatcher_->SetSenderReportCallback(
+        [weak_self](uint32_t media_ssrc) {
+            if (auto self = weak_self.lock())
+            {
+                self->EvaluateReceiveQuality(media_ssrc);
+            }
+        });
     local_rtcp_ssrc_ = static_cast<uint32_t>(Id() ^ (Id() >> 32));
     if (local_rtcp_ssrc_ == 0)
     {
@@ -470,6 +499,10 @@ void SfuEndpoint::OnTrackPli(uint32_t media_ssrc)
 void SfuEndpoint::Stop()
 {
     SetState(State::kStopping);
+    if (rtcp_dispatcher_)
+    {
+        rtcp_dispatcher_->SetSenderReportCallback({});
+    }
 
     std::vector<uint32_t> streams;
     {
@@ -633,6 +666,67 @@ void SfuEndpoint::RemoveMediaStreamOnOwner(uint32_t source_ssrc)
         }
     }
     router_.RemoveStream(source_ssrc);
+    {
+        std::lock_guard<std::mutex> lock(quality_mutex_);
+        receive_quality_.erase(source_ssrc);
+    }
+}
+
+void SfuEndpoint::EvaluateReceiveQuality(uint32_t source_ssrc)
+{
+    auto track = FindTrackBySsrc(source_ssrc);
+    if (!track)
+    {
+        return;
+    }
+
+    const uint64_t now_ms = SteadyNowMs();
+    const auto report = track->BuildReceiverReport(now_ms);
+
+    WeakNetFeedback feedback;
+    feedback.now_ms = now_ms;
+    feedback.send_bitrate_bps = ClampToUint32(track->GetSenderBitrateBps());
+    feedback.loss_rate = static_cast<double>(report.fraction_lost) / 256.0;
+    const uint32_t clock_rate = track->getTrackInfo().clock_rate;
+    if (clock_rate > 0)
+    {
+        feedback.jitter_ms = static_cast<uint32_t>(static_cast<uint64_t>(report.jitter) * 1000ULL / clock_rate);
+    }
+    feedback.rtt_ms = track->GetRttMs();
+    feedback.nack_count = track->GetNackCount();
+    feedback.pli_count = track->GetPliCount();
+    feedback.fir_count = track->GetFirCount();
+
+    NetworkControlUpdate update;
+    NetworkQualityLevel previous_quality = NetworkQualityLevel::Unknown;
+    NetworkQualityLevel current_quality = NetworkQualityLevel::Unknown;
+    {
+        std::lock_guard<std::mutex> lock(quality_mutex_);
+        auto& state = receive_quality_[source_ssrc];
+        previous_quality = state.quality;
+        update = state.controller.OnFeedback(feedback);
+        state.latest_report = report;
+        state.update_time_ms = now_ms;
+        current_quality = state.controller.GetSnapshot().quality;
+        state.quality = current_quality;
+    }
+
+    if (current_quality != previous_quality)
+    {
+        LOG_INFO("[WEAK_NET] quality changed",
+                 " ssrc=", source_ssrc,
+                 " from=", ToString(previous_quality),
+                 " to=", ToString(current_quality),
+                 " loss=", feedback.loss_rate,
+                 " jitter_ms=", feedback.jitter_ms,
+                 " sender_bitrate_bps=", feedback.send_bitrate_bps,
+                 " target_bitrate_bps=", update.target_rate.target_bitrate_bps);
+    }
+
+    if (update.request_key_frame && track->getTrackType() == TrackVideo)
+    {
+        OnTrackPli(source_ssrc);
+    }
 }
 
 void SfuEndpoint::ForwardRtpToSubscribers(uint32_t source_ssrc, const uint8_t* data, size_t len)

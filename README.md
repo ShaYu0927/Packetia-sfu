@@ -588,3 +588,53 @@ TcpConnection
 - 由信令层建立 `UdpSession → SfuEndpoint` 的明确绑定后，将 UDP RTP/RTCP 接入同一个 `MediaEndpointIngress`。
 - 减少 `MediaEndpoint::OnRtp()` 到 Tracker Packet Pool 之间的剩余内存复制。
 - 接通 Room/SFU 的订阅发送链路，使 `RtpSenderTrack` 通过具体 Transport 完成下行转发。
+
+## 2026-08-15 — 接入 RTCP 接收统计与弱网质量评估链路
+
+### 本次完成
+
+- 扩展 `RtpRecvStatsBase`，统一维护每个 SSRC 的 RTP/RTCP 接收统计。
+- RTP 到达时实时统计包数、负载字节数、序列号回绕、重复包、乱序包和 RFC 3550 jitter。
+- 根据接收时间和累计负载字节数计算平均接收码率。
+- SR 到达时保存 NTP/RTP 时间映射、发送包数和发送字节数。
+- 根据连续 SR 计算发送端负载码率、发送包速率、SR 间隔、实测 RTP 时钟频率和时钟漂移。
+- 实现 `BuildReceiverReport()`，计算 RR report block 所需的 `fraction lost`、`cumulative lost`、`extended highest sequence`、`jitter`、`LSR` 和 `DLSR`。
+- 将 `RtpRecvStatsBase` 下沉到 `RtpReceiverTrack`，使音频和视频轨使用同一套统计逻辑。
+- 增加 `RtcpDispatcher` 的 SR 完成回调，在 Track 更新完成后通知对应 `SfuEndpoint`。
+- Endpoint 根据媒体 SSRC 找到接收轨，将统计结果转换为 `WeakNetFeedback` 并提交给 `WeakNetController`。
+- 按 SSRC 独立保存弱网控制器、最近一次 RR 统计结果和网络质量等级，避免音视频状态互相覆盖。
+- 视频网络质量进入 `Bad` 状态时，通过现有 RTCP Transport 链路发送 PLI 请求关键帧。
+- 网络质量等级发生变化时输出 `[WEAK_NET] quality changed` 日志。
+- 补充 SR/RR 接收日志，输出 NTP、RTP timestamp、包数、字节数及 report block 数量。
+- 移除 AI Frame 和 Frame Router 的高频逐帧信息日志，保留队列溢出错误日志。
+- 补充 RTCP 指标计算和 Dispatcher SR 回调单元测试。
+- 补充 `RtpRecvStatsBase` 接口、参数单位、调用时机及状态副作用说明。
+- 修复 `OnSenderReport` 调用名称不一致导致的编译错误。
+
+### 当前计算链路
+
+```text
+RTP packet
+  → RtpReceiverTrack::inputPacket()
+  → RtpRecvStatsBase::OnRtpPacket()
+  → sequence / loss / jitter / receive bitrate
+
+RTCP SR
+  → RtcpReceiverImpl
+  → RtcpDispatcher::OnSenderReport()
+  → RtpReceiverTrack::OnRtcpSenderReport()
+  → TrackClock + RtpRecvStatsBase::OnSenderReport()
+  → SfuEndpoint::EvaluateReceiveQuality()
+  → BuildReceiverReport()
+  → WeakNetFeedback
+  → WeakNetController::OnFeedback()
+  → NetworkControlUpdate
+```
+
+### 后续工作
+
+- 增加独立的质量评估周期，避免完全依赖上游 SR 的发送周期。
+- 周期构造并发送 RTCP RR，复用弱网评估已经生成的 report block，避免重复推进统计区间基线。
+- 将目标码率、Pacer 和 FEC 建议接入实际媒体发送或编码控制接口。
+- 完善下行 `RtpSenderTrack` 的 RR/TWCC、RTT 和带宽估计控制链路。
+- 增加 Endpoint/Session 级音视频质量聚合策略。

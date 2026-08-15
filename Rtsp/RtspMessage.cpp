@@ -4,6 +4,7 @@
 #include "MediaEndpoint.h"
 #include "Sdp.h"
 #include "RtspUtil.h"
+#include "TimeUtil.h"
 #include "logger.h"
 
 
@@ -799,15 +800,18 @@ std::string RtspRequest::HandleCmdRecord(RtspRequestInfo& req)
 
 std::string RtspRequest::HandleCmdPlay(RtspRequestInfo& req)
 {
-
+    (void)req;
+    return {};
 }
 
 std::string RtspRequest::HandleCmdPause(RtspRequestInfo& req)
 {
-
+    (void)req;
+    return {};
 }
 
 std::string RtspRequest::HandleCmdTeardown(RtspRequestInfo& req)
 {
-
+    (void)req;
+    return {};
 }

@@ -60,6 +60,11 @@ public:
 	void Send(const char *data, uint32_t size);
     void Start();
 
+    // Continue consuming bytes already buffered on the connection's owning
+    // I/O thread. This is used by budgeted protocol parsers to yield fairly
+    // without waiting for another socket-read event.
+    bool RequestReadContinuation();
+
 
     bool IsClosed() const 
 	{ return is_closed_; }
@@ -77,6 +82,7 @@ public:
     void close();
 protected:
     virtual void HandleRead();
+	void DispatchReadCallback();
 	virtual void HandleWrite();
 	virtual void HandleClose();
 	virtual void HandleError();	
@@ -102,6 +108,8 @@ protected:
     TaskScheduler *task_scheduler_;
     std::mutex mutex_;
     std::atomic_bool is_closed_;
+    std::atomic_bool read_continuation_pending_{false};
+    bool peer_read_closed_ = false;
 };
 
 

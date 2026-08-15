@@ -1,4 +1,8 @@
 #include "Rtp.h"
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
+#include <limits>
 #include <string>
 
 
@@ -43,15 +47,159 @@ void RtpRecvStatsBase::CountBye()
     ++_bye_count;
 }
 
-void RtpRecvStatsBase::OnSenderReport(uint32_t sender_ssrc, uint64_t ntp, uint32_t rtp_ts, uint32_t packet_count, uint32_t octet_count)
+void RtpRecvStatsBase::OnRtpPacket(uint32_t ssrc, uint8_t payload_type,
+                                   uint16_t seq, uint32_t rtp_ts,
+                                   size_t bytes, uint64_t receive_ms,
+                                   uint32_t clock_rate)
 {
+    if (_first_rtp_recv_ms == 0)
+    {
+        _first_rtp_recv_ms = receive_ms;
+    }
+    _last_rtp_recv_ms = receive_ms;
+    _ssrc = ssrc;
+    _payload_type = payload_type;
+    _last_seq = seq;
+    _last_timestamp = rtp_ts;
+    ++_rtp_packet_count;
+    _rtp_bytes += bytes;
+
+    if (!_has_seq)
+    {
+        _has_seq = true;
+        _base_seq = seq;
+        _max_seq = seq;
+    }
+    else
+    {
+        const int16_t delta = static_cast<int16_t>(seq - _max_seq);
+        if (delta > 0)
+        {
+            if (seq < _max_seq)
+            {
+                _seq_cycles += 1U << 16;
+            }
+            _max_seq = seq;
+        }
+        else if (delta == 0)
+        {
+            ++_duplicate_packets;
+        }
+        else
+        {
+            ++_out_of_order_packets;
+        }
+    }
+
+    if (clock_rate > 0)
+    {
+        const uint32_t arrival_rtp_units = static_cast<uint32_t>(
+            (receive_ms * static_cast<uint64_t>(clock_rate)) / 1000ULL);
+        const int32_t transit = static_cast<int32_t>(arrival_rtp_units - rtp_ts);
+        if (_has_transit)
+        {
+            const int64_t difference = std::llabs(
+                static_cast<int64_t>(transit) - _previous_transit);
+            _jitter_value += (static_cast<double>(difference) - _jitter_value) / 16.0;
+            _jitter = static_cast<uint32_t>(std::max(0.0, _jitter_value));
+        }
+        _previous_transit = transit;
+        _has_transit = true;
+    }
+
+    if (_first_rtp_recv_ms != 0 && receive_ms > _first_rtp_recv_ms)
+    {
+        const uint64_t elapsed_ms = receive_ms - _first_rtp_recv_ms;
+        _receiver_bitrate_bps = static_cast<double>(_rtp_bytes) * 8000.0 /
+                                static_cast<double>(elapsed_ms);
+    }
+}
+
+void RtpRecvStatsBase::OnSenderReport(uint32_t sender_ssrc, uint64_t ntp,
+                                      uint32_t rtp_ts, uint32_t packet_count,
+                                      uint32_t octet_count, uint64_t receive_ms,
+                                      uint32_t clock_rate)
+{
+    if (_sr_count > 0 && ntp > _last_sr_ntp)
+    {
+        const double interval_seconds =
+            static_cast<double>(ntp - _last_sr_ntp) / 4294967296.0;
+        if (interval_seconds > 0.0)
+        {
+            _sr_interval_ms = interval_seconds * 1000.0;
+            const uint32_t octet_delta = octet_count - _last_sr_octet_count;
+            const uint32_t packet_delta = packet_count - _last_sr_packet_count;
+            _sender_bitrate_bps = static_cast<double>(octet_delta) * 8.0 /
+                                  interval_seconds;
+            _sender_packet_rate = static_cast<double>(packet_delta) /
+                                  interval_seconds;
+
+            if (clock_rate > 0)
+            {
+                const uint32_t rtp_delta = rtp_ts - _last_sr_rtp_ts;
+                _measured_clock_rate = static_cast<double>(rtp_delta) /
+                                       interval_seconds;
+                _clock_drift_ppm =
+                    (_measured_clock_rate - static_cast<double>(clock_rate)) /
+                    static_cast<double>(clock_rate) * 1000000.0;
+            }
+        }
+    }
+
     ++_sr_count;
     _rtcp_sender_ssrc = sender_ssrc;
     _last_sr_ntp = ntp;
     _last_sr_rtp_ts = rtp_ts;
     _last_sr_packet_count = packet_count;
     _last_sr_octet_count = octet_count;
+    _last_sr_receive_ms = receive_ms;
 }
+
+RtpRecvStatsBase::ReceiverReport RtpRecvStatsBase::BuildReceiverReport(uint64_t now_ms)
+{
+    ReceiverReport report;
+    report.media_ssrc = _ssrc;
+    report.jitter = _jitter;
+
+    if (_has_seq)
+    {
+        report.extended_highest_seq = _seq_cycles + _max_seq;
+        const uint32_t expected = report.extended_highest_seq - _base_seq + 1;
+        const int64_t cumulative_lost =
+            static_cast<int64_t>(expected) - static_cast<int64_t>(_rtp_packet_count);
+        report.cumulative_lost = static_cast<int32_t>(std::clamp<int64_t>(
+            cumulative_lost, -0x800000LL, 0x7FFFFFLL));
+
+        const uint32_t expected_interval = expected - _expected_prior;
+        const uint32_t received_interval =
+            static_cast<uint32_t>(_rtp_packet_count) - _received_prior;
+        const int64_t lost_interval =
+            static_cast<int64_t>(expected_interval) - received_interval;
+        if (expected_interval > 0 && lost_interval > 0)
+        {
+            const uint64_t fraction =
+                (static_cast<uint64_t>(lost_interval) << 8) / expected_interval;
+            report.fraction_lost = static_cast<uint8_t>(
+                std::min<uint64_t>(fraction, 255));
+        }
+        _expected_prior = expected;
+        _received_prior = static_cast<uint32_t>(_rtp_packet_count);
+    }
+
+    if (_last_sr_ntp != 0)
+    {
+        report.lsr = static_cast<uint32_t>((_last_sr_ntp >> 16) & 0xFFFFFFFFULL);
+        if (now_ms >= _last_sr_receive_ms)
+        {
+            const uint64_t delay =
+                (now_ms - _last_sr_receive_ms) * 65536ULL / 1000ULL;
+            report.dlsr = static_cast<uint32_t>(
+                std::min<uint64_t>(delay, std::numeric_limits<uint32_t>::max()));
+        }
+    }
+    return report;
+}
+
 
 void RtpRecvStatsBase::OnReceiverReport(uint32_t sender_ssrc, uint32_t media_ssrc, uint8_t fraction_lost, int32_t cumulative_lost, uint32_t highest_seq, uint32_t jitter, uint32_t lsr, uint32_t dlsr)
 {

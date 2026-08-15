@@ -28,12 +28,8 @@ MediaPacketIngressResult MediaEndpointIngress::OnMediaPacket(ReceivedMediaPacket
 
     WorkJob job{};
     job.target_id = endpoint_id_;
-    job.key = has_media_ssrc
-        ? media_affinity::MakeStreamHandle(endpoint_id_, media_ssrc).affinity_key
-        : endpoint_id_;
-    job.type = owner->type == MediaPacketType::Rtcp
-        ? WorkType::Rtcp
-        : WorkType::Rtp;
+    job.key = has_media_ssrc ? media_affinity::MakeStreamHandle(endpoint_id_, media_ssrc).affinity_key : endpoint_id_;
+    job.type = owner->type == MediaPacketType::Rtcp ? WorkType::Rtcp : WorkType::Rtp;
     job.raw.data = owner->Data();
     job.raw.len = static_cast<uint32_t>(owner->Size());
     job.enqueue_ts = owner->receive_time_ms;

@@ -73,19 +73,6 @@ size_t EncodedFrameRouter::Publish(const EncodedFrameEvent& event)
         }
     }
 
-    static std::atomic<uint64_t> published{0};
-    const uint64_t count = published.fetch_add(1) + 1;
-    if (count == 1 || count % 300 == 0)
-    {
-        LOG_INFO("[FRAME_ROUTER] frame routed, count=", count,
-                 ", endpoint_id=", event.source.endpoint_id,
-                 ", session_id=", event.source.session_id,
-                 ", stream_id=", event.source.stream_id,
-                 ", track_id=", event.source.track_id,
-                 ", ssrc=", event.source.ssrc,
-                 ", sink_count=", slots.size(),
-                 ", accepted=", accepted);
-    }
     return accepted;
 }
 

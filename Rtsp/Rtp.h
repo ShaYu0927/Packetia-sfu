@@ -46,28 +46,108 @@ using FramePtr = std::shared_ptr<Frame>;
     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 */
 
+/**
+ * Per-SSRC receive-side RTP/RTCP statistics.
+ *
+ * RTP packets update sequence, loss, jitter and receive-rate state as they
+ * arrive. Sender Reports update sender-rate and clock state. The periodic
+ * RTCP task calls BuildReceiverReport() to obtain one RFC 3550 report block.
+ * All methods are expected to run on the media worker that owns the stream.
+ */
 class RtpRecvStatsBase
 {
 public:
+    /** Values serialized into one RTCP Receiver Report block. */
+    struct ReceiverReport
+    {
+        uint32_t media_ssrc = 0;
+        uint8_t fraction_lost = 0;
+        int32_t cumulative_lost = 0;
+        uint32_t extended_highest_seq = 0;
+        uint32_t jitter = 0;
+        uint32_t lsr = 0;
+        uint32_t dlsr = 0;
+    };
+
     RtpRecvStatsBase() = default;
     virtual ~RtpRecvStatsBase() = default;
 
 public:
+    /** Record that one complete encoded media frame was produced. */
     void OnFrameCompleted();
-    void CountNack(size_t count);
-    void CountPli();
-    void CountFir();
-    void CountBye();
-    void OnSenderReport(uint32_t sender_ssrc, uint64_t ntp, uint32_t rtp_ts, uint32_t packet_count, uint32_t octet_count);
-    void OnReceiverReport(uint32_t sender_ssrc, uint32_t media_ssrc, 
-        uint8_t fraction_lost, int32_t cumulative_lost, uint32_t highest_seq, uint32_t jitter, uint32_t lsr, uint32_t dlsr);
-    void SetRttMs(uint32_t rtt_ms);
-    void SetJitter(uint32_t jitter);
-    void UpdateSequenceStats(uint16_t seq)
-    {
-        
-    }
 
+    /** Record a generated NACK and the number of lost RTP packets requested. */
+    void CountNack(size_t count);
+
+    /** Record one Picture Loss Indication event. */
+    void CountPli();
+
+    /** Record one Full Intra Request event. */
+    void CountFir();
+
+    /** Record one RTCP BYE event. */
+    void CountBye();
+
+    /**
+     * Update receive statistics for one RTP packet.
+     *
+     * This method updates sequence-number rollover, duplicate/out-of-order
+     * counts, RFC 3550 interarrival jitter and the average receive bitrate.
+     * It must be called once for every accepted RTP packet, before packet
+     * sorting can discard duplicates or late packets.
+     *
+     * @param ssrc RTP synchronization source identifier.
+     * @param payload_type RTP payload type.
+     * @param seq RTP 16-bit sequence number.
+     * @param rtp_ts RTP timestamp in clock_rate units.
+     * @param bytes RTP payload bytes carried by this packet.
+     * @param receive_ms Local monotonic receive time in milliseconds.
+     * @param clock_rate RTP clock rate in Hz.
+     */
+    void OnRtpPacket(uint32_t ssrc, uint8_t payload_type, uint16_t seq,
+                     uint32_t rtp_ts, size_t bytes, uint64_t receive_ms,
+                     uint32_t clock_rate);
+
+    /**
+     * Update statistics from one received RTCP Sender Report.
+     *
+     * Consecutive reports are used to calculate SR interval, sender payload
+     * bitrate, packet rate, measured RTP clock rate and clock drift.
+     *
+     * @param sender_ssrc SSRC of the remote RTP sender.
+     * @param ntp 64-bit NTP timestamp from the SR.
+     * @param rtp_ts RTP timestamp corresponding to ntp.
+     * @param packet_count Sender's cumulative RTP packet count.
+     * @param octet_count Sender's cumulative RTP payload octet count.
+     * @param receive_ms Local monotonic SR arrival time in milliseconds.
+     * @param clock_rate Negotiated RTP clock rate in Hz.
+     */
+    void OnSenderReport(uint32_t sender_ssrc, uint64_t ntp, uint32_t rtp_ts,
+                        uint32_t packet_count, uint32_t octet_count,
+                        uint64_t receive_ms, uint32_t clock_rate);
+
+    /**
+     * Build the current RTCP Receiver Report block.
+     *
+     * Calculates interval fraction lost, cumulative loss, extended highest
+     * sequence, jitter, LSR and DLSR. Calling this method advances the
+     * expected/received interval baseline, so it should be called exactly
+     * once for each RR reporting period.
+     *
+     * @param now_ms Local monotonic time at which the RR will be generated.
+     */
+    ReceiverReport BuildReceiverReport(uint64_t now_ms);
+
+    /** Store the latest report block received for a locally sent RTP stream. */
+    void OnReceiverReport(uint32_t sender_ssrc, uint32_t media_ssrc, uint8_t fraction_lost, int32_t cumulative_lost, uint32_t highest_seq, uint32_t jitter, uint32_t lsr, uint32_t dlsr);
+
+    /** Replace the latest round-trip time estimate, in milliseconds. */
+    void SetRttMs(uint32_t rtt_ms);
+
+    /** Replace the latest interarrival jitter value, in RTP clock units. */
+    void SetJitter(uint32_t jitter);
+
+    /** Clear all RTP, RTCP, interval and derived metric state. */
     void Reset()
     {
         _first_rtp_recv_ms = 0;
@@ -103,6 +183,13 @@ public:
         _last_sr_rtp_ts = 0;
         _last_sr_packet_count = 0;
         _last_sr_octet_count = 0;
+        _last_sr_receive_ms = 0;
+        _sr_interval_ms = 0.0;
+        _sender_bitrate_bps = 0.0;
+        _sender_packet_rate = 0.0;
+        _receiver_bitrate_bps = 0.0;
+        _measured_clock_rate = 0.0;
+        _clock_drift_ppm = 0.0;
         _last_rr_fraction_lost = 0;
         _last_rr_cumulative_lost = 0;
         _last_rr_highest_seq = 0;
@@ -110,9 +197,18 @@ public:
         _last_rr_dlsr = 0;
 
         _has_seq = false;
+        _base_seq = 0;
+        _max_seq = 0;
+        _seq_cycles = 0;
+        _expected_prior = 0;
+        _received_prior = 0;
+        _jitter_value = 0.0;
+        _previous_transit = 0;
+        _has_transit = false;
     }
 
 public:
+    // RTP/frame timing and cumulative counters.
     uint64_t GetFirstRtpRecvMs() const { return _first_rtp_recv_ms; }
     uint64_t GetLastRtpRecvMs() const { return _last_rtp_recv_ms; }
     uint64_t GetFirstFrameMs() const { return _first_frame_ms; }
@@ -125,6 +221,7 @@ public:
     uint64_t GetDuplicatePackets() const { return _duplicate_packets; }
     uint64_t GetOutOfOrderPackets() const { return _out_of_order_packets; }
 
+    // RTCP feedback and report counters.
     uint64_t GetNackCount() const { return _nack_count; }
     uint64_t GetNackPacketCount() const { return _nack_packet_count; }
     uint64_t GetPliCount() const { return _pli_count; }
@@ -133,11 +230,13 @@ public:
     uint64_t GetSenderReportCount() const { return _sr_count; }
     uint64_t GetReceiverReportCount() const { return _rr_count; }
 
+    // Identity and most recently observed RTP header values.
     uint32_t GetSsrc() const { return _ssrc; }
     uint8_t GetPayloadType() const { return _payload_type; }
     uint16_t GetLastSeq() const { return _last_seq; }
     uint32_t GetLastTimestamp() const { return _last_timestamp; }
 
+    // Latest RTCP values and derived receive-quality metrics.
     uint32_t GetRttMs() const { return _rtt_ms; }
     uint32_t GetJitter() const { return _jitter; }
     uint32_t GetRtcpSenderSsrc() const { return _rtcp_sender_ssrc; }
@@ -146,61 +245,82 @@ public:
     uint32_t GetLastSrRtpTimestamp() const { return _last_sr_rtp_ts; }
     uint32_t GetLastSrPacketCount() const { return _last_sr_packet_count; }
     uint32_t GetLastSrOctetCount() const { return _last_sr_octet_count; }
+    uint64_t GetLastSrReceiveMs() const { return _last_sr_receive_ms; }
+    double GetSrIntervalMs() const { return _sr_interval_ms; }
+    double GetSenderBitrateBps() const { return _sender_bitrate_bps; }
+    double GetSenderPacketRate() const { return _sender_packet_rate; }
+    double GetReceiverBitrateBps() const { return _receiver_bitrate_bps; }
+    double GetMeasuredClockRate() const { return _measured_clock_rate; }
+    double GetClockDriftPpm() const { return _clock_drift_ppm; }
     uint8_t GetLastRrFractionLost() const { return _last_rr_fraction_lost; }
     int32_t GetLastRrCumulativeLost() const { return _last_rr_cumulative_lost; }
     uint32_t GetLastRrHighestSeq() const { return _last_rr_highest_seq; }
 
 protected:
-
+    /** Return local monotonic time in milliseconds for interval accounting. */
     static uint64_t NowMs()
     {
         using namespace std::chrono;
-        return duration_cast<milliseconds>(
-            steady_clock::now().time_since_epoch()).count();
+        return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
     }
 
 
 protected:
-    uint64_t _first_rtp_recv_ms = 0;
-    uint64_t _last_rtp_recv_ms = 0;
-    uint64_t _first_frame_ms = 0;
-    uint64_t _last_frame_ms = 0;
+    uint64_t _first_rtp_recv_ms = 0;          // First RTP packet receive time in ms
+    uint64_t _last_rtp_recv_ms = 0;           // Last RTP packet receive time in ms
+    uint64_t _first_frame_ms = 0;             // First frame time in ms
+    uint64_t _last_frame_ms = 0;              // Last frame time in ms
 
-    uint64_t _rtp_packet_count = 0;
-    uint64_t _rtp_bytes = 0;
-    uint64_t _frame_count = 0;
+    uint64_t _rtp_packet_count = 0;           // Total number of received RTP packets
+    uint64_t _rtp_bytes = 0;                  // Total number of received RTP bytes
+    uint64_t _frame_count = 0;                // Total number of received frames
 
-    uint64_t _duplicate_packets = 0;
-    uint64_t _out_of_order_packets = 0;
+    uint64_t _duplicate_packets = 0;          // Number of duplicate RTP packets
+    uint64_t _out_of_order_packets = 0;       // Number of out-of-order RTP packets
 
-    uint64_t _nack_count = 0;
-    uint64_t _nack_packet_count = 0;
-    uint64_t _pli_count = 0;
-    uint64_t _fir_count = 0;
-    uint64_t _bye_count = 0;
-    uint64_t _sr_count = 0;
-    uint64_t _rr_count = 0;
+    uint64_t _nack_count = 0;                 // Number of received NACK messages
+    uint64_t _nack_packet_count = 0;          // Number of packets requested by NACK
+    uint64_t _pli_count = 0;                  // Number of received PLI messages
+    uint64_t _fir_count = 0;                  // Number of received FIR messages
+    uint64_t _bye_count = 0;                  // Number of received RTCP BYE messages
+    uint64_t _sr_count = 0;                   // Number of received Sender Reports
+    uint64_t _rr_count = 0;                   // Number of received Receiver Reports
 
-    uint32_t _ssrc = 0;
-    uint8_t  _payload_type = 0;
-    uint16_t _last_seq = 0;
-    uint32_t _last_timestamp = 0;
+    uint32_t _ssrc = 0;                       // RTP stream SSRC
+    uint8_t  _payload_type = 0;               // RTP payload type
+    uint16_t _last_seq = 0;                   // Last received RTP sequence number
+    uint32_t _last_timestamp = 0;             // Last received RTP timestamp
 
-    uint32_t _rtt_ms = 0;
-    uint32_t _jitter = 0;
-    uint32_t _rtcp_sender_ssrc = 0;
-    uint32_t _rtcp_media_ssrc = 0;
-    uint64_t _last_sr_ntp = 0;
-    uint32_t _last_sr_rtp_ts = 0;
-    uint32_t _last_sr_packet_count = 0;
-    uint32_t _last_sr_octet_count = 0;
-    uint8_t _last_rr_fraction_lost = 0;
-    int32_t _last_rr_cumulative_lost = 0;
-    uint32_t _last_rr_highest_seq = 0;
-    uint32_t _last_rr_lsr = 0;
-    uint32_t _last_rr_dlsr = 0;
+    uint32_t _rtt_ms = 0;                     // Latest round-trip time in ms
+    uint32_t _jitter = 0;                     // Latest RTP interarrival jitter
+    uint32_t _rtcp_sender_ssrc = 0;            // SSRC of the RTCP sender
+    uint32_t _rtcp_media_ssrc = 0;             // Media SSRC referenced by RTCP
+    uint64_t _last_sr_ntp = 0;                 // NTP timestamp from the latest SR
+    uint32_t _last_sr_rtp_ts = 0;              // RTP timestamp from the latest SR
+    uint32_t _last_sr_packet_count = 0;        // Sender packet count from the latest SR
+    uint32_t _last_sr_octet_count = 0;         // Sender octet count from the latest SR
+    uint64_t _last_sr_receive_ms = 0;          // Local arrival time of the latest SR
+    double _sr_interval_ms = 0.0;
+    double _sender_bitrate_bps = 0.0;
+    double _sender_packet_rate = 0.0;
+    double _receiver_bitrate_bps = 0.0;
+    double _measured_clock_rate = 0.0;
+    double _clock_drift_ppm = 0.0;
+    uint8_t _last_rr_fraction_lost = 0;        // Fraction lost from the latest RR
+    int32_t _last_rr_cumulative_lost = 0;      // Cumulative packet loss from the latest RR
+    uint32_t _last_rr_highest_seq = 0;         // Extended highest sequence from the latest RR
+    uint32_t _last_rr_lsr = 0;                 // Last Sender Report timestamp from RR
+    uint32_t _last_rr_dlsr = 0;                // Delay since last Sender Report from RR
 
-    bool _has_seq = false;
+    bool _has_seq = false;                     // Whether the RTP sequence number is initialized
+    uint16_t _base_seq = 0;
+    uint16_t _max_seq = 0;
+    uint32_t _seq_cycles = 0;
+    uint32_t _expected_prior = 0;
+    uint32_t _received_prior = 0;
+    double _jitter_value = 0.0;
+    int32_t _previous_transit = 0;
+    bool _has_transit = false;
 };
 
 class RtpHeader

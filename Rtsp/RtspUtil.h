@@ -4,7 +4,6 @@
 #include <string>
 #include <optional>
 
-#include "ProtocolParser.h"
 #include "Rtsp.h"
 
 namespace rtsp
@@ -23,25 +22,6 @@ public:
     static uint16_t Unwrap(uint16_t sequence_number);
 };
 
-
-class RtspProtocolParser : public protocol::ProtocolParser 
-{
-public:
-    protocol::ProtocolParser::ParseResult Parse(BufferReader& buffer) override
-    {
-        if (buffer.ReadableBytes() < 4)
-        return protocol::ProtocolParser::ParseResult::NeedMoreData;
-
-        const unsigned char* p = (const unsigned char*)buffer.Peek();
-        if (p[0] == '$') 
-        {
-            return protocol::ProtocolParser::ParseResult::Ok;
-        }
-
-        return protocol::ProtocolParser::ParseResult::NeedMoreData;
-    }
-    const char* Name() const override { return "RTSP"; }
-};
 
 class RtpSequenceNumberUnwrapper
 {

@@ -338,13 +338,7 @@ RtpAudioTracker::RtpAudioTracker(const TrackInfo& info)
 
 RtpAudioTracker::~RtpAudioTracker()
 {
-    LOG_INFO("[AUDIO][TRACK] summary",
-             " track=", _info.track_index,
-             " codec=", _info.codec_name,
-             " ssrc=", _info.ssrc,
-             " packets=", audio_packets_seen_,
-             " frames=", audio_frames_completed_,
-             " failures=", audio_depacketize_failures_);
+
 }
 
 RtpAudioTracker::Ptr RtpAudioTracker::Clone()
@@ -565,13 +559,16 @@ void RtcpDispatcher::SetTransportFeedbackCallback(TransportFeedbackCallback cb)
     transport_feedback_cb_ = std::move(cb);
 }
 
-void RtcpDispatcher::OnSenderReport(uint32_t sender_ssrc,
-                                    uint64_t ntp,
-                                    uint32_t rtp_ts,
-                                    uint32_t packet_count,
-                                    uint32_t octet_count)
+void RtcpDispatcher::SetSenderReportCallback(SenderReportCallback cb)
+{
+    std::lock_guard<std::mutex> lock(tracks_mutex_);
+    sender_report_cb_ = std::move(cb);
+}
+
+void RtcpDispatcher::OnSenderReport(uint32_t sender_ssrc, uint64_t ntp, uint32_t rtp_ts, uint32_t packet_count, uint32_t octet_count)
 {
     std::shared_ptr<RtpReceiverTrack> track;
+    SenderReportCallback callback;
     {
         std::lock_guard<std::mutex> lock(tracks_mutex_);
         auto it = recv_tracks_.find(sender_ssrc);
@@ -585,8 +582,13 @@ void RtcpDispatcher::OnSenderReport(uint32_t sender_ssrc,
             recv_tracks_.erase(it);
             return;
         }
+        callback = sender_report_cb_;
     }
     track->OnRtcpSenderReport(sender_ssrc, ntp, rtp_ts, packet_count, octet_count);
+    if (callback)
+    {
+        callback(sender_ssrc);
+    }
 }
 
 void RtcpDispatcher::OnNack(uint32_t sender_ssrc, uint32_t media_ssrc, const uint16_t* seqs, size_t count)
@@ -616,6 +618,7 @@ void RtcpDispatcher::OnNack(uint32_t sender_ssrc, uint32_t media_ssrc, const uin
     track->OnRtcpNack(lost_seqs);
 }
 
+/* Find the sender track by media SSRC and dispatch the RTCP Receiver Report to it. */
 void RtcpDispatcher::OnReceiverReport(uint32_t reporter_ssrc, uint32_t media_ssrc, uint8_t fraction_lost, int32_t cumulative_lost, uint32_t highest_seq, uint32_t jitter, uint32_t lsr, uint32_t dlsr)
 {
     std::shared_ptr<RtpSenderTrack> track;
@@ -633,14 +636,7 @@ void RtcpDispatcher::OnReceiverReport(uint32_t reporter_ssrc, uint32_t media_ssr
             return;
         }
     }
-    track->OnRtcpReceiverReport(reporter_ssrc,
-                                media_ssrc,
-                                fraction_lost,
-                                cumulative_lost,
-                                highest_seq,
-                                jitter,
-                                lsr,
-                                dlsr);
+    track->OnRtcpReceiverReport(reporter_ssrc, media_ssrc, fraction_lost, cumulative_lost, highest_seq, jitter, lsr, dlsr);
 }
 
 void RtcpDispatcher::OnTransportFeedback(const rtcpx::TransportFeedbackReport& report)

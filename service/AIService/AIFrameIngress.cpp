@@ -65,8 +65,6 @@ bool AIFrameIngress::Start()
         running_ = false;
         return false;
     }
-    LOG_INFO("[AI_FRAME] ingress started, subscription_id=", subscription_id,
-             ", queue_capacity=", max_queue_size_);
     return true;
 }
 
@@ -93,9 +91,6 @@ void AIFrameIngress::Stop()
     std::lock_guard<std::mutex> lock(mutex_);
     dropped_.fetch_add(queue_.size());
     queue_.clear();
-    LOG_INFO("[AI_FRAME] ingress stopped, accepted=", accepted_.load(),
-             ", processed=", processed_.load(),
-             ", dropped=", dropped_.load());
 }
 
 AIFrameIngressStats AIFrameIngress::Stats() const
@@ -132,17 +127,6 @@ bool AIFrameIngress::TryEnqueue(const media::EncodedFrameEvent& event)
     }
     queue_.push_back(event);
     accepted_.fetch_add(1);
-    const uint64_t accepted = accepted_.load();
-    if (accepted == 1 || accepted % 300 == 0)
-    {
-        LOG_INFO("[AI_FRAME] frame enqueued, accepted=", accepted,
-                 ", endpoint_id=", event.source.endpoint_id,
-                 ", session_id=", event.source.session_id,
-                 ", stream_id=", event.source.stream_id,
-                 ", track_id=", event.source.track_id,
-                 ", ssrc=", event.source.ssrc,
-                 ", queue_depth=", queue_.size());
-    }
     ready_.notify_one();
     return true;
 }
@@ -174,15 +158,7 @@ void AIFrameIngress::Run()
                 // A processor failure must never escape into the media path.
             }
         }
-        const uint64_t processed = processed_.fetch_add(1) + 1;
-        if (processed == 1 || processed % 300 == 0)
-        {
-            LOG_INFO("[AI_FRAME] frame consumed, processed=", processed,
-                     ", endpoint_id=", event.source.endpoint_id,
-                     ", stream_id=", event.source.stream_id,
-                     ", track_id=", event.source.track_id,
-                     ", has_processor=", processor_ != nullptr);
-        }
+        processed_.fetch_add(1);
     }
 }
 

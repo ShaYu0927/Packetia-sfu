@@ -1,6 +1,7 @@
 #include "RtspUtil.h"
 #include "logger.h"
 #include <cstring>
+#include <vector>
 
 namespace rtsp
 {

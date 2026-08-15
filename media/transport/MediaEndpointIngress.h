@@ -16,8 +16,7 @@ public:
     {
     }
 
-    MediaPacketIngressResult OnMediaPacket(
-        ReceivedMediaPacket packet) override;
+    MediaPacketIngressResult OnMediaPacket(ReceivedMediaPacket packet) override;
 
     uint64_t EndpointId() const noexcept { return endpoint_id_; }
 

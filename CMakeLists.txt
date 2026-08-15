@@ -92,10 +92,7 @@ add_library(network STATIC
     network/TcpServer.cpp
     network/TcpSession.cpp
     network/TcpConnection.cpp
-    network/ProtocolParser.cpp
     utils/Acceptor.cpp
-    network/DefaultSessionFactory.cpp
-    network/ProtocolDetector.cpp
     network/UdpSocket.cpp
     network/UdpServer.cpp
     network/UdpSession.cpp
