@@ -35,6 +35,11 @@ public:
     void Stop();
 
     bool SendTo(const network::SocketAddr& dst, const uint8_t* data, size_t len);
+    enum class SendResult { Sent, NotWritable, Closed, Failed };
+    SendResult TrySendTo(const network::SocketAddr& dst, const uint8_t* data, size_t len);
+    bool IsWritable() const noexcept {
+        return started_.load() && scheduler_ && !scheduler_->IsStopped();
+    }
 
     int Fd() const { return sock_.Fd(); }
 

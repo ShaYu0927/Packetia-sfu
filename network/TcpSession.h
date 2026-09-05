@@ -148,8 +148,9 @@ public:
         codec_->Encode(msg, out);
         if (!out.empty()) 
         {
-            conn_->Send(reinterpret_cast<const char*>(out.data()),
-                        static_cast<uint32_t>(out.size()));
+            if (conn_->Send(reinterpret_cast<const char*>(out.data()),
+                            static_cast<uint32_t>(out.size())) != TcpConnection::SendResult::Queued)
+                conn_->Disconnect();
         }
     }
 

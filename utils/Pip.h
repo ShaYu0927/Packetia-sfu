@@ -8,6 +8,7 @@ class Pip
 public:
 
     Pip();
+    ~Pip() { Close(); }
     bool  Create();
 	int   Write(void *buf, int len);
 	int   Read(void *buf, int len);
@@ -20,7 +21,7 @@ public:
     int WriteFd() const;
 
 private:
-    int pipe_fd_[2];
+    int pipe_fd_[2]{-1, -1};
 };
 
 #endif

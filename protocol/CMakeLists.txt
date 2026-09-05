@@ -33,6 +33,8 @@ add_library(Rtcp STATIC
     Rtcp/RtcpNack.cpp
     Rtcp/RtcpFeedback.h
     Rtcp/RtcpFeedback.cpp
+    Rtcp/TransportFeedbackGenerator.h
+    Rtcp/TransportFeedbackGenerator.cpp
 )
 
 target_include_directories(Rtcp
@@ -61,6 +63,8 @@ target_include_directories(ICE
 target_compile_features(ICE PUBLIC cxx_std_17)
 
 add_library(WebRtc STATIC
+    WebRtc/WebRtcTransport.cpp
+    WebRtc/WebRtcTransport.h
     WebRtc/webrtc_config.cpp
     WebRtc/webrtc_config.h
     WebRtc/weak_network/NetworkStats.h
@@ -73,3 +77,19 @@ target_include_directories(WebRtc
 )
 
 target_compile_features(WebRtc PUBLIC cxx_std_17)
+target_link_libraries(WebRtc PUBLIC network)
+
+add_library(Rtmp STATIC
+    Rtmp/rtmp_message.cpp
+    Rtmp/rtmp_chunck.cpp
+    Rtmp/rtmp_protocol.cpp
+    Rtmp/rtmp_transport.cpp
+    Rtmp/rtmp_session.cpp
+    Rtmp/rtmp_server.cpp
+)
+target_include_directories(Rtmp PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/Rtmp
+    ${CMAKE_SOURCE_DIR}/network
+)
+target_link_libraries(Rtmp PUBLIC network)
+target_compile_features(Rtmp PUBLIC cxx_std_17)

@@ -37,6 +37,7 @@ namespace rtcpx
     {
         uint16_t transport_sequence = 0;
         bool received = false;
+        int64_t receive_time_us = 0;
         uint64_t receive_time_ms = 0;
     };
 
@@ -141,6 +142,10 @@ public:
         virtual ~IRtcpSender() = default;
         /* Generate periodic RTCP packet(s), such as RR/SR/SDES. */
         virtual bool GenerateRtcp(uint32_t media_ssrc, std::vector<uint8_t>& out) = 0;
+
+        /* Build one Receiver Report containing a reception report block. */
+        virtual std::vector<uint8_t> BuildReceiverReport(uint32_t sender_ssrc,
+                                                         const RrBlock& block) = 0;
 
         /* Build a PSFB PLI packet (PT=206, FMT=1). Returns bytes to send. */
         virtual std::vector<uint8_t> BuildPli(uint32_t sender_ssrc, uint32_t media_ssrc) = 0;

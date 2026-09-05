@@ -203,47 +203,29 @@ void UdpMuxHandler::OnDatagram(const network::SocketAddr& src,
     RFC 7983 
     https://www.rfc-editor.org/pdfrfc/rfc7983.txt.pdf
 */
-inline bool UdpMuxHandler::IsStunPacket(const uint8_t *d, size_t n)
+bool UdpMuxHandler::IsStunPacket(const uint8_t *d, size_t n)
 {
-    if (!d || n < 20) return false;
-    if ((d[0] & 0xC0) != 0x00) return false;
-    const uint32_t mc = (uint32_t(d[4]) << 24) | (uint32_t(d[5]) << 16) | (uint32_t(d[6]) << 8) | uint32_t(d[7]);
-    return mc == 0x2112A442;
+    return network::transport::DatagramProtocolClassifier::IsStun(d, n);
 }
 
-inline bool UdpMuxHandler::IsDtlsPacket(const uint8_t *d, size_t n)
+bool UdpMuxHandler::IsDtlsPacket(const uint8_t *d, size_t n)
 {
-    if (!d || n < 13) return false; 
-    const uint8_t ct = d[0];
-    if (ct < 20 || ct > 23) return false;
-    if (d[1] != 0xFE) return false;
-    if (d[2] != 0xFD && d[2] != 0xFF) return false;
-    return true;
+    return network::transport::DatagramProtocolClassifier::IsDtls(d, n);
 }
 
-inline bool UdpMuxHandler::IsRtcpPacket(const uint8_t *d, size_t n)
+bool UdpMuxHandler::IsRtcpPacket(const uint8_t *d, size_t n)
 {
-    if (!d || n < 4) return false;
-    if ((d[0] >> 6) != 2) return false;
-    const uint8_t pt = d[1];
-    if (pt >= 192 && pt <= 223) return true; 
-    return false;
+    return network::transport::DatagramProtocolClassifier::IsRtcp(d, n);
 }
 
-inline bool UdpMuxHandler::IsRtpPacket(const uint8_t *d, size_t n)
+bool UdpMuxHandler::IsRtpPacket(const uint8_t *d, size_t n)
 {
-    if (!d || n < 12) return false;
-    if ((d[0] >> 6) != 2) return false;
-    return !IsRtcpPacket(d, n);
+    return network::transport::DatagramProtocolClassifier::IsRtp(d, n);
 }
 
-inline UdpMuxHandler::UdpProto UdpMuxHandler::DetectProto(const uint8_t *d, size_t n)
+UdpMuxHandler::UdpProto UdpMuxHandler::DetectProto(const uint8_t *d, size_t n)
 {
-    if (IsStunPacket(d, n)) return UdpProto::Stun;
-    if (IsDtlsPacket(d, n)) return UdpProto::Dtls;
-    if (IsRtcpPacket(d, n)) return UdpProto::Rtcp;
-    if (IsRtpPacket(d, n)) return UdpProto::Rtp;
-    return UdpProto::Unknown;
+    return network::transport::DatagramProtocolClassifier::Classify(d, n);
 }
 
 void UdpMuxHandler::BindPeer(const network::SocketAddr &peer, const std::shared_ptr<UdpSession> &sess)

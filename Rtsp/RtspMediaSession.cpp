@@ -4,6 +4,7 @@
 #include "StreamContext.h"
 
 #include <algorithm>
+#include <cstdlib>
 
 namespace
 {
@@ -28,6 +29,38 @@ std::string NormalizeControlKey(const std::string& control)
 
     const auto slash = value.find_last_of('/');
     return slash == std::string::npos ? value : value.substr(slash + 1);
+}
+
+uint8_t FindTransportCcExtensionId(const sdp::SdpMedia& media)
+{
+    for (const auto& attribute : media.attributes)
+    {
+        if (attribute.key != "extmap")
+        {
+            continue;
+        }
+
+        const auto separator = attribute.value.find(' ');
+        if (separator == std::string::npos)
+        {
+            continue;
+        }
+        const std::string uri = attribute.value.substr(separator + 1);
+        if (uri.find("transport-wide-cc") == std::string::npos)
+        {
+            continue;
+        }
+
+        // extmap ID 后面可能带方向，例如 a=extmap:3/sendrecv <uri>。
+        const std::string id_text = attribute.value.substr(0, separator);
+        char* end = nullptr;
+        const long id = std::strtol(id_text.c_str(), &end, 10);
+        if (end != id_text.c_str() && id >= 1 && id <= 14)
+        {
+            return static_cast<uint8_t>(id);
+        }
+    }
+    return 0;
 }
 
 bool FillStaticPayloadType(int pt, TrackType type, TrackInfo* info)
@@ -174,7 +207,7 @@ void MediaSession::ResetTracks()
 {
     track_infos_.clear();
     control_to_track_.clear();
-    runtime_tracks_.clear();
+    track_descriptions_.clear();
     endpoint_to_track_.clear();
     ssrc_to_track_.clear();
     channel_bindings_ = {};
@@ -195,6 +228,7 @@ bool MediaSession::ParseTrackInfoFromMedia(const sdp::SdpMedia& media, int track
 
     *info = TrackInfo{};
     info->track_index = track_index;
+    info->transport_cc_extension_id = FindTransportCcExtensionId(media);
 
     if (media.media == "audio")
     {
@@ -304,7 +338,7 @@ bool MediaSession::ParseTrackInfoFromMedia(const sdp::SdpMedia& media, int track
 }
 
 
-RtpTrack::Ptr MediaSession::CreateTrack(const TrackInfo& info)
+RtpTrackDescription::Ptr MediaSession::CreateTrackDescription(const TrackInfo& info)
 {
     switch (info.type)
     {
@@ -315,7 +349,7 @@ RtpTrack::Ptr MediaSession::CreateTrack(const TrackInfo& info)
         case CodecId::PCMA:
         case CodecId::OPUS:
         case CodecId::AAC:
-            return std::make_shared<AudioTrack>(info);
+            return std::make_shared<RtpTrackDescription>(info);
 
         default:
             return nullptr;
@@ -325,8 +359,7 @@ RtpTrack::Ptr MediaSession::CreateTrack(const TrackInfo& info)
         switch (info.codec_id)
         {
         case CodecId::H264:
-        case CodecId::H265:
-            return std::make_shared<VideoTrack>(info);
+            return std::make_shared<RtpTrackDescription>(info);
 
         default:
             return nullptr;
@@ -367,7 +400,7 @@ bool MediaSession::ApplySdp(const sdp::SdpSession& sdp, std::string* err)
             continue;
         }
 
-        auto track = BuildTrackFromInfo(info, err);
+        auto track = BuildTrackDescription(info, err);
         if (!track)
         {
             return false;
@@ -377,7 +410,8 @@ bool MediaSession::ApplySdp(const sdp::SdpSession& sdp, std::string* err)
                  " control=", info.control,
                  " codec=", info.codec_name,
                  " pt=", static_cast<int>(info.payload_type),
-                 " clock_rate=", info.clock_rate);
+                 " clock_rate=", info.clock_rate,
+                 " twcc_ext_id=", static_cast<int>(info.transport_cc_extension_id));
 
         track_infos_[track_idx] = info;
         const std::string control_key = NormalizeControlKey(info.control);
@@ -391,20 +425,26 @@ bool MediaSession::ApplySdp(const sdp::SdpSession& sdp, std::string* err)
             return false;
         }
         control_to_track_[control_key] = track_idx;
-        runtime_tracks_[track_idx] = track;
+        track_descriptions_[track_idx] = track;
 
         ++track_idx;
     }
     return true;
 }
 
-RtpTrack::Ptr MediaSession::BuildTrackFromInfo(const TrackInfo& info, std::string* err)
+RtpTrackDescription::Ptr MediaSession::BuildTrackDescription(const TrackInfo& info, std::string* err)
 {
-    return CreateTrack(info);
+    auto description = CreateTrackDescription(info);
+    if (!description && err)
+    {
+        *err = "no receiver implementation for codec '" + info.codec_name +
+               "' on track index " + std::to_string(info.track_index);
+    }
+    return description;
 }
 
 
-std::shared_ptr<RtpTrack> MediaSession::GetRtpTrack(const std::string& control) const
+std::shared_ptr<RtpTrackDescription> MediaSession::GetTrackDescription(const std::string& control) const
 {
     std::lock_guard<std::mutex> lk(track_mtx_);
     auto it = control_to_track_.find(NormalizeControlKey(control));
@@ -413,8 +453,8 @@ std::shared_ptr<RtpTrack> MediaSession::GetRtpTrack(const std::string& control) 
 
     int trackIdx = it->second;
 
-    auto track_it = runtime_tracks_.find(trackIdx);
-    if (track_it == runtime_tracks_.end())
+    auto track_it = track_descriptions_.find(trackIdx);
+    if (track_it == track_descriptions_.end())
         return nullptr;
 
     return track_it->second;
@@ -561,8 +601,8 @@ bool MediaSession::BindInterleavedChannel(uint8_t channel, int track_id, bool is
 {
     std::lock_guard<std::mutex> lk(track_mtx_);
 
-    auto it = runtime_tracks_.find(track_id);
-    if (it == runtime_tracks_.end())
+    auto it = track_descriptions_.find(track_id);
+    if (it == track_descriptions_.end())
         return false;
 
     ChannelBinding& b = channel_bindings_[channel];

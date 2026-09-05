@@ -2,6 +2,7 @@
 #define _UDPSESSION_H_
 
 #include "UdpServer.h"
+#include "transport/DatagramProtocolClassifier.h"
 #include "EndpointBase.h"
 #include "IceAgent.h"
 #include <functional>
@@ -71,7 +72,7 @@ private:
 class UdpMuxHandler : public IUdpHandler 
 {
 public:
-    enum class UdpProto { Stun, Dtls, Rtp, Rtcp, Unknown };
+    using UdpProto = network::transport::DatagramProtocol;
 
     explicit UdpMuxHandler(network::UdpServer* udp) : udp_(udp) {}
 
@@ -79,11 +80,11 @@ public:
                             const uint8_t* data,
                             size_t len) override;
 
-    static inline bool IsStunPacket(const uint8_t* d, size_t n);
-    static inline bool IsDtlsPacket(const uint8_t* d, size_t n);
-    static inline bool IsRtcpPacket(const uint8_t* d, size_t n);
-    static inline bool IsRtpPacket(const uint8_t* d, size_t n);
-    static inline UdpProto DetectProto(const uint8_t* d, size_t n);
+    static bool IsStunPacket(const uint8_t* d, size_t n);
+    static bool IsDtlsPacket(const uint8_t* d, size_t n);
+    static bool IsRtcpPacket(const uint8_t* d, size_t n);
+    static bool IsRtpPacket(const uint8_t* d, size_t n);
+    static UdpProto DetectProto(const uint8_t* d, size_t n);
 
 
     void BindPeer(const network::SocketAddr& peer, const std::shared_ptr<UdpSession>& sess);

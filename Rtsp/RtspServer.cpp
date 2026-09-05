@@ -11,6 +11,7 @@ RtspServer::RtspServer(EventLoop* event_loop)
 
 RtspServer::~RtspServer()
 {
+    Stop();
 }
 
 TcpConnection::Ptr RtspServer:: OnConnect(SOCKET sockfd)
@@ -18,7 +19,7 @@ TcpConnection::Ptr RtspServer:: OnConnect(SOCKET sockfd)
     LOG_INFO("New RTSP connection established with sockfd: " + std::to_string(sockfd));
 
     auto conn = RtspConnection::Create(shared_from_this(),
-                                       event_loop_->GetTaskScheduler().get(),
+                                       acceptor_->GetTaskScheduler().get(),
                                        sockfd);
 
     auto rtsp_conn = std::dynamic_pointer_cast<RtspConnection>(conn);

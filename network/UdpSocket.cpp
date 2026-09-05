@@ -41,7 +41,9 @@ int network::UdpSocket::RecvFrom(uint8_t *buf, size_t cap, SocketAddr &src)
 {
     sockaddr_storage ss{};
     socklen_t slen = sizeof(ss);
-    int n = ::recvfrom(fd_, buf, cap, 0, (sockaddr*)&ss, &slen);
+    int n;
+    do { n = ::recvfrom(fd_, buf, cap, 0, (sockaddr*)&ss, &slen); }
+    while (n < 0 && errno == EINTR);
     if (n < 0) 
     {
         if (errno == EAGAIN || errno == EWOULDBLOCK) return -1;
@@ -53,7 +55,9 @@ int network::UdpSocket::RecvFrom(uint8_t *buf, size_t cap, SocketAddr &src)
 
 int network::UdpSocket::SendTo(const SocketAddr &dst, const uint8_t *data, size_t len)
 {
-    int n = ::sendto(fd_, data, len, 0, (sockaddr*)&dst.ss, dst.len);
+    int n;
+    do { n = ::sendto(fd_, data, len, 0, (sockaddr*)&dst.ss, dst.len); }
+    while (n < 0 && errno == EINTR);
     if (n < 0)
     {
         if (errno == EAGAIN || errno == EWOULDBLOCK) return -1;

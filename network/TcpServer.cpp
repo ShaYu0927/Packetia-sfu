@@ -21,31 +21,17 @@ TcpServer::TcpServer(EventLoop *event_loop)
 
        conn->SetDisconnectCallback([this](TcpConnection::Ptr conn)
        {
-            auto scheduler = conn->GetTaskScheduler();
             int fd = conn->GetSocket();
-            std::weak_ptr<TcpConnection> weak = conn;
-
-            auto cleanup = [this, fd, weak]() 
-            {
-                auto itc = connections_.find(fd);
-                if (itc == connections_.end()) return;
-
-                auto sp = weak.lock();
-                if (!sp || itc->second != sp) return;
-
-                RemoveConnection(fd);
-            };
-
-            if (!scheduler->AddTriggerEvent(cleanup)) 
-            {
-                scheduler->AddTimer([cleanup]() { cleanup(); return false; }, 100);
-            }
+            // Connections and the acceptor belong to the same scheduler.
+            // No delayed callback may outlive this server.
+            RemoveConnection(fd);
         });
     });
 }
 
 TcpServer::~TcpServer()
 {
+    Stop();
 }
 
 bool TcpServer::Start(std::string ip, uint16_t port)
@@ -58,7 +44,7 @@ bool TcpServer::Start(std::string ip, uint16_t port)
         {
             is_started_ = true;
             ip_ = ip;
-            port_ = port;
+            port_ = acceptor_->GetPort();
             return true;
         }
     }
@@ -68,32 +54,26 @@ bool TcpServer::Start(std::string ip, uint16_t port)
 
 void TcpServer::Stop()
 {
-   if (is_started_) 
-   {		
-		mutex_.lock();
-		for (auto iter : connections_) 
+    auto scheduler = acceptor_->GetTaskScheduler();
+    if (!scheduler) return;
+    scheduler->Invoke([this] {
+        acceptor_->Close();
+        is_started_ = false;
+        std::vector<TcpConnection::Ptr> snapshot;
         {
-			iter.second->Disconnect();
-		}
-		mutex_.unlock();
-
-		acceptor_->Close();
-		is_started_ = false;
-
-		while (1) 
-        {
-			std::this_thread::sleep_for(std::chrono::milliseconds(10));
-			if (connections_.empty()) 
-            {
-				break;
-			}
-		}
-	}	
+            std::lock_guard<std::mutex> lock(mutex_);
+            for (const auto& entry : connections_) snapshot.push_back(entry.second);
+        }
+        // Disconnect invokes removal callbacks; do not hold the map lock.
+        for (auto& connection : snapshot) connection->Disconnect();
+        std::lock_guard<std::mutex> lock(mutex_);
+        connections_.clear();
+    });
 }
 
 TcpConnection::Ptr TcpServer::OnConnect(SOCKET sockfd)
 {
-    auto ts = event_loop_->GetTaskScheduler().get();
+    auto ts = acceptor_->GetTaskScheduler().get();
     auto conn = std::make_shared<TcpConnection>(ts, sockfd);
     conn->Start();              
     return conn;

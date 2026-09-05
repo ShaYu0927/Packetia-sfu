@@ -675,7 +675,6 @@ std::string RtspRequest::HandleCmdSetup(RtspRequestInfo& req)
     last_setup_rtp_channel_ = 0;
     last_setup_rtcp_channel_ = 0;
     std::string session_id,url,control, suffix;
-    std::shared_ptr<RtpTrack> track_ptr;
     std::shared_ptr<char> response(new char[10240], std::default_delete<char[]>());
     size_t size,transport = 1;
     uint16_t rtp_ch, rtcp_ch = 0;
@@ -696,8 +695,8 @@ std::string RtspRequest::HandleCmdSetup(RtspRequestInfo& req)
     }
 
     session_id = std::to_string(media_session->GetId());
-    auto tracker = media_session->GetRtpTrack(control);
-    if(!tracker)
+    auto track_description = media_session->GetTrackDescription(control);
+    if(!track_description)
     {
         LOG_ERROR("Track not found, suffix=, control=", suffix, control);
         return "";
@@ -722,9 +721,9 @@ std::string RtspRequest::HandleCmdSetup(RtspRequestInfo& req)
         return "";
     }
     std::uint64_t endpoint_id = utils::EndpointBase::NextEndpointId();
-    tracker->setInterleavedChannel(pTranOut.interleaved_rtp, pTranOut.interleaved_rtcp);
+    track_description->setInterleavedChannel(pTranOut.interleaved_rtp, pTranOut.interleaved_rtcp);
 
-    const int track_id = tracker->getTrackIndex();
+    const int track_id = track_description->getTrackIndex();
 
     if (!media_session->BindInterleavedChannel(
             static_cast<uint8_t>(pTranOut.interleaved_rtp), track_id, false, endpoint_id))
@@ -744,7 +743,7 @@ std::string RtspRequest::HandleCmdSetup(RtspRequestInfo& req)
 
     
     auto endpoint = std::make_shared<media::SfuEndpoint>(
-        endpoint_id, tracker, media_session, media_session->GetFramePublisher());
+        endpoint_id, track_description, media_session, media_session->GetFramePublisher());
     if (!endpoint->Start())
     {
         LOG_ERROR("Start endpoint failed, endpoint_id={}, session={}, track_id={}",

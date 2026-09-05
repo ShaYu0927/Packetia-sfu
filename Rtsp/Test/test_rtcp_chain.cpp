@@ -2,6 +2,7 @@
 
 #include "IMediaTransport.h"
 #include "MediaEndpoint.h"
+#include "GoogCcNetworkController.h"
 #include "NackRequester.h"
 #include "RtcpNack.h"
 #include "RtcpFeedback.h"
@@ -9,7 +10,10 @@
 #include "RtcpReciver.h"
 #include "RtpReceiver.h"
 #include "RtpSenderTrack.h"
+#include "RtpTransportCcExtension.h"
 #include "TrackClock.h"
+#include "TransportSequenceAllocator.h"
+#include "TransportFeedbackGenerator.h"
 
 namespace
 {
@@ -76,6 +80,7 @@ public:
         ++send_count;
         last_type = type;
         last_retransmit = retransmit;
+        last_packet.assign(data, data + size);
         return SendResult::Ok;
     }
 
@@ -87,6 +92,7 @@ public:
     int send_count = 0;
     MediaPacketType last_type = MediaPacketType::Rtp;
     bool last_retransmit = false;
+    std::vector<uint8_t> last_packet;
     MediaTransportState state = MediaTransportState::Connected;
     std::weak_ptr<IMediaPacketSink> sink;
 };
@@ -141,6 +147,77 @@ TEST(RtcpChainTest, NackRequesterEmitsAfterReorderWindow)
     requester.Process(70);
     ASSERT_EQ(batches.size(), 2U);
     EXPECT_EQ(batches[1], (std::vector<uint16_t>{101}));
+}
+
+TEST(RtcpChainTest, NackRequesterUsesRttForRetryInterval)
+{
+    rtsp::NackRequester::Config config;
+    config.reorder_wait_ms = 0;
+    config.retry_interval_ms = 50;
+    rtsp::NackRequester requester(config);
+
+    std::vector<std::vector<uint16_t>> batches;
+    requester.SetNackCallback([&batches](const std::vector<uint16_t>& seqs) {
+        batches.push_back(seqs);
+    });
+    requester.UpdateRtt(120);
+    requester.OnReceivedPacket(10, 1000);
+    requester.OnReceivedPacket(12, 1000);
+    requester.Process(1000);
+    requester.Process(1119);
+    EXPECT_EQ(batches.size(), 1U);
+    requester.Process(1120);
+    EXPECT_EQ(batches.size(), 2U);
+}
+
+TEST(RtcpChainTest, NackRequesterResetsOnLargeSequenceGap)
+{
+    rtsp::NackRequester::Config config;
+    config.reorder_wait_ms = 0;
+    config.max_sequence_gap = 100;
+    rtsp::NackRequester requester(config);
+
+    std::vector<std::vector<uint16_t>> batches;
+    requester.SetNackCallback([&batches](const std::vector<uint16_t>& seqs) {
+        batches.push_back(seqs);
+    });
+    requester.OnReceivedPacket(100, 0);
+    requester.OnReceivedPacket(1000, 1);
+    requester.Process(1);
+
+    EXPECT_TRUE(batches.empty());
+    EXPECT_EQ(requester.GetStats().large_gap_resets, 1U);
+    EXPECT_EQ(requester.GetStats().missing_packets, 0U);
+}
+
+TEST(RtcpChainTest, NackRequesterReportsRecoveryAndFailure)
+{
+    rtsp::NackRequester::Config config;
+    config.reorder_wait_ms = 0;
+    config.retry_interval_ms = 20;
+    config.max_retries = 1;
+    config.failure_callback_interval_ms = 0;
+    rtsp::NackRequester requester(config);
+
+    std::vector<uint16_t> abandoned;
+    requester.SetNackCallback([](const std::vector<uint16_t>&) {});
+    requester.SetRecoveryFailureCallback(
+        [&abandoned](const std::vector<uint16_t>& seqs) { abandoned = seqs; });
+
+    requester.OnReceivedPacket(20, 100);
+    requester.OnReceivedPacket(22, 100);
+    requester.Process(100);
+    const auto recovered = requester.OnReceivedPacket(21, 110);
+    EXPECT_TRUE(recovered.was_missing);
+    EXPECT_TRUE(recovered.recovered_after_nack);
+    EXPECT_EQ(recovered.times_nacked, 1U);
+    EXPECT_EQ(requester.GetStats().recovered_packets, 1U);
+
+    requester.OnReceivedPacket(24, 120);
+    requester.Process(120);
+    requester.Process(140);
+    EXPECT_EQ(abandoned, (std::vector<uint16_t>{23}));
+    EXPECT_EQ(requester.GetStats().abandoned_packets, 1U);
 }
 
 TEST(RtcpChainTest, ReceiverReportUsesSigned24BitCumulativeLoss)
@@ -202,6 +279,19 @@ TEST(RtcpChainTest, ReceiveStatsCalculateSrMetricsAndReceiverReport)
     EXPECT_EQ(report.dlsr, 65536U);
 }
 
+TEST(RtcpChainTest, ReceiveStatsUsesRecentFiveHundredMillisecondBitrateWindow)
+{
+    RtpRecvStatsBase stats;
+    stats.OnRtpPacket(1, 96, 1, 90000, 1000, 1000, 90000);
+    stats.OnRtpPacket(1, 96, 2, 112500, 1000, 1250, 90000);
+
+    EXPECT_DOUBLE_EQ(stats.GetReceiverBitrateBps(1250), 64000.0);
+
+    stats.OnRtpPacket(1, 96, 3, 157500, 1000, 1750, 90000);
+    EXPECT_DOUBLE_EQ(stats.GetReceiverBitrateBps(1750), 32000.0);
+    EXPECT_DOUBLE_EQ(stats.GetReceiverBitrateBps(2251), 0.0);
+}
+
 TEST(RtcpChainTest, DispatcherNotifiesQualityPathAfterSenderReport)
 {
     TrackInfo info;
@@ -226,6 +316,9 @@ TEST(RtcpChainTest, DispatcherNotifiesQualityPathAfterSenderReport)
 
     EXPECT_EQ(track->GetSenderReportCount(), 1U);
     EXPECT_EQ(notified_ssrc, info.ssrc);
+
+    dispatcher.OnRttUpdated(info.ssrc, 87);
+    EXPECT_EQ(track->GetRttMs(), 87U);
 }
 
 TEST(RtcpChainTest, DispatcherRoutesNackAndPliToSenderTrack)
@@ -259,7 +352,7 @@ TEST(RtcpChainTest, EndpointBuildsOutboundNack)
 {
     TrackInfo info;
     info.type = TrackVideo;
-    auto source_track = std::make_shared<VideoTrack>(info);
+    auto source_track = std::make_shared<RtpTrackDescription>(info);
     auto endpoint = std::make_shared<media::SfuEndpoint>(9, source_track, nullptr, nullptr);
     ASSERT_TRUE(endpoint->Start());
 
@@ -284,7 +377,7 @@ TEST(RtcpChainTest, EndpointBuildsOutboundPli)
 {
     TrackInfo info;
     info.type = TrackVideo;
-    auto source_track = std::make_shared<VideoTrack>(info);
+    auto source_track = std::make_shared<RtpTrackDescription>(info);
     auto endpoint = std::make_shared<media::SfuEndpoint>(10, source_track, nullptr, nullptr);
     ASSERT_TRUE(endpoint->Start());
 
@@ -330,6 +423,172 @@ TEST(RtcpChainTest, ContextFactoriesBuildAndInspectPackets)
     auto receiver = rtcpx::CreateRtcpReceiver(&observer);
     ASSERT_NE(receiver, nullptr);
     EXPECT_TRUE(receiver->OnRtcpPacket(pli.data(), pli.size()));
+}
+
+TEST(RtcpChainTest, SenderBuildsReceiverReportWithReportBlock)
+{
+    auto sender = rtcpx::CreateRtcpSender();
+    ASSERT_NE(sender, nullptr);
+
+    rtcpx::RrBlock block;
+    block.ssrc = 0x11223344;
+    block.fraction_lost = 64;
+    block.cumulative_lost = -2;
+    block.extended_highest_seq = 0x00010020;
+    block.jitter = 900;
+    block.lsr = 0x12345678;
+    block.dlsr = 0x00008000;
+
+    const auto packet = sender->BuildReceiverReport(0x01020304, block);
+    ASSERT_EQ(packet.size(), 32U);
+
+    CaptureObserver observer;
+    rtcpx::RtcpReceiverImpl receiver(&observer);
+    ASSERT_TRUE(receiver.OnRtcpPacket(packet.data(), packet.size()));
+    ASSERT_EQ(observer.rr_count, 1);
+    EXPECT_EQ(observer.reporter, 0x01020304U);
+    EXPECT_EQ(observer.media, block.ssrc);
+    EXPECT_EQ(observer.fraction, block.fraction_lost);
+    EXPECT_EQ(observer.cumulative, block.cumulative_lost);
+    EXPECT_EQ(observer.highest, block.extended_highest_seq);
+    EXPECT_EQ(observer.last_jitter, block.jitter);
+    EXPECT_EQ(observer.last_lsr, block.lsr);
+    EXPECT_EQ(observer.last_dlsr, block.dlsr);
+}
+
+TEST(RtcpChainTest, GoogCcControllerBoundaryPreservesAvailabilityAndConstraints)
+{
+    media::NetworkControllerConfig config;
+    config.bitrate.min_bitrate_bps = 100000;
+    config.bitrate.start_bitrate_bps = 500000;
+    config.bitrate.max_bitrate_bps = 1000000;
+    media::GoogCcNetworkController controller(config);
+
+    media::WeakNetFeedback feedback;
+    feedback.now_ms = 1000;
+    feedback.send_bitrate_bps = 500000;
+    feedback.receive_bitrate_bps = 500000;
+    const auto active = controller.OnReceiverFeedback(feedback);
+    EXPECT_TRUE(active.has_target_rate);
+    EXPECT_GE(active.target_rate.target_bitrate_bps, config.bitrate.min_bitrate_bps);
+    EXPECT_LE(active.target_rate.target_bitrate_bps, config.bitrate.max_bitrate_bps);
+
+    media::NetworkAvailability unavailable;
+    unavailable.at_time_ms = 1100;
+    unavailable.network_available = false;
+    const auto stopped = controller.OnNetworkAvailability(unavailable);
+    EXPECT_FALSE(stopped.HasUpdates());
+
+    feedback.now_ms = 1200;
+    const auto ignored = controller.OnReceiverFeedback(feedback);
+    EXPECT_FALSE(ignored.HasUpdates());
+}
+
+TEST(RtcpChainTest, SharedTransportSequenceAllocatorOrdersAudioVideoAndWrapsWireValue)
+{
+    // 同一 Transport 的音频和视频发送器应共享这个实例。
+    auto allocator = std::make_shared<media::TransportSequenceAllocator>(65534);
+    auto audio_allocator = allocator;
+    auto video_allocator = allocator;
+
+    const auto audio_1 = audio_allocator->Allocate();
+    const auto video_1 = video_allocator->Allocate();
+    const auto video_2 = video_allocator->Allocate();
+    const auto audio_2 = audio_allocator->Allocate();
+
+    EXPECT_EQ(audio_1.wire_sequence, 65534U);
+    EXPECT_EQ(video_1.wire_sequence, 65535U);
+    EXPECT_EQ(video_2.wire_sequence, 0U);
+    EXPECT_EQ(audio_2.wire_sequence, 1U);
+
+    EXPECT_EQ(audio_1.extended_sequence, 65534);
+    EXPECT_EQ(video_1.extended_sequence, 65535);
+    EXPECT_EQ(video_2.extended_sequence, 65536);
+    EXPECT_EQ(audio_2.extended_sequence, 65537);
+    EXPECT_EQ(allocator->PeekNextExtendedSequence(), 65538);
+}
+
+TEST(RtcpChainTest, SenderTracksShareTwccSequenceAndWriteRtpExtension)
+{
+    auto allocator = std::make_shared<media::TransportSequenceAllocator>(1000);
+    auto audio_transport = std::make_shared<CaptureTransport>();
+    auto video_transport = std::make_shared<CaptureTransport>();
+
+    rtsp::RtpSenderTrackConfig audio_config;
+    audio_config.local_ssrc = 0x11111111;
+    audio_config.transport_cc_extension_id = 3;
+    audio_config.transport_sequence_allocator = allocator;
+    rtsp::RtpSenderTrack audio(audio_config, audio_transport);
+
+    rtsp::RtpSenderTrackConfig video_config;
+    video_config.local_ssrc = 0x22222222;
+    video_config.transport_cc_extension_id = 3;
+    video_config.transport_sequence_allocator = allocator;
+    rtsp::RtpSenderTrack video(video_config, video_transport);
+
+    int64_t audio_extended = -1;
+    int64_t video_extended = -1;
+    audio.SetPacketSentCallback(
+        [&audio_extended](int64_t extended, uint16_t, uint32_t, uint16_t, uint64_t, uint32_t) {
+            audio_extended = extended;
+        });
+    video.SetPacketSentCallback(
+        [&video_extended](int64_t extended, uint16_t, uint32_t, uint16_t, uint64_t, uint32_t) {
+            video_extended = extended;
+        });
+
+    const uint8_t audio_rtp[] = {0x80, 111, 0, 1, 0, 0, 0, 1,
+                                 0, 0, 0, 1, 0xAA};
+    const uint8_t video_rtp[] = {0x80, 96, 0, 1, 0, 0, 0, 1,
+                                 0, 0, 0, 2, 0x65};
+    ASSERT_TRUE(audio.InputRtpPacket(audio_rtp, sizeof(audio_rtp)));
+    ASSERT_TRUE(video.InputRtpPacket(video_rtp, sizeof(video_rtp)));
+
+    ASSERT_EQ(audio_transport->last_packet.size(), sizeof(audio_rtp) + 8U);
+    ASSERT_EQ(video_transport->last_packet.size(), sizeof(video_rtp) + 8U);
+    EXPECT_NE(audio_transport->last_packet[0] & 0x10, 0);
+    EXPECT_EQ(audio_transport->last_packet[12], 0xBE);
+    EXPECT_EQ(audio_transport->last_packet[13], 0xDE);
+    EXPECT_EQ(audio_transport->last_packet[16], 0x31); // ID=3, length=2.
+    EXPECT_EQ(audio_transport->last_packet[17], 0x03);
+    EXPECT_EQ(audio_transport->last_packet[18], 0xE8); // 1000.
+    EXPECT_EQ(video_transport->last_packet[17], 0x03);
+    EXPECT_EQ(video_transport->last_packet[18], 0xE9); // 1001.
+    EXPECT_EQ(audio_extended, 1000);
+    EXPECT_EQ(video_extended, 1001);
+
+    uint16_t parsed_audio_twcc = 0;
+    uint16_t parsed_video_twcc = 0;
+    ASSERT_TRUE(rtsp::RtpTransportCcExtension::Read(
+        audio_transport->last_packet.data(), audio_transport->last_packet.size(),
+        3, &parsed_audio_twcc));
+    ASSERT_TRUE(rtsp::RtpTransportCcExtension::Read(
+        video_transport->last_packet.data(), video_transport->last_packet.size(),
+        3, &parsed_video_twcc));
+    EXPECT_EQ(parsed_audio_twcc, 1000U);
+    EXPECT_EQ(parsed_video_twcc, 1001U);
+}
+
+TEST(RtcpChainTest, ReceiverTwccGeneratorTracksWrapAndMissingPackets)
+{
+    rtcpx::TransportFeedbackGenerator::Config config;
+    config.feedback_interval_ms = 100;
+    config.max_packet_status_count = 100;
+    rtcpx::TransportFeedbackGenerator generator(config);
+
+    ASSERT_TRUE(generator.OnPacket(65534, 1000000));
+    ASSERT_TRUE(generator.OnPacket(0, 1002000)); // 65535 没有到达。
+
+    rtcpx::TransportFeedbackReport report;
+    ASSERT_TRUE(generator.BuildFeedback(0x01020304, 0, 1100000, &report));
+    EXPECT_EQ(report.base_sequence, 65534U);
+    ASSERT_EQ(report.packet_status_count, 3U);
+    ASSERT_EQ(report.packets.size(), 3U);
+    EXPECT_TRUE(report.packets[0].received);
+    EXPECT_FALSE(report.packets[1].received);
+    EXPECT_TRUE(report.packets[2].received);
+    EXPECT_EQ(report.packets[0].receive_time_us, 1000000);
+    EXPECT_EQ(report.packets[2].receive_time_us, 1002000);
 }
 
 TEST(RtcpChainTest, TrackClockMapsRtpTimestampToUnixTime)
@@ -380,7 +639,7 @@ TEST(RtcpChainTest, H264SingleNaluProducesCompleteEncodedFrame)
         0x65, 0xAA, 0xBB        // IDR NALU.
     };
 
-    ASSERT_NE(tracker.inputRtp(TrackVideo, 90000, rtp, sizeof(rtp)), nullptr);
+    ASSERT_NE(tracker.inputRtp(rtp, sizeof(rtp)), nullptr);
     ASSERT_NE(output, nullptr);
     EXPECT_TRUE(output->Valid());
     EXPECT_TRUE(output->IsComplete());
@@ -393,4 +652,122 @@ TEST(RtcpChainTest, H264SingleNaluProducesCompleteEncodedFrame)
     EXPECT_FALSE(output->info.timestamp.capture_time_valid);
     EXPECT_EQ(*output->buffer,
               (std::vector<uint8_t>{0, 0, 0, 1, 0x65, 0xAA, 0xBB}));
+}
+
+TEST(RtcpChainTest, ConsecutiveSortedVideoPacketsRemainComplete)
+{
+    TrackInfo info;
+    info.type = TrackVideo;
+    info.codec_id = CodecId::H264;
+    info.clock_rate = 90000;
+
+    rtsp::RtpVideoTracker tracker(info);
+    std::vector<media::EncodedFrame::Ptr> outputs;
+    tracker.setOnEncodedFrame([&outputs](const media::EncodedFrame::Ptr& frame) {
+        outputs.push_back(frame);
+    });
+
+    uint8_t first[] = {
+        0x80, 0xE0, 0x12, 0x71,
+        0x00, 0x01, 0x5F, 0x90,
+        0x11, 0x22, 0x33, 0x44,
+        0x65, 0xAA
+    };
+    uint8_t second[] = {
+        0x80, 0xE0, 0x12, 0x72,
+        0x00, 0x02, 0xBF, 0x20,
+        0x11, 0x22, 0x33, 0x44,
+        0x41, 0xBB
+    };
+
+    ASSERT_NE(tracker.inputRtp(first, sizeof(first)), nullptr);
+    ASSERT_NE(tracker.inputRtp(second, sizeof(second)), nullptr);
+    ASSERT_EQ(outputs.size(), 2U);
+    EXPECT_TRUE(outputs[0]->IsComplete());
+    EXPECT_TRUE(outputs[1]->IsComplete());
+}
+
+TEST(RtcpChainTest, H264FrameWaitsForRetransmittedGap)
+{
+    TrackInfo info;
+    info.type = TrackVideo;
+    info.codec_id = CodecId::H264;
+    info.clock_rate = 90000;
+
+    rtsp::RtpVideoTracker tracker(info);
+    std::vector<media::EncodedFrame::Ptr> outputs;
+    tracker.setOnEncodedFrame([&outputs](const media::EncodedFrame::Ptr& frame) {
+        outputs.push_back(frame);
+    });
+
+    uint8_t start[] = {0x80, 0x60, 0x00, 0x64, 0, 0, 0, 1,
+                       1, 2, 3, 4, 0x7C, 0x85, 0xAA};
+    uint8_t middle[] = {0x80, 0x60, 0x00, 0x65, 0, 0, 0, 1,
+                        1, 2, 3, 4, 0x7C, 0x05, 0xBB};
+    uint8_t end[] = {0x80, 0xE0, 0x00, 0x66, 0, 0, 0, 1,
+                     1, 2, 3, 4, 0x7C, 0x45, 0xCC};
+
+    ASSERT_NE(tracker.inputRtp(start, sizeof(start)), nullptr);
+    ASSERT_NE(tracker.inputRtp(end, sizeof(end)), nullptr);
+    EXPECT_TRUE(outputs.empty());
+
+    ASSERT_NE(tracker.inputRtp(middle, sizeof(middle)), nullptr);
+    ASSERT_EQ(outputs.size(), 1U);
+    EXPECT_EQ(*outputs.front()->buffer,
+              (std::vector<uint8_t>{0, 0, 0, 1, 0x65, 0xAA, 0xBB, 0xCC}));
+    EXPECT_EQ(outputs.front()->rtp.first_sequence, 100U);
+    EXPECT_EQ(outputs.front()->rtp.last_sequence, 102U);
+}
+
+TEST(RtcpChainTest, H264PacketBufferHandlesSequenceWrap)
+{
+    TrackInfo info;
+    info.type = TrackVideo;
+    info.codec_id = CodecId::H264;
+    info.clock_rate = 90000;
+
+    rtsp::RtpVideoTracker tracker(info);
+    media::EncodedFrame::Ptr output;
+    tracker.setOnEncodedFrame([&output](const media::EncodedFrame::Ptr& frame) {
+        output = frame;
+    });
+
+    uint8_t start[] = {0x80, 0x60, 0xFF, 0xFF, 0, 0, 0, 2,
+                       1, 2, 3, 4, 0x7C, 0x85, 0x11};
+    uint8_t end[] = {0x80, 0xE0, 0x00, 0x00, 0, 0, 0, 2,
+                     1, 2, 3, 4, 0x7C, 0x45, 0x22};
+
+    ASSERT_NE(tracker.inputRtp(start, sizeof(start)), nullptr);
+    ASSERT_NE(tracker.inputRtp(end, sizeof(end)), nullptr);
+    ASSERT_NE(output, nullptr);
+    EXPECT_EQ(output->rtp.first_sequence, 65535U);
+    EXPECT_EQ(output->rtp.last_sequence, 0U);
+    EXPECT_EQ(*output->buffer,
+              (std::vector<uint8_t>{0, 0, 0, 1, 0x65, 0x11, 0x22}));
+}
+
+TEST(RtcpChainTest, H264PacketBufferReplacesOlderRingWindow)
+{
+    TrackInfo info;
+    info.type = TrackVideo;
+    info.codec_id = CodecId::H264;
+    info.clock_rate = 90000;
+
+    rtsp::RtpVideoTracker tracker(info);
+    media::EncodedFrame::Ptr output;
+    tracker.setOnEncodedFrame([&output](const media::EncodedFrame::Ptr& frame) {
+        output = frame;
+    });
+
+    uint8_t old_start[] = {0x80, 0x60, 0x00, 0x00, 0, 0, 0, 1,
+                           1, 2, 3, 4, 0x7C, 0x85, 0xAA};
+    uint8_t new_idr[] = {0x80, 0xE0, 0x08, 0x00, 0, 0, 0, 2,
+                         1, 2, 3, 4, 0x65, 0xBB};
+
+    ASSERT_NE(tracker.inputRtp(old_start, sizeof(old_start)), nullptr);
+    EXPECT_EQ(output, nullptr);
+    ASSERT_NE(tracker.inputRtp(new_idr, sizeof(new_idr)), nullptr);
+    ASSERT_NE(output, nullptr);
+    EXPECT_EQ(output->rtp.first_sequence, 2048U);
+    EXPECT_EQ(output->rtp.last_sequence, 2048U);
 }

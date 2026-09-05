@@ -11,12 +11,7 @@ namespace media
 class AudioRtpDepacketizerFactory
 {
 public:
-    static std::unique_ptr<IAudioRtpDepacketizer> Create(
-        CodecType codec,
-        const std::string& encoding_name,
-        uint32_t sample_rate,
-        uint16_t channels,
-        const std::string& fmtp = {});
+    static std::unique_ptr<IAudioRtpDepacketizer> Create(CodecType codec, const std::string& encoding_name, uint32_t sample_rate, uint16_t channels, const std::string& fmtp = {});
 };
 
 } // namespace media

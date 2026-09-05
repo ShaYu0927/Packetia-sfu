@@ -7,11 +7,11 @@ namespace media::transport
 
 UdpMediaTransport::UdpMediaTransport(
     uint64_t id,
-    std::weak_ptr<network::UdpServer> server)
+    std::shared_ptr<network::transport::IDatagramTransport> datagram_transport)
     : MediaTransportBase(id),
-      server_(std::move(server))
+      datagram_transport_(std::move(datagram_transport))
 {
-    SetState(server_.expired()
+    SetState(!datagram_transport_ || !datagram_transport_->IsWritable()
         ? MediaTransportState::Failed
         : MediaTransportState::Connecting);
 }
@@ -37,26 +37,36 @@ SendResult UdpMediaTransport::Send(MediaPacketType type,
         return SendResult::Failed;
     }
 
-    auto server = server_.lock();
-    if (!server)
-    {
-        SetState(MediaTransportState::Closed);
-        return SendResult::Closed;
-    }
-
     network::SocketAddr peer;
+    std::shared_ptr<network::transport::IDatagramTransport> datagram_transport;
     {
         std::lock_guard<std::mutex> lock(peer_mutex_);
+        datagram_transport = datagram_transport_;
         if (!has_selected_peer_)
         {
             return SendResult::NotWritable;
         }
         peer = selected_peer_;
     }
+    if (!datagram_transport || !datagram_transport->IsWritable())
+    {
+        SetState(MediaTransportState::Closed);
+        return SendResult::Closed;
+    }
 
-    return server->SendTo(peer, data, size)
-        ? SendResult::Ok
-        : SendResult::Failed;
+    switch (datagram_transport->SendDatagram(peer, data, size))
+    {
+    case network::transport::DatagramSendResult::Ok:
+        return SendResult::Ok;
+    case network::transport::DatagramSendResult::Closed:
+        SetState(MediaTransportState::Closed);
+        return SendResult::Closed;
+    case network::transport::DatagramSendResult::NotWritable:
+        return SendResult::NotWritable;
+    case network::transport::DatagramSendResult::Failed:
+    default:
+        return SendResult::Failed;
+    }
 }
 
 void UdpMediaTransport::Close()
@@ -73,18 +83,22 @@ void UdpMediaTransport::Close()
         has_selected_peer_ = false;
         selected_peer_ = {};
     }
-    server_.reset();
+    datagram_transport_.reset();
     SetState(MediaTransportState::Closed);
 }
 
 void UdpMediaTransport::SetSelectedPeer(const network::SocketAddr& peer)
 {
-    if (peer.len == 0 || server_.expired() || IsClosed())
+    if (peer.len == 0 || IsClosed())
     {
         return;
     }
     {
         std::lock_guard<std::mutex> lock(peer_mutex_);
+        if (!datagram_transport_ || !datagram_transport_->IsWritable())
+        {
+            return;
+        }
         selected_peer_ = peer;
         has_selected_peer_ = true;
     }

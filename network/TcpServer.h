@@ -41,7 +41,7 @@ protected:
 	uint16_t port_;
 	std::string ip_;
 	std::unique_ptr<Acceptor> acceptor_;
-	bool is_started_;
+	std::atomic<bool> is_started_;
 	std::mutex mutex_;
 	std::unordered_map<SOCKET, TcpConnection::Ptr> connections_;
 };

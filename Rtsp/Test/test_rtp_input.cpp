@@ -56,7 +56,7 @@ TEST(RtpAudioTrackerCloneTest, MirrorsFuturePacketsWithIndependentState)
     EXPECT_EQ(0u, clone->getStats().received_packets);
 
     auto first = MakeAudioRtp(100, 48000);
-    ASSERT_NE(nullptr, source->inputRtp(TrackAudio, 48000, first.data(), first.size()));
+    ASSERT_NE(nullptr, source->inputRtp(first.data(), first.size()));
 
     EXPECT_EQ(1u, source->getStats().received_packets);
     EXPECT_EQ(1u, clone->getStats().received_packets);
@@ -65,12 +65,43 @@ TEST(RtpAudioTrackerCloneTest, MirrorsFuturePacketsWithIndependentState)
 
     // Direct input into the clone changes only the clone's receiver state.
     auto second = MakeAudioRtp(101, 48960);
-    ASSERT_NE(nullptr, clone->inputRtp(TrackAudio, 48000, second.data(), second.size()));
+    ASSERT_NE(nullptr, clone->inputRtp(second.data(), second.size()));
 
     EXPECT_EQ(1u, source->getStats().received_packets);
     EXPECT_EQ(2u, clone->getStats().received_packets);
     EXPECT_EQ(100u, source->getStats().last_seq);
     EXPECT_EQ(101u, clone->getStats().last_seq);
+}
+
+TEST(RtpReceiverTrackTest, FactoryCreatesOnlyImplementedReceiverCodecs)
+{
+    auto audio = rtsp::RtpReceiverTrack::Create(MakeAudioTrackInfo());
+    ASSERT_NE(audio, nullptr);
+    EXPECT_NE(std::dynamic_pointer_cast<rtsp::RtpAudioTracker>(audio), nullptr);
+
+    TrackInfo video;
+    video.type = TrackVideo;
+    video.codec_id = CodecId::H264;
+    video.clock_rate = 90000;
+    EXPECT_NE(rtsp::RtpReceiverTrack::Create(video), nullptr);
+
+    video.codec_id = CodecId::H265;
+    EXPECT_EQ(rtsp::RtpReceiverTrack::Create(video), nullptr);
+}
+
+TEST(RtpReceiverTrackTest, RejectsPacketOutsideNegotiatedIdentity)
+{
+    auto receiver = rtsp::RtpReceiverTrack::Create(MakeAudioTrackInfo());
+    ASSERT_NE(receiver, nullptr);
+
+    auto wrong_payload_type = MakeAudioRtp(1, 48000);
+    wrong_payload_type[1] = 112;
+    EXPECT_EQ(receiver->inputRtp(wrong_payload_type.data(), wrong_payload_type.size()), nullptr);
+
+    auto wrong_ssrc = MakeAudioRtp(2, 48960);
+    wrong_ssrc[11] = 0x05;
+    EXPECT_EQ(receiver->inputRtp(wrong_ssrc.data(), wrong_ssrc.size()), nullptr);
+    EXPECT_EQ(receiver->getStats().received_packets, 0U);
 }
 
 TEST(RtpAudioTrackerCloneTest, ReleasedCloneDetachesAutomatically)
@@ -82,7 +113,7 @@ TEST(RtpAudioTrackerCloneTest, ReleasedCloneDetachesAutomatically)
     }
 
     auto packet = MakeAudioRtp(200, 96000);
-    ASSERT_NE(nullptr, source->inputRtp(TrackAudio, 48000, packet.data(), packet.size()));
+    ASSERT_NE(nullptr, source->inputRtp(packet.data(), packet.size()));
     EXPECT_EQ(1u, source->getStats().received_packets);
 }
 
@@ -116,8 +147,7 @@ TEST(RtpPacketPoolTest, RejectsOversizedPacketBeforeAllocation)
     oversized[0] = 0x80;
     oversized[1] = 111;
 
-    EXPECT_EQ(nullptr, tracker->inputRtp(
-        TrackAudio, 48000, oversized.data(), oversized.size()));
+    EXPECT_EQ(nullptr, tracker->inputRtp(oversized.data(), oversized.size()));
     EXPECT_EQ(1u, tracker->getStats().oversized_packets);
     EXPECT_EQ(0u, tracker->getStats().received_packets);
 }
@@ -140,4 +170,3 @@ int main(int argc, char** argv)
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
 }
-

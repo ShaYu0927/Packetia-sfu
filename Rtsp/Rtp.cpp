@@ -47,10 +47,7 @@ void RtpRecvStatsBase::CountBye()
     ++_bye_count;
 }
 
-void RtpRecvStatsBase::OnRtpPacket(uint32_t ssrc, uint8_t payload_type,
-                                   uint16_t seq, uint32_t rtp_ts,
-                                   size_t bytes, uint64_t receive_ms,
-                                   uint32_t clock_rate)
+void RtpRecvStatsBase::OnRtpPacket(uint32_t ssrc, uint8_t payload_type, uint16_t seq, uint32_t rtp_ts, size_t bytes, uint64_t receive_ms, uint32_t clock_rate)
 {
     if (_first_rtp_recv_ms == 0)
     {
@@ -63,6 +60,19 @@ void RtpRecvStatsBase::OnRtpPacket(uint32_t ssrc, uint8_t payload_type,
     _last_timestamp = rtp_ts;
     ++_rtp_packet_count;
     _rtp_bytes += bytes;
+
+    if (!_receive_rate_window.empty() && _receive_rate_window.back().receive_ms == receive_ms)
+    {
+        _receive_rate_window.back().bytes += bytes;
+    }
+    else
+    {
+        _receive_rate_window.push_back({receive_ms, bytes});
+    }
+    while (!_receive_rate_window.empty() && receive_ms >= _receive_rate_window.front().receive_ms && receive_ms - _receive_rate_window.front().receive_ms > kReceiveBitrateWindowMs)
+    {
+        _receive_rate_window.pop_front();
+    }
 
     if (!_has_seq)
     {
@@ -93,13 +103,11 @@ void RtpRecvStatsBase::OnRtpPacket(uint32_t ssrc, uint8_t payload_type,
 
     if (clock_rate > 0)
     {
-        const uint32_t arrival_rtp_units = static_cast<uint32_t>(
-            (receive_ms * static_cast<uint64_t>(clock_rate)) / 1000ULL);
+        const uint32_t arrival_rtp_units = static_cast<uint32_t>( (receive_ms * static_cast<uint64_t>(clock_rate)) / 1000ULL);
         const int32_t transit = static_cast<int32_t>(arrival_rtp_units - rtp_ts);
         if (_has_transit)
         {
-            const int64_t difference = std::llabs(
-                static_cast<int64_t>(transit) - _previous_transit);
+            const int64_t difference = std::llabs(static_cast<int64_t>(transit) - _previous_transit);
             _jitter_value += (static_cast<double>(difference) - _jitter_value) / 16.0;
             _jitter = static_cast<uint32_t>(std::max(0.0, _jitter_value));
         }
@@ -107,12 +115,42 @@ void RtpRecvStatsBase::OnRtpPacket(uint32_t ssrc, uint8_t payload_type,
         _has_transit = true;
     }
 
-    if (_first_rtp_recv_ms != 0 && receive_ms > _first_rtp_recv_ms)
+    _receiver_bitrate_bps = GetReceiverBitrateBps(receive_ms);
+}
+
+double RtpRecvStatsBase::GetReceiverBitrateBps(uint64_t now_ms) const
+{
+    if (_receive_rate_window.empty() || now_ms < _receive_rate_window.front().receive_ms)
     {
-        const uint64_t elapsed_ms = receive_ms - _first_rtp_recv_ms;
-        _receiver_bitrate_bps = static_cast<double>(_rtp_bytes) * 8000.0 /
-                                static_cast<double>(elapsed_ms);
+        return 0.0;
     }
+
+    const uint64_t cutoff_ms = now_ms > kReceiveBitrateWindowMs
+                                   ? now_ms - kReceiveBitrateWindowMs
+                                   : 0;
+    uint64_t window_bytes = 0;
+    bool has_sample = false;
+    for (const auto& sample : _receive_rate_window)
+    {
+        if (sample.receive_ms < cutoff_ms || sample.receive_ms > now_ms)
+        {
+            continue;
+        }
+        has_sample = true;
+        window_bytes += sample.bytes;
+    }
+    if (window_bytes == 0 || !has_sample)
+    {
+        return 0.0;
+    }
+
+    const uint64_t stream_age_ms = now_ms >= _first_rtp_recv_ms
+                                       ? now_ms - _first_rtp_recv_ms
+                                       : 0;
+    const uint64_t duration_ms = std::max<uint64_t>(
+        1, std::min<uint64_t>(kReceiveBitrateWindowMs, stream_age_ms));
+    return static_cast<double>(window_bytes) * 8000.0 /
+           static_cast<double>(duration_ms);
 }
 
 void RtpRecvStatsBase::OnSenderReport(uint32_t sender_ssrc, uint64_t ntp,
@@ -250,30 +288,10 @@ bool RtpHeader::InputFromBuffer(const uint8_t* buf, size_t len)
     return true;
 }
 
-void RtpTrack::setInterleavedChannel(uint8_t rtp_channel, uint8_t rtcp_channel)
+void RtpTrackDescription::setInterleavedChannel(uint8_t rtp_channel, uint8_t rtcp_channel)
 {
     info_.rtsp_transport.interleaved_rtcp = rtcp_channel;
     info_.rtsp_transport.interleaved_rtp  = rtp_channel;
-}
-
-bool AudioTrack::onInputRtp(uint8_t* data, size_t len)
-{
-    return true;
-}
-
-void AudioTrack::onInputRtcp(const uint8_t* data, size_t len)
-{
-    LOG_INFO("1111");
-}
-
-bool VideoTrack::onInputRtp(uint8_t* data, size_t len)
-{
-    return true;
-}
-
-void VideoTrack::onInputRtcp(const uint8_t* data, size_t len)
-{
-    
 }
 
 void RtpPacket::setPayload(const uint8_t* payload, size_t len)
@@ -381,8 +399,4 @@ bool RtpPacket::reserve(size_t capacity)
     capacity_ = capacity;
     size_ = 0;
     return true;
-}
-
-void VideoTrack::onOrderedPacket(uint16_t seq, PacketPtr pkt)
-{
 }

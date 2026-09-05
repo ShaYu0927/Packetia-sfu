@@ -10,6 +10,7 @@
 #include <memory>
 #include "IMediaTransport.h"
 #include "Rtp.h"
+#include "../media/quality/TransportSequenceAllocator.h"
 
 namespace rtsp
 {
@@ -77,6 +78,18 @@ struct RtpSenderTrackConfig
      * Maximum retransmission attempts per cached RTP packet.
      */
     uint32_t max_retransmit_count = 3;
+
+    /*
+     * SDP 协商得到的 Transport-CC RTP Header Extension ID。
+     * 0 表示禁用；当前写入器支持 RFC 8285 one-byte ID 1~14。
+     */
+    uint8_t transport_cc_extension_id = 0;
+
+    /*
+     * 当前下行 Transport 共享的 TWCC 分配器。音频、视频和 RTX Track
+     * 必须注入同一个实例，不能每个 Track 单独创建。
+     */
+    std::shared_ptr<media::TransportSequenceAllocator> transport_sequence_allocator;
 };
 
 class RtpSenderTrack
@@ -84,7 +97,8 @@ class RtpSenderTrack
 public:
     using Ptr = std::shared_ptr<RtpSenderTrack>;
     using KeyFrameRequestCallback = std::function<void()>;
-    using PacketSentCallback = std::function<void(uint16_t transport_sequence,
+    using PacketSentCallback = std::function<void(int64_t extended_transport_sequence,
+                                                  uint16_t wire_transport_sequence,
                                                   uint32_t ssrc,
                                                   uint16_t rtp_sequence,
                                                   uint64_t send_time_ms,
@@ -140,6 +154,16 @@ private:
     bool ParseRtpHeader(const uint8_t* data, size_t len, RtpHeader& header);
 
     bool RewriteRtpPacket(std::vector<uint8_t>& packet, const RtpHeader& in_header, uint16_t& out_seq, uint32_t& out_timestamp);
+
+    bool WriteTransportCcExtension(std::vector<uint8_t>& packet,
+                                   uint16_t transport_sequence) const;
+
+    bool PrepareTransportCc(std::vector<uint8_t>& packet,
+                            media::TransportSequenceNumber& sequence) const;
+
+    void NotifyPacketSent(const media::TransportSequenceNumber& sequence,
+                          uint16_t rtp_sequence,
+                          size_t packet_size);
 
     uint16_t RewriteSeq(uint16_t in_seq);
 

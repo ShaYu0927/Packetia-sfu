@@ -63,7 +63,12 @@ int  BufferWirte::Send(int socketfd,int timeOut)
    while (!buffer_.empty()) 
    {
         Packet &pkt = buffer_.front();
-        const int ret = send(socketfd, pkt.data.get() + pkt.writeIndex, pkt.size - pkt.writeIndex, 0);
+#ifdef MSG_NOSIGNAL
+        constexpr int flags = MSG_NOSIGNAL;
+#else
+        constexpr int flags = 0;
+#endif
+        const int ret = send(socketfd, pkt.data.get() + pkt.writeIndex, pkt.size - pkt.writeIndex, flags);
         if (ret > 0) 
         {
             pkt.writeIndex += static_cast<uint32_t>(ret);

@@ -44,8 +44,32 @@ const char* BoolText(bool value)
 }
 }
 
+RtpReceiverTrack::Ptr RtpReceiverTrack::Create(const TrackInfo& info)
+{
+    switch (info.type)
+    {
+    case TrackVideo:
+        return info.codec_id == CodecId::H264
+                   ? std::make_shared<RtpVideoTracker>(info)
+                   : nullptr;
+    case TrackAudio:
+        switch (info.codec_id)
+        {
+        case CodecId::PCMU:
+        case CodecId::PCMA:
+        case CodecId::OPUS:
+        case CodecId::AAC:
+            return std::make_shared<RtpAudioTracker>(info);
+        default:
+            return nullptr;
+        }
+    default:
+        return nullptr;
+    }
+}
 
-RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len)
+
+RtpPacket::Ptr RtpVideoTracker::inputRtp(uint8_t *ptr, size_t len)
 {
     if (!ptr || len < RtpHeader::kSize)
     {
@@ -63,6 +87,16 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_
     if (hdr.getVersion() != 2)
     {
         LOG_ERROR("inputRtp invalid rtp version=", static_cast<int>(hdr.getVersion()));
+        return nullptr;
+    }
+
+    if ((_info.payload_type != 0xFF && hdr.getPayloadType() != _info.payload_type) ||
+        (_info.ssrc != 0 && hdr.getSSRC() != _info.ssrc))
+    {
+        LOG_ERROR("inputRtp packet does not belong to receiver track, expected_pt=",
+                  static_cast<int>(_info.payload_type), " actual_pt=",
+                  static_cast<int>(hdr.getPayloadType()), " expected_ssrc=",
+                  _info.ssrc, " actual_ssrc=", hdr.getSSRC());
         return nullptr;
     }
 
@@ -116,51 +150,28 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(TrackType type, int sample_rate, uint8_
     pkt->setSSRC(hdr.getSSRC());
     pkt->setPayloadType(hdr.getPayloadType());
     pkt->setMarker(hdr.getMarker());
-    pkt->setTrackType(type);
-    pkt->setSampleRate(sample_rate > 0 ? static_cast<uint32_t>(sample_rate) : _info.clock_rate);
+    pkt->setTrackType(_info.type);
+    pkt->setSampleRate(_info.clock_rate > 0 ? _info.clock_rate : 90000U);
     pkt->setTrackIndex(_info.track_index);
     pkt->setRaw(ptr, len);
     pkt->setHeaderInfo(headerLen, headerLen, payloadLen);
     pkt->setRecvTimeMs(NowMs());
 
-    if (!inputPacket(pkt))
+    if (_nack_receiver)
+    {
+        _nack_receiver->OnReceivedPacket(pkt->getSeq(), pkt->getRecvTimeMs());
+        // Keep this immediate pass for low first-NACK latency. TickNack() also
+        // drives retries when a periodic media tick is available.
+        _nack_receiver->Process(pkt->getRecvTimeMs());
+    }
+
+    if (!inputUnorderedPacket(pkt))
     {
         return nullptr;
     }
     return pkt;
 }
 
-
-void RtpVideoTracker::onBeforeRtpSorted(const RtpPacket::Ptr &pkt)
-{
-    if(!pkt)
-    {
-        LOG_ERROR("RtpPacket is nullptr");
-        return;
-    }
-
-    auto seq = pkt->getSeq();
-    auto ts = pkt->getStamp();
-    auto ssrc = pkt->getSSRC();
-
-
-    if(_has_last_seq)
-    {
-        uint16_t expected = _last_seq + 1;
-        if (seq != expected) 
-        {
-            LOG_ERROR("[RtpVideoTracker] packet lost after sorted, expected=", expected, " actual=", seq);
-            if (_broken_timestamps.size() >= 64)
-            {
-                _broken_timestamps.clear();
-            }
-            _broken_timestamps.insert(ts);
-        }
-
-    }
-    _last_seq = seq;
-    _has_last_seq = true;
-}
 
 void RtpVideoTracker::onRtpSorted(const RtpPacket::Ptr &pkt)
 {
@@ -172,14 +183,6 @@ void RtpVideoTracker::onRtpSorted(const RtpPacket::Ptr &pkt)
     if (!_depacketizer) 
     {
         return;
-    }
-
-    if(_nack_receiver)
-    {
-        const uint64_t now_ms = pkt->getRecvTimeMs();
-
-        _nack_receiver->OnReceivedPacket(pkt->getSeq(), now_ms);
-        _nack_receiver->Process(now_ms);
     }
 
     const uint8_t *payload = pkt->getPayload();
@@ -206,12 +209,6 @@ void RtpVideoTracker::onRtpSorted(const RtpPacket::Ptr &pkt)
     media::H264AccessUnit au;
     while (_depacketizer->popAccessUnit(au))
     {
-        if (_broken_timestamps.erase(au.timestamp) > 0)
-        {
-            au.broken = true;
-            au.complete = false;
-        }
-
         auto frame = std::make_shared<media::EncodedFrame>();
         frame->info.track_id = _info.track_index >= 0 ? static_cast<media::TrackId>(_info.track_index) : 0;
         frame->info.media_type = media::MediaType::Video;
@@ -255,6 +252,20 @@ void RtpVideoTracker::onRtpSorted(const RtpPacket::Ptr &pkt)
         frame->sample_rate           = pkt->getSampleRate();
 
         auto buffer = std::make_shared<std::vector<uint8_t>>();
+        size_t annexb_size = 0;
+        for (const auto& nalu : au.nalus)
+            annexb_size += sizeof(kAnnexBStartCode) + nalu.size();
+        if (au.has_idr && !au.has_sps)
+        {
+            if (const auto* sps = _depacketizer->parameterSets().LatestSps())
+                annexb_size += sizeof(kAnnexBStartCode) + sps->payload.size();
+        }
+        if (au.has_idr && !au.has_pps)
+        {
+            if (const auto* pps = _depacketizer->parameterSets().LatestPps())
+                annexb_size += sizeof(kAnnexBStartCode) + pps->payload.size();
+        }
+        buffer->reserve(annexb_size);
         if (au.has_idr)
         {
             if (!au.has_sps)
@@ -378,7 +389,7 @@ std::vector<RtpAudioTracker::Ptr> RtpAudioTracker::SnapshotClones()
     return result;
 }
 
-RtpPacket::Ptr RtpAudioTracker::inputRtp(TrackType type, int sample_rate, uint8_t* ptr, size_t len)
+RtpPacket::Ptr RtpAudioTracker::inputRtp(uint8_t* ptr, size_t len)
 {
     if (!ptr || len < RtpHeader::kSize)
     {
@@ -392,6 +403,12 @@ RtpPacket::Ptr RtpAudioTracker::inputRtp(TrackType type, int sample_rate, uint8_
     }
 
     if (hdr.getVersion() != 2)
+    {
+        return nullptr;
+    }
+
+    if ((_info.payload_type != 0xFF && hdr.getPayloadType() != _info.payload_type) ||
+        (_info.ssrc != 0 && hdr.getSSRC() != _info.ssrc))
     {
         return nullptr;
     }
@@ -453,9 +470,8 @@ RtpPacket::Ptr RtpAudioTracker::inputRtp(TrackType type, int sample_rate, uint8_
     pkt->setPayloadType(hdr.getPayloadType());
     pkt->setMarker(hdr.getMarker());
 
-    pkt->setTrackType(type);
-    pkt->setSampleRate(sample_rate > 0 ? static_cast<uint32_t>(sample_rate)
-                                       : _info.clock_rate);
+    pkt->setTrackType(_info.type);
+    pkt->setSampleRate(_info.clock_rate);
     pkt->setTrackIndex(_info.track_index);
 
     pkt->setRaw(ptr, len);
@@ -469,7 +485,7 @@ RtpPacket::Ptr RtpAudioTracker::inputRtp(TrackType type, int sample_rate, uint8_
 
     for (const auto& clone : SnapshotClones())
     {
-        clone->inputRtp(type, sample_rate, ptr, len);
+        clone->inputRtp(ptr, len);
     }
 
     return pkt;
@@ -715,8 +731,27 @@ void RtcpDispatcher::OnBye(uint32_t sender_ssrc)
 
 void RtcpDispatcher::OnRttUpdated(uint32_t media_ssrc, uint32_t rtt_ms)
 {
-    (void)media_ssrc;
-    (void)rtt_ms;
+    std::shared_ptr<RtpReceiverTrack> track;
+    {
+        std::lock_guard<std::mutex> lock(tracks_mutex_);
+        auto it = recv_tracks_.find(media_ssrc);
+        if (it == recv_tracks_.end())
+        {
+            return;
+        }
+        track = it->second.lock();
+        if (!track)
+        {
+            recv_tracks_.erase(it);
+            return;
+        }
+    }
+
+    track->SetRttMs(rtt_ms);
+    if (auto video = std::dynamic_pointer_cast<RtpVideoTracker>(track))
+    {
+        video->UpdateNackRtt(rtt_ms);
+    }
 }
 
 }

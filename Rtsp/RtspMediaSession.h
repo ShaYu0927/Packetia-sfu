@@ -54,7 +54,7 @@ public:
     void SetRtspSuffix(const std::string& suffix) { suffix_ = suffix; }
     void SetRtspUrl(const std::string& url) {url_ = url; }
     
-    std::shared_ptr<RtpTrack> GetRtpTrack(const std::string& control) const;
+    std::shared_ptr<RtpTrackDescription> GetTrackDescription(const std::string& control) const;
     bool GetTrackInfo(int track_id, TrackInfo* out) const;
     std::shared_ptr<const StreamContext> GetStreamContext() const;
     bool FindStreamTrack(int media_index, StreamTrackInfo* out) const;
@@ -63,7 +63,6 @@ public:
     bool FindPayloadType(int track_id, uint8_t payload_type, PayloadTypeInfo* out) const;
 
     bool ApplySdp(const sdp::SdpSession& sdp, std::string* err);
-    RtpTrack::Ptr CreateTrack(const MediaTrackInfo& info);
 
 
     bool IsReady() const { return ready_.load(); }
@@ -85,11 +84,9 @@ private:
 
     bool ParseTrackInfoFromMedia(const sdp::SdpMedia& media, int track_index, TrackInfo* info, std::string* err) const;
 
-    RtpTrack::Ptr BuildTrackFromInfo(const TrackInfo& info, std::string* err);
-
-    void InstallTrack(int track_index, const TrackInfo& info, const RtpTrack::Ptr& track);
+    RtpTrackDescription::Ptr BuildTrackDescription(const TrackInfo& info, std::string* err);
     
-    RtpTrack::Ptr CreateTrack(const TrackInfo& info);
+    RtpTrackDescription::Ptr CreateTrackDescription(const TrackInfo& info);
     
 
 public:
@@ -107,7 +104,7 @@ private:
 
     std::unordered_map<int, TrackInfo>                  track_infos_;
     std::unordered_map<std::string, int>                control_to_track_;
-    std::unordered_map<int, std::shared_ptr<RtpTrack>>  runtime_tracks_;
+    std::unordered_map<int, std::shared_ptr<RtpTrackDescription>> track_descriptions_;
     std::unordered_map<uint32_t, int>                   ssrc_to_track_;
     std::unordered_map<uint64_t, int>                   endpoint_to_track_;
     std::array<ChannelBinding, 256>                     channel_bindings_;

@@ -2,7 +2,7 @@
 #define _UDP_MEDIA_TRANSPORT_H_
 
 #include "MediaTransportBase.h"
-#include "UdpServer.h"
+#include "network/transport/IDatagramTransport.h"
 
 #include <memory>
 #include <mutex>
@@ -14,7 +14,7 @@ class UdpMediaTransport final : public MediaTransportBase
 {
 public:
     UdpMediaTransport(uint64_t id,
-                      std::weak_ptr<network::UdpServer> server);
+                      std::shared_ptr<network::transport::IDatagramTransport> datagram_transport);
 
     MediaTransportProtocol Protocol() const noexcept override;
 
@@ -36,7 +36,7 @@ public:
         uint64_t receive_time_ms);
 
 private:
-    std::weak_ptr<network::UdpServer> server_;
+    std::shared_ptr<network::transport::IDatagramTransport> datagram_transport_;
     mutable std::mutex peer_mutex_;
     network::SocketAddr selected_peer_{};
     bool has_selected_peer_{false};

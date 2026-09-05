@@ -12,19 +12,24 @@ Acceptor::Acceptor(EventLoop *eventLoop)
 
 Acceptor::~Acceptor()
 {
+    Close();
 }
 
 int Acceptor::Listen(std::string ip, uint16_t port)
 {
-    std::lock_guard<std::mutex> locker(mutex_);
-    if(tcp_socket_->GetSocket() == INVALID_SOCKET)
+    Close();
+    scheduler_ = event_loop_->GetTaskScheduler();
+    if (!scheduler_ || scheduler_->IsStopped()) return -1;
+    int result = -1;
+    scheduler_->Invoke([&, this] {
+    if(tcp_socket_->GetSocket() != INVALID_SOCKET)
     {
         tcp_socket_->Close();
     }
     SOCKET sockfd = tcp_socket_->Create();
     if(sockfd == INVALID_SOCKET)
     {
-        return -1;
+        return;
     }
     channel_ptr_.reset(new Channel(sockfd));
     SocketUtil::SetReuseAddr(sockfd);
@@ -33,28 +38,40 @@ int Acceptor::Listen(std::string ip, uint16_t port)
 
     if (!tcp_socket_->Bind(ip, port)) 
     {
-		return -1;
+        tcp_socket_->Close();
+		return;
 	}
 
     if (!tcp_socket_->Listen(1024)) 
     {
-		return -1;
+        tcp_socket_->Close();
+		return;
 	}
     channel_ptr_->SetReadCallback([this]() { this->OnAccept(); });
+    sockaddr_in local{};
+    socklen_t length = sizeof(local);
+    if (::getsockname(sockfd, reinterpret_cast<sockaddr*>(&local), &length) == 0)
+        port_ = ntohs(local.sin_port);
 	channel_ptr_->EnableReading();
     LOG_INFO("EnableReading called on fd=" + std::to_string(tcp_socket_->GetSocket()));
-	event_loop_->UpdateChannel(channel_ptr_);
-    return 0;
+	scheduler_->UpdateChannel(channel_ptr_);
+    result = 0;
+    });
+    return result;
 }
 
 void Acceptor::Close()
 {
-    std::lock_guard<std::mutex> locker(mutex_);
-    if (tcp_socket_->GetSocket() > 0) 
+    if (!scheduler_) return;
+    scheduler_->Invoke([this] {
+    if (tcp_socket_->GetSocket() >= 0)
     {
-		event_loop_->RemoveChannel(channel_ptr_);
+		if (channel_ptr_) scheduler_->RemoveChannel(channel_ptr_);
 		tcp_socket_->Close();
 	}
+    channel_ptr_.reset();
+    port_ = 0;
+    });
 }
 
 void Acceptor::OnAccept()
@@ -62,12 +79,13 @@ void Acceptor::OnAccept()
     while (true) 
     {
         int sockfd = tcp_socket_->Accept();
-        if (sockfd > 0) 
+        if (sockfd >= 0)
         {
             if (new_connection_callback_) new_connection_callback_(sockfd);
             else SocketUtil::Close(sockfd);
             continue;
         }
+        if (errno == EINTR) continue;
         if (errno == EAGAIN || errno == EWOULDBLOCK) break;
         LOG_ERROR("accept failed, errno=" + std::to_string(errno));
         break; 

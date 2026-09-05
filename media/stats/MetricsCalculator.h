@@ -24,7 +24,12 @@ struct CalculatedMetrics
     double packet_rate = 0.0;              // Packets per second
     double frame_rate = 0.0;               // Frames per second
 
-    double packet_loss_rate = 0.0;          // Loss rate [0.0, 1.0]
+    double packet_loss_rate = 0.0;         // Loss rate [0.0, 1.0]
+
+    double delay_delta_ms = 0.0;            // Arrival delta - send delta
+    double delay_trend_ms = 0.0;            // Smoothed delay trend
+    double rtt_ms = 0.0;                    // Round-trip time
+    double jitter_ms = 0.0;                 // RTP jitter
 
     uint64_t packet_delta = 0;              // Packets in interval
     uint64_t byte_delta = 0;                // Bytes in interval

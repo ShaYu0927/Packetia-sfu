@@ -46,11 +46,57 @@ void TaskScheduler::start()
 
 void TaskScheduler::stop()
 {
-    is_shutdown_ = true;
+    {
+        std::lock_guard<std::mutex> lock(task_mutex_);
+        shutdown_.store(true);
+    }
     char event = kTriggetEvent;
-    wakeup_pipe_->Write(&event,1);
-    shutdown_.store(true);
-    started_.store(false);
+    if (wakeup_pipe_) wakeup_pipe_->Write(&event, 1);
+}
+
+void TaskScheduler::Run()
+{
+    current_ = this;
+    {
+        std::lock_guard<std::mutex> lock(task_mutex_);
+        started_.store(true);
+    }
+    for (;;)
+    {
+        HandleEvent(100);
+        HandlePendingTasks();
+        std::lock_guard<std::mutex> lock(task_mutex_);
+        if (shutdown_ && pending_tasks_.empty())
+        {
+            started_.store(false);
+            break;
+        }
+    }
+    current_ = nullptr;
+}
+
+void TaskScheduler::Invoke(Task task)
+{
+    if (IsCurrentThread()) { task(); return; }
+    auto work = std::make_shared<std::packaged_task<void()>>(std::move(task));
+    auto done = work->get_future();
+    bool queued = false;
+    {
+        std::lock_guard<std::mutex> lock(task_mutex_);
+        if (started_)
+        {
+            // Cleanup must also be accepted while Run is draining on stop.
+            pending_tasks_.push_back([work] { (*work)(); });
+            queued = true;
+        }
+    }
+    if (queued)
+    {
+        char event = kTriggetEvent;
+        if (wakeup_pipe_) wakeup_pipe_->Write(&event, 1);
+    }
+    else { (*work)(); }
+    done.get();
 }
 
 TimeId TaskScheduler::AddTimer(TimeEvent timerEvent, uint32_t msec)
@@ -66,22 +112,7 @@ void TaskScheduler::RemoveTimer(TimeId timerId)
 
 bool TaskScheduler::AddTriggerEvent(TriggerEvent callback)
 {
-    if (!callback || !trigger_events_)
-    {
-        return false;
-    }
-
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (trigger_events_->Size() >= kMaxTriggetEvents ||
-            !trigger_events_->Push(std::move(callback)))
-        {
-            return false;
-        }
-    }
-
-    char event = kTriggetEvent;
-    return wakeup_pipe_ && wakeup_pipe_->Write(&event, 1) == 1;
+    return Post(std::move(callback));
 }
 
 void TaskScheduler::Wake()
@@ -140,7 +171,7 @@ bool TaskScheduler::Post(Task task)
 
     {
         std::lock_guard<std::mutex> lock(task_mutex_);
-        if (pending_tasks_.size() >= kMaxTriggetEvents)
+        if (shutdown_ || !wakeup_pipe_ || pending_tasks_.size() >= kMaxTriggetEvents)
         {
             return false;
         }
@@ -148,5 +179,8 @@ bool TaskScheduler::Post(Task task)
     }
 
     char event = kTriggetEvent;
-    return wakeup_pipe_ && wakeup_pipe_->Write(&event, 1) == 1;
+    wakeup_pipe_->Write(&event, 1);
+    // A full nonblocking wakeup pipe is already readable. The task was
+    // accepted and must not be reported as failed (callers might retry it).
+    return true;
 }

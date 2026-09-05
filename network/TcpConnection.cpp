@@ -6,6 +6,7 @@
 
 TcpConnection::TcpConnection(TaskScheduler *task_scheduler, SOCKET sockfd)
     : task_scheduler_(task_scheduler)
+    , scheduler_owner_(task_scheduler->weak_from_this().lock())
 	, read_buffer_(new BufferReader)
 	, write_buffer_(new BufferWirte())
 	, channel_(new Channel(sockfd))
@@ -19,47 +20,64 @@ TcpConnection::TcpConnection(TaskScheduler *task_scheduler, SOCKET sockfd)
 
 TcpConnection::~TcpConnection()
 {
-    SOCKET fd = channel_->GetSocket();
-	if (fd > 0)
-    {
-		SocketUtil::Close(fd);
-	}
+    // No user callbacks from a destructor; remove the last registration
+    // before destroying the channel.
+    task_scheduler_->Invoke([this] {
+        task_scheduler_->RemoveChannel(channel_);
+        channel_->CloseSocket();
+    });
 }
 
 void TcpConnection::Disconnect()
 {
+    close();
+}
+
+TcpConnection::SendResult TcpConnection::Send(std::shared_ptr<char> data, uint32_t size)
+{
+    if (!data || size == 0) return SendResult::Failed;
     std::lock_guard<std::mutex> lock(mutex_);
-	auto conn = shared_from_this();
-	task_scheduler_->AddTriggerEvent([conn]() 
+    if (is_closed_ || task_scheduler_->IsStopped()) return SendResult::Closed;
+    if (size > write_buffer_->CapacityBytes() - write_buffer_->QueuedBytes())
+        return SendResult::QueueFull;
+    if (!write_pending_)
     {
-		conn->close();
-	});
+        auto weak = weak_from_this();
+        if (weak.expired() || !task_scheduler_->Post([weak] {
+                if (auto self = weak.lock()) self->HandleWrite();
+            })) return SendResult::Failed;
+        write_pending_ = true;
+    }
+    return write_buffer_->Append(std::move(data), size)
+        ? SendResult::Queued : SendResult::QueueFull;
 }
 
-void TcpConnection::Send(std::shared_ptr<char> data, uint32_t size)
+TcpConnection::SendResult TcpConnection::Send(const char *data, uint32_t size)
 {
-    if (!is_closed_) 
+    if (!data || size == 0) return SendResult::Failed;
+    // Check capacity before allocating/copying potentially oversized input.
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (is_closed_ || task_scheduler_->IsStopped()) return SendResult::Closed;
+    if (size > write_buffer_->CapacityBytes() - write_buffer_->QueuedBytes())
+        return SendResult::QueueFull;
+    if (!write_pending_)
     {
-		mutex_.lock();
-		write_buffer_->Append(data, size);
-		mutex_.unlock();
-		this->HandleWrite();
-	}
-}
-
-void TcpConnection::Send(const char *data, uint32_t size)
-{
-    if (!is_closed_)
-    {
-		mutex_.lock();
-		write_buffer_->Append(data, size);
-		mutex_.unlock();
-		this->HandleWrite();
-	}
+        auto weak = weak_from_this();
+        if (weak.expired() || !task_scheduler_->Post([weak] {
+                if (auto self = weak.lock()) self->HandleWrite();
+            })) return SendResult::Failed;
+        write_pending_ = true;
+    }
+    return write_buffer_->Append(data, size)
+        ? SendResult::Queued : SendResult::QueueFull;
 }
 
 void TcpConnection::Start()
 {
+    auto self = shared_from_this();
+    task_scheduler_->Invoke([this, self] {
+    if (started_ || is_closed_ || task_scheduler_->IsStopped()) return;
+    started_ = true;
     std::weak_ptr<TcpConnection> weak_self = shared_from_this();
 
     channel_->SetReadCallback([weak_self]() {
@@ -77,29 +95,45 @@ void TcpConnection::Start()
 
     channel_->EnableReading();
     task_scheduler_->UpdateChannel(channel_);
+    });
 }
 
 void TcpConnection::close()
 {
-    if (!is_closed_) 
+    auto self = shared_from_this();
+    task_scheduler_->Invoke([self] { self->CloseOnOwner(); });
+}
+
+void TcpConnection::CloseOnOwner()
+{
+    if (!is_closed_.exchange(true))
     {
-		is_closed_ = true;
 		task_scheduler_->RemoveChannel(channel_);
+        // Preserve the descriptor identity for removal callbacks below.
+        // Release the write lock before invoking any user callback.
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            write_buffer_ = std::make_unique<BufferWirte>();
+            write_pending_ = false;
+        }
 
 		if (close_callback_)
         {
 			close_callback_(shared_from_this());
 		}
+        if (sess_close_cb_) sess_close_cb_(0);
 
 		if (disconnect_callback_) 
         {
 			disconnect_callback_(shared_from_this());
 		}	
+        channel_->CloseSocket();
 	}
 }
 
 void TcpConnection::HandleRead()
 {
+    if (is_closed_) return;
     bool peer_closed = false;
 
     while (true)
@@ -108,6 +142,8 @@ void TcpConnection::HandleRead()
         if (n > 0) continue;
 
         if (n == 0) { peer_closed = true; break; }
+
+        if (errno == EINTR) continue;
 
         if (errno == EAGAIN || errno == EWOULDBLOCK) break;
 
@@ -140,7 +176,8 @@ void TcpConnection::HandleRead()
 
     if (peer_closed && !read_cb_)
     {
-        this->close();
+        peer_read_closed_ = true;
+        FinishPeerRead();
         return;
     }    
 }
@@ -190,10 +227,22 @@ void TcpConnection::DispatchReadCallback()
     // continuations drain it before closing the connection.
     if (peer_read_closed_ && !read_continuation_pending_.load())
     {
-        close();
+        FinishPeerRead();
     }
 }
 
+void TcpConnection::FinishPeerRead()
+{
+    if (is_closed_) return;
+    bool drained;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        drained = write_buffer_->IsEmpty();
+    }
+    channel_->DisableReading();
+    task_scheduler_->UpdateChannel(channel_);
+    if (drained) close();
+}
 
 void TcpConnection::HandleWrite()
 {
@@ -202,11 +251,14 @@ void TcpConnection::HandleWrite()
         return;
     }
 
-    std::lock_guard<std::mutex> lock(mutex_);  
+    std::unique_lock<std::mutex> lock(mutex_);
+    write_pending_ = false;
+    if (is_closed_) return;
 
     int ret = write_buffer_->Send(channel_->GetSocket());
     if (ret < 0) 
     {
+        lock.unlock();
         this->close();
         return;
     }
@@ -217,6 +269,11 @@ void TcpConnection::HandleWrite()
         {
             channel_->DisableWriting();
             task_scheduler_->UpdateChannel(channel_);
+        }
+        if (peer_read_closed_ && !read_continuation_pending_.load())
+        {
+            lock.unlock();
+            close();
         }
     } 
     else 
@@ -232,12 +289,10 @@ void TcpConnection::HandleWrite()
 
 void TcpConnection::HandleClose()
 {
-    std::lock_guard<std::mutex> lock(mutex_);
 	this->close();
 }
 
 void TcpConnection::HandleError()
 {
-    std::lock_guard<std::mutex> lock(mutex_);
     this->close();
 }

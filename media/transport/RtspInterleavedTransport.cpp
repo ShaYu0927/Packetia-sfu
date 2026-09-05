@@ -63,20 +63,15 @@ SendResult RtspInterleavedTransport::Send(MediaPacketType type,
     (*frame)[3] = static_cast<char>(payload_size & 0xFF);
     std::memcpy(frame->data() + 4, data, size);
 
-    TaskScheduler* scheduler = connection->GetTaskScheduler();
-    if (!scheduler)
+    // Alias the immutable frame storage, avoiding a second payload copy.
+    std::shared_ptr<char> bytes(frame, frame->data());
+    switch (connection->Send(std::move(bytes), static_cast<uint32_t>(frame->size())))
     {
-        return SendResult::Failed;
+        case TcpConnection::SendResult::Queued: return SendResult::Ok;
+        case TcpConnection::SendResult::QueueFull: return SendResult::NotWritable;
+        case TcpConnection::SendResult::Closed: return SendResult::Closed;
+        default: return SendResult::Failed;
     }
-
-    std::weak_ptr<TcpConnection> weak_connection = connection;
-    return scheduler->Post([weak_connection, frame = std::move(frame)] {
-        auto locked = weak_connection.lock();
-        if (locked && !locked->IsClosed())
-        {
-            locked->Send(frame->data(), static_cast<uint32_t>(frame->size()));
-        }
-    }) ? SendResult::Ok : SendResult::Failed;
 }
 
 void RtspInterleavedTransport::Close()

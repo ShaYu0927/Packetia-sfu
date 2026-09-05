@@ -8,6 +8,27 @@
 namespace rtcpx 
 {
 
+struct RtcpTransportFeedbackPacket
+{
+    uint16_t transport_sequence_number = 0;  // Transport-wide sequence number
+
+    uint64_t receive_time_ms = 0;             // Packet receive time in milliseconds
+
+    bool received = false;                    // Whether the packet was received
+};
+
+struct RtcpTransportFeedback
+{
+    uint16_t base_sequence_number = 0;                    // First transport sequence number
+
+    uint64_t base_time_ms = 0;                           // Base receive time in milliseconds
+
+    uint64_t feedback_time_ms = 0;                      // Time when feedback was received
+
+    std::vector<RtcpTransportFeedbackPacket> packets;  // Packet feedback list
+};
+
+
 class RtRtcpNack
 {
 public:

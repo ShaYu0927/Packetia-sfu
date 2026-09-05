@@ -1,5 +1,6 @@
 #include "RtspServer.h"
 #include "SipServer.h"
+#include "rtmp_server.h"
 #include "EventLoop.h"
 #include "logger.h"
 #include "UdpServer.h"
@@ -59,6 +60,7 @@ int main()
             return true;
         },
         [event_loop]() {
+            event_loop->Stop();
         }
     );
 
@@ -82,6 +84,7 @@ int main()
 
     auto rtsp_server = launcher.AddIpPortService<RtspServer>("RtspServer", "0.0.0.0", 554, event_loop.get());
     auto sip_server   = launcher.AddIpPortService<SipServer>("SipServer", "0.0.0.0", 5060, event_loop.get());
+    auto rtmp_server  = launcher.AddIpPortService<protocol::rtmp::RtmpServer>("RtmpServer", "0.0.0.0", 1935, event_loop.get());
     auto udp_server   = launcher.AddIpPortService<network::UdpServer>("UdpServer","0.0.0.0", 9000,  event_loop.get());
     auto mux_handler                              = std::make_shared<network::UdpMuxHandler>(udp_server.get());
     udp_server->SetHandler(mux_handler);

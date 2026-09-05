@@ -127,6 +127,7 @@ NetworkControlUpdate NetworkController::BuildUpdate(const BweResult* bwe, const 
 
     snapshot_.update_time_ms = feedback.now_ms;
     snapshot_.send_bitrate_bps = feedback.send_bitrate_bps;
+    snapshot_.recv_bitrate_bps = feedback.receive_bitrate_bps;
     snapshot_.target_bitrate_bps = target_bitrate_bps;
     snapshot_.rtt_ms = feedback.rtt_ms;
     snapshot_.jitter_ms = feedback.jitter_ms;
@@ -143,6 +144,7 @@ NetworkControlUpdate NetworkController::BuildUpdate(const BweResult* bwe, const 
     update.target_rate.stable_target_bitrate_bps = stable_target_bitrate_bps_;
     update.target_rate.estimate.update_time_ms = feedback.now_ms;
     update.target_rate.estimate.send_bitrate_bps = feedback.send_bitrate_bps;
+    update.target_rate.estimate.recv_bitrate_bps = feedback.receive_bitrate_bps;
     update.target_rate.estimate.rtt_ms = feedback.rtt_ms;
     update.target_rate.estimate.jitter_ms = feedback.jitter_ms;
     update.target_rate.estimate.loss_rate = feedback.loss_rate;

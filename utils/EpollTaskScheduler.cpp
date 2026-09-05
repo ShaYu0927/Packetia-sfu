@@ -75,15 +75,16 @@ bool EpollTaskScheduler::HandleEvent(int timeout)
 
     for(int i = 0;i < num_events;i++)
     {
-        if(events[i].data.ptr) 
-        {        
-            auto fd = ((Channel *)events[i].data.ptr)->GetSocket();
-            uint32_t ev = events[i].events;
-#if RTP_DEBUG
-            LOG_INFO("Event on fd=" + std::to_string(fd) + " events=" + std::to_string(ev));
-#endif
-			((Channel *)events[i].data.ptr)->HandleEvent(events[i].events);
-		}
+        std::shared_ptr<Channel> channel;
+        {
+            std::lock_guard<std::mutex> lock(channel_mutex_);
+            // epoll_event is packed on Linux; do not bind an unordered_map
+            // key reference directly to its potentially unaligned member.
+            const uint64_t token = events[i].data.u64;
+            auto it = token_channels_.find(token);
+            if (it != token_channels_.end()) channel = it->second.lock();
+        }
+        if (channel) channel->HandleEvent(events[i].events);
     }
     return true;
 }
@@ -92,9 +93,25 @@ void EpollTaskScheduler::Update(int operation, std::shared_ptr<Channel> &channel
 {
     struct epoll_event event = {0};
 
-	if(operation != EPOLL_CTL_DEL) 
+    const int fd = channel->GetSocket();
+    if (operation == EPOLL_CTL_ADD)
     {
-		event.data.ptr = channel.get();
+        const auto token = next_token_++;
+        channel_tokens_[fd] = token;
+        token_channels_[token] = channel;
+    }
+    if (operation == EPOLL_CTL_DEL)
+    {
+        auto it = channel_tokens_.find(fd);
+        if (it != channel_tokens_.end())
+        {
+            token_channels_.erase(it->second);
+            channel_tokens_.erase(it);
+        }
+    }
+	if(operation != EPOLL_CTL_DEL)
+    {
+		event.data.u64 = channel_tokens_.at(fd);
 		event.events = channel->GetEvents();
 	}
 

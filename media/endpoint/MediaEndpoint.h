@@ -19,10 +19,10 @@ class MediaEndpoint : public utils::EndpointBase
 public:
     using EndpointBase::EndpointBase;
     MediaEndpoint(uint64_t id,
-                  std::shared_ptr<RtpTrack> tracker,
+                  std::shared_ptr<RtpTrackDescription> track_description,
                   std::shared_ptr<MediaSession> session)
         : utils::EndpointBase(id, "MediaEndpoint"),
-          tracker_(std::move(tracker)),
+          track_description_(std::move(track_description)),
           session_(std::move(session))
     {
     }
@@ -49,9 +49,9 @@ protected:
     virtual void HandleStunPacket(Packet* pkt) {}
     virtual void HandleDtlsPacket(Packet* pkt) {}
 
-    std::shared_ptr<RtpTrack> SourceTrack() const
+    std::shared_ptr<RtpTrackDescription> SourceTrack() const
     {
-        return tracker_;
+        return track_description_;
     }
 
     std::shared_ptr<MediaSession> SourceSession() const
@@ -62,7 +62,7 @@ protected:
 private:
     std::shared_ptr<MediaSession> session_;
     uint64_t id_;
-    std::shared_ptr<RtpTrack> tracker_;
+    std::shared_ptr<RtpTrackDescription> track_description_;
 };
 
 class SfuRouter
@@ -83,10 +83,10 @@ class SfuEndpoint : public MediaEndpoint,
 {
 public:
     SfuEndpoint(uint64_t id,
-                std::shared_ptr<RtpTrack> tracker,
+                std::shared_ptr<RtpTrackDescription> track_description,
                 std::shared_ptr<MediaSession> session,
                 std::shared_ptr<IEncodedFramePublisher> frame_publisher)
-        : MediaEndpoint(id, std::move(tracker), std::move(session)),
+        : MediaEndpoint(id, std::move(track_description), std::move(session)),
           frame_publisher_(std::move(frame_publisher))
     {
     }
@@ -105,12 +105,6 @@ public:
                          const std::shared_ptr<rtsp::RtpSenderTrack>& sender);
     int RemoveMediaStream(uint32_t source_ssrc);
 
-    void SetVideoTrack(const std::shared_ptr<VideoTrack>& track)
-    {
-        video_track_ = track;
-    }
-
-    bool InitTracks(const std::vector<TrackInfo>& infos);
     void OnTrackNack(uint32_t media_ssrc, const std::vector<uint16_t>& lost_seqs);
     void OnTrackPli(uint32_t media_ssrc);
     void SetRtcpSendCallback(SendRtcpCallback cb);
@@ -124,8 +118,8 @@ protected:
     void ForwardRtpToSubscribers(uint32_t source_ssrc, const uint8_t* data, size_t len);
 
 private:
-    rtsp::RtpReceiverTrack::Ptr FindTrackBySsrc(uint32_t ssrc);
-    std::shared_ptr<rtsp::RtpReceiverTrack> GetOrCreateTrack(uint32_t ssrc);
+    rtsp::RtpReceiverTrack::Ptr FindReceiverTrackBySsrc(uint32_t ssrc);
+    std::shared_ptr<rtsp::RtpReceiverTrack> GetOrCreateReceiverTrack(uint32_t ssrc);
     void RemoveMediaStreamOnOwner(uint32_t source_ssrc);
     void DispatchEncodedFrame(const media::EncodedFrame::Ptr& frame);
     void EvaluateReceiveQuality(uint32_t source_ssrc);
@@ -141,8 +135,6 @@ private:
 private:
     std::mutex track_mtx_;
     std::unordered_map<uint32_t, rtsp::RtpReceiverTrack::Ptr> ssrc_to_track_;
-    std::shared_ptr<VideoTrack> video_track_;
-
     SfuRouter router_;
     std::unique_ptr<rtsp::RtcpDispatcher> rtcp_dispatcher_;
     std::unique_ptr<rtcpx::IRtcpReceiver> rtcp_receiver_;

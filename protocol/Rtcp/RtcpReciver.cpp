@@ -124,6 +124,8 @@ bool ParseTransportFeedback(const uint8_t* p, size_t len, rtcpx::TransportFeedba
 
         receive_delta_us += delta_us;
         packet.received = true;
+        packet.receive_time_us = static_cast<int64_t>(report.reference_time_ms) * 1000LL +
+                                 receive_delta_us;
         packet.receive_time_ms = report.reference_time_ms +
                                  static_cast<uint64_t>(receive_delta_us >= 0 ? receive_delta_us : 0) / 1000ULL;
         report.packets.push_back(packet);

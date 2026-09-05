@@ -13,7 +13,8 @@ UdpServer::~UdpServer()
 
 void UdpServer::SetHandler(IUdpHandler::Ptr h)
 {
-    handler_ = std::move(h);
+    if (scheduler_) scheduler_->Invoke([this, h = std::move(h)] { handler_ = h; });
+    else handler_ = std::move(h);
 }
 
 bool UdpServer::Start(const std::string &ip, uint16_t port)
@@ -21,23 +22,25 @@ bool UdpServer::Start(const std::string &ip, uint16_t port)
     Stop();
 
     scheduler_ = event_loop_->GetTaskScheduler();
-    if (!scheduler_)
+    if (!scheduler_ || scheduler_->IsStopped())
     {
         LOG_ERROR("UdpServer Start: no scheduler");
         return false;
     }
 
+    bool result = false;
+    scheduler_->Invoke([&, this] {
     if (sock_.Create() < 0)
     {
         LOG_ERROR("UdpServer Start: socket create failed");
-        return false;
+        return;
     }
 
     if (!sock_.Bind(ip, port))
     {
         LOG_ERROR("UdpServer Start: bind failed");
         sock_.Close();
-        return false;
+        return;
     }
 
     channel_ = std::make_shared<Channel>(sock_.Fd());
@@ -45,62 +48,78 @@ bool UdpServer::Start(const std::string &ip, uint16_t port)
     channel_->SetReadCallback([this]() { this->OnReadable(); });
     channel_->EnableReading();
 
-    event_loop_->UpdateChannel(channel_);
+    scheduler_->UpdateChannel(channel_);
     started_ = true;
 
     LOG_INFO("UdpServer started fd=", sock_.Fd(), " bind=", ip, ":", port);
-    return true;
+    result = true;
+    });
+    return result;
 }
 
 void UdpServer::Stop()
 {
-    if (!started_) return;
-
     auto cleanup = [this]() {
-        if (!started_) return;
-        started_ = false;
+        if (!started_.exchange(false)) return;
 
         if (channel_) 
         {
-            event_loop_->RemoveChannel(channel_);
+            scheduler_->RemoveChannel(channel_);
             channel_.reset();
         }
 
         sock_.Close();
 
-        if (handler_) handler_->OnClosed(0);
+        auto handler = handler_;
+        if (handler) handler->OnClosed(0);
         LOG_INFO("UdpServer stopped");
     };
 
-    if (!scheduler_ || !scheduler_->AddTriggerEvent(cleanup))
-    {
-        cleanup();
-    }
+    // Completion is guaranteed before returning, including during destruction
+    // and when the event loop has already stopped.
+    if (scheduler_) scheduler_->Invoke(cleanup);
+    else cleanup();
 }
 bool UdpServer::SendTo(const network::SocketAddr &dst, const uint8_t *data, size_t len)
 {
-    if (!started_) return false;
-    int n = sock_.SendTo(dst, data, len);
-    return n == 0;
+    return TrySendTo(dst, data, len) == SendResult::Sent;
+}
+
+UdpServer::SendResult UdpServer::TrySendTo(const network::SocketAddr& dst,
+                                          const uint8_t* data, size_t len)
+{
+    if (!data || len == 0 || len > 65507 || dst.len == 0 || dst.len > sizeof(dst.ss))
+        return SendResult::Failed;
+    if (!scheduler_ || !started_) return SendResult::Closed;
+    SendResult result = SendResult::Closed;
+    scheduler_->Invoke([&] {
+        if (!started_ || scheduler_->IsStopped()) return;
+        const int n = sock_.SendTo(dst, data, len);
+        result = n == 0 ? SendResult::Sent :
+            n == -1 ? SendResult::NotWritable : SendResult::Failed;
+    });
+    return result;
 }
 void UdpServer::OnReadable()
 {
-    uint8_t buf[2048];
+    // Full IPv4 UDP payload (the socket is AF_INET); no silent 2 KB truncation.
+    uint8_t buf[65536];
     for (int i = 0; i < 32; ++i)
     {
+        if (!started_) break;
         SocketAddr src;
         int n = sock_.RecvFrom(buf, sizeof(buf), src);
         if (n == -1) break; 
         if (n == -2) 
         {
             LOG_ERROR("UdpServer recv error errno=", errno);
-            if (handler_) handler_->OnError(errno);
+            auto handler = handler_;
+            if (handler) handler->OnError(errno);
             break;
         }
 
-        LOG_INFO("UdpServer recv from ", src.ToString(), ":", src.Port(), " bytes=", n);
-
-        if (handler_) handler_->OnDatagram(src, buf, (size_t)n);
+        auto handler = handler_;
+        if (handler) handler->OnDatagram(src, buf, (size_t)n);
     }
 }
 }

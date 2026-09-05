@@ -6,11 +6,12 @@
 #include "TimeUtil.h"
 #include "RingBuffer.h"
 #include <functional>
+#include <future>
 
 
 typedef std::function<void(void)> TriggerEvent;
 
-class TaskScheduler
+class TaskScheduler : public std::enable_shared_from_this<TaskScheduler>
 {
 public:
     using Task = std::function<void()>;
@@ -35,6 +36,12 @@ public:
     bool AddTriggerEvent(TriggerEvent callback);
 
     bool Post(Task task);
+    // Run owns all I/O callbacks. Invoke waits for completion; after Run has
+    // stopped, it executes cleanup inline. Never wait while holding a lock
+    // needed by an I/O callback.
+    void Run();
+    void Invoke(Task task);
+    bool IsCurrentThread() const { return current_ == this; }
 
 protected:
     void Wakeup();
@@ -55,6 +62,7 @@ protected:
 
     std::mutex task_mutex_;
     std::vector<Task> pending_tasks_;
+    inline static thread_local TaskScheduler* current_ = nullptr;
 
 
     std::mutex mutex_;

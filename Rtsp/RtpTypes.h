@@ -205,6 +205,8 @@ struct TrackInfo
     uint32_t ssrc = 0;
     uint32_t clock_rate = 0;
     uint8_t payload_type = 0xFF;
+    // SDP 协商得到的 transport-wide-cc RTP Header Extension ID，0 表示禁用。
+    uint8_t transport_cc_extension_id = 0;
     int channels = 0;
 
     std::string control;

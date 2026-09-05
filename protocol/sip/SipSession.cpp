@@ -314,7 +314,11 @@ void SipSession::SendResponse(const SipRequest& req, int status_code, const std:
 void SipSession::SendRaw(const std::string& data)
 {
     if (!conn_ || data.empty()) return;
-    conn_->Send(data.data(), static_cast<uint32_t>(data.size()));
+    if (conn_->Send(data.data(), static_cast<uint32_t>(data.size())) != TcpConnection::SendResult::Queued)
+    {
+        LOG_ERROR("SIP response could not be queued; closing connection");
+        conn_->Disconnect();
+    }
 }
 
 } // namespace sip

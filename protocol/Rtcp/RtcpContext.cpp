@@ -5,6 +5,8 @@
 #include "RtcpReciver.h"
 #include "utils.h"
 
+#include <algorithm>
+
 namespace rtcpx
 {
 
@@ -46,6 +48,30 @@ public:
         utils::Utils::WriteUint16BE(out.data() + 2, 1); // 2 words - 1.
         utils::Utils::WriteUint32BE(out.data() + 4, media_ssrc);
         return true;
+    }
+
+    std::vector<uint8_t> BuildReceiverReport(uint32_t sender_ssrc,
+                                             const RrBlock& block) override
+    {
+        std::vector<uint8_t> out(32, 0);
+        out[0] = static_cast<uint8_t>((2U << 6) | 1U); // V=2, P=0, RC=1.
+        out[1] = kRtcpRr;
+        utils::Utils::WriteUint16BE(out.data() + 2, 7); // 8 words - 1.
+        utils::Utils::WriteUint32BE(out.data() + 4, sender_ssrc);
+        utils::Utils::WriteUint32BE(out.data() + 8, block.ssrc);
+        out[12] = block.fraction_lost;
+
+        const int32_t cumulative = std::max(-0x800000,
+                                            std::min(block.cumulative_lost, 0x7FFFFF));
+        const uint32_t loss24 = static_cast<uint32_t>(cumulative) & 0x00FFFFFFU;
+        out[13] = static_cast<uint8_t>(loss24 >> 16);
+        out[14] = static_cast<uint8_t>(loss24 >> 8);
+        out[15] = static_cast<uint8_t>(loss24);
+        utils::Utils::WriteUint32BE(out.data() + 16, block.extended_highest_seq);
+        utils::Utils::WriteUint32BE(out.data() + 20, block.jitter);
+        utils::Utils::WriteUint32BE(out.data() + 24, block.lsr);
+        utils::Utils::WriteUint32BE(out.data() + 28, block.dlsr);
+        return out;
     }
 
     std::vector<uint8_t> BuildPli(uint32_t sender_ssrc, uint32_t media_ssrc) override

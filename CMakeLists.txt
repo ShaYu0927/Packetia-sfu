@@ -96,6 +96,8 @@ add_library(network STATIC
     network/UdpSocket.cpp
     network/UdpServer.cpp
     network/UdpSession.cpp
+    network/transport/DatagramProtocolClassifier.cpp
+    network/transport/UdpDatagramTransport.cpp
     network/websocket/WsServer.cpp
     network/websocket/WsSession.cpp
     network/websocket/WsSessionManager.cpp
@@ -162,6 +164,8 @@ add_library(rtp STATIC
     Rtsp/TrackClock.h
     Rtsp/RtpSenderTrack.cpp
     Rtsp/RtpSenderTrack.h
+    Rtsp/RtpTransportCcExtension.cpp
+    Rtsp/RtpTransportCcExtension.h
     Rtsp/RtpConnection.cpp
     Rtsp/RtpConnection.h
     Rtsp/RtpTypes.h
@@ -215,6 +219,9 @@ add_subdirectory(service)
 add_subdirectory(server)
 
 enable_testing()
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/network/Test)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/Common/Depacketizer/Test)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/media/quality/Test)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/Rtsp/Test)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/utils/test)
 
@@ -231,7 +238,7 @@ add_executable(Packetia ${CMAKE_SOURCE_DIR}/server/main.cpp)
 target_link_libraries(Packetia
     PRIVATE
     -Wl,--start-group
-    media rtsp rtp sip network utils Rtcp LOGGER ROOM_LIB COMMON ICE WebRtc Interleaved service hv_static
+    media rtsp rtp sip Rtmp network utils Rtcp LOGGER ROOM_LIB COMMON ICE WebRtc Interleaved service hv_static
     -Wl,--end-group
     ${FFMPEG_LIBRARIES}
     pthread

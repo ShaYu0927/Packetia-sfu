@@ -22,7 +22,7 @@ public:
 
 private:
     media::H264RtpPayloadParser parser_;
-    media::H26xPacketBuffer packet_buffer_;
+    media::H264PacketBuffer packet_buffer_;
     media::H264ParameterSetTracker parameter_sets_;
     std::deque<media::H264AccessUnit> ready_frames_;
 };

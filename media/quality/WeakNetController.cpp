@@ -20,6 +20,7 @@ NetworkControlUpdate WeakNetController::OnFeedback(const WeakNetFeedback& feedba
 
     snapshot_.update_time_ms = feedback.now_ms;
     snapshot_.send_bitrate_bps = feedback.send_bitrate_bps;
+    snapshot_.recv_bitrate_bps = feedback.receive_bitrate_bps;
     snapshot_.target_bitrate_bps = target;
     snapshot_.rtt_ms = feedback.rtt_ms;
     snapshot_.jitter_ms = feedback.jitter_ms;
@@ -35,6 +36,7 @@ NetworkControlUpdate WeakNetController::OnFeedback(const WeakNetFeedback& feedba
     update.target_rate.stable_target_bitrate_bps = stable_target_bitrate_bps_;
     update.target_rate.estimate.update_time_ms = feedback.now_ms;
     update.target_rate.estimate.send_bitrate_bps = feedback.send_bitrate_bps;
+    update.target_rate.estimate.recv_bitrate_bps = feedback.receive_bitrate_bps;
     update.target_rate.estimate.rtt_ms = feedback.rtt_ms;
     update.target_rate.estimate.jitter_ms = feedback.jitter_ms;
     update.target_rate.estimate.loss_rate = feedback.loss_rate;
@@ -79,29 +81,31 @@ uint32_t WeakNetController::UpdateTargetBitrate(const WeakNetFeedback& feedback,
     switch (quality)
     {
     case NetworkQualityLevel::Excellent:
-        base = static_cast<uint32_t>(base * 1.05);
+        // Ar(ti) = eta * Ar(ti-1), eta = 1.05
+        base = static_cast<uint32_t>(target_bitrate_bps_ * 1.05);
         break;
 
     case NetworkQualityLevel::Good:
+        // Ar(ti) = Ar(ti-1)
         break;
 
     case NetworkQualityLevel::Weak:
-        base = static_cast<uint32_t>(base * 0.85);
+        // Ar(ti) = alpha * Rr(ti), alpha = 0.85
+        base = static_cast<uint32_t>(feedback.receive_bitrate_bps * 0.85);
         break;
 
     case NetworkQualityLevel::Bad:
-        base = static_cast<uint32_t>(base * 0.65);
+        base = static_cast<uint32_t>(feedback.receive_bitrate_bps * 0.85);
         break;
 
     default:
         break;
     }
 
-    target_bitrate_bps_ = std::clamp(base,
-                                     bitrate_.min_bitrate_bps,
-                                     bitrate_.max_bitrate_bps);
-
-    stable_target_bitrate_bps_ = static_cast<uint32_t>(stable_target_bitrate_bps_ * 0.8 + target_bitrate_bps_ * 0.2);
+    target_bitrate_bps_ = std::clamp(base, bitrate_.min_bitrate_bps, bitrate_.max_bitrate_bps);
+    stable_target_bitrate_bps_ = static_cast<uint32_t>(
+        static_cast<uint64_t>(stable_target_bitrate_bps_) * 8 / 10 +
+        static_cast<uint64_t>(target_bitrate_bps_) * 2 / 10);
 
     return target_bitrate_bps_;
 }

@@ -1,5 +1,6 @@
 #include "RtpSenderTrack.h"
 
+#include <algorithm>
 #include <chrono>
 #include <utility>
 
@@ -52,6 +53,25 @@ uint32_t CalculateRttMs(uint32_t lsr, uint32_t dlsr)
     const uint32_t rtt_ntp = arrival - lsr - dlsr;
     return static_cast<uint32_t>((static_cast<uint64_t>(rtt_ntp) * 1000ULL + 32768ULL) / 65536ULL);
 }
+
+size_t RtpPayloadOffset(const std::vector<uint8_t>& packet)
+{
+    if (packet.size() < RtpHeader::kSize)
+    {
+        return packet.size();
+    }
+    const size_t base = RtpHeader::kSize + static_cast<size_t>(packet[0] & 0x0F) * 4;
+    if (packet.size() < base || (packet[0] & 0x10) == 0)
+    {
+        return base;
+    }
+    if (packet.size() < base + 4)
+    {
+        return packet.size();
+    }
+    const uint16_t words = static_cast<uint16_t>(packet[base + 2] << 8) | packet[base + 3];
+    return std::min(packet.size(), base + 4 + static_cast<size_t>(words) * 4);
+}
 }
 
 RtpSenderTrack::RtpSenderTrack(const RtpSenderTrackConfig& config,
@@ -84,24 +104,24 @@ bool RtpSenderTrack::InputRtpPacket(const uint8_t* data, size_t len)
         return false;
     }
 
+    media::TransportSequenceNumber transport_sequence;
+    if (!PrepareTransportCc(packet, transport_sequence))
+    {
+        return false;
+    }
+
     if (!SendRtpPacket(packet))
     {
         return false;
     }
 
-    if (_packet_sent_cb)
-    {
-        _packet_sent_cb(out_seq,
-                        _config.local_ssrc,
-                        out_seq,
-                        NowMs(),
-                        static_cast<uint32_t>(packet.size()));
-    }
+    
+    NotifyPacketSent(transport_sequence, out_seq, packet.size());
 
     CacheRtpPacket(out_seq, packet);
     ++_packet_count;
 
-    const size_t header_size = in_header.getHeaderSize();
+    const size_t header_size = RtpPayloadOffset(packet);
     if (packet.size() > header_size)
     {
         _octet_count += packet.size() - header_size;
@@ -141,8 +161,19 @@ void RtpSenderTrack::OnRtcpNack(const std::vector<uint16_t>& lost_seqs)
             continue;
         }
 
-        if (SendRtpPacket(cached.packet, true))
+        // RTP sequence 必须保持为对端 NACK 请求的原值；但重传是一次新的
+        // 网络发送，因此必须复制缓存包并重新分配 TWCC sequence。
+        // 不能直接发送 cached.packet，否则原发送和重传会共用同一个 TWCC 序号。
+        std::vector<uint8_t> retransmit_packet = cached.packet;
+        media::TransportSequenceNumber transport_sequence;
+        if (!PrepareTransportCc(retransmit_packet, transport_sequence))
         {
+            continue;
+        }
+
+        if (SendRtpPacket(retransmit_packet, true))
+        {
+            NotifyPacketSent(transport_sequence, seq, retransmit_packet.size());
             cached.last_retransmit_ms = now_ms;
             ++cached.retransmit_count;
         }
@@ -265,6 +296,148 @@ bool RtpSenderTrack::RewriteRtpPacket(std::vector<uint8_t>& packet, const RtpHea
     WriteUint32(packet.data() + 8, _config.local_ssrc);
 
     return true;
+}
+
+bool RtpSenderTrack::WriteTransportCcExtension(std::vector<uint8_t>& packet,
+                                                uint16_t transport_sequence) const
+{
+    // extension ID 来自 SDP a=extmap 协商。0 表示未启用，1~14 是 RFC 8285
+    // one-byte header 可使用的 ID；绝不能在这里写死成某个固定数字。
+    const uint8_t extension_id = _config.transport_cc_extension_id;
+    if (extension_id == 0 || extension_id > 14 || packet.size() < RtpHeader::kSize)
+    {
+        return false;
+    }
+
+    const size_t base_header_size = RtpHeader::kSize + static_cast<size_t>(packet[0] & 0x0F) * 4;
+    if (packet.size() < base_header_size)
+    {
+        return false;
+    }
+
+    if ((packet[0] & 0x10) == 0)
+    {
+        // 新建 RFC 8285 one-byte 扩展块：4 字节块头 + 3 字节元素 + 1 字节 padding。
+        const uint8_t extension[8] = {
+            0xBE, 0xDE, 0x00, 0x01,
+            static_cast<uint8_t>((extension_id << 4) | 0x01),
+            static_cast<uint8_t>(transport_sequence >> 8),
+            static_cast<uint8_t>(transport_sequence),
+            0x00};
+        packet.insert(packet.begin() + static_cast<std::ptrdiff_t>(base_header_size),
+                      extension, extension + sizeof(extension));
+        packet[0] |= 0x10;
+        return true;
+    }
+
+    if (packet.size() < base_header_size + 4)
+    {
+        return false;
+    }
+    const uint16_t profile = static_cast<uint16_t>(packet[base_header_size] << 8) |
+                             packet[base_header_size + 1];
+    if (profile != 0xBEDE)
+    {
+        // 不擅自改写 two-byte 或应用自定义扩展格式。
+        return false;
+    }
+
+    const uint16_t words = static_cast<uint16_t>(packet[base_header_size + 2] << 8) |
+                           packet[base_header_size + 3];
+    const size_t extension_data = base_header_size + 4;
+    const size_t extension_end = extension_data + static_cast<size_t>(words) * 4;
+    if (packet.size() < extension_end)
+    {
+        return false;
+    }
+
+    // RTP 已经带扩展时逐项扫描。已有同 ID 元素就原地更新，常见于从
+    // 缓存复制出来的 RTX/NACK 重传包，避免一个 RTP 包出现两个 TWCC 元素。
+    for (size_t offset = extension_data; offset < extension_end;)
+    {
+        const uint8_t header = packet[offset];
+        if (header == 0)
+        {
+            ++offset;
+            continue;
+        }
+        const uint8_t id = header >> 4;
+        if (id == 15)
+        {
+            break;
+        }
+        const size_t element_size = static_cast<size_t>(header & 0x0F) + 1;
+        if (offset + 1 + element_size > extension_end)
+        {
+            return false;
+        }
+        if (id == extension_id)
+        {
+            if (element_size != 2)
+            {
+                return false;
+            }
+            WriteUint16(packet.data() + offset + 1, transport_sequence);
+            return true;
+        }
+        offset += 1 + element_size;
+    }
+
+    // 包里存在 MID、audio-level 等其他 one-byte 扩展，但还没有 TWCC：
+    // 保留所有原扩展，在扩展数据末尾增加一个 4 字节 word。
+    const uint8_t element[4] = {
+        static_cast<uint8_t>((extension_id << 4) | 0x01),
+        static_cast<uint8_t>(transport_sequence >> 8),
+        static_cast<uint8_t>(transport_sequence),
+        0x00};
+    packet.insert(packet.begin() + static_cast<std::ptrdiff_t>(extension_end),
+                  element, element + sizeof(element));
+    WriteUint16(packet.data() + base_header_size + 2, static_cast<uint16_t>(words + 1));
+    return true;
+}
+
+bool RtpSenderTrack::PrepareTransportCc(std::vector<uint8_t>& packet,
+                                        media::TransportSequenceNumber& sequence) const
+{
+    // 没有通过 SDP 启用 transport-cc 时保持原发送行为，也不触发发送历史回调。
+    if (_config.transport_cc_extension_id == 0)
+    {
+        sequence = {};
+        sequence.extended_sequence = -1;
+        return true;
+    }
+    if (!_config.transport_sequence_allocator)
+    {
+        return false;
+    }
+
+    // 先用占位值验证并建立扩展结构，再从共享 allocator 取正式序号。
+    // 这样遇到不支持的扩展格式时不会白白消耗序号，也就不会在接收端
+    // 形成一个从未实际发送过、却被误认为丢失的 transport sequence。
+    if (!WriteTransportCcExtension(packet, 0))
+    {
+        return false;
+    }
+    sequence = _config.transport_sequence_allocator->Allocate();
+    return WriteTransportCcExtension(packet, sequence.wire_sequence);
+}
+
+void RtpSenderTrack::NotifyPacketSent(const media::TransportSequenceNumber& sequence,
+                                      uint16_t rtp_sequence,
+                                      size_t packet_size)
+{
+    // extended_sequence 是本地连续键；wire_sequence 是 RTP 中的 16 位值。
+    // 两者必须一起保留，后续反馈适配器负责把回绕后的 wire sequence
+    // 展开并匹配到正确的 PacketHistory 记录。
+    if (_packet_sent_cb && sequence.extended_sequence >= 0)
+    {
+        _packet_sent_cb(sequence.extended_sequence,
+                        sequence.wire_sequence,
+                        _config.local_ssrc,
+                        rtp_sequence,
+                        NowMs(),
+                        static_cast<uint32_t>(packet_size));
+    }
 }
 
 uint16_t RtpSenderTrack::RewriteSeq(uint16_t in_seq)

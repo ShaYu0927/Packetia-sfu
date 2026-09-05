@@ -30,6 +30,7 @@ bool H264Depacketizer::input(const RtpView& pkt)
     return result.inserted || result.duplicate;
 }
 
+
 bool H264Depacketizer::hasFrame() const
 {
     return !ready_frames_.empty();

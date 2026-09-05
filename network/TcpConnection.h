@@ -16,9 +16,7 @@
 class TcpConnection : public std::enable_shared_from_this<TcpConnection>
 {
 public:
-
-    enum class ConnectionType { Generic, Rtsp };
-    virtual ConnectionType GetConnectionType() const { return ConnectionType::Generic; }
+    enum class SendResult { Queued, QueueFull, Closed, Failed };
 
     using Ptr = std::shared_ptr<TcpConnection>;
     using DisconnectCallback = std::function<void(std::shared_ptr<TcpConnection> conn)>;
@@ -56,8 +54,10 @@ public:
     void SetCloseCallback(SessionCloseCallback cb) { sess_close_cb_ = std::move(cb); }
 
     void Disconnect();
-    void Send(std::shared_ptr<char> data, uint32_t size);
-	void Send(const char *data, uint32_t size);
+    // Thread-safe, bounded admission. Queued means accepted locally, not
+    // delivered. Shared storage must remain immutable until released.
+    SendResult Send(std::shared_ptr<char> data, uint32_t size);
+	SendResult Send(const char *data, uint32_t size);
     void Start();
 
     // Continue consuming bytes already buffered on the connection's owning
@@ -81,6 +81,8 @@ public:
 
     void close();
 protected:
+    void CloseOnOwner();
+    void FinishPeerRead();
     virtual void HandleRead();
 	void DispatchReadCallback();
 	virtual void HandleWrite();
@@ -106,10 +108,13 @@ protected:
 
     std::shared_ptr<Channel> channel_;
     TaskScheduler *task_scheduler_;
+    std::shared_ptr<TaskScheduler> scheduler_owner_;
     std::mutex mutex_;
     std::atomic_bool is_closed_;
     std::atomic_bool read_continuation_pending_{false};
     bool peer_read_closed_ = false;
+    bool write_pending_ = false;
+    bool started_ = false;
 };
 
 

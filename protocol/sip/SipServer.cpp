@@ -9,12 +9,12 @@ SipServer::SipServer(EventLoop* event_loop)
 
 }
 
-SipServer::~SipServer() = default;
+SipServer::~SipServer() { Stop(); }
 
 TcpConnection::Ptr SipServer::OnConnect(SOCKET sockfd)
 {
     LOG_INFO("New SIP connection established, sockfd=", sockfd);
-    auto conn = std::make_shared<TcpConnection>(event_loop_->GetTaskScheduler().get(), sockfd);
+    auto conn = std::make_shared<TcpConnection>(acceptor_->GetTaskScheduler().get(), sockfd);
     auto session = std::make_shared<sip::SipSession>(conn);
     sessions_[sockfd] = session;
 

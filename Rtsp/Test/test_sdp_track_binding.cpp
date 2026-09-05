@@ -70,8 +70,8 @@ TEST(SdpTrackBinding, MatchesAbsoluteAndRelativeControl)
         "a=control:rtsp://camera/live/test/trackID=audio\r\n");
     ASSERT_NE(session, nullptr);
 
-    EXPECT_NE(session->GetRtpTrack("trackID=audio"), nullptr);
-    EXPECT_NE(session->GetRtpTrack("rtsp://camera/live/test/trackID=audio"), nullptr);
+    EXPECT_NE(session->GetTrackDescription("trackID=audio"), nullptr);
+    EXPECT_NE(session->GetTrackDescription("rtsp://camera/live/test/trackID=audio"), nullptr);
 }
 
 TEST(SdpTrackBinding, PayloadLookupIsScopedToTrack)

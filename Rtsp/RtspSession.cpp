@@ -142,7 +142,11 @@ void RtspSession::SendRaw(std::string_view s,size_t size)
 {
     if (!conn_) return;
 
-    conn_->Send(s.data(), s.size());
+    if (conn_->Send(s.data(), s.size()) != TcpConnection::SendResult::Queued)
+    {
+        LOG_ERROR("RTSP response could not be queued; closing connection");
+        conn_->Disconnect();
+    }
 }
 
 void RtspSession::OnInterleaved(int channel,const uint8_t*p, int len)

@@ -115,7 +115,6 @@ public:
         {
             LOG_ERROR("Channel fd=" + std::to_string(sockfd_) + " HUP detected, closing socket");
             close_callback_();
-            CloseSocket();
             return;
         }
 
@@ -123,7 +122,6 @@ public:
         {
             LOG_ERROR("Channel fd=" + std::to_string(sockfd_) + " ERROR detected, closing socket");
             errorCallback_();
-            CloseSocket();
             return;
         }
     }

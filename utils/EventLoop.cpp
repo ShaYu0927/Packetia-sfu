@@ -88,13 +88,11 @@ bool EventLoop::Start()
 
         std::shared_ptr<std::thread> thread =
             std::make_shared<std::thread>([task_scheduler]() {
-                while (!task_scheduler->IsStopped()) 
-				{
-                    task_scheduler->HandleEvent(100);
-                }
+                task_scheduler->Run();
             });
 
         threads_.push_back(thread);
+        while (!task_scheduler->IsStarted()) std::this_thread::yield();
     }
 
     started_ = true;
@@ -139,26 +137,27 @@ void EventLoop::Loop()
 
 void EventLoop::Stop()
 {
+    std::vector<std::shared_ptr<std::thread>> threads;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto& scheduler : task_schedulers_) scheduler->stop();
+        started_ = false;
+        // An I/O callback can request stop, but cannot join its own thread.
+        // The owning thread/destructor subsequently completes the joins.
+        for (auto& scheduler : task_schedulers_)
+            if (scheduler->IsCurrentThread()) return;
+    }
+    // Serialize controlling callers without blocking an I/O callback that
+    // merely requests stop while another caller is joining it.
+    std::lock_guard<std::mutex> joining(join_mutex_);
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        threads.swap(threads_);
+    }
+    for (auto& thread : threads)
+        if (thread && thread->joinable()) thread->join();
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!started_) 
-	{
-        return;
-    }
-
-    for (auto& iter : task_schedulers_)
-	{
-        iter->stop();
-    }
-
-    for (auto& iter : threads_) 
-	{
-        if (iter && iter->joinable())
-        {
-            iter->join();
-        }
-    }
-
+    // Connections and servers retain their old scheduler for final cleanup.
+    // A subsequent Start creates new schedulers.
     task_schedulers_.clear();
-    threads_.clear();
-    started_ = false;
 }

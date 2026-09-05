@@ -34,6 +34,9 @@ private:
 
 	std::mutex channel_mutex_;
 	std::unordered_map<SOCKET, std::shared_ptr<Channel>> channels_;
+    uint64_t next_token_ = 1;
+    std::unordered_map<SOCKET, uint64_t> channel_tokens_;
+    std::unordered_map<uint64_t, std::weak_ptr<Channel>> token_channels_;
 
 };
 

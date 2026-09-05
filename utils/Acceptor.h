@@ -22,11 +22,15 @@ public:
 
     int  Listen(std::string ip, uint16_t port);
 	void Close();
+    std::shared_ptr<TaskScheduler> GetTaskScheduler() const { return scheduler_; }
+    uint16_t GetPort() const { return port_; }
 
 private:
     void OnAccept();
 
     EventLoop* event_loop_ = nullptr;
+    std::shared_ptr<TaskScheduler> scheduler_;
+    uint16_t port_ = 0;
 	std::mutex mutex_;
     std::unique_ptr<TcpSocket> tcp_socket_;
     ChannelPtr channel_ptr_;

@@ -148,8 +148,11 @@ public:
     using FirCallback = std::function<void(uint8_t seq_nr)>;
 
     using SendNackCallback = std::function<void(uint32_t ssrc, const std::vector<uint16_t>& lost_seq)>;
+    using NackRecoveryFailureCallback = std::function<void(uint32_t ssrc, const std::vector<uint16_t>& abandoned_seq)>;
 
 public:
+    static Ptr Create(const TrackInfo& info);
+
     /**
      * @brief Construct a receiver track with basic track information.
      *
@@ -294,17 +297,12 @@ public:
      *   3. Track matching if necessary.
      *   4. Calling inputPacket() after a valid RtpPacket is created.
      *
-     * @param type        Track type, such as audio or video.
-     * @param sample_rate RTP timestamp clock rate.
-     *                    Video is usually 90000.
-     *                    Opus is usually 48000.
-     *                    PCMA/PCMU is usually 8000.
      * @param ptr         Raw RTP packet buffer.
      * @param len         Raw RTP packet length.
      *
      * @return Parsed RtpPacket on success, nullptr on failure.
      */
-    virtual RtpPacket::Ptr inputRtp(TrackType type, int sample_rate, uint8_t *ptr, size_t len) = 0;
+    virtual RtpPacket::Ptr inputRtp(uint8_t *ptr, size_t len) = 0;
 
     virtual void OnRtcpSenderReport(uint32_t sender_ssrc, uint64_t ntp, uint32_t rtp_ts, uint32_t packet_count, uint32_t octet_count)
     {
@@ -320,6 +318,18 @@ public:
     }
 
 protected:
+    bool recordPacketReceived(const RtpPacket::Ptr& pkt)
+    {
+        if (!pkt)
+            return false;
+        ++_stats.received_packets;
+        _stats.seen_packet = true;
+        OnRtpPacket(pkt->getSSRC(), pkt->getPayloadType(), pkt->getSeq(),
+                    pkt->getStamp(), pkt->getPayloadSize(), pkt->getRecvTimeMs(),
+                    pkt->getSampleRate());
+        return true;
+    }
+
     /**
      * @brief Input a parsed RTP packet into the packet sorter.
      *
@@ -333,18 +343,23 @@ protected:
      */
     bool inputPacket(const RtpPacket::Ptr &pkt)
     {
-        if (!pkt)
-        {
+        if (!recordPacketReceived(pkt))
             return false;
-        }
-
-        ++_stats.received_packets;
-        _stats.seen_packet = true;
-        OnRtpPacket(pkt->getSSRC(), pkt->getPayloadType(), pkt->getSeq(),
-                    pkt->getStamp(), pkt->getPayloadSize(), pkt->getRecvTimeMs(),
-                    pkt->getSampleRate());
         EnhancedPacketSortor<RtpPacket::Ptr, uint16_t>::inputPacket(pkt->getSeq(), pkt);
 
+        return true;
+    }
+
+    // Video packet buffers need to observe packets in arrival order so a
+    // retransmitted gap can unlock frames already buffered behind it.
+    bool inputUnorderedPacket(const RtpPacket::Ptr& pkt)
+    {
+        if (!recordPacketReceived(pkt))
+            return false;
+        onRtpSorted(pkt);
+        ++_stats.sorted_packets;
+        _stats.last_seq = pkt->getSeq();
+        _stats.last_ts = pkt->getStamp();
         return true;
     }
 
@@ -451,6 +466,7 @@ protected:
 
 public:
     void setSendNackCallback(SendNackCallback cb) { _on_send_nack = std::move(cb);}
+    void setNackRecoveryFailureCallback(NackRecoveryFailureCallback cb) { _on_nack_recovery_failure = std::move(cb); }
 
 protected:
     static constexpr size_t kPacketPoolCapacity = 64;
@@ -486,6 +502,7 @@ protected:
     EncodedFrameCallback _on_encoded_frame;
 
     SendNackCallback _on_send_nack;
+    NackRecoveryFailureCallback _on_nack_recovery_failure;
     media::TrackClock track_clock_;
 };
 
@@ -514,12 +531,48 @@ public:
                 _on_send_nack(getSSRC(), lost_seq);
             }
         });
+        _nack_receiver->SetRecoveryFailureCallback(
+            [this](const std::vector<uint16_t>& abandoned_seq) {
+                if (_on_nack_recovery_failure && !abandoned_seq.empty())
+                {
+                    _on_nack_recovery_failure(getSSRC(), abandoned_seq);
+                }
+            });
     }
 
     ~RtpVideoTracker() override = default;
 
 public:
-    RtpPacket::Ptr inputRtp(TrackType type, int sample_rate, uint8_t* ptr, size_t len) override;
+    RtpPacket::Ptr inputRtp(uint8_t* ptr, size_t len) override;
+
+    void TickNack(uint64_t now_ms)
+    {
+        if (_nack_receiver)
+        {
+            _nack_receiver->Process(now_ms);
+        }
+    }
+
+    void UpdateNackRtt(uint32_t rtt_ms)
+    {
+        if (_nack_receiver)
+        {
+            _nack_receiver->UpdateRtt(rtt_ms);
+        }
+    }
+
+    void ClearNackUpTo(uint16_t seq)
+    {
+        if (_nack_receiver)
+        {
+            _nack_receiver->ClearUpTo(seq);
+        }
+    }
+
+    const NackRequester::Stats* GetNackRequesterStats() const
+    {
+        return _nack_receiver ? &_nack_receiver->GetStats() : nullptr;
+    }
 
     void OnRtcpBye(uint32_t sender_ssrc) override
     {
@@ -527,16 +580,12 @@ public:
     }
 
 protected:
-    void onBeforeRtpSorted(const RtpPacket::Ptr& pkt) override;
     void onRtpSorted(const RtpPacket::Ptr& pkt) override;
 
 private:
 
 
     std::unique_ptr<H264Depacketizer> _depacketizer;
-    bool _has_last_seq = false;
-    std::unordered_set<uint32_t> _broken_timestamps;
-
     std::unique_ptr<NackRequester> _nack_receiver;
 };
 
@@ -558,7 +607,7 @@ public:
      */
     Ptr Clone();
 
-    RtpPacket::Ptr inputRtp(TrackType type, int sample_rate, uint8_t* ptr, size_t len) override;
+    RtpPacket::Ptr inputRtp(uint8_t* ptr, size_t len) override;
 protected:
     void onRtpSorted(const RtpPacket::Ptr& pkt) override;
 

@@ -117,7 +117,7 @@ void MediaEndpoint::OnDtls(WorkJob& job)
 }
 
 
-rtsp::RtpReceiverTrack::Ptr SfuEndpoint::FindTrackBySsrc(uint32_t ssrc)
+rtsp::RtpReceiverTrack::Ptr SfuEndpoint::FindReceiverTrackBySsrc(uint32_t ssrc)
 {
     std::lock_guard<std::mutex> lock(track_mtx_);
 
@@ -189,14 +189,13 @@ void SfuEndpoint::HandleRtpPacket(Packet* pkt)
         }
     }
 
-    auto track = GetOrCreateTrack(ssrc);
+    auto track = GetOrCreateReceiverTrack(ssrc);
     if (!track)
     {
         return;
     }
 
     const auto& track_info = track->getTrackInfo();
-    const int sample_rate = track_info.clock_rate > 0 ? static_cast<int>(track_info.clock_rate) : 90000;
     if (track_info.type == TrackAudio)
     {
         LOG_DEBUG("[AUDIO][RTP] received",
@@ -208,13 +207,13 @@ void SfuEndpoint::HandleRtpPacket(Packet* pkt)
                   " rtp_ts=", timestamp,
                   " bytes=", pkt->len);
     }
-    if (track->inputRtp(track->getTrackType(), sample_rate, pkt->data, pkt->len))
+    if (track->inputRtp(pkt->data, pkt->len))
     {
         ForwardRtpToSubscribers(ssrc, pkt->data, pkt->len);
     }
 }
 
-std::shared_ptr<rtsp::RtpReceiverTrack> SfuEndpoint::GetOrCreateTrack(uint32_t ssrc)
+std::shared_ptr<rtsp::RtpReceiverTrack> SfuEndpoint::GetOrCreateReceiverTrack(uint32_t ssrc)
 {
     {
         std::lock_guard<std::mutex> lock(track_mtx_);
@@ -237,13 +236,18 @@ std::shared_ptr<rtsp::RtpReceiverTrack> SfuEndpoint::GetOrCreateTrack(uint32_t s
     TrackInfo info = source_track->getTrackInfo();
     info.ssrc = ssrc;
 
-    if (info.type == TrackVideo)
+    new_track = rtsp::RtpReceiverTrack::Create(info);
+    if (!new_track)
     {
-        new_track = std::make_shared<rtsp::RtpVideoTracker>(info);
+        LOG_ERROR("[TRACK] unsupported receiver track",
+                  " ssrc=", ssrc,
+                  " type=", static_cast<int>(info.type),
+                  " codec=", info.codec_name);
+        return nullptr;
     }
-    else if (info.type == TrackAudio)
+
+    if (info.type == TrackAudio)
     {
-        new_track = std::make_shared<rtsp::RtpAudioTracker>(info);
         LOG_INFO("[AUDIO][TRACK] created",
                  " track=", info.track_index,
                  " codec=", info.codec_name,
@@ -252,12 +256,6 @@ std::shared_ptr<rtsp::RtpReceiverTrack> SfuEndpoint::GetOrCreateTrack(uint32_t s
                  " clock_rate=", info.clock_rate,
                  " channels=", info.channels);
     }
-    else
-    {
-        LOG_ERROR("[TRACK] unsupported track type", " ssrc=", ssrc, " type=", static_cast<int>(info.type));
-        return nullptr;
-    }
-
     std::weak_ptr<SfuEndpoint> Weak_self = weak_from_this();
 
     new_track->setSendNackCallback(
@@ -269,6 +267,20 @@ std::shared_ptr<rtsp::RtpReceiverTrack> SfuEndpoint::GetOrCreateTrack(uint32_t s
         }
 
         self->OnTrackNack(media_ssrc, lost_seqs);
+    });
+
+    new_track->setNackRecoveryFailureCallback(
+    [Weak_self](uint32_t media_ssrc, const std::vector<uint16_t>& abandoned_seqs) {
+        auto self = Weak_self.lock();
+        if (!self || abandoned_seqs.empty())
+        {
+            return;
+        }
+
+        LOG_INFO("[RTCP][NACK] recovery exhausted",
+                 " media_ssrc=", media_ssrc,
+                 " count=", abandoned_seqs.size());
+        self->OnTrackPli(media_ssrc);
     });
 
     new_track->setOnEncodedFrame(
@@ -322,7 +334,7 @@ void SfuEndpoint::HandleRtcpPacket(Packet* pkt)
          rtcp_info.first_packet_type == rtcpx::RTCP_PT_SDES ||
          rtcp_info.first_packet_type == rtcpx::RTCP_PT_BYE))
     {
-        GetOrCreateTrack(rtcp_info.media_ssrc);
+        GetOrCreateReceiverTrack(rtcp_info.media_ssrc);
     }
 
     if (!rtcp_receiver_ || !rtcp_receiver_->OnRtcpPacket(pkt->data, pkt->len))
@@ -330,19 +342,6 @@ void SfuEndpoint::HandleRtcpPacket(Packet* pkt)
         LOG_ERROR("[RTCP] parse failed, len=", pkt->len);
     }
 }
-
-bool SfuEndpoint::InitTracks(const std::vector<TrackInfo>& infos)
-{
-    for (const auto& info : infos)
-    {
-        if (info.type == TrackType::TrackVideo)
-        {
-            video_track_ = std::make_shared<VideoTrack>(info);
-        }
-    }
-    return video_track_ != nullptr;
-}
-
 
 bool SfuEndpoint::Start()
 {
@@ -674,18 +673,47 @@ void SfuEndpoint::RemoveMediaStreamOnOwner(uint32_t source_ssrc)
 
 void SfuEndpoint::EvaluateReceiveQuality(uint32_t source_ssrc)
 {
-    auto track = FindTrackBySsrc(source_ssrc);
+    auto track = FindReceiverTrackBySsrc(source_ssrc);
     if (!track)
     {
         return;
     }
 
     const uint64_t now_ms = SteadyNowMs();
+    if (auto video = std::dynamic_pointer_cast<rtsp::RtpVideoTracker>(track))
+    {
+        video->UpdateNackRtt(track->GetRttMs());
+        video->TickNack(now_ms);
+    }
     const auto report = track->BuildReceiverReport(now_ms);
+
+    SendRtcpCallback send;
+    {
+        std::lock_guard<std::mutex> lock(rtcp_send_mutex_);
+        send = send_rtcp_cb_;
+    }
+    if (send)
+    {
+        rtcpx::RrBlock block;
+        block.ssrc = report.media_ssrc;
+        block.fraction_lost = report.fraction_lost;
+        block.cumulative_lost = report.cumulative_lost;
+        block.extended_highest_seq = report.extended_highest_seq;
+        block.jitter = report.jitter;
+        block.lsr = report.lsr;
+        block.dlsr = report.dlsr;
+        auto rtcp_sender = rtcpx::CreateRtcpSender();
+        const auto packet = rtcp_sender->BuildReceiverReport(local_rtcp_ssrc_, block);
+        if (packet.empty() || !send(packet.data(), packet.size()))
+        {
+            LOG_ERROR("[RTCP][RR] send failed", " media_ssrc=", source_ssrc);
+        }
+    }
 
     WeakNetFeedback feedback;
     feedback.now_ms = now_ms;
     feedback.send_bitrate_bps = ClampToUint32(track->GetSenderBitrateBps());
+    feedback.receive_bitrate_bps = ClampToUint32(track->GetReceiverBitrateBps(now_ms));
     feedback.loss_rate = static_cast<double>(report.fraction_lost) / 256.0;
     const uint32_t clock_rate = track->getTrackInfo().clock_rate;
     if (clock_rate > 0)
@@ -696,6 +724,20 @@ void SfuEndpoint::EvaluateReceiveQuality(uint32_t source_ssrc)
     feedback.nack_count = track->GetNackCount();
     feedback.pli_count = track->GetPliCount();
     feedback.fir_count = track->GetFirCount();
+
+    LOG_INFO("[WEAK_NET][FEEDBACK] submit",
+             " ssrc=", source_ssrc,
+             " now_ms=", feedback.now_ms,
+             " sender_bitrate_bps=", feedback.send_bitrate_bps,
+             " receive_bitrate_bps=", feedback.receive_bitrate_bps,
+             " fraction_lost=", static_cast<uint32_t>(report.fraction_lost),
+             " loss_rate=", feedback.loss_rate,
+             " jitter_ticks=", report.jitter,
+             " jitter_ms=", feedback.jitter_ms,
+             " rtt_ms=", feedback.rtt_ms,
+             " nack_count=", feedback.nack_count,
+             " pli_count=", feedback.pli_count,
+             " fir_count=", feedback.fir_count);
 
     NetworkControlUpdate update;
     NetworkQualityLevel previous_quality = NetworkQualityLevel::Unknown;
@@ -710,6 +752,18 @@ void SfuEndpoint::EvaluateReceiveQuality(uint32_t source_ssrc)
         current_quality = state.controller.GetSnapshot().quality;
         state.quality = current_quality;
     }
+
+    LOG_INFO("[WEAK_NET][CONTROL] update",
+             " ssrc=", source_ssrc,
+             " quality=", ToString(current_quality),
+             " has_target_rate=", update.has_target_rate,
+             " target_bitrate_bps=", update.target_rate.target_bitrate_bps,
+             " stable_target_bitrate_bps=", update.target_rate.stable_target_bitrate_bps,
+             " has_pacer_config=", update.has_pacer_config,
+             " pacing_bitrate_bps=", update.pacer_config.pacing_bitrate_bps,
+             " enable_nack=", update.enable_nack,
+             " enable_fec=", update.enable_fec,
+             " request_key_frame=", update.request_key_frame);
 
     if (current_quality != previous_quality)
     {
@@ -735,7 +789,7 @@ void SfuEndpoint::ForwardRtpToSubscribers(uint32_t source_ssrc, const uint8_t* d
 
     if (!senders.empty())
     {
-        auto source = FindTrackBySsrc(source_ssrc);
+        auto source = FindReceiverTrackBySsrc(source_ssrc);
         if (source && source->getTrackType() == TrackAudio)
         {
             LOG_DEBUG("[AUDIO][RTP] forwarding",
