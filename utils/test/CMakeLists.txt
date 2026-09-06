@@ -23,3 +23,25 @@ add_test(
     NAME ShardedWorkerPoolUnitTest
     COMMAND test_sharded_worker_pool
 )
+
+add_executable(test_sharded_worker_lifecycle
+    test_sharded_worker_lifecycle.cpp
+)
+
+target_link_libraries(test_sharded_worker_lifecycle
+    PRIVATE
+    utils
+    LOGGER
+    pthread
+)
+
+target_include_directories(test_sharded_worker_lifecycle
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/utils
+        ${CMAKE_SOURCE_DIR}/log
+)
+
+add_test(
+    NAME ShardedWorkerLifecycleTest
+    COMMAND test_sharded_worker_lifecycle
+)

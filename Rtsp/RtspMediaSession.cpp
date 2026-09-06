@@ -666,3 +666,15 @@ uint64_t MediaSession::FindEndpointByTrack(int track_id) const
         [track_id](const auto& pair) { return pair.second == track_id; });
     return (it != endpoint_to_track_.end()) ? it->first : 0;
 }
+
+void MediaSession::UnbindTrackEndpoint(uint64_t endpoint_id)
+{
+    std::lock_guard<std::mutex> lk(track_mtx_);
+    endpoint_to_track_.erase(endpoint_id);
+    for (size_t channel = 0; channel < channel_bindings_.size(); ++channel) {
+        auto& binding = channel_bindings_[channel];
+        if (!binding.valid || binding.endpoint_id != endpoint_id) continue;
+        if (stream_context_) stream_context_->channel_to_media_index.erase(channel);
+        binding = ChannelBinding{};
+    }
+}

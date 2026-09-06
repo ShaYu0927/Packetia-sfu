@@ -2,6 +2,8 @@
 #include "logger.h"
 #include <cstring>
 #include <vector>
+#include <charconv>
+#include <algorithm>
 
 namespace rtsp
 {
@@ -117,16 +119,34 @@ std::string RtspUtil::GetSuffixFromSetupUrl(const std::string& url)
 
 bool RtspUtil::ParseTransport(const std::string& text, RtspTransport& out)
 {
+    out = RtspTransport{};
+    // This implementation negotiates one transport at a time.
+    if (text.find(',') != std::string::npos) return false;
     auto parts = Split(text, ';');
     if (parts.empty())
         return false;
 
     out.profile = Trim(parts[0]);
+    std::transform(out.profile.begin(), out.profile.end(), out.profile.begin(),
+        [](unsigned char c) { return std::toupper(c); });
+    if (out.profile != "RTP/AVP" && out.profile != "RTP/AVP/UDP" && out.profile != "RTP/AVP/TCP")
+        return false;
 
     if (out.profile.find("/TCP") != std::string::npos)
         out.lower_transport = "TCP";
     else
         out.lower_transport = "UDP";
+    out.transport = out.lower_transport == "TCP" ? RtspTransportType::TcpInterleaved : RtspTransportType::UdpInterleaved;
+    auto parse_pair = [](const std::string& value, int maximum, int& first, int& second) {
+        const auto dash = value.find('-');
+        if (dash == std::string::npos || dash == 0 || dash + 1 == value.size()) return false;
+        const auto begin = value.data();
+        const auto end = begin + value.size();
+        auto a = std::from_chars(begin, begin + dash, first);
+        auto b = std::from_chars(begin + dash + 1, end, second);
+        return a.ec == std::errc{} && a.ptr == begin + dash && b.ec == std::errc{} && b.ptr == end &&
+            first >= 0 && first <= maximum && second >= 0 && second <= maximum && first != second;
+    };
 
     for (size_t i = 1; i < parts.size(); ++i)
     {
@@ -144,34 +164,22 @@ bool RtspUtil::ParseTransport(const std::string& text, RtspTransport& out)
         }
         else if (item.rfind("interleaved=", 0) == 0)
         {
-            std::string v = item.substr(strlen("interleaved="));
-            auto pos = v.find('-');
-            if (pos == std::string::npos)
-                return false;
-
-            out.interleaved_rtp = std::atoi(v.substr(0, pos).c_str());
-            out.interleaved_rtcp = std::atoi(v.substr(pos + 1).c_str());
+            if (out.interleaved_rtp != -1 || !parse_pair(item.substr(strlen("interleaved=")),
+                255, out.interleaved_rtp, out.interleaved_rtcp)) return false;
         }
         else if (item.rfind("client_port=", 0) == 0)
         {
-            std::string v = item.substr(strlen("client_port="));
-            auto pos = v.find('-');
-            if (pos == std::string::npos)
-                return false;
-
-            out.client_rtp_port = std::atoi(v.substr(0, pos).c_str());
-            out.client_rtcp_port = std::atoi(v.substr(pos + 1).c_str());
+            if (out.client_rtp_port != -1 || !parse_pair(item.substr(strlen("client_port=")),
+                65535, out.client_rtp_port, out.client_rtcp_port) ||
+                out.client_rtp_port == 0 || out.client_rtcp_port == 0) return false;
         }
         else if (item.rfind("server_port=", 0) == 0)
         {
-            std::string v = item.substr(strlen("server_port="));
-            auto pos = v.find('-');
-            if (pos == std::string::npos)
-                return false;
-
-            out.server_rtp_port = std::atoi(v.substr(0, pos).c_str());
-            out.server_rtcp_port = std::atoi(v.substr(pos + 1).c_str());
+            if (out.server_rtp_port != -1 || !parse_pair(item.substr(strlen("server_port=")),
+                65535, out.server_rtp_port, out.server_rtcp_port) ||
+                out.server_rtp_port == 0 || out.server_rtcp_port == 0) return false;
         }
+        else if (item == "rtcp-mux") out.rtcp_mux = true;
         else if (item.rfind("mode=", 0) == 0)
         {
             std::string mode = item.substr(std::string("mode=").size());

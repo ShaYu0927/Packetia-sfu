@@ -161,7 +161,7 @@ public:
     ~UdpSocket() = default;
 
     int  Create(); // socket(AF_INET, SOCK_DGRAM, 0)
-    bool Bind(const std::string& ip, uint16_t port);
+    bool Bind(const std::string& ip, uint16_t port, bool reuse_address = true);
     void Close();
 
     int Fd() const { return fd_; }

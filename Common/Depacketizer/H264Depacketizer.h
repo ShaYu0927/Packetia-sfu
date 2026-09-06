@@ -6,6 +6,7 @@
 #include <vector>
 #include <deque>
 #include <cstdint>
+#include <string>
 #include "H264RtpPayloadParser.h"
 #include "H26xPacketBuffer.h"
 #include "H264ParameterSetTracker.h"
@@ -14,6 +15,7 @@
 class H264Depacketizer : public Depacketizer
 {
 public:
+    explicit H264Depacketizer(const std::string& fmtp = {});
     bool input(const RtpView& pkt) override;
     bool hasFrame() const override;
     std::vector<uint8_t> popFrame() override;

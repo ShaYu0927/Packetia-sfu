@@ -21,18 +21,20 @@ public:
     virtual void OnError(int /*err*/) {}
 };
 
-class UdpServer
+class UdpServer : public std::enable_shared_from_this<UdpServer>
 {
 public:
     using Ptr = std::shared_ptr<UdpServer>;
 
     explicit UdpServer(EventLoop* loop);
+    explicit UdpServer(std::shared_ptr<TaskScheduler> scheduler);
     ~UdpServer();
 
     void SetHandler(IUdpHandler::Ptr h);
 
-    bool Start(const std::string& ip, uint16_t port);
+    bool Start(const std::string& ip, uint16_t port, bool reuse_address = true);
     void Stop();
+    SocketAddr LocalAddress() const;
 
     bool SendTo(const network::SocketAddr& dst, const uint8_t* data, size_t len);
     enum class SendResult { Sent, NotWritable, Closed, Failed };

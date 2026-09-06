@@ -41,6 +41,14 @@ struct Mp4Sample
     bool key_frame = false;
 };
 
+struct SegmentIndentity
+{
+    std::string session_id;
+    std::string stream_id;
+    uint64_t start_time_ms = 0;
+    uint64_t sequnence = 0;
+};
+
 
 class IMediaSink
 {

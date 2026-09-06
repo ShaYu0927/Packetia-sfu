@@ -151,6 +151,25 @@ void AudioDepacketizer::ParseAacFmtp(const std::string& fmtp)
         }
 
         const std::string key = Lower(Trim(item.substr(0, equal)));
+        if (key == "config")
+        {
+            const auto hex = Trim(item.substr(equal + 1));
+            auto bytes = std::make_shared<std::vector<uint8_t>>();
+            auto digit = [](char c) -> int {
+                if (c >= '0' && c <= '9') return c - '0';
+                if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+                if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+                return -1;
+            };
+            bool valid = !hex.empty() && hex.size() % 2 == 0 && hex.size() <= 128;
+            for (size_t i = 0; valid && i < hex.size(); i += 2) {
+                const int high = digit(hex[i]), low = digit(hex[i + 1]);
+                valid = high >= 0 && low >= 0;
+                if (valid) bytes->push_back(static_cast<uint8_t>((high << 4) | low));
+            }
+            codec_config_ = valid ? bytes : nullptr;
+            continue;
+        }
         uint32_t value = 0;
         if (!ParseUint(item.substr(equal + 1), value))
         {
@@ -365,6 +384,7 @@ void AudioDepacketizer::EmitAacFrame(const uint8_t* data,
     frame.rtp.packet_count = static_cast<uint16_t>(last_seq - first_seq) + 1;
     frame.frame_type = EncodedFrameType::Audio;
     frame.sample_count = aac_config_.constant_duration;
+    frame.codec_config = codec_config_;
     frame.sample_rate = sample_rate_;
     frame.channels = channels_;
     auto buffer = std::make_shared<std::vector<uint8_t>>(data, data + len);

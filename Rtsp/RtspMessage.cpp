@@ -669,111 +669,86 @@ std::string RtspRequest::HandleCmdANNOUNCE(RtspRequestInfo& req)
     return res.get();
 }
 
-std::string RtspRequest::HandleCmdSetup(RtspRequestInfo& req)
+std::string RtspRequest::BuildStatusResponse(int cseq, const std::string& status)
+{
+    return "RTSP/1.0 " + status + "\r\nCSeq: " + std::to_string(cseq) +
+           "\r\nContent-Length: 0\r\n\r\n";
+}
+
+std::string RtspRequest::HandleCmdSetup(RtspRequestInfo& req, const SetupTransportFactory& factory)
 {
     last_setup_endpoint_id_ = 0;
-    last_setup_rtp_channel_ = 0;
-    last_setup_rtcp_channel_ = 0;
-    std::string session_id,url,control, suffix;
-    std::shared_ptr<char> response(new char[10240], std::default_delete<char[]>());
-    size_t size,transport = 1;
-    uint16_t rtp_ch, rtcp_ch = 0;
-    RtspTransport pTranOut;
-    int ret;
+    last_setup_rtp_channel_ = last_setup_rtcp_channel_ = 0;
+    RtspTransport transport;
+    if (!rtsp::RtspUtil::ParseTransport(req.GetHeader("transport"), transport) ||
+        transport.multicast || transport.rtcp_mux)
+        return BuildStatusResponse(req.cseq, "461 Unsupported Transport");
+    const bool tcp = transport.lower_transport == "TCP";
+    if ((tcp && (transport.interleaved_rtp < 0 || transport.interleaved_rtcp < 0 ||
+                 transport.client_rtp_port >= 0)) ||
+        (!tcp && (transport.client_rtp_port <= 0 || transport.client_rtcp_port <= 0 ||
+                  transport.interleaved_rtp >= 0 || !factory)))
+        return BuildStatusResponse(req.cseq, "461 Unsupported Transport");
 
-    LOG_INFO(req.url);
-    suffix = rtsp::RtspUtil::GetSuffixFromSetupUrl(req.url);
-    control = req.GetControlFromUrl();
-
-    LOG_INFO(control);
-
+    const auto suffix = rtsp::RtspUtil::GetSuffixFromSetupUrl(req.url);
     media_session = MediaSessionManager::Instance().GetSessionBySuffix(suffix);
-    if (!media_session)
-    {
-        LOG_ERROR("Media session not found, url=", suffix);
-        return "";
-    }
+    if (!media_session) return BuildStatusResponse(req.cseq, "404 Not Found");
+    const auto track = media_session->GetTrackDescription(req.GetControlFromUrl());
+    if (!track) return BuildStatusResponse(req.cseq, "404 Not Found");
+    const int track_id = track->getTrackIndex();
+    if (media_session->FindEndpointByTrack(track_id) != 0)
+        return BuildStatusResponse(req.cseq, "455 Method Not Valid in This State");
 
-    session_id = std::to_string(media_session->GetId());
-    auto track_description = media_session->GetTrackDescription(control);
-    if(!track_description)
-    {
-        LOG_ERROR("Track not found, suffix=, control=", suffix, control);
-        return "";
-    }
-
-    std::string transport_str = req.GetHeader("transport");
-    if (transport_str.empty())
-    {
-        LOG_ERROR("SETUP missing Transport header");
-        return "";
-    }
-    ret = rtsp::RtspUtil::ParseTransport(transport_str, pTranOut);
-    if(!ret)
-    {
-        LOG_ERROR("SETUP missing Transport header");
-        return "";
-    }
-
-    if (pTranOut.interleaved_rtp < 0 || pTranOut.interleaved_rtcp < 0)
-    {
-        LOG_ERROR("SETUP missing interleaved channel, transport={}", transport_str);
-        return "";
-    }
-    std::uint64_t endpoint_id = utils::EndpointBase::NextEndpointId();
-    track_description->setInterleavedChannel(pTranOut.interleaved_rtp, pTranOut.interleaved_rtcp);
-
-    const int track_id = track_description->getTrackIndex();
-
-    if (!media_session->BindInterleavedChannel(
-            static_cast<uint8_t>(pTranOut.interleaved_rtp), track_id, false, endpoint_id))
-    {
-        LOG_ERROR("Bind RTP interleaved channel failed, session={}, track_id={}, channel={}",
-                  session_id, track_id, pTranOut.interleaved_rtp);
-        return "";
-    }
-
-    if (!media_session->BindInterleavedChannel(
-            static_cast<uint8_t>(pTranOut.interleaved_rtcp), track_id, true, endpoint_id))
-    {
-        LOG_ERROR("Bind RTCP interleaved channel failed, session={}, track_id={}, channel={}",
-                  session_id, track_id, pTranOut.interleaved_rtcp);
-        return "";
-    }
-
-    
+    const auto endpoint_id = utils::EndpointBase::NextEndpointId();
     auto endpoint = std::make_shared<media::SfuEndpoint>(
-        endpoint_id, track_description, media_session, media_session->GetFramePublisher());
-    if (!endpoint->Start())
-    {
-        LOG_ERROR("Start endpoint failed, endpoint_id={}, session={}, track_id={}",
-                  endpoint_id, session_id, track_id);
-        return "";
+        endpoint_id, track, media_session, media_session->GetFramePublisher());
+    if (!endpoint->Start()) return BuildStatusResponse(req.cseq, "500 Internal Server Error");
+    if (factory && !factory(endpoint_id, transport)) {
+        endpoint->Stop();
+        return BuildStatusResponse(req.cseq, "461 Unsupported Transport");
+    }
+    if (!tcp && (transport.server_rtp_port <= 0 || transport.server_rtp_port > 65535 ||
+                 transport.server_rtcp_port <= 0 || transport.server_rtcp_port > 65535 ||
+                 transport.server_rtp_port == transport.server_rtcp_port)) {
+        endpoint->Stop();
+        return BuildStatusResponse(req.cseq, "500 Internal Server Error");
+    }
+    if (!utils::EndpointManager::Instance().Add(endpoint)) {
+        endpoint->Stop();
+        return BuildStatusResponse(req.cseq, "500 Internal Server Error");
     }
 
-    if (!utils::EndpointManager::Instance().Add(endpoint))
-    {
-        LOG_ERROR("Add endpoint failed, endpoint_id={}, session={}, track_id={}",
-                  endpoint_id, session_id, track_id);
-        return "";
+    bool bound = media_session->BindTrackEndpoint(track_id, endpoint_id);
+    if (bound && tcp) {
+        bound = media_session->BindInterleavedChannel(
+            static_cast<uint8_t>(transport.interleaved_rtp), track_id, false, endpoint_id) &&
+            media_session->BindInterleavedChannel(
+            static_cast<uint8_t>(transport.interleaved_rtcp), track_id, true, endpoint_id);
     }
-
-    if (!media_session->BindTrackEndpoint(track_id, endpoint_id))
-    {
-        LOG_ERROR("Bind track endpoint failed, endpoint_id={}, track_id={}",
-                  endpoint_id, track_id);
+    if (!bound) {
+        media_session->UnbindTrackEndpoint(endpoint_id);
+        endpoint->Stop();
         utils::EndpointManager::Instance().Remove(endpoint_id);
-        return "";
+        return BuildStatusResponse(req.cseq, "500 Internal Server Error");
     }
 
     last_setup_endpoint_id_ = endpoint_id;
-    last_setup_rtp_channel_ = static_cast<uint8_t>(pTranOut.interleaved_rtp);
-    last_setup_rtcp_channel_ = static_cast<uint8_t>(pTranOut.interleaved_rtcp);
-
-    std::string str = BuildSetupRes(std::to_string(req.cseq), session_id,pTranOut.interleaved_rtp, pTranOut.interleaved_rtcp,"record");
-    LOG_INFO(str);
-    
-    return str;
+    const auto session_id = std::to_string(media_session->GetId());
+    if (tcp) {
+        track->setInterleavedChannel(transport.interleaved_rtp, transport.interleaved_rtcp);
+        last_setup_rtp_channel_ = static_cast<uint8_t>(transport.interleaved_rtp);
+        last_setup_rtcp_channel_ = static_cast<uint8_t>(transport.interleaved_rtcp);
+        return BuildSetupRes(std::to_string(req.cseq), session_id,
+                             transport.interleaved_rtp, transport.interleaved_rtcp, "record");
+    }
+    std::ostringstream response;
+    response << "RTSP/1.0 200 OK\r\nCSeq: " << req.cseq
+             << "\r\nSession: " << session_id
+             << "\r\nTransport: RTP/AVP/UDP;unicast;client_port="
+             << transport.client_rtp_port << "-" << transport.client_rtcp_port
+             << ";server_port=" << transport.server_rtp_port << "-" << transport.server_rtcp_port
+             << ";mode=record\r\nContent-Length: 0\r\n\r\n";
+    return response.str();
 }
 
 std::string RtspRequest::HandleCmdRecord(RtspRequestInfo& req)

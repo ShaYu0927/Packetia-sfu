@@ -73,6 +73,7 @@ private:
     uint32_t sample_rate_ = 0;
     uint16_t channels_ = 1;
     AacPayloadConfig aac_config_;
+    std::shared_ptr<const std::vector<uint8_t>> codec_config_;
     AacFragment aac_fragment_;
 
     std::deque<EncodedFrame> frames_;

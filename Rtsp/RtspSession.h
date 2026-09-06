@@ -7,6 +7,7 @@
 #include "RtspConnection.h"
 #include "RtspInterleavedTransport.h"
 #include "MediaEndpointIngress.h"
+#include "UdpMediaTransport.h"
 #include <cstddef>
 #include "Sdp.h"
 #include <unordered_map>
@@ -52,6 +53,7 @@ public:
 
     ~RtspSession()
     {
+        CloseMediaTransports();
         LOG_INFO("RtspSession destroyed, fd=" + std::to_string(conn_ ? conn_->GetSocket() : -1));
     }
 
@@ -88,8 +90,12 @@ public:
 private:
     struct TransportBinding
     {
-        std::shared_ptr<media::transport::RtspInterleavedTransport> transport;
+        ~TransportBinding() { if (transport) transport->Close(); }
+        uint64_t endpoint_id = 0;
+        std::shared_ptr<IMediaTransport> transport;
+        std::shared_ptr<media::transport::RtspInterleavedTransport> interleaved;
         std::shared_ptr<media::transport::MediaEndpointIngress> ingress;
+        MediaSession::Ptr session;
     };
 
     void CloseMediaTransports();
@@ -107,6 +113,7 @@ private:
     MediaSession::Ptr media_session_;
     std::unordered_map<uint8_t, std::shared_ptr<TransportBinding>>
         media_transports_;
+    std::vector<std::shared_ptr<TransportBinding>> udp_transports_;
 };
 }
 

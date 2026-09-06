@@ -163,7 +163,8 @@ void RtspSession::OnInterleaved(int channel,const uint8_t*p, int len)
         LOG_ERROR("transport binding not found, channel=", channel);
         return;
     }
-    (void)it->second->transport->InputInterleaved(static_cast<uint8_t>(channel), p, static_cast<size_t>(len), Timestamp::NowMs());
+    if (it->second->interleaved)
+        (void)it->second->interleaved->InputInterleaved(static_cast<uint8_t>(channel), p, static_cast<size_t>(len), Timestamp::NowMs());
 }
 
 void RtspSession::Dispatch(const char* p, size_t total)
@@ -336,38 +337,58 @@ void RtspSession::HandleCmdANNOUNCE(RtspRequest::RtspRequestInfo& req)
 
 void RtspSession::HandleCmdSetup(RtspRequest::RtspRequestInfo& req)
 {
-    std::string res  = rtsp_request_->HandleCmdSetup(req);
-    media_session_ = rtsp_request_->GetMediaSession();
+    std::shared_ptr<TransportBinding> pending;
+    RtspTransport negotiated;
+    const auto response = rtsp_request_->HandleCmdSetup(req,
+        [&](uint64_t endpoint_id, RtspTransport& transport) {
+            pending = std::make_shared<TransportBinding>();
+            pending->endpoint_id = endpoint_id;
+            if (transport.lower_transport == "TCP") {
+                const auto rtp_channel = static_cast<uint8_t>(transport.interleaved_rtp);
+                const auto rtcp_channel = static_cast<uint8_t>(transport.interleaved_rtcp);
+                if (media_transports_.count(rtp_channel) || media_transports_.count(rtcp_channel))
+                    return false;
+                pending->interleaved = std::make_shared<media::transport::RtspInterleavedTransport>(
+                    endpoint_id, conn_, rtp_channel, rtcp_channel);
+                pending->transport = pending->interleaved;
+            } else {
+                auto udp = media::transport::UdpMediaTransport::CreateUnicast(
+                    endpoint_id, task_scheduler_->weak_from_this().lock(),
+                    SocketUtil::GetSocketIp(conn_->GetSocket()), conn_->GetIp(),
+                    static_cast<uint16_t>(transport.client_rtp_port),
+                    static_cast<uint16_t>(transport.client_rtcp_port));
+                if (!udp) return false;
+                transport.server_rtp_port = udp->LocalPort(MediaPacketType::Rtp);
+                transport.server_rtcp_port = udp->LocalPort(MediaPacketType::Rtcp);
+                pending->transport = std::move(udp);
+            }
+            pending->ingress = std::make_shared<media::transport::MediaEndpointIngress>(endpoint_id);
+            pending->transport->SetPacketSink(pending->ingress);
+            negotiated = transport;
+            return true;
+        });
 
-    const uint64_t endpoint_id = rtsp_request_->GetLastSetupEndpointId();
-    if (endpoint_id != 0)
-    {
+    const auto endpoint_id = rtsp_request_->GetLastSetupEndpointId();
+    if (endpoint_id && pending && pending->transport) {
+        media_session_ = rtsp_request_->GetMediaSession();
+        pending->session = media_session_;
+        if (negotiated.lower_transport == "TCP") {
+            media_transports_[static_cast<uint8_t>(negotiated.interleaved_rtp)] = pending;
+            media_transports_[static_cast<uint8_t>(negotiated.interleaved_rtcp)] = pending;
+        } else {
+            udp_transports_.push_back(pending);
+        }
         auto endpoint = std::dynamic_pointer_cast<media::SfuEndpoint>(
             utils::EndpointManager::Instance().Find(endpoint_id));
-        if (endpoint)
-        {
-            const uint8_t rtp_channel = rtsp_request_->GetLastSetupRtpChannel();
-            const uint8_t rtcp_channel = rtsp_request_->GetLastSetupRtcpChannel();
-            auto transport = std::make_shared<media::transport::RtspInterleavedTransport>(
-                endpoint_id, conn_, rtp_channel, rtcp_channel);
-            auto ingress = std::make_shared<media::transport::MediaEndpointIngress>(endpoint_id);
-            transport->SetPacketSink(ingress);
-
-            auto binding = std::make_shared<TransportBinding>();
-            binding->transport = transport;
-            binding->ingress = ingress;
-            media_transports_[rtp_channel] = binding;
-            media_transports_[rtcp_channel] = binding;
-
-            std::weak_ptr<IMediaTransport> weak_transport = transport;
-            endpoint->SetRtcpSendCallback(
-                [weak_transport](const uint8_t* data, size_t len) -> bool {
-                    auto transport = weak_transport.lock();
-                    return transport && transport->SendRtcp(data, len) == SendResult::Ok;
-                });
+        if (endpoint) {
+            std::weak_ptr<IMediaTransport> weak = pending->transport;
+            endpoint->SetRtcpSendCallback([weak](const uint8_t* data, size_t size) {
+                auto transport = weak.lock();
+                return transport && transport->SendRtcp(data, size) == SendResult::Ok;
+            });
         }
     }
-    this->SendRaw(res,(size_t)res.size());
+    SendRaw(response, response.size());
 }
 void RtspSession::HandleCmdRecord(RtspRequest::RtspRequestInfo& req)
 {
@@ -383,22 +404,37 @@ void RtspSession::HandleCmdPause(RtspRequest::RtspRequestInfo& req)
 }
 void RtspSession::HandleCmdTeardown(RtspRequest::RtspRequestInfo& req)
 {
-    (void)req;
+    auto id = req.GetHeader("session");
+    id = id.substr(0, id.find(';'));
+    if (!media_session_ || id != std::to_string(media_session_->GetId())) {
+        const auto response = RtspRequest::BuildStatusResponse(req.cseq, "454 Session Not Found");
+        SendRaw(response, response.size());
+        return;
+    }
     CloseMediaTransports();
+    const auto response = RtspRequest::BuildStatusResponse(req.cseq, "200 OK");
+    SendRaw(response, response.size());
 }
 
 void RtspSession::CloseMediaTransports()
 {
-    std::unordered_set<IMediaTransport*> closed;
-    for (auto& entry : media_transports_)
-    {
-        auto& binding = entry.second;
-        if (binding && binding->transport &&
-            closed.insert(binding->transport.get()).second)
-        {
-            binding->transport->Close();
+    std::unordered_set<uint64_t> closed;
+    auto release = [&](const std::shared_ptr<TransportBinding>& binding) {
+        if (!binding || !closed.insert(binding->endpoint_id).second) return;
+        if (binding->transport) binding->transport->Close();
+        auto endpoint = std::dynamic_pointer_cast<media::SfuEndpoint>(
+            utils::EndpointManager::Instance().Find(binding->endpoint_id));
+        if (endpoint) {
+            endpoint->SetRtcpSendCallback({});
+            endpoint->Stop();
+            utils::EndpointManager::Instance().Remove(binding->endpoint_id);
         }
-    }
+        if (binding->session) binding->session->UnbindTrackEndpoint(binding->endpoint_id);
+    };
+    for (auto& entry : media_transports_) release(entry.second);
+    for (auto& binding : udp_transports_) release(binding);
     media_transports_.clear();
+    udp_transports_.clear();
 }
+
 }

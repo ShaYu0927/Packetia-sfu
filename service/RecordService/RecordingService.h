@@ -1,41 +1,41 @@
-#ifndef _RECORDING_SERVICE_H_
-#define _RECORDING_SERVICE_H_
+#pragma once
 
-
-#include "H264Payload.h"
 #include "core/IService.h"
-#include "Mp4.h"
-#include <memory>
+#include "RecordingOptions.h"
+#include "core/EncodedFrameRouter.h"
+#include <atomic>
 #include <mutex>
 
-namespace service 
-{
-class RecordingService : public IService
-{
-public:
-    RecordingService();
-    ~RecordingService() override;
-
-    bool Init() override;
-    bool Start() override;
-
-    void Stop() override;
-    void Shutdown() override;
-
-    service::ServiceType    Type() const override;
-    service::ServiceState   State() const override;
-    service::ServiceHealth  Health() const override;
-
-    bool StartRecording(const RecordingRequest& request);
-    bool StopRecording(const  StreamKey& stream_key);
-    void OnVideoFrame(const   StreamKey& stream_key, const media::H264AccessUnit& frame);
-
-private:
-    service::ServiceState state_ = service::ServiceState::Created;
-    mutable std::mutex mutex_;
+namespace service {
+class RecordingDispatcher;
+struct RecordingStats {
+    uint64_t accepted = 0, written = 0, dropped = 0, completed_files = 0, errors = 0;
+    size_t queue_depth = 0, queue_bytes = 0;
 };
 
+class RecordingService final : public IService, public media::IEncodedFrameSink,
+                               public std::enable_shared_from_this<RecordingService> {
+public:
+    explicit RecordingService(std::shared_ptr<media::EncodedFrameRouter> router,
+                              RecordingOptions options = {});
+    ~RecordingService() override;
+    bool Init() override;
+    bool Start() override;
+    void Stop() override;
+    void Shutdown() override { Stop(); }
+    ServiceType Type() const override { return ServiceType::Record; }
+    ServiceState State() const override { return state_.load(); }
+    ServiceHealth Health() const override;
+    RecordingStats Stats() const;
+    bool TryEnqueue(const media::EncodedFrameEvent& event) override;
+private:
+    std::shared_ptr<media::EncodedFrameRouter> router_;
+    RecordingOptions options_;
+    std::mutex lifecycle_mutex_;
+    mutable std::mutex mutex_;
+    std::shared_ptr<RecordingDispatcher> dispatcher_;
+    media::EncodedFrameRouter::SubscriptionId subscription_ = 0;
+    std::atomic<ServiceState> state_{ServiceState::Created};
+    std::atomic<uint64_t> accepted_{0}, written_{0}, dropped_{0}, completed_{0}, errors_{0};
+};
 }
-
-
-#endif /* _RECORDING_SERVICE_H_ */

@@ -6,6 +6,7 @@
 #include <array>
 #include <unordered_map>
 #include <sstream>
+#include <functional>
 #include "RtpTypes.h"
 #include "Media.h"
 #include "RtspMediaSession.h"
@@ -210,7 +211,9 @@ public:
     std::string HandleCmdOptions(RtspRequestInfo& req);
     std::string HandleCmdDescribe(RtspRequestInfo& req);
     std::string HandleCmdANNOUNCE(RtspRequestInfo& req);
-    std::string HandleCmdSetup(RtspRequestInfo& req);
+    using SetupTransportFactory = std::function<bool(uint64_t, RtspTransport&)>;
+    std::string HandleCmdSetup(RtspRequestInfo& req, const SetupTransportFactory& factory = {});
+    static std::string BuildStatusResponse(int cseq, const std::string& status);
     std::string HandleCmdRecord(RtspRequestInfo& req);
     std::string HandleCmdPlay(RtspRequestInfo& req);
     std::string HandleCmdPause(RtspRequestInfo& req);

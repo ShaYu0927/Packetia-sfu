@@ -118,6 +118,9 @@ struct EncodedFrame
     uint32_t sample_rate            = 0;
     uint16_t channels               = 0;
 
+    // Codec initialization bytes (AAC AudioSpecificConfig from SDP).
+    std::shared_ptr<const std::vector<uint8_t>> codec_config;
+
     std::shared_ptr<const std::vector<uint8_t>> buffer;
 
     size_t offset                   = 0;

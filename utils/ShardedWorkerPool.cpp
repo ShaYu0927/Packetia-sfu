@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <exception>
 #include <iterator>
 #include <utility>
@@ -191,14 +192,23 @@ void ShardedWorkerPool::worker_loop(Worker &worker, std::size_t idx)
         {
             std::unique_lock<std::mutex> lk(worker.mtx);
 
-            worker.cv.wait(lk, [&] {
+            worker.cv.wait_for(lk, std::chrono::milliseconds(100), [&] {
                 return !worker.running.load() || !worker.q.empty();
             });
 
             if (!worker.running.load() && worker.q.empty())
             {
+                lk.unlock();
+                if (handler_) handler_->on_worker_stop(idx);
                 LOG_INFO("worker exit by stop, idx=", idx);
                 break;
+            }
+
+            if (worker.q.empty())
+            {
+                lk.unlock();
+                if (handler_) handler_->on_worker_tick(idx);
+                continue;
             }
 
             job = std::move(worker.q.front());
@@ -234,7 +244,8 @@ void ShardedWorkerPool::worker_loop(Worker &worker, std::size_t idx)
             safe_release_job(job);
             continue;
         }
-        handler_->handle(job);
+        handler_->handle(job, idx);
+        handler_->on_worker_tick(idx);
     }
 }
 

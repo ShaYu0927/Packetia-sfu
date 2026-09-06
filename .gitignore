@@ -22,3 +22,4 @@ build/
 out/
 build-win/
 .codex-build-transport/
+recordings/

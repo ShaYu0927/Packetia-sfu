@@ -11,17 +11,35 @@ UdpServer::~UdpServer()
     Stop();
 }
 
+UdpServer::UdpServer(std::shared_ptr<TaskScheduler> scheduler)
+    : scheduler_(std::move(scheduler))
+{
+}
+
+SocketAddr UdpServer::LocalAddress() const
+{
+    SocketAddr result;
+    if (scheduler_) scheduler_->Invoke([&] {
+        if (!started_) return;
+        sockaddr_storage address{};
+        socklen_t length = sizeof(address);
+        if (::getsockname(sock_.Fd(), reinterpret_cast<sockaddr*>(&address), &length) == 0)
+            result = SocketAddr::FromSockaddr(reinterpret_cast<sockaddr*>(&address), length);
+    });
+    return result;
+}
+
 void UdpServer::SetHandler(IUdpHandler::Ptr h)
 {
     if (scheduler_) scheduler_->Invoke([this, h = std::move(h)] { handler_ = h; });
     else handler_ = std::move(h);
 }
 
-bool UdpServer::Start(const std::string &ip, uint16_t port)
+bool UdpServer::Start(const std::string &ip, uint16_t port, bool reuse_address)
 {
     Stop();
 
-    scheduler_ = event_loop_->GetTaskScheduler();
+    if (event_loop_) scheduler_ = event_loop_->GetTaskScheduler();
     if (!scheduler_ || scheduler_->IsStopped())
     {
         LOG_ERROR("UdpServer Start: no scheduler");
@@ -36,7 +54,7 @@ bool UdpServer::Start(const std::string &ip, uint16_t port)
         return;
     }
 
-    if (!sock_.Bind(ip, port))
+    if (!sock_.Bind(ip, port, reuse_address))
     {
         LOG_ERROR("UdpServer Start: bind failed");
         sock_.Close();
@@ -45,7 +63,17 @@ bool UdpServer::Start(const std::string &ip, uint16_t port)
 
     channel_ = std::make_shared<Channel>(sock_.Fd());
 
-    channel_->SetReadCallback([this]() { this->OnReadable(); });
+    auto weak = weak_from_this();
+    if (!weak.expired()) {
+        // A media transport may release its last server reference inside a
+        // packet callback. Keep the server alive until OnReadable returns.
+        channel_->SetReadCallback([weak] {
+            if (auto self = weak.lock()) self->OnReadable();
+        });
+    } else {
+        // Stack/unique owners use synchronous Stop before destruction.
+        channel_->SetReadCallback([this]() { this->OnReadable(); });
+    }
     channel_->EnableReading();
 
     scheduler_->UpdateChannel(channel_);

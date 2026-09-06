@@ -210,7 +210,7 @@ void rtcpx::RtcpReceiverImpl::HandleSingleRtcpPacket(const uint8_t* p, size_t le
             const uint32_t ntp_seconds = static_cast<uint32_t>(ntp >> 32);
             const uint32_t ntp_fraction = static_cast<uint32_t>(ntp);
 
-            LOG_INFO("[RTCP][SR] sender_ssrc=", sender_ssrc,
+            LOG_DEBUG("[RTCP][SR] sender_ssrc=", sender_ssrc,
                      " ntp_seconds=", ntp_seconds,
                      " ntp_fraction=", ntp_fraction,
                      " rtp_ts=", rtp_ts,
@@ -240,7 +240,7 @@ void rtcpx::RtcpReceiverImpl::HandleSingleRtcpPacket(const uint8_t* p, size_t le
         if (len >= 8)
         {
             const uint32_t sender_ssrc = utils::Utils::ReadUint32BE(p + 4);
-            LOG_INFO("[RTCP][RR] reporter_ssrc=", sender_ssrc,
+            LOG_DEBUG("[RTCP][RR] reporter_ssrc=", sender_ssrc,
                      " report_blocks=", static_cast<uint32_t>(fmt));
 
             size_t off = 8;
@@ -251,7 +251,7 @@ void rtcpx::RtcpReceiverImpl::HandleSingleRtcpPacket(const uint8_t* p, size_t le
                 const uint8_t fraction_lost = rb[4];
                 const int32_t cumulative_lost = ReadInt24BE(rb + 5);
 
-                LOG_INFO("[RTCP][RR] reporter_ssrc=", sender_ssrc,
+                LOG_DEBUG("[RTCP][RR] reporter_ssrc=", sender_ssrc,
                          " media_ssrc=", media_ssrc,
                          " fraction_lost=", static_cast<uint32_t>(fraction_lost),
                          " cumulative_lost=", cumulative_lost);

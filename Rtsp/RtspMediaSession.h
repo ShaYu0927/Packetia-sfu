@@ -75,6 +75,7 @@ public:
     bool GetChannelBinding(uint8_t channel, ChannelBinding* out) const;
 
     bool BindTrackEndpoint(int track_id, uint64_t endpoint_id);
+    void UnbindTrackEndpoint(uint64_t endpoint_id);
     uint64_t FindEndpointByTrack(int track_id) const;
     void SetFramePublisher(std::shared_ptr<media::IEncodedFramePublisher> publisher);
     std::shared_ptr<media::IEncodedFramePublisher> GetFramePublisher() const;

@@ -33,6 +33,7 @@ struct RtspTransport
     std::string profile;            /* RTP/AVP, RTP/AVP/TCP */
     bool unicast = true;
     bool multicast = false;
+    bool rtcp_mux = false;
 
     int interleaved_rtp = -1;
     int interleaved_rtcp = -1;

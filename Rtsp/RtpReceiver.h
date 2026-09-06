@@ -514,7 +514,7 @@ public:
 
     explicit RtpVideoTracker(const TrackInfo& info)
         : RtpReceiverTrack(info)
-        , _depacketizer(std::make_unique<H264Depacketizer>())
+        , _depacketizer(std::make_unique<H264Depacketizer>(info.fmtp))
         , _nack_receiver(std::make_unique<NackRequester>(NackRequester::Config{}))
     {
         _nack_receiver->SetNackCallback([this](const std::vector<uint16_t> &lost_seq){

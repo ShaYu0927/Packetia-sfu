@@ -37,7 +37,10 @@ enum class WorkType : uint32_t
     Control,
 
     // Type-erased C++ task for globally managed business worker pools.
-    Function
+    Function,
+
+    // Encoded media frame consumed by the recording module.
+    Recording
 };
 
 struct WorkJob
@@ -102,6 +105,15 @@ struct IJobHandler
 {
     virtual ~IJobHandler() = default;
     virtual void handle(WorkJob& job) = 0;
+    // Modules that keep worker-local state can override these hooks. Existing
+    // handlers continue to use handle(job) unchanged.
+    virtual void handle(WorkJob& job, std::size_t worker_index)
+    {
+        (void)worker_index;
+        handle(job);
+    }
+    virtual void on_worker_tick(std::size_t worker_index) { (void)worker_index; }
+    virtual void on_worker_stop(std::size_t worker_index) { (void)worker_index; }
 };
 
 

@@ -11,6 +11,8 @@
 #include "AIService/AIService.h"
 #include "AIService/UnavailableModelProvider.h"
 #include "core/EncodedFrameRouter.h"
+#include "RecordService/RecordingService.h"
+#include <cstdlib>
 
 #include <algorithm>
 #include <thread>
@@ -23,8 +25,6 @@ int main()
     auto media_module = std::make_shared<MediaWorkerModule>();
     registry.Add(media_module);
     registry.Add(std::make_shared<EndpointWorkerModule>());
-    registry.Add(std::make_shared<FunctionWorkerModule>("recording", 2, 2048, ShardedWorkerPool::DropPolicy::DropTail));
-
     const auto hardware_threads = std::thread::hardware_concurrency();
     const auto transcode_threads = std::clamp<std::size_t>(hardware_threads / 2, 1, 4);
     registry.Add(std::make_shared<FunctionWorkerModule>("transcode", transcode_threads, 512, ShardedWorkerPool::DropPolicy::DropTail));
@@ -66,6 +66,16 @@ int main()
 
     auto frame_router = std::make_shared<media::EncodedFrameRouter>();
     MediaSessionManager::Instance().SetFramePublisher(frame_router);
+
+    const char* recording_enabled = std::getenv("PACKETIA_RECORDING");
+    if (!recording_enabled || std::string(recording_enabled) != "0") {
+        service::RecordingOptions options;
+        if (const char* directory = std::getenv("PACKETIA_RECORD_DIR")) options.directory = directory;
+        auto recording = std::make_shared<service::RecordingService>(frame_router, options);
+        launcher.AddCustomService("RecordingService",
+            [recording] { return recording->Init() && recording->Start(); },
+            [recording] { recording->Stop(); });
+    }
 
     auto ai_service = std::make_shared<service::ai::AIService>(
         std::make_shared<service::ai::UnavailableModelProvider>(),

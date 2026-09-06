@@ -17,6 +17,15 @@ add_library(service STATIC
     AIService/AIService.cpp
     RecordService/RecordingService.h
     RecordService/RecordingService.cpp
+    RecordService/RecordingOptions.h
+    RecordService/Mp4Recorder.h
+    RecordService/Mp4Recorder.cpp
+    RecordService/Mp4Writer.cpp
+    RecordService/ISeekableFile.h
+    RecordService/LocalFileIO.h
+    RecordService/LocalFileIO.cpp
+    RecordService/RecordingDispatcher.h
+    RecordService/RecordingDispatcher.cpp
 )
 
 target_include_directories(service
@@ -29,7 +38,7 @@ target_include_directories(service
 
 target_compile_features(service PUBLIC cxx_std_17)
 
-target_link_libraries(service PUBLIC media LOGGER)
+target_link_libraries(service PUBLIC media LOGGER ${FFMPEG_LIBRARIES})
 
 if(MSVC)
     target_compile_options(service PRIVATE /utf-8)

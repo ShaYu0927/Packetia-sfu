@@ -432,7 +432,7 @@ void SfuEndpoint::DispatchEncodedFrame(const media::EncodedFrame::Ptr& frame)
         event.frame = immutable_frame;
         const size_t accepted = frame_publisher_->Publish(event);
         const uint64_t count = published_frame_count_.fetch_add(1) + 1;
-        if (count == 1 || count % 300 == 0)
+        if (count == 1)
         {
             LOG_INFO("[FRAME_SOURCE] encoded frame published, count=", count,
                      ", endpoint_id=", event.source.endpoint_id,
@@ -444,6 +444,14 @@ void SfuEndpoint::DispatchEncodedFrame(const media::EncodedFrame::Ptr& frame)
                      ", codec=", static_cast<int>(frame->info.codec),
                      ", bytes=", frame->size,
                      ", accepted_sinks=", accepted);
+        }
+        else if (count % 300 == 0)
+        {
+            LOG_DEBUG("[FRAME_SOURCE] encoded frame published, count=", count,
+                      ", endpoint_id=", event.source.endpoint_id,
+                      ", track_id=", event.source.track_id,
+                      ", bytes=", frame->size,
+                      ", accepted_sinks=", accepted);
         }
     }
     for (const auto& callback : callbacks)
@@ -725,7 +733,7 @@ void SfuEndpoint::EvaluateReceiveQuality(uint32_t source_ssrc)
     feedback.pli_count = track->GetPliCount();
     feedback.fir_count = track->GetFirCount();
 
-    LOG_INFO("[WEAK_NET][FEEDBACK] submit",
+    LOG_DEBUG("[WEAK_NET][FEEDBACK] submit",
              " ssrc=", source_ssrc,
              " now_ms=", feedback.now_ms,
              " sender_bitrate_bps=", feedback.send_bitrate_bps,
@@ -753,7 +761,7 @@ void SfuEndpoint::EvaluateReceiveQuality(uint32_t source_ssrc)
         state.quality = current_quality;
     }
 
-    LOG_INFO("[WEAK_NET][CONTROL] update",
+    LOG_DEBUG("[WEAK_NET][CONTROL] update",
              " ssrc=", source_ssrc,
              " quality=", ToString(current_quality),
              " has_target_rate=", update.has_target_rate,

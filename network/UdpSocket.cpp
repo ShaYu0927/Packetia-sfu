@@ -6,14 +6,14 @@ int network::UdpSocket::Create()
     return fd_;
 }
 
-bool network::UdpSocket::Bind(const std::string &ip, uint16_t port)
+bool network::UdpSocket::Bind(const std::string &ip, uint16_t port, bool reuse_address)
 {
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
     addr.sin_addr.s_addr = ip.empty() ? htonl(INADDR_ANY) : inet_addr(ip.c_str());
 
-    int reuse = 1;
+    int reuse = reuse_address ? 1 : 0;
     setsockopt(fd_, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
 
     int ret = ::bind(fd_, (sockaddr*)&addr, sizeof(addr));
