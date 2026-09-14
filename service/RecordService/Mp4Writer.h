@@ -1,7 +1,7 @@
 #pragma once
 
 #include "ISeekableFile.h"
-#include "core/EncodedFrameRouter.h"
+#include "EncodedFrameRouter.h"
 #include <map>
 #include <memory>
 #include <string>
@@ -31,7 +31,8 @@ private:
     bool FailFile(const std::string& operation);
     static int WritePacket(void* opaque, uint8_t* data, int bytes);
     static int64_t Seek(void* opaque, int64_t offset, int whence);
-    struct Track {
+    struct Track 
+    {
         int index = 0;
         AVPacket* pending = nullptr;
         int64_t last_duration = 0;

@@ -44,7 +44,7 @@ public:
     bool Start();
     void Stop();
     AIFrameIngressStats Stats() const;
-    bool TryEnqueue(const media::EncodedFrameEvent& event) override;
+    bool SubmitFrame(const media::EncodedFrameEvent& event) override;
 
 private:
     void Run();

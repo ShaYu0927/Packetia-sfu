@@ -638,3 +638,29 @@ RTCP SR
 - 将目标码率、Pacer 和 FEC 建议接入实际媒体发送或编码控制接口。
 - 完善下行 `RtpSenderTrack` 的 RR/TWCC、RTT 和带宽估计控制链路。
 - 增加 Endpoint/Session 级音视频质量聚合策略。
+
+## 2026-09-14 — 完善录像生命周期并接通发送侧 GCC 反馈链路
+
+### 本次完成
+
+- 拆分 `RecordingSession`、`RecordingInstance` 和 `RecordingSegment`，明确录像会话、执行实例与文件分段的职责。
+- 引入 `IRecorder` 和录像事件回调，补充状态流转、停止原因及失败通知。
+- 录像先写入临时文件，成功收尾后重命名为正式 MP4 文件。
+- 统一编码帧订阅接口为 `SubmitFrame`，同步适配录像和 AI 模块。
+- 新增 Transport 级 `SendSideController`，统一管理发送历史与 GCC。
+- 音视频及重传共享 TWCC 序号，发送成功后记录包信息。
+- 接通 TWCC/RR 反馈处理与目标码率、Pacer 配置输出回调。
+- 补充序号回绕匹配、重复反馈过滤和断线状态重置。
+- 保留 TWCC 带宽估计，避免 RTT 更新额外改变目标码率。
+- 拆出 `media_quality` 库，明确发送轨与控制器的链接依赖。
+- 新增 8 个发送侧链路测试及[接入文档](media/quality/README.md)。
+
+### 验证情况
+
+- 发送侧与原有弱网测试共 16 项，独立构建运行通过。
+- 完整服务及录像改动尚未完成本轮联调。
+
+### 后续工作
+
+- 当前 GCC 链路接至控制输出接口，继续接入实际 Pacer 发包和编码器调码率。
+- 实现 TWCC 超时后的 RR 回退策略。

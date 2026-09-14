@@ -18,6 +18,13 @@ add_library(service STATIC
     RecordService/RecordingService.h
     RecordService/RecordingService.cpp
     RecordService/RecordingOptions.h
+    RecordService/RecordingTypes.h
+    RecordService/IRecorder.h
+    RecordService/RecordingSegment.h
+    RecordService/RecordingInstance.h
+    RecordService/RecordingInstance.cpp
+    RecordService/RecordingSession.h
+    RecordService/RecordingSession.cpp
     RecordService/Mp4Recorder.h
     RecordService/Mp4Recorder.cpp
     RecordService/Mp4Writer.cpp

@@ -1,78 +1,43 @@
 #pragma once
 
-#include "RecordingOptions.h"
-#include "Mp4Writer.h"
-#include <atomic>
-#include <map>
+#include "IRecorder.h"
+#include "RecordingTypes.h"
+#include "RecordingSegment.h"
 
-namespace service {
-
-// Shared across recording workers; must outlive every recorder. Only the
-// immutable options and atomic budgets/counters are shared between workers.
-struct RecordingContext 
+namespace service 
 {
-    const RecordingOptions& options;
-    const int64_t run_id;
-    std::atomic<uint64_t> sequence{0};
-    std::atomic<size_t> pending_bytes{0};
-    std::atomic<uint64_t>& written;
-    std::atomic<uint64_t>& dropped;
-    std::atomic<uint64_t>& completed;
-    std::atomic<uint64_t>& errors;
 
-    RecordingContext(const RecordingOptions& opts, int64_t id,
-        std::atomic<uint64_t>& w, std::atomic<uint64_t>& d,
-        std::atomic<uint64_t>& c, std::atomic<uint64_t>& e)
-        : options(opts), run_id(id), written(w), dropped(d), completed(c), errors(e) {}
-
-    bool ReservePending(size_t bytes) {
-        auto used = pending_bytes.load();
-        do {
-            if (bytes > options.max_pending_bytes - used) return false;
-        } while (!pending_bytes.compare_exchange_weak(used, used + bytes));
-        return true;
-    }
-};
-
-// One stream's recording lifecycle; all methods run on its assigned worker.
-class Mp4Recorder 
+// Existing MP4 recording instance. RecordingSession supervises its lifecycle;
+// a later extraction can move the nested file state into RecordingSegment.
+class Mp4Recorder final : public IRecorder
 {
 public:
-    explicit Mp4Recorder(RecordingContext& context) : context_(context) {}
-    ~Mp4Recorder();
+    explicit Mp4Recorder(RecordingContext& context, RecordingInstanceId instance)
+        : context_(context), instance_(std::move(instance)) {}
+
+    ~Mp4Recorder() override;
     Mp4Recorder(const Mp4Recorder&) = delete;
     Mp4Recorder& operator=(const Mp4Recorder&) = delete;
-    void InputFrame(const media::EncodedFrameEvent& event, uint64_t now);
-    // Returns true when the recorder has finalized and can be removed.
-    bool Tick(uint64_t now, bool stopping);
-    void Close();
+    void InputFrame(const media::EncodedFrameEvent& event, uint64_t now) override;
+    
+    bool Tick(uint64_t now, bool stopping) override;
+    void Close() override;
+    bool IsOpen() const noexcept override { return segment_.IsOpen(); }
+    bool HasFailed() const noexcept override { return segment_.HasFailed(); }
 private:
     void DiscardPending();
     void Fail(const std::string& message);
     void Write(const media::EncodedFrameEvent& event);
+    
+    void EmitEvent(RecordingEventType type, RecordingSessionState state, const std::string& error = {});
+    
+
+    bool CanOpen(uint64_t now, bool force) const;
+    bool HasReadyVideoTrack() const;
     void Open();
-    struct Clock
-    {
-        media::EncodedFrameEvent first;
-        uint32_t previous = 0;
-        int64_t ticks = 0;
-        int64_t anchor_us = 0;
-    };
-
-
-    struct Recording
-    {
-        std::map<uint64_t, Clock> tracks;
-        std::vector<media::EncodedFrameEvent> pending;
-        std::unique_ptr<Mp4Writer> writer;
-        std::string path;
-        uint64_t first_ms = 0, last_ms = 0, frames = 0;
-        int64_t origin_us = 0;
-        size_t pending_bytes = 0;
-        bool video_seen = false, failed = false;
-        std::string session_id, stream_id;
-    };
-    Recording recording_;
+    RecordingSegment segment_;
     RecordingContext& context_;
+    RecordingInstanceId instance_;
 };
+
 }

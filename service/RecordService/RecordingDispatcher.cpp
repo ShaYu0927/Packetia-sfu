@@ -1,4 +1,5 @@
 #include "RecordingDispatcher.h"
+#include "EncodedFrameRouter.h"
 #include "logger.h"
 #include <chrono>
 #include <stdexcept>
@@ -34,12 +35,12 @@ struct RecordingDispatcher::FrameJob
 class RecordingDispatcher::JobHandler final : public IJobHandler
 {
 public:
-    struct Session
+    struct SessionEntry
     {
         std::shared_ptr<StreamEntry> stream;
-        std::unique_ptr<Mp4Recorder> recorder;
+        std::unique_ptr<RecordingSession> session;
     };
-    using Sessions = std::map<Key, Session>;
+    using Sessions = std::map<Key, SessionEntry>;
 
     JobHandler(RecordingDispatcher& owner, size_t workers)
         : owner_(owner), sessions_(workers) {}
@@ -74,24 +75,26 @@ public:
         }
 
         try {
+            const auto now = NowMs();
             if (restart && found != shard.end()) 
             {
-                found->second.recorder->Close();
+                found->second.session->Close(RecordingStopReason::QueueOverflow, now);
                 shard.erase(found);
                 found = shard.end();
             }
             if (found == shard.end()) 
             {
-                Session session;
-                session.stream = frame->stream;
-                session.recorder = std::make_unique<Mp4Recorder>(*owner_.context_);
-                found = shard.emplace(frame->stream->key, std::move(session)).first;
+                SessionEntry entry;
+                entry.stream = frame->stream;
+                const RecordingSessionKey key{frame->stream->key.first, frame->stream->key.second};
+                entry.session = std::make_unique<RecordingSession>(
+                    *owner_.context_, key, ++owner_.context_->instance_sequence, now);
+                found = shard.emplace(frame->stream->key, std::move(entry)).first;
                 std::lock_guard<std::mutex> lock(owner_.mutex_);
                 frame->stream->active = true;
             }
-            const auto now = NowMs();
-            found->second.recorder->InputFrame(frame->event, now);
-            if (found->second.recorder->Tick(now, false)) 
+            found->second.session->InputFrame(frame->event, now);
+            if (found->second.session->Tick(now, false))
             {
                 shard.erase(found);
                 MarkInactive(frame->stream);
@@ -121,7 +124,7 @@ public:
         const auto now = NowMs();
         for (auto it = shard.begin(); it != shard.end();) {
             try {
-                if (!it->second.recorder->Tick(now, false)) { ++it; continue; }
+                if (!it->second.session->Tick(now, false)) { ++it; continue; }
             } catch (const std::exception& error) {
                 LOG_ERROR("[RECORD] tick failed, session=", it->first.first,
                           " stream=", it->first.second, " error=", error.what());
@@ -140,8 +143,9 @@ public:
         if (worker >= sessions_.size()) return;
         for (auto& item : sessions_[worker]) {
             try {
-                if (!item.second.recorder->Tick(NowMs(), true))
-                    item.second.recorder->Close();
+                if (!item.second.session->Tick(NowMs(), true))
+                    item.second.session->Close(RecordingStopReason::ServiceStopping,
+                                               NowMs());
             } catch (...) {
                 ++owner_.errors_;
             }
@@ -184,7 +188,8 @@ void RecordingDispatcher::Start()
     handler_ = std::make_shared<JobHandler>(*this, options_.worker_count);
     if (WorkerService::exists("recording") ||
         WorkerService::create_pool("recording", options_.worker_count, handler_,
-            options_.max_queue_frames, ShardedWorkerPool::DropPolicy::DropTail) != 0) {
+            options_.max_queue_frames, ShardedWorkerPool::DropPolicy::DropTail) != 0) 
+    {
         handler_.reset();
         throw std::runtime_error("start recording worker module failed");
     }

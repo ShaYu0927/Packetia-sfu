@@ -3,11 +3,13 @@
 #include "ISeekableFile.h"
 #include <cstdio>
 
-namespace service {
+namespace service 
+{
 
 // stdio-backed implementation. Opening and path policy are concrete backend
 // concerns and intentionally do not belong to ISeekableFile.
-class LocalFileIO final : public ISeekableFile {
+class LocalFileIO final : public ISeekableFile 
+{
 public:
     enum class OpenMode { Create, ReadOnly };
 

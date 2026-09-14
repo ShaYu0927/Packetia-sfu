@@ -2,6 +2,7 @@
 
 #include "core/IService.h"
 #include "RecordingOptions.h"
+#include "RecordingTypes.h"
 #include "core/EncodedFrameRouter.h"
 #include <atomic>
 #include <mutex>
@@ -14,10 +15,12 @@ struct RecordingStats {
 };
 
 class RecordingService final : public IService, public media::IEncodedFrameSink,
-                               public std::enable_shared_from_this<RecordingService> {
+                               public std::enable_shared_from_this<RecordingService> 
+{
 public:
     explicit RecordingService(std::shared_ptr<media::EncodedFrameRouter> router,
-                              RecordingOptions options = {});
+                              RecordingOptions options = {},
+                              std::shared_ptr<IRecordingEventSink> event_sink = nullptr);
     ~RecordingService() override;
     bool Init() override;
     bool Start() override;
@@ -27,10 +30,11 @@ public:
     ServiceState State() const override { return state_.load(); }
     ServiceHealth Health() const override;
     RecordingStats Stats() const;
-    bool TryEnqueue(const media::EncodedFrameEvent& event) override;
+    bool SubmitFrame(const media::EncodedFrameEvent& event) override;
 private:
     std::shared_ptr<media::EncodedFrameRouter> router_;
     RecordingOptions options_;
+    std::shared_ptr<IRecordingEventSink> event_sink_;
     std::mutex lifecycle_mutex_;
     mutable std::mutex mutex_;
     std::shared_ptr<RecordingDispatcher> dispatcher_;

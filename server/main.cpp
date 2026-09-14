@@ -68,7 +68,8 @@ int main()
     MediaSessionManager::Instance().SetFramePublisher(frame_router);
 
     const char* recording_enabled = std::getenv("PACKETIA_RECORDING");
-    if (!recording_enabled || std::string(recording_enabled) != "0") {
+    if (!recording_enabled || std::string(recording_enabled) != "0") 
+    {
         service::RecordingOptions options;
         if (const char* directory = std::getenv("PACKETIA_RECORD_DIR")) options.directory = directory;
         auto recording = std::make_shared<service::RecordingService>(frame_router, options);

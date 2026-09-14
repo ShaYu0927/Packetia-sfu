@@ -1,4 +1,5 @@
 #include "MediaTransportBase.h"
+#include "quality/SendSideController.h"
 
 #include <utility>
 
@@ -29,6 +30,25 @@ void MediaTransportBase::SetPacketSink(std::weak_ptr<IMediaPacketSink> sink)
 void MediaTransportBase::SetState(MediaTransportState state) noexcept
 {
     state_.store(state, std::memory_order_release);
+    std::shared_ptr<media::SendSideController> controller;
+    {
+        std::lock_guard<std::mutex> lock(controller_mutex_);
+        controller = send_controller_;
+    }
+    if (controller)
+        controller->SetNetworkAvailable(state == MediaTransportState::Connected);
+}
+
+std::shared_ptr<media::SendSideController> MediaTransportBase::GetSendSideController()
+{
+    std::lock_guard<std::mutex> lock(controller_mutex_);
+    if (!send_controller_)
+    {
+        media::NetworkControllerConfig config;
+        config.network_available = State() == MediaTransportState::Connected;
+        send_controller_ = std::make_shared<media::SendSideController>(config);
+    }
+    return send_controller_;
 }
 
 void MediaTransportBase::DetachPacketSink()
@@ -45,6 +65,16 @@ MediaPacketIngressResult MediaTransportBase::PublishPacket(MediaPacketType type,
     }
 
     std::shared_ptr<IMediaPacketSink> sink;
+    if (type == MediaPacketType::Rtcp)
+    {
+        std::shared_ptr<media::SendSideController> controller;
+        {
+            std::lock_guard<std::mutex> lock(controller_mutex_);
+            controller = send_controller_;
+        }
+        if (controller && !controller->OnRtcpPacket(data, size, receive_time_ms))
+            return MediaPacketIngressResult::Dropped;
+    }
     {
         std::lock_guard<std::mutex> lock(sink_mutex_);
         sink = sink_.lock();

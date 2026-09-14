@@ -1,5 +1,5 @@
 #include "RecordingService.h"
-#include "Mp4Recorder.h"
+#include "RecordingTypes.h"
 #include "RecordingDispatcher.h"
 #include "logger.h"
 #include <chrono>
@@ -8,8 +8,11 @@
 #include <utility>
 
 namespace service {
-RecordingService::RecordingService(std::shared_ptr<media::EncodedFrameRouter> router, RecordingOptions options)
-    : router_(std::move(router)), options_(std::move(options)) {}
+RecordingService::RecordingService(std::shared_ptr<media::EncodedFrameRouter> router,
+                                   RecordingOptions options,
+                                   std::shared_ptr<IRecordingEventSink> event_sink)
+    : router_(std::move(router)), options_(std::move(options)),
+      event_sink_(std::move(event_sink)) {}
 RecordingService::~RecordingService() { Stop(); }
 
 bool RecordingService::Init()
@@ -40,9 +43,8 @@ bool RecordingService::Start()
     try {
         auto context = std::make_shared<RecordingContext>(options_,
             std::chrono::system_clock::now().time_since_epoch().count(),
-            written_, dropped_, completed_, errors_);
-        dispatcher = std::make_shared<RecordingDispatcher>(
-            options_, context, accepted_, dropped_, errors_);
+            written_, dropped_, completed_, errors_, event_sink_);
+        dispatcher = std::make_shared<RecordingDispatcher>(options_, context, accepted_, dropped_, errors_);
         dispatcher->Start();
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -50,7 +52,9 @@ bool RecordingService::Start()
         }
         subscription_ = router_->Subscribe(shared_from_this());
         if (!subscription_) throw std::runtime_error("recording subscription failed");
-    } catch (...) {
+    } 
+    catch (...) 
+    {
         {
             std::lock_guard<std::mutex> lock(mutex_);
             dispatcher_.reset();
@@ -60,9 +64,6 @@ bool RecordingService::Start()
         return false;
     }
     state_ = ServiceState::Running;
-    LOG_INFO("[RECORD] started, directory=", std::filesystem::absolute(options_.directory).string(),
-             " workers=", options_.worker_count,
-             " segment_ms=", options_.segment_ms, " idle_timeout_ms=", options_.idle_timeout_ms);
     return true;
 }
 
@@ -106,7 +107,7 @@ RecordingStats RecordingService::Stats() const
     return {accepted_, written_, dropped_, completed_, errors_, queued.frames, queued.bytes};
 }
 
-bool RecordingService::TryEnqueue(const media::EncodedFrameEvent& event)
+bool RecordingService::SubmitFrame(const media::EncodedFrameEvent& event)
 {
     if (!event.Valid() || !event.frame->IsComplete() ||
         (event.frame->info.codec != media::CodecType::H264 && event.frame->info.codec != media::CodecType::AAC)) {

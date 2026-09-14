@@ -70,7 +70,8 @@ int LocalFileIO::Write(const void* data, uint64_t bytes) {
     return count == bytes ? 0 : Fail(errno);
 }
 
-int LocalFileIO::Seek(int64_t offset) {
+int LocalFileIO::Seek(int64_t offset) 
+{
     if (!file_) return Fail(EBADF);
     errno = 0;
 #if defined(__MINGW32__) && !defined(__MINGW64_VERSION_MAJOR)

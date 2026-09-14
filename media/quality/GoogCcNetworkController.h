@@ -4,6 +4,7 @@
 #include "NetworkController.h"
 #include "NetworkControllerInterface.h"
 #include "bwe/transport_bwe_controller.h"
+#include <optional>
 
 namespace media
 {
@@ -48,6 +49,7 @@ private:
 
     // 当前项目已有的包级时延带宽估计器，未来可替换为 DelayBasedBwe。
     TransportBweController delay_bwe_;
+    std::optional<BweResult> latest_bwe_;
 
     // 当前项目已有的控制策略层，未来承接 loss based 与 pushback 融合。
     NetworkController policy_;

@@ -104,7 +104,7 @@ AIFrameIngressStats AIFrameIngress::Stats() const
     return stats;
 }
 
-bool AIFrameIngress::TryEnqueue(const media::EncodedFrameEvent& event)
+bool AIFrameIngress::SubmitFrame(const media::EncodedFrameEvent& event)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!running_ || !event.Valid())

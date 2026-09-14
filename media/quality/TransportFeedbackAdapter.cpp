@@ -14,7 +14,7 @@ TransportFeedback TransportFeedbackAdapter::Build(const rtcpx::TransportFeedback
     for (const auto& item : report.packets)
     {
         PacketSendInfo sent_packet;
-        if (!history.GetPacket(item.transport_sequence, sent_packet))
+        if (!history.GetPacketByWireSequence(item.transport_sequence, sent_packet))
         {
             continue;
         }

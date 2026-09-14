@@ -6,8 +6,7 @@
 namespace media
 {
 
-EncodedFrameRouter::SubscriptionId EncodedFrameRouter::Subscribe(
-    std::shared_ptr<IEncodedFrameSink> sink)
+EncodedFrameRouter::SubscriptionId EncodedFrameRouter::Subscribe(std::shared_ptr<IEncodedFrameSink> sink)
 {
     if (!sink)
     {
@@ -18,8 +17,7 @@ EncodedFrameRouter::SubscriptionId EncodedFrameRouter::Subscribe(
     auto slot = std::make_shared<Slot>(std::move(sink));
     std::lock_guard<std::mutex> lock(mutex_);
     slots_.emplace(id, std::move(slot));
-    LOG_INFO("[FRAME_ROUTER] sink subscribed, subscription_id=", id,
-             ", sink_count=", slots_.size());
+    LOG_INFO("[FRAME_ROUTER] sink subscribed, subscription_id=", id, ", sink_count=", slots_.size());
     return id;
 }
 
@@ -35,8 +33,7 @@ void EncodedFrameRouter::Unsubscribe(SubscriptionId id)
         }
         removed = std::move(it->second);
         slots_.erase(it);
-        LOG_INFO("[FRAME_ROUTER] sink unsubscribed, subscription_id=", id,
-                 ", sink_count=", slots_.size());
+        LOG_INFO("[FRAME_ROUTER] sink unsubscribed, subscription_id=", id, ", sink_count=", slots_.size());
     }
     removed->active.store(false);
 }
@@ -67,7 +64,7 @@ size_t EncodedFrameRouter::Publish(const EncodedFrameEvent& event)
         }
 
         const auto sink = slot->sink.lock();
-        if (sink && sink->TryEnqueue(event))
+        if (sink && sink->SubmitFrame(event))
         {
             ++accepted;
         }

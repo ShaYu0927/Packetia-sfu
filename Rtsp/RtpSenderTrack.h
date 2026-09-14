@@ -88,6 +88,8 @@ struct RtpSenderTrackConfig
     /*
      * 当前下行 Transport 共享的 TWCC 分配器。音频、视频和 RTX Track
      * 必须注入同一个实例，不能每个 Track 单独创建。
+     * Transport 提供 SendSideController 时自动使用它的 allocator；
+     * 本字段仅作为自定义 Transport 未提供控制器时的依赖注入入口。
      */
     std::shared_ptr<media::TransportSequenceAllocator> transport_sequence_allocator;
 };
@@ -107,7 +109,9 @@ public:
 public:
     RtpSenderTrack(const RtpSenderTrackConfig& config, std::shared_ptr<IMediaTransport> transport);
 
-    ~RtpSenderTrack() = default;
+    ~RtpSenderTrack();
+    RtpSenderTrack(const RtpSenderTrack&) = delete;
+    RtpSenderTrack& operator=(const RtpSenderTrack&) = delete;
 
 public:
     bool InputRtpPacket(const uint8_t* data, size_t len);
@@ -198,6 +202,7 @@ private:
      * pointers when the session is closed first.
      */
     std::weak_ptr<IMediaTransport> _transport;
+    std::shared_ptr<media::SendSideController> _send_controller;
 
     /*
      * Whether the first RTP packet has been received.

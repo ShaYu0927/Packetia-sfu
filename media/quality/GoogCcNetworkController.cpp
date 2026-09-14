@@ -28,6 +28,7 @@ NetworkControlUpdate GoogCcNetworkController::OnNetworkRouteChange(
     // 编排层状态；各个估计器的显式 Reset 会在拆分子组件时补齐。
     policy_.SetBitrateConstraints(msg.bitrate);
     latest_feedback_ = WeakNetFeedback{};
+    latest_bwe_.reset();
     latest_feedback_.now_ms = msg.at_time_ms;
     has_feedback_ = false;
     latest_update_ = NetworkControlUpdate{};
@@ -49,6 +50,11 @@ NetworkControlUpdate GoogCcNetworkController::OnRoundTripTimeUpdate(
     // 避免启动阶段凭一个 RTT 样本产生没有依据的目标码率。
     latest_feedback_.now_ms = msg.at_time_ms;
     latest_feedback_.rtt_ms = msg.rtt_ms;
+    if (network_available_ && has_feedback_ && latest_bwe_)
+    {
+        latest_update_ = policy_.OnBweResultAndFeedback(*latest_bwe_, latest_feedback_);
+        return latest_update_;
+    }
     return network_available_ && has_feedback_
                ? OnReceiverFeedback(latest_feedback_)
                : EmptyUpdate();
@@ -65,6 +71,7 @@ NetworkControlUpdate GoogCcNetworkController::OnTransportPacketsFeedback(
     // 第一阶段复用现有 BWE。这里是未来接入 acknowledged bitrate、probe
     // bitrate、delay based 和 loss based 结果融合的固定位置。
     const BweResult bwe = delay_bwe_.OnTransportFeedback(msg.feedback);
+    latest_bwe_ = bwe;
 
     // 将包级估计结果合并进统一反馈快照，再交给策略层生成控制动作。
     latest_feedback_.now_ms = msg.feedback.feedback_time_ms;

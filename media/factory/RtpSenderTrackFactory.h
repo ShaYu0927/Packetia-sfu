@@ -20,8 +20,9 @@ public:
         config.payload_type = source_info.payload_type;
         config.sample_rate = source_info.clock_rate > 0 ? source_info.clock_rate : 90000;
         config.rtp_cache_size = 512;
-        // 同一订阅者下行 Transport 创建音频、视频 Track 时，调用方必须
-        // 传入同一个 allocator；Factory 只注入依赖，不能在这里按 Track 新建。
+        // 支持发送侧控制的 Transport 自动提供共享 allocator。下面的参数
+        // 用于自定义 Transport；此时调用方必须为同一路径传入同一个实例。
+        // extension ID 必须来自下游协商，不能使用上游 source_info 的 ID。
         config.transport_sequence_allocator = std::move(transport_sequence_allocator);
         config.transport_cc_extension_id = transport_cc_extension_id;
 

@@ -1,4 +1,5 @@
 #include "RtpSenderTrack.h"
+#include "../media/quality/SendSideController.h"
 
 #include <algorithm>
 #include <chrono>
@@ -79,6 +80,21 @@ RtpSenderTrack::RtpSenderTrack(const RtpSenderTrackConfig& config,
     : _config(config),
       _transport(std::move(transport))
 {
+    if (auto bound_transport = _transport.lock())
+    {
+        _send_controller = bound_transport->GetSendSideController();
+        if (_send_controller)
+        {
+            _config.transport_sequence_allocator = _send_controller->SequenceAllocator();
+            _send_controller->RegisterSender(_config.local_ssrc,
+                _config.sample_rate > 0 ? static_cast<uint32_t>(_config.sample_rate) : 0);
+        }
+    }
+}
+
+RtpSenderTrack::~RtpSenderTrack()
+{
+    if (_send_controller) _send_controller->UnregisterSender(_config.local_ssrc);
 }
 
 bool RtpSenderTrack::InputRtpPacket(const uint8_t* data, size_t len)
@@ -426,6 +442,19 @@ void RtpSenderTrack::NotifyPacketSent(const media::TransportSequenceNumber& sequ
                                       uint16_t rtp_sequence,
                                       size_t packet_size)
 {
+    // No transport sequence exists unless the downstream negotiated TWCC.
+    if (_config.transport_cc_extension_id == 0) return;
+    const uint64_t sent_at_ms = NowMs();
+    if (_send_controller && sequence.extended_sequence >= 0)
+    {
+        media::PacketSendInfo packet;
+        packet.transport_sequence = sequence.extended_sequence;
+        packet.ssrc = _config.local_ssrc;
+        packet.rtp_sequence = rtp_sequence;
+        packet.send_time_ms = sent_at_ms;
+        packet.size_bytes = static_cast<uint32_t>(packet_size);
+        _send_controller->OnPacketSent(packet);
+    }
     // extended_sequence 是本地连续键；wire_sequence 是 RTP 中的 16 位值。
     // 两者必须一起保留，后续反馈适配器负责把回绕后的 wire sequence
     // 展开并匹配到正确的 PacketHistory 记录。
@@ -435,7 +464,7 @@ void RtpSenderTrack::NotifyPacketSent(const media::TransportSequenceNumber& sequ
                         sequence.wire_sequence,
                         _config.local_ssrc,
                         rtp_sequence,
-                        NowMs(),
+                        sent_at_ms,
                         static_cast<uint32_t>(packet_size));
     }
 }

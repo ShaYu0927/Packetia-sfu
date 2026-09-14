@@ -5,6 +5,8 @@
 #include <cstdint>
 #include "IMediaPacketSink.h"
 
+namespace media { class SendSideController; }
+
 enum class SendResult
 {
     Ok = 0,
@@ -51,6 +53,12 @@ public:
                             bool retransmit = false) = 0;
 
     virtual void Close() = 0;
+
+    // Optional transport-wide sending state. Implementations without feedback
+    // support can retain the default; UDP/interleaved transports share one
+    // controller across every sender track using that transport.
+    virtual std::shared_ptr<media::SendSideController> GetSendSideController()
+    { return nullptr; }
 
     bool IsClosed() const noexcept
     {

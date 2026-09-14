@@ -18,6 +18,7 @@ public:
     uint64_t Id() const noexcept final;
     MediaTransportState State() const noexcept final;
     void SetPacketSink(std::weak_ptr<IMediaPacketSink> sink) final;
+    std::shared_ptr<media::SendSideController> GetSendSideController() final;
 
 protected:
     void SetState(MediaTransportState state) noexcept;
@@ -34,6 +35,8 @@ private:
     std::atomic<MediaTransportState> state_{MediaTransportState::Created};
     std::mutex sink_mutex_;
     std::weak_ptr<IMediaPacketSink> sink_;
+    std::mutex controller_mutex_;
+    std::shared_ptr<media::SendSideController> send_controller_;
 };
 
 } // namespace media::transport
