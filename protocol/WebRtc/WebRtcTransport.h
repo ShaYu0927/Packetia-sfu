@@ -25,11 +25,7 @@ class IWebRtcTransportSink
 {
 public:
     virtual ~IWebRtcTransportSink() = default;
-
-    virtual void OnWebRtcDatagram(
-        network::transport::DatagramProtocol protocol,
-        network::transport::ReceivedDatagram datagram) = 0;
-
+    virtual void OnWebRtcDatagram(network::transport::DatagramProtocol protocol, network::transport::ReceivedDatagram datagram) = 0;
     virtual void OnWebRtcTransportClosed() {}
 };
 
@@ -39,14 +35,10 @@ public:
  * This class owns demultiplexing, selected-peer validation and raw datagram
  * I/O. ICE, DTLS and SRTP processing are deliberately supplied by its sink.
  */
-class WebRtcTransport final
-    : public network::transport::IDatagramSink,
-      public std::enable_shared_from_this<WebRtcTransport>
+class WebRtcTransport final : public network::transport::IDatagramSink, public std::enable_shared_from_this<WebRtcTransport>
 {
 public:
-    WebRtcTransport(
-        uint64_t id,
-        std::shared_ptr<network::transport::IDatagramTransport> datagram_transport);
+    WebRtcTransport(uint64_t id, std::shared_ptr<network::transport::IDatagramTransport> datagram_transport);
 
     uint64_t Id() const noexcept { return id_; }
     WebRtcTransportState State() const noexcept;
@@ -58,16 +50,9 @@ public:
     bool SelectPeer(const network::SocketAddr& peer);
     bool IsSelectedPeer(const network::SocketAddr& peer) const;
 
-    network::transport::DatagramSendResult Send(
-        network::transport::DatagramProtocol protocol,
-        const uint8_t* data,
-        size_t size);
+    network::transport::DatagramSendResult Send(network::transport::DatagramProtocol protocol, const uint8_t* data, size_t size);
 
-    network::transport::DatagramSendResult SendTo(
-        const network::SocketAddr& peer,
-        network::transport::DatagramProtocol protocol,
-        const uint8_t* data,
-        size_t size);
+    network::transport::DatagramSendResult SendTo(const network::SocketAddr& peer, network::transport::DatagramProtocol protocol, const uint8_t* data, size_t size);
 
     void OnDatagram(network::transport::ReceivedDatagram datagram) override;
 

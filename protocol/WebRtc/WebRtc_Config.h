@@ -1,9 +1,15 @@
 #ifndef _WEBRTC_CONFIG_H_
 #define _WEBRTC_CONFIG_H_
 
+#include "SdpMode.h"
+
+#include <cstdint>
 #include <string>
 #include <vector>
 #include <memory>
+
+namespace protocol::webrtc
+{
 
 namespace RtpHeaderExtensionUri
 {
@@ -43,9 +49,7 @@ namespace RtcpFeedbackType
     static const std::string GOOG_REMB = "goog-remb";
 }
 
-/*
- * RTCP Feedback parameter
- */
+
 namespace RtcpFeedbackParameter
 {
     static const std::string PLI = "pli";
@@ -110,12 +114,7 @@ struct Config
     RTCConfig rtc;
 };
 
-/*
- * BufferFactory 占位类。
- *
- * 在实际实现中，BufferFactory 可以提供创建和管理 RTP/RTCP 数据包缓冲区的功能，以优化内存使用和性能。
- *
- */
+
 class BufferFactory
 {
 public:
@@ -123,13 +122,7 @@ public:
     virtual ~BufferFactory() = default;
 };
 
-/*
- * SettingEngine 占位类。
- *
- * 
- * webRTCConfig.SettingEngine.DisableActiveTCP(true)
- * c.SettingEngine.BufferFactory = factory.GetOrNew
- */
+
 class SettingEngine
 {
 public:
@@ -146,10 +139,7 @@ public:
 private:
     bool disableActiveTCP_ = false;
 };
-/*
- * WebRTC 基础配置。
- *
- */
+
 struct BaseWebRTCConfig
 {
     SettingEngine settingEngine;
@@ -177,9 +167,130 @@ private:
     std::shared_ptr<BufferFactory> bufferFactory_;
 };
 
+enum class SdpType
+{
+    Offer,
+    Answer,
+    Pranswer,
+    Rollback
+};
+
+struct IceParameters
+{
+    std::string ufrag;
+    std::string pwd;
+    bool iceLite = false;
+    std::vector<std::string> options;
+    std::vector<std::string> candidates;
+    bool endOfCandidates = false;
+};
+
+enum class DtlsSetup
+{
+    Unspecified,
+    ActPass,
+    Active,
+    Passive,
+    HoldConn
+};
+
+struct DtlsFingerprint
+{
+    std::string algorithm;
+    std::string value;
+};
+
+struct DtlsParameters
+{
+    DtlsSetup setup = DtlsSetup::Unspecified;
+    std::vector<DtlsFingerprint> fingerprints;
+};
+
+struct BundleParameters
+{
+    std::vector<std::string> mids;
+};
+
+enum class MediaDirection
+{
+    SendRecv,
+    SendOnly,
+    RecvOnly,
+    Inactive
+};
+
+struct RtpCodecParameters
+{
+    int payloadType = -1;
+    std::string encodingName;
+    int clockRate = 0;
+    int channels = 0;
+    std::string fmtp;
+    std::vector<RtcpFeedback> rtcpFeedback;
+};
+
+struct RtpHeaderExtensionParameters
+{
+    int id = 0;
+    std::string uri;
+    MediaDirection direction = MediaDirection::SendRecv;
+    std::string attributes;
+};
+
+struct RtpSsrcParameters
+{
+    uint32_t ssrc = 0;
+    std::vector<sdp::SdpAttribute> attributes;
+};
+
+struct RtpSsrcGroup
+{
+    std::string semantics;
+    std::vector<uint32_t> ssrcs;
+};
+
+struct WebRtcMediaDescription
+{
+    // Original m= section, including media kind, port, protocol and attributes.
+    sdp::SdpMedia sdp;
+    std::string mid;
+    MediaDirection direction = MediaDirection::SendRecv;
+    bool rtcpMux = false;
+    bool rtcpRsize = false;
+    bool bundleOnly = false;
+
+    // Effective transport parameters after applying session-level defaults.
+    IceParameters ice;
+    DtlsParameters dtls;
+
+    std::vector<RtpCodecParameters> codecs;
+    std::vector<RtpHeaderExtensionParameters> headerExtensions;
+    // Feedback with a wildcard payload type (a=rtcp-fb:*).
+    std::vector<RtcpFeedback> rtcpFeedback;
+    std::vector<RtpSsrcParameters> ssrcs;
+    std::vector<RtpSsrcGroup> ssrcGroups;
+    std::vector<std::string> msids;
+};
+
+// Value model only: the raw SDP and extracted parameters are populated together
+// by the caller; changing one representation does not update the other.
+struct WebRtcSessionDescription
+{
+    SdpType type = SdpType::Offer;
+
+    sdp::SdpSession sdp;
+
+    IceParameters ice;
+    DtlsParameters dtls;
+    BundleParameters bundle;
+    std::vector<WebRtcMediaDescription> medias;
+};
+
 std::unique_ptr<WebRTCConfig> NewWebRTCConfig(Config conf);
 DirectionConfig GetPublisherConfig(bool consolidated);
 DirectionConfig GetSubscriberConfig(bool enableTWCC);
 
+}
 
-#endif // _WEBRTC_CONFIG_H_ 
+
+#endif // _WEBRTC_CONFIG_H_

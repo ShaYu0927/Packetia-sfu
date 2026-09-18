@@ -30,6 +30,18 @@ public:
     NetworkControlUpdate GetNetworkState() const;
 
 private:
+    bool IsTwccRecent(uint64_t now_ms) const
+    {
+        if (!has_twcc_)
+            return false;
+
+        if (now_ms < last_valid_twcc_receive_time_ms_)
+            return true;
+
+        return now_ms - last_valid_twcc_receive_time_ms_ < 1000;
+    }
+
+private:
     mutable std::mutex mutex_;
     NetworkControllerConfig config_;
     GoogCcNetworkController controller_;

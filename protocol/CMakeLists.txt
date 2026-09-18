@@ -61,12 +61,19 @@ target_include_directories(ICE
 )
 
 target_compile_features(ICE PUBLIC cxx_std_17)
+target_link_libraries(ICE PUBLIC LOGGER OpenSSL::Crypto)
 
 add_library(WebRtc STATIC
+    WebRtc/WebRtcSession.cpp
+    WebRtc/WebRtcSession.h
+    WebRtc/DtlsTransport.cpp
+    WebRtc/DtlsTransport.h
+    WebRtc/SrtpTransport.cpp
+    WebRtc/SrtpTransport.h
     WebRtc/WebRtcTransport.cpp
     WebRtc/WebRtcTransport.h
-    WebRtc/webrtc_config.cpp
-    WebRtc/webrtc_config.h
+    WebRtc/WebRtc_Config.cpp
+    WebRtc/WebRtc_Config.h
     WebRtc/weak_network/NetworkStats.h
 )
 
@@ -74,10 +81,12 @@ target_include_directories(WebRtc
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/WebRtc
         ${CMAKE_CURRENT_SOURCE_DIR}/WebRtc/weak_network
+        ${CMAKE_SOURCE_DIR}/media/transport
+        ${CMAKE_SOURCE_DIR}/src/sdp
 )
 
 target_compile_features(WebRtc PUBLIC cxx_std_17)
-target_link_libraries(WebRtc PUBLIC network)
+target_link_libraries(WebRtc PUBLIC network ICE)
 
 add_library(Rtmp STATIC
     Rtmp/rtmp_message.cpp

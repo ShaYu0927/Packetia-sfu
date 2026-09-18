@@ -118,6 +118,9 @@ bool SendSideController::OnRtcpPacket(const uint8_t* data, size_t size, uint64_t
             /* 把逐包反馈交给拥塞控制器 */
             update = controller_.OnTransportPacketsFeedback({std::move(feedback)});
             has_twcc_ = true;
+            
+            /* 记录最近一次有效 TWCC 的本地接收时间 */
+            last_valid_twcc_receive_time_ms_ = receive_time_ms;
         }
 
         /*
@@ -144,7 +147,7 @@ bool SendSideController::OnRtcpPacket(const uint8_t* data, size_t size, uint64_t
                 std::min<uint64_t>(static_cast<uint64_t>(report.jitter) * 1000 / sender->second,
                                    std::numeric_limits<uint32_t>::max()));
             feedback.rtt_ms = RttMs(report.lsr, report.dlsr);
-            if (!has_twcc_)
+            if (!IsTwccRecent(receive_time_ms))
                 update = controller_.OnReceiverFeedback(feedback);
             else if (feedback.rtt_ms != 0)
                 update = controller_.OnRoundTripTimeUpdate({feedback.now_ms, feedback.rtt_ms});
@@ -152,7 +155,7 @@ bool SendSideController::OnRtcpPacket(const uint8_t* data, size_t size, uint64_t
         callback = update_callback_;
     }
     
-    
+
     if (callback && update.HasUpdates()) callback(update);
     return true;
 }
@@ -167,7 +170,7 @@ void SendSideController::OnReceiverFeedback(const WeakNetFeedback& feedback)
         // RR is the fallback when TWCC is absent. Once packet feedback exists,
         // RR may supplement RTT but must not replace the transport loss/rate
         // with one track's summary (or drive another bitrate increase).
-        if (has_twcc_)
+        if (!IsTwccRecent(receive_time_ms))
         {
             if (feedback.rtt_ms == 0) return;
             update = controller_.OnRoundTripTimeUpdate({feedback.now_ms, feedback.rtt_ms});

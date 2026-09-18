@@ -21,8 +21,7 @@ NetworkControlUpdate GoogCcNetworkController::OnNetworkAvailability(
     return latest_update_;
 }
 
-NetworkControlUpdate GoogCcNetworkController::OnNetworkRouteChange(
-    const NetworkRouteChange& msg)
+NetworkControlUpdate GoogCcNetworkController::OnNetworkRouteChange(const NetworkRouteChange& msg)
 {
     // 路由变化意味着旧路径上的时延和吞吐样本已经失效。当前先重置
     // 编排层状态；各个估计器的显式 Reset 会在拆分子组件时补齐。
@@ -43,8 +42,7 @@ NetworkControlUpdate GoogCcNetworkController::OnProcessInterval(const ProcessInt
     return network_available_ ? latest_update_ : EmptyUpdate();
 }
 
-NetworkControlUpdate GoogCcNetworkController::OnRoundTripTimeUpdate(
-    const RoundTripTimeUpdate& msg)
+NetworkControlUpdate GoogCcNetworkController::OnRoundTripTimeUpdate(const RoundTripTimeUpdate& msg)
 {
     // RTT 本身不提供吞吐信息；只有已经收到其他反馈后才重新计算策略，
     // 避免启动阶段凭一个 RTT 样本产生没有依据的目标码率。
@@ -55,25 +53,20 @@ NetworkControlUpdate GoogCcNetworkController::OnRoundTripTimeUpdate(
         latest_update_ = policy_.OnBweResultAndFeedback(*latest_bwe_, latest_feedback_);
         return latest_update_;
     }
-    return network_available_ && has_feedback_
-               ? OnReceiverFeedback(latest_feedback_)
-               : EmptyUpdate();
+    return network_available_ && has_feedback_ ? OnReceiverFeedback(latest_feedback_) : EmptyUpdate();
 }
 
-NetworkControlUpdate GoogCcNetworkController::OnTransportPacketsFeedback(
-    const TransportPacketsFeedbackMessage& msg)
+NetworkControlUpdate GoogCcNetworkController::OnTransportPacketsFeedback(const TransportPacketsFeedbackMessage& msg)
 {
     if (!network_available_ || msg.feedback.packet_feedbacks.empty())
     {
         return EmptyUpdate();
     }
 
-    // 第一阶段复用现有 BWE。这里是未来接入 acknowledged bitrate、probe
-    // bitrate、delay based 和 loss based 结果融合的固定位置。
     const BweResult bwe = delay_bwe_.OnTransportFeedback(msg.feedback);
     latest_bwe_ = bwe;
 
-    // 将包级估计结果合并进统一反馈快照，再交给策略层生成控制动作。
+   
     latest_feedback_.now_ms = msg.feedback.feedback_time_ms;
     latest_feedback_.receive_bitrate_bps = bwe.target_bitrate_bps;
     latest_feedback_.loss_rate = msg.feedback.LossRate();
@@ -83,8 +76,7 @@ NetworkControlUpdate GoogCcNetworkController::OnTransportPacketsFeedback(
     return latest_update_;
 }
 
-NetworkControlUpdate GoogCcNetworkController::OnReceiverFeedback(
-    const WeakNetFeedback& feedback)
+NetworkControlUpdate GoogCcNetworkController::OnReceiverFeedback(const WeakNetFeedback& feedback)
 {
     // RR、NACK、PLI 等非 TWCC 指标仍沿用原来的弱网控制入口。
     latest_feedback_ = feedback;

@@ -1,4 +1,7 @@
-#include "webrtc_config.h"
+#include "WebRtc_Config.h"
+
+namespace protocol::webrtc
+{
 
 std::unique_ptr<WebRTCConfig> NewWebRTCConfig(Config conf)
 {
@@ -171,4 +174,5 @@ DirectionConfig GetSubscriberConfig(bool enableTWCC)
     return subscriberConfig;
 }
 
+} // namespace protocol::webrtc
 

@@ -24,12 +24,9 @@ WebRtcTransportState WebRtcTransport::State() const noexcept
 bool WebRtcTransport::Start()
 {
     WebRtcTransportState expected = WebRtcTransportState::Created;
-    if (!state_.compare_exchange_strong(expected,
-                                        WebRtcTransportState::Connecting,
-                                        std::memory_order_acq_rel))
+    if (!state_.compare_exchange_strong(expected, WebRtcTransportState::Connecting, std::memory_order_acq_rel))
     {
-        return expected == WebRtcTransportState::Connecting ||
-               expected == WebRtcTransportState::Connected;
+        return expected == WebRtcTransportState::Connecting || expected == WebRtcTransportState::Connected;
     }
     if (!datagram_transport_ || !datagram_transport_->IsWritable())
     {
@@ -84,9 +81,7 @@ void WebRtcTransport::SetSink(std::weak_ptr<IWebRtcTransportSink> sink)
 bool WebRtcTransport::SelectPeer(const network::SocketAddr& peer)
 {
     const auto state = State();
-    if (peer.len == 0 ||
-        (state != WebRtcTransportState::Connecting &&
-         state != WebRtcTransportState::Connected))
+    if (peer.len == 0 || (state != WebRtcTransportState::Connecting && state != WebRtcTransportState::Connected))
     {
         return false;
     }
@@ -105,10 +100,7 @@ bool WebRtcTransport::IsSelectedPeer(const network::SocketAddr& peer) const
     return has_selected_peer_ && selected_peer_ == peer;
 }
 
-network::transport::DatagramSendResult WebRtcTransport::Send(
-    network::transport::DatagramProtocol protocol,
-    const uint8_t* data,
-    size_t size)
+network::transport::DatagramSendResult WebRtcTransport::Send(network::transport::DatagramProtocol protocol, const uint8_t* data, size_t size)
 {
     network::SocketAddr peer;
     {
@@ -122,15 +114,9 @@ network::transport::DatagramSendResult WebRtcTransport::Send(
     return SendTo(peer, protocol, data, size);
 }
 
-network::transport::DatagramSendResult WebRtcTransport::SendTo(
-    const network::SocketAddr& peer,
-    network::transport::DatagramProtocol protocol,
-    const uint8_t* data,
-    size_t size)
+network::transport::DatagramSendResult WebRtcTransport::SendTo(const network::SocketAddr& peer, network::transport::DatagramProtocol protocol, const uint8_t* data, size_t size)
 {
-    if (peer.len == 0 ||
-        protocol == network::transport::DatagramProtocol::Unknown ||
-        !data || size == 0)
+    if (peer.len == 0 || protocol == network::transport::DatagramProtocol::Unknown || !data || size == 0)
     {
         return network::transport::DatagramSendResult::Failed;
     }
@@ -141,25 +127,20 @@ network::transport::DatagramSendResult WebRtcTransport::SendTo(
     return datagram_transport_->SendDatagram(peer, data, size);
 }
 
-void WebRtcTransport::OnDatagram(
-    network::transport::ReceivedDatagram datagram)
+void WebRtcTransport::OnDatagram(network::transport::ReceivedDatagram datagram)
 {
     const auto state = State();
-    if (!datagram.IsValid() ||
-        (state != WebRtcTransportState::Connecting &&
-         state != WebRtcTransportState::Connected))
+    if (!datagram.IsValid() || (state != WebRtcTransportState::Connecting && state != WebRtcTransportState::Connected))
     {
         return;
     }
 
-    const auto protocol = network::transport::DatagramProtocolClassifier::Classify(
-        datagram.Data(), datagram.Size());
+    const auto protocol = network::transport::DatagramProtocolClassifier::Classify(datagram.Data(), datagram.Size());
     if (protocol == network::transport::DatagramProtocol::Unknown)
     {
         return;
     }
-    if (protocol != network::transport::DatagramProtocol::Stun &&
-        !IsSelectedPeer(datagram.remote))
+    if (protocol != network::transport::DatagramProtocol::Stun && !IsSelectedPeer(datagram.remote))
     {
         return;
     }
