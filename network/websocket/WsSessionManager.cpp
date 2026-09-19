@@ -2,7 +2,7 @@
 
 namespace network
 {
-bool WsSessionManager::AddSession(const SessionPtr& session)
+bool WsSessionManager::AddSession(const SessionPtr& session, std::size_t max_sessions)
 {
     if (!session)
     {
@@ -15,7 +15,8 @@ bool WsSessionManager::AddSession(const SessionPtr& session)
         return false;
     }
 
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    if (sessions_.size() >= max_sessions) return false;
 
     auto ret = sessions_.emplace(session_id, session);
     return ret.second;
@@ -26,7 +27,7 @@ void WsSessionManager::RemoveSession(const std::string& session_id)
     SessionPtr session;
 
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::unique_lock<std::shared_mutex> lock(mutex_);
 
         auto it = sessions_.find(session_id);
         if (it == sessions_.end())
@@ -48,7 +49,7 @@ void WsSessionManager::RemoveSession(const std::string& session_id)
 WsSessionManager::SessionPtr
 WsSessionManager::GetSession(const std::string& session_id) const
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::shared_lock<std::shared_mutex> lock(mutex_);
 
     auto it = sessions_.find(session_id);
     if (it == sessions_.end())
@@ -61,7 +62,7 @@ WsSessionManager::GetSession(const std::string& session_id) const
 
 size_t WsSessionManager::GetSessionCount() const
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::shared_lock<std::shared_mutex> lock(mutex_);
     return sessions_.size();
 }
 

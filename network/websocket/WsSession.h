@@ -1,5 +1,6 @@
 #pragma once
 
+#include "WsLimits.h"
 #include <cstddef>
 #include <deque>
 #include <functional>
@@ -9,6 +10,32 @@
 
 namespace network
 {
+// Keep this object until the complete WebSocket message has been written.
+// Moving it transfers the reservation; Reset or destruction returns it.
+class WsOutgoingMessage
+{
+public:
+    WsOutgoingMessage() = default;
+    ~WsOutgoingMessage();
+    WsOutgoingMessage(WsOutgoingMessage&& other) noexcept;
+    WsOutgoingMessage& operator=(WsOutgoingMessage&& other) noexcept;
+    WsOutgoingMessage(const WsOutgoingMessage&) = delete;
+    WsOutgoingMessage& operator=(const WsOutgoingMessage&) = delete;
+
+    const std::string& Data() const { return data_; }
+    std::size_t Size() const { return data_.size(); }
+    // An empty text frame still has a reservation and is not Empty().
+    bool Empty() const { return !account_; }
+    void Reset();
+
+private:
+    friend class WsSession;
+    WsOutgoingMessage(std::size_t bytes, std::shared_ptr<WsSendAccount> account) noexcept;
+    std::string data_;
+    std::shared_ptr<WsSendAccount> account_;
+    std::size_t reserved_bytes_ = 0;
+};
+
 // Workers enqueue messages; only WsServer's service thread touches sockets.
 class WsSession : public std::enable_shared_from_this<WsSession>
 {
@@ -21,7 +48,9 @@ public:
     static constexpr std::size_t kMaxQueuedBytes = 4 * kMaxMessageBytes;
     static constexpr std::size_t kMaxQueuedMessages = 256;
 
-    WsSession(const std::string& connId, WakeCallback wake);
+    WsSession(const std::string& connId, WakeCallback wake,
+              WsLimits limits = {}, std::shared_ptr<WsSendBudget> budget = {});
+    ~WsSession();
     WsSession(const WsSession&) = delete;
     WsSession& operator=(const WsSession&) = delete;
 
@@ -41,16 +70,18 @@ public:
     void OnOpen();
     void OnClosed();
     bool ReceiveFragment(const void* data, std::size_t size, bool final);
-    bool PopOutgoing(std::string& message);
+    bool PopOutgoing(WsOutgoingMessage& message);
     bool NeedsWritable() const;
     bool IsClosing() const;
+    WsSendStats GetSendStats() const;
 
 private:
     const std::string session_id_;
+    const WsLimits limits_;
+    std::shared_ptr<WsSendAccount> send_account_;
     mutable std::mutex mutex_;
     std::string room_id_, participant_id_, received_;
-    std::deque<std::string> outgoing_;
-    std::size_t queued_bytes_ = 0;
+    std::deque<WsOutgoingMessage> outgoing_;
     bool open_ = false;
     bool closing_ = false;
     WakeCallback wake_;

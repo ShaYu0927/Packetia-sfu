@@ -10,169 +10,165 @@
 namespace network
 {
 
-struct SocketAddr 
-{
-    sockaddr_storage ss{};
-    socklen_t len{0};
-
-    bool IsV4() const
+    struct SocketAddr
     {
-        return ss.ss_family == AF_INET;
-    }
+        sockaddr_storage ss{};
+        socklen_t len{0};
 
-    bool IsV6() const
-    {
-        return ss.ss_family == AF_INET6;
-    }
-
-    std::string IPv4Bytes() const
-    {
-        if (!IsV4()) return {};
-        const auto* a = reinterpret_cast<const sockaddr_in*>(&ss);
-        const uint8_t* p = reinterpret_cast<const uint8_t*>(&a->sin_addr.s_addr);
-        return std::string(reinterpret_cast<const char*>(p), 4);
-    }
-
-    std::string IPv6Bytes() const
-    {
-        if (!IsV6()) return {};
-        const auto* a = reinterpret_cast<const sockaddr_in6*>(&ss);
-        const uint8_t* p = reinterpret_cast<const uint8_t*>(a->sin6_addr.s6_addr);
-        return std::string(reinterpret_cast<const char*>(p), 16);
-    }
-
-
-    uint16_t Port() const
-    {
-        if (IsV4())
+        bool IsV4() const
         {
-            const auto* a = reinterpret_cast<const sockaddr_in*>(&ss);
-            return ntohs(a->sin_port);
-        }
-        if (IsV6())
-        {
-            const auto* a = reinterpret_cast<const sockaddr_in6*>(&ss);
-            return ntohs(a->sin6_port);
-        }
-        return 0;
-    }
-
-
-    static SocketAddr FromIPPort(const std::string& ip, uint16_t port)
-    {
-        SocketAddr a;
-        sockaddr_in in{};
-        in.sin_family = AF_INET;
-        in.sin_port = htons(port);
-        in.sin_addr.s_addr = inet_addr(ip.c_str());
-        memcpy(&a.ss, &in, sizeof(in));
-        a.len = sizeof(in);
-        return a;
-    }
-
-    static SocketAddr FromSockaddr(const sockaddr* sa, socklen_t slen) 
-    {
-        SocketAddr a;
-        memcpy(&a.ss, sa, slen);
-        a.len = slen;
-        return a;
-    }
-
-    std::string ToString() const 
-    {
-        char ip[64]{};
-        uint16_t port = 0;
-        if (ss.ss_family == AF_INET) 
-        {
-            auto* in = (sockaddr_in*)&ss;
-            inet_ntop(AF_INET, &in->sin_addr, ip, sizeof(ip));
-            port = ntohs(in->sin_port);
-        } 
-        else if (ss.ss_family == AF_INET6) 
-        {
-            auto* in6 = (sockaddr_in6*)&ss;
-            inet_ntop(AF_INET6, &in6->sin6_addr, ip, sizeof(ip));
-            port = ntohs(in6->sin6_port);
-        }
-        return std::string(ip) + ":" + std::to_string(port);
-    }
-
-    bool operator==(const SocketAddr& other) const
-    {
-        if (ss.ss_family != other.ss.ss_family) return false;
-
-        if (ss.ss_family == AF_INET)
-        {
-            auto* a = (const sockaddr_in*)&ss;
-            auto* b = (const sockaddr_in*)&other.ss;
-
-            return a->sin_port == b->sin_port &&
-                a->sin_addr.s_addr == b->sin_addr.s_addr;
-        }
-        else if (ss.ss_family == AF_INET6)
-        {
-            auto* a = (const sockaddr_in6*)&ss;
-            auto* b = (const sockaddr_in6*)&other.ss;
-
-            return a->sin6_port == b->sin6_port &&
-                memcmp(&a->sin6_addr, &b->sin6_addr, sizeof(in6_addr)) == 0;
+            return ss.ss_family == AF_INET;
         }
 
-        return false;
-    }
-};
+        bool IsV6() const
+        {
+            return ss.ss_family == AF_INET6;
+        }
 
-struct SocketAddrHash
-{
-    size_t operator()(const SocketAddr& a) const noexcept
+        std::string IPv4Bytes() const
+        {
+            if (!IsV4())
+                return {};
+            const auto *a = reinterpret_cast<const sockaddr_in *>(&ss);
+            const uint8_t *p = reinterpret_cast<const uint8_t *>(&a->sin_addr.s_addr);
+            return std::string(reinterpret_cast<const char *>(p), 4);
+        }
+
+        std::string IPv6Bytes() const
+        {
+            if (!IsV6())
+                return {};
+            const auto *a = reinterpret_cast<const sockaddr_in6 *>(&ss);
+            const uint8_t *p = reinterpret_cast<const uint8_t *>(a->sin6_addr.s6_addr);
+            return std::string(reinterpret_cast<const char *>(p), 16);
+        }
+
+        uint16_t Port() const
+        {
+            if (IsV4())
+            {
+                const auto *a = reinterpret_cast<const sockaddr_in *>(&ss);
+                return ntohs(a->sin_port);
+            }
+            if (IsV6())
+            {
+                const auto *a = reinterpret_cast<const sockaddr_in6 *>(&ss);
+                return ntohs(a->sin6_port);
+            }
+            return 0;
+        }
+
+        static SocketAddr FromIPPort(const std::string &ip, uint16_t port)
+        {
+            SocketAddr a;
+            sockaddr_in in{};
+            in.sin_family = AF_INET;
+            in.sin_port = htons(port);
+            in.sin_addr.s_addr = inet_addr(ip.c_str());
+            memcpy(&a.ss, &in, sizeof(in));
+            a.len = sizeof(in);
+            return a;
+        }
+
+        static SocketAddr FromSockaddr(const sockaddr *sa, socklen_t slen)
+        {
+            SocketAddr a;
+            memcpy(&a.ss, sa, slen);
+            a.len = slen;
+            return a;
+        }
+
+        std::string ToString() const
+        {
+            char ip[64]{};
+            uint16_t port = 0;
+            if (ss.ss_family == AF_INET)
+            {
+                auto *in = (sockaddr_in *)&ss;
+                inet_ntop(AF_INET, &in->sin_addr, ip, sizeof(ip));
+                port = ntohs(in->sin_port);
+            }
+            else if (ss.ss_family == AF_INET6)
+            {
+                auto *in6 = (sockaddr_in6 *)&ss;
+                inet_ntop(AF_INET6, &in6->sin6_addr, ip, sizeof(ip));
+                port = ntohs(in6->sin6_port);
+            }
+            return std::string(ip) + ":" + std::to_string(port);
+        }
+
+        bool operator==(const SocketAddr &other) const
+        {
+            if (ss.ss_family != other.ss.ss_family)
+                return false;
+
+            if (ss.ss_family == AF_INET)
+            {
+                auto *a = (const sockaddr_in *)&ss;
+                auto *b = (const sockaddr_in *)&other.ss;
+
+                return a->sin_port == b->sin_port &&
+                       a->sin_addr.s_addr == b->sin_addr.s_addr;
+            }
+            else if (ss.ss_family == AF_INET6)
+            {
+                auto *a = (const sockaddr_in6 *)&ss;
+                auto *b = (const sockaddr_in6 *)&other.ss;
+
+                return a->sin6_port == b->sin6_port &&
+                       memcmp(&a->sin6_addr, &b->sin6_addr, sizeof(in6_addr)) == 0;
+            }
+
+            return false;
+        }
+    };
+
+    struct SocketAddrHash
     {
-        if (a.ss.ss_family == AF_INET)
+        size_t operator()(const SocketAddr &a) const noexcept
         {
-            auto* in = (const sockaddr_in*)&a.ss;
+            if (a.ss.ss_family == AF_INET)
+            {
+                auto *in = (const sockaddr_in *)&a.ss;
 
-            uint64_t key =
-                (uint64_t(in->sin_addr.s_addr) << 16) |
-                uint64_t(in->sin_port);
+                uint64_t key = (uint64_t(in->sin_addr.s_addr) << 16) | uint64_t(in->sin_port);
 
-            return std::hash<uint64_t>()(key);
+                return std::hash<uint64_t>()(key);
+            }
+            else if (a.ss.ss_family == AF_INET6)
+            {
+                auto *in6 = (const sockaddr_in6 *)&a.ss;
+
+                const uint64_t *p = reinterpret_cast<const uint64_t *>(&in6->sin6_addr);
+
+                uint64_t h = p[0] ^ p[1] ^ uint64_t(in6->sin6_port);
+
+                return std::hash<uint64_t>()(h);
+            }
+
+            return 0;
         }
-        else if (a.ss.ss_family == AF_INET6)
-        {
-            auto* in6 = (const sockaddr_in6*)&a.ss;
+    };
 
-            const uint64_t* p =
-                reinterpret_cast<const uint64_t*>(&in6->sin6_addr);
+    class UdpSocket
+    {
+    public:
+        explicit UdpSocket(int fd = -1) : fd_(fd) {}
+        ~UdpSocket() = default;
 
-            uint64_t h =
-                p[0] ^ p[1] ^ uint64_t(in6->sin6_port);
+        int Create(); // socket(AF_INET, SOCK_DGRAM, 0)
+        bool Bind(const std::string &ip, uint16_t port, bool reuse_address = true);
+        void Close();
 
-            return std::hash<uint64_t>()(h);
-        }
+        int Fd() const { return fd_; }
 
-        return 0;
-    }
-};
+        // recvfrom / sendto
+        int RecvFrom(uint8_t *buf, size_t cap, SocketAddr &src);
+        int SendTo(const SocketAddr &dst, const uint8_t *data, size_t len);
 
-
-class UdpSocket 
-{
-public:
-    explicit UdpSocket(int fd = -1) : fd_(fd) {}
-    ~UdpSocket() = default;
-
-    int  Create(); // socket(AF_INET, SOCK_DGRAM, 0)
-    bool Bind(const std::string& ip, uint16_t port, bool reuse_address = true);
-    void Close();
-
-    int Fd() const { return fd_; }
-
-    // recvfrom / sendto
-    int RecvFrom(uint8_t* buf, size_t cap, SocketAddr& src);
-    int SendTo(const SocketAddr& dst, const uint8_t* data, size_t len);
-
-private:
-    int fd_{-1};
-};
+    private:
+        int fd_{-1};
+    };
 
 }
 

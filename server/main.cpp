@@ -105,18 +105,18 @@ int main()
         "WsServer", "0.0.0.0", 8080, event_loop.get());
 
     ws_server->SetOnOpen([](const network::websocket::WsConnectionInfo& info) {
-        LOG_INFO("ws open, connId=", info.connId);
+        LOG_DEBUG("ws open, connId=", info.connId);
     });
 
     ws_server->SetOnMessage(
         [](const std::string& connId, const std::string& message) -> std::string {
-            LOG_INFO("ws message, connId=", connId, ", message=", message);
+            LOG_DEBUG("ws message, connId=", connId, ", bytes=", message.size());
             return R"({"code":0,"msg":"ok"})";
         }
     );
 
     ws_server->SetOnClose([](const std::string& connId) {
-        LOG_INFO("ws close, connId=", connId);
+        LOG_DEBUG("ws close, connId=", connId);
     });
 
 #endif
