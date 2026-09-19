@@ -250,6 +250,41 @@ TEST(SendSideTransportTest, RttSupplementPreservesTwccRateAndTransportLoss)
     EXPECT_DOUBLE_EQ(after.target_rate.estimate.loss_rate, 0.0);
 }
 
+TEST(SendSideTransportTest, ReceiverFeedbackWithoutTwccUpdatesLossWithoutRtt)
+{
+    media::SendSideController controller;
+    media::WeakNetFeedback rr;
+    rr.now_ms = 2100;
+    rr.loss_rate = 0.25;
+    controller.OnReceiverFeedback(rr);
+    const auto state = controller.GetNetworkState();
+    ASSERT_TRUE(state.HasUpdates());
+    EXPECT_DOUBLE_EQ(state.target_rate.estimate.loss_rate, 0.25);
+}
+
+TEST(SendSideTransportTest, ReceiverFeedbackFallsBackAtTwccTimeout)
+{
+    media::SendSideController controller;
+    media::PacketSendInfo packet;
+    packet.transport_sequence = 0;
+    packet.send_time_ms = 1000;
+    packet.size_bytes = 1200;
+    controller.OnPacketSent(packet);
+    const auto twcc = Twcc(0, {true});
+    ASSERT_TRUE(controller.OnRtcpPacket(twcc.data(), twcc.size(), 2000));
+    ASSERT_TRUE(controller.GetNetworkState().HasUpdates());
+
+    media::WeakNetFeedback rr;
+    rr.loss_rate = 0.5;
+    rr.now_ms = 2999;
+    controller.OnReceiverFeedback(rr);
+    EXPECT_DOUBLE_EQ(controller.GetNetworkState().target_rate.estimate.loss_rate, 0.0);
+
+    rr.now_ms = 3000;
+    controller.OnReceiverFeedback(rr);
+    EXPECT_DOUBLE_EQ(controller.GetNetworkState().target_rate.estimate.loss_rate, 0.5);
+}
+
 TEST(SendSideTransportTest, ConcurrentAudioVideoHistoryAcceptsTransportWideFeedback)
 {
     media::SendSideController controller;

@@ -1,0 +1,12 @@
+prefix="/home/kxy/code/libwebsockets/output"
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: libwebsockets_static
+Description: Websockets server and client static library
+Version: 5.0.99-sai-759f3c3b2
+
+Libs: -L${libdir} -l:libwebsockets.a
+Libs.private:
+Cflags: -I${includedir}

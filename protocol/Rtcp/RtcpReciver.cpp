@@ -1,5 +1,4 @@
 #include "RtcpReciver.h"
-#include "BufferRead.h"
 #include "utils.h"
 #include "RtcpHealper.h"
 #include "logger.h"
@@ -294,8 +293,8 @@ void rtcpx::RtcpReceiverImpl::HandleSingleRtcpPacket(const uint8_t* p, size_t le
             std::vector<uint16_t> seqs;
             for (size_t off = 12; off + 4 <= len; off += 4)
             {
-                const uint16_t pid = ReadUint16BE(p + off);
-                const uint16_t blp = ReadUint16BE(p + off + 2);
+                const uint16_t pid = utils::Utils::ReadUint16BE(p + off);
+                const uint16_t blp = utils::Utils::ReadUint16BE(p + off + 2);
                 ExpandNackPair(pid, blp, seqs);
             }
             if (!seqs.empty())

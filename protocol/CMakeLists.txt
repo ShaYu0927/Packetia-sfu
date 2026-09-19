@@ -43,6 +43,7 @@ target_include_directories(Rtcp
 )
 
 target_compile_features(Rtcp PUBLIC cxx_std_17)
+target_link_libraries(Rtcp PUBLIC utils LOGGER)
 
 add_library(ICE STATIC
     ice/IceAgent.cpp

@@ -25,3 +25,7 @@ add_executable(test_webrtc_session test_webrtc_session.cpp)
 target_link_libraries(test_webrtc_session PRIVATE WebRtc Interleaved)
 add_test(NAME test_webrtc_session COMMAND test_webrtc_session)
 set_tests_properties(test_webrtc_session PROPERTIES TIMEOUT 30)
+
+if(PACKETIA_WITH_LIBWEBSOCKETS)
+    add_subdirectory(../websocket/Test websocket)
+endif()

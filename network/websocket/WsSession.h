@@ -1,76 +1,59 @@
-#ifndef _WS_SESSION_H_
-#define _WS_SESSION_H_
+#pragma once
 
-#include "WsHeader.h"
+#include <cstddef>
+#include <deque>
+#include <functional>
 #include <memory>
+#include <mutex>
+#include <string>
+
 namespace network
 {
-/**
- * @brief 一个 WebSocket 连接对应一个 WsSession。
- *
- * WsSession 不负责会议业务，只保存连接上下文：
- * - sessionId
- * - roomId
- * - participantId
- * - WebSocket channel
- * - Room / Participant 弱引用
- */
+// Workers enqueue messages; only WsServer's service thread touches sockets.
 class WsSession : public std::enable_shared_from_this<WsSession>
 {
 public:
     using Ptr = std::shared_ptr<WsSession>;
     using MessageCallback = std::function<void(const std::string&, const std::string&)>;
-    using CloseCallback   = std::function<void(const std::string&)>;
+    using CloseCallback = std::function<void(const std::string&)>;
+    using WakeCallback = std::function<void()>;
+    static constexpr std::size_t kMaxMessageBytes = 1024 * 1024;
+    static constexpr std::size_t kMaxQueuedBytes = 4 * kMaxMessageBytes;
+    static constexpr std::size_t kMaxQueuedMessages = 256;
 
-    explicit WsSession(const std::string& connId, const WebSocketChannelPtr& channel);
-    ~WsSession();
-
+    WsSession(const std::string& connId, WakeCallback wake);
     WsSession(const WsSession&) = delete;
     WsSession& operator=(const WsSession&) = delete;
 
-public:
     const std::string& GetSessionId() const;
-
     void SetRoomId(const std::string& room_id);
-    const std::string& GetRoomId() const;
-
+    std::string GetRoomId() const;
     void SetParticipantId(const std::string& participant_id);
-    const std::string& GetParticipantId() const;
-
+    std::string GetParticipantId() const;
     bool IsJoinedRoom() const;
-
-    /**
-     * @brief 发送文本信令消息。
-     */
     bool SendText(const std::string& message);
-
-    /**
-     * @brief 关闭 WebSocket 连接。
-     */
     void Close();
-
-    void OnOpen();
-
+    void ClearBinding();
+    void SetOnMessage(MessageCallback cb);
     void OnMessage(const std::string& message);
 
-    void ClearBinding();
+    // Service-thread entry points. Callbacks run without the session lock.
+    void OnOpen();
+    void OnClosed();
+    bool ReceiveFragment(const void* data, std::size_t size, bool final);
+    bool PopOutgoing(std::string& message);
+    bool NeedsWritable() const;
+    bool IsClosing() const;
 
-    void SetOnMessage(MessageCallback cb);
 private:
-    static std::string GenerateSessionId();
-
-private:
-    std::string session_id_;
-
+    const std::string session_id_;
     mutable std::mutex mutex_;
-
-    std::string room_id_;
-    std::string participant_id_;
-
-
-    WebSocketChannelPtr channel_;
+    std::string room_id_, participant_id_, received_;
+    std::deque<std::string> outgoing_;
+    std::size_t queued_bytes_ = 0;
+    bool open_ = false;
+    bool closing_ = false;
+    WakeCallback wake_;
+    MessageCallback on_message_;
 };
 }
-
-
-#endif /* _WS_SESSION_H_ */

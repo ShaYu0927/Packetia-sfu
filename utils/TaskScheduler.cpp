@@ -63,8 +63,12 @@ void TaskScheduler::Run()
     }
     for (;;)
     {
-        HandleEvent(100);
+        const auto timer_wait = timer_queue_.GetTimeRemain();
+        const int timeout = timer_wait < 0 || timer_wait > 100
+            ? 100 : static_cast<int>(timer_wait);
+        HandleEvent(timeout);
         HandlePendingTasks();
+        if (!shutdown_) timer_queue_.HandleTimerEvent();
         std::lock_guard<std::mutex> lock(task_mutex_);
         if (shutdown_ && pending_tasks_.empty())
         {
@@ -102,6 +106,9 @@ void TaskScheduler::Invoke(Task task)
 TimeId TaskScheduler::AddTimer(TimeEvent timerEvent, uint32_t msec)
 {
     TimeId timeId = timer_queue_.AddTimer(timerEvent,msec);
+    // A timer added from a worker may expire before the current I/O wait.
+    char event = kTimerEvent;
+    if (wakeup_pipe_) wakeup_pipe_->Write(&event, 1);
     return timeId;
 }
 

@@ -167,10 +167,10 @@ void SendSideController::OnReceiverFeedback(const WeakNetFeedback& feedback)
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!available_) return;
-        // RR is the fallback when TWCC is absent. Once packet feedback exists,
+        // RR is the fallback when TWCC is absent or stale. While TWCC is recent,
         // RR may supplement RTT but must not replace the transport loss/rate
         // with one track's summary (or drive another bitrate increase).
-        if (!IsTwccRecent(receive_time_ms))
+        if (IsTwccRecent(feedback.now_ms))
         {
             if (feedback.rtt_ms == 0) return;
             update = controller_.OnRoundTripTimeUpdate({feedback.now_ms, feedback.rtt_ms});

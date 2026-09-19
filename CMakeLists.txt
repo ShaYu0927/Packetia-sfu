@@ -28,6 +28,14 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/third/libhv)
 
 find_package(GTest REQUIRED)
 find_package(OpenSSL REQUIRED)
+set(THREADS_PREFER_PTHREAD_FLAG TRUE)
+find_package(Threads REQUIRED)
+
+option(PACKETIA_WITH_LIBWEBSOCKETS "Build the libwebsockets signaling server" ON)
+if(PACKETIA_WITH_LIBWEBSOCKETS)
+  add_subdirectory(cmake/libwebsockets)
+  add_subdirectory(network/websocket)
+endif()
 
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
@@ -101,15 +109,20 @@ add_library(network STATIC
     network/UdpSession.cpp
     network/transport/DatagramProtocolClassifier.cpp
     network/transport/UdpDatagramTransport.cpp
-    network/websocket/WsServer.cpp
-    network/websocket/WsSession.cpp
-    network/websocket/WsSessionManager.cpp
 )
+
+if(PACKETIA_WITH_LIBWEBSOCKETS)
+  target_link_libraries(network PUBLIC packetia_websocket)
+endif()
 
 add_library(LOGGER STATIC
     log/logger.h
     log/logger.cpp
 )
+
+# logger.h starts and joins its worker thread in inline code. Consumers such
+# as ICE need the thread dependency as well as LOGGER itself.
+target_link_libraries(LOGGER PUBLIC Threads::Threads)
 
 add_library(COMMON STATIC
     Common/CallbackEmitter/CallbackEmitter.h
@@ -155,6 +168,8 @@ add_library(utils STATIC
     utils/utils.cpp
 
 )
+
+target_link_libraries(utils PUBLIC LOGGER Threads::Threads)
 
 add_library(rtp STATIC
     Rtsp/Rtp.cpp

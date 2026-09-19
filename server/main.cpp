@@ -100,7 +100,9 @@ int main()
     auto mux_handler                              = std::make_shared<network::UdpMuxHandler>(udp_server.get());
     udp_server->SetHandler(mux_handler);
 
-    auto ws_server = std::make_shared<network::websocket::WsServer>();
+#ifdef PACKETIA_WITH_LIBWEBSOCKETS
+    auto ws_server = launcher.AddIpPortService<network::websocket::WsServer>(
+        "WsServer", "0.0.0.0", 8080, event_loop.get());
 
     ws_server->SetOnOpen([](const network::websocket::WsConnectionInfo& info) {
         LOG_INFO("ws open, connId=", info.connId);
@@ -117,15 +119,7 @@ int main()
         LOG_INFO("ws close, connId=", connId);
     });
 
-    launcher.AddCustomService(
-        "WsServer",
-        [ws_server]() -> bool {
-            return ws_server->Start("0.0.0.0", 8080, 1);
-        },
-        [ws_server]() {
-            ws_server->Stop();
-        }
-    );
+#endif
 
     if (!launcher.StartAll())
     {

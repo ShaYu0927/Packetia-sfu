@@ -6,7 +6,8 @@
 #include <memory>
 #include <string>
 
-#include "WsHeader.h"
+class EventLoop;
+class TaskScheduler;
 
 namespace network 
 {
@@ -30,12 +31,16 @@ public:
     using OnCloseCallback = std::function<void(const std::string& connId)>;
 
 public:
-    WsServer();
+    explicit WsServer(EventLoop* event_loop);
+    explicit WsServer(std::shared_ptr<TaskScheduler> scheduler);
     ~WsServer();
+    WsServer(const WsServer&) = delete;
+    WsServer& operator=(const WsServer&) = delete;
 
-    bool Start(const std::string& ip, uint16_t port, int threadNum = 1);
+    bool Start(const std::string& ip, uint16_t port);
     void Stop();
 
+    bool SendText(const std::string& connId, const std::string& message);
     bool CloseConnection(const std::string& connId);
 
     void SetOnOpen(OnOpenCallback cb);
@@ -44,7 +49,7 @@ public:
 
 private:
     class Impl;
-    std::unique_ptr<Impl> impl_;
+    std::shared_ptr<Impl> impl_;
 };
 
 }

@@ -2,6 +2,7 @@
 #define _WS_SESSION_MANAGER_H_
 
 #include "WsSession.h"
+#include <unordered_map>
 
 namespace network
 {

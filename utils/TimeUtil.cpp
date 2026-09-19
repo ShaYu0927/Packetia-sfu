@@ -12,9 +12,9 @@ TimeId TimeQueue::AddTimer(const TimeEvent& event, uint32_t msec)
     TimeId timer_id = ++last_timer_id_;
 
     auto timer = std::make_shared<TimeUtil>(event, msec);
-    timer->SetEventCallback(event);
+    timer->SetNextTimeout(timeOut);
     time_map_.emplace(timer_id, timer);
-    event_.emplace(std::pair<int64_t, TimeId>(timeOut + msec, timer_id), std::move(timer));
+    event_.emplace(std::make_pair(timer->getNextTimeout(), timer_id), timer);
     return timer_id;
 }
 void TimeQueue::RemoveTimer(TimeId id)
@@ -42,31 +42,42 @@ int64_t TimeQueue::GetTimeRemain()
 }
 void TimeQueue::HandleTimerEvent()
 {
-    if(!time_map_.empty())
+    const auto deadline = GetTimeNow();
+    for (;;)
     {
-        std::lock_guard<std::mutex> lock(mutex_);
-        int64_t timePoint = GetTimeNow();
-        while(!time_map_.empty() && event_.begin()->first.first<=timePoint)
+        TimeId id;
+        std::shared_ptr<TimeUtil> timer;
         {
-            auto iter = event_.begin()->first.second;
-            bool flag = event_.begin()->second->event_callback_();
-            if(flag == true)
-            {
-                event_.begin()->second->SetNextTimeout(timePoint);
-                auto timerPtr = std::move(event_.begin()->second);
-                event_.erase(event_.begin());
-                event_.emplace(std::pair<int64_t, TimeId>(timerPtr->getNextTimeout(), iter), timerPtr);
-            }
-            else {
-                event_.erase(event_.begin());
-                time_map_.erase(iter);
-            }
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (event_.empty() || event_.begin()->first.first > deadline) return;
+            id = event_.begin()->first.second;
+            timer = event_.begin()->second;
+            event_.erase(event_.begin());
         }
+
+        // Callbacks may add/remove timers, including this timer. Keep the
+        // timer alive without holding the queue lock across application code.
+        bool repeat = false;
+        try { repeat = timer->triggerEventCallback(); }
+        catch (...)
+        {
+            RemoveTimer(id);
+            throw;
+        }
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = time_map_.find(id);
+        if (it == time_map_.end() || it->second != timer) continue;
+        if (repeat)
+        {
+            timer->SetNextTimeout(GetTimeNow());
+            event_.emplace(std::make_pair(timer->getNextTimeout(), id), timer);
+        }
+        else time_map_.erase(it);
     }
 }
 
 int64_t TimeQueue::GetTimeNow()
 {
-    auto time_point = std::chrono::system_clock::now();  // 获取当前时间点
+    auto time_point = std::chrono::steady_clock::now();
     return std::chrono::duration_cast<std::chrono::milliseconds>(time_point.time_since_epoch()).count();  // 转换为自纪元以来的毫秒数
 }

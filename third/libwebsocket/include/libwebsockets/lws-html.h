@@ -1,0 +1,1144 @@
+/*
+ * libwebsockets - small server side websockets and web server implementation
+ *
+ * Copyright (C) 2010 - 2022 Andy Green <andy@warmcat.com>
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to
+ * deal in the Software without restriction, including without limitation the
+ * rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+ * IN THE SOFTWARE.
+ *
+ * Extremely Lightweight HTML5 Stream Parser, same approach as lecp but for
+ * html5.
+ */
+
+#if !defined(LHP_MAX_ELEMS_NEST)
+#define LHP_MAX_ELEMS_NEST		128
+#endif
+#if !defined(LHP_MAX_DEPTH)
+#define LHP_MAX_DEPTH			64
+#endif
+#if !defined(LHP_STRING_CHUNK)
+#define LHP_STRING_CHUNK		2048
+#endif
+/*
+ * How many of an element's closed earlier siblings are remembered (their
+ * attributes) so that the ~ and + selector combinators and :first-child can
+ * be evaluated.  Costs the attribute storage of that many elements per open
+ * level.
+ */
+#if !defined(LHP_SIBLING_HISTORY)
+#if defined(LWS_PLAT_FREERTOS) || defined(LWS_PLAT_BAREMETAL)
+#define LHP_SIBLING_HISTORY		2
+#else
+#define LHP_SIBLING_HISTORY		8
+#endif
+#endif
+
+enum lhp_callbacks {
+
+	LHPCB_ERR_ATTRIB_SYNTAX		= -5,
+	LHPCB_ERR_ATTRIB_LEN		= -4,
+	LHPCB_ERR_OOM			= -3,
+	LHPCB_ERR_ELEM_DEPTH		= -2,
+	LHPCB_CONTINUE			= -1,
+
+	LHPCB_CONSTRUCTED		= 0,
+	LHPCB_DESTRUCTED		= 1,
+
+	LHPCB_COMPLETE			= 2,
+	LHPCB_FAILED			= 3,
+
+	LHPCB_ELEMENT_START		= 4,	/* reported at end of <> */
+	LHPCB_ELEMENT_END		= 5,
+
+	LHPCB_CONTENT			= 6,
+
+	LHPCB_COMMENT			= 7,
+};
+
+/*
+ * CSS v2.1 full property set, taken from
+ *
+ * https://www.w3.org/TR/CSS21/propidx.html
+ */
+
+typedef enum lcsp_props {
+	LCSP_PROP_AZIMUTH,
+	LCSP_PROP_BACKGROUND_ATTACHMENT,
+	LCSP_PROP_BACKGROUND_COLOR,
+	LCSP_PROP_BACKGROUND_IMAGE,
+	LCSP_PROP_BACKGROUND_POSITION,
+	LCSP_PROP_BACKGROUND_REPEAT,
+	LCSP_PROP_BACKGROUND_SIZE,
+	LCSP_PROP_BACKGROUND,
+	LCSP_PROP_BORDER_COLLAPSE,
+	LCSP_PROP_BORDER_COLOR,
+	LCSP_PROP_BORDER_SPACING,
+	LCSP_PROP_BORDER_STYLE,
+	LCSP_PROP_BORDER_TOP,
+	LCSP_PROP_BORDER_RIGHT,
+	LCSP_PROP_BORDER_BOTTOM,
+	LCSP_PROP_BORDER_LEFT,
+	LCSP_PROP_BORDER_TOP_COLOR,
+	LCSP_PROP_BORDER_RIGHT_COLOR,
+	LCSP_PROP_BORDER_BOTTOM_COLOR,
+	LCSP_PROP_BORDER_LEFT_COLOR,
+	LCSP_PROP_BORDER_TOP_STYLE,
+	LCSP_PROP_BORDER_RIGHT_STYLE,
+	LCSP_PROP_BORDER_BOTTOM_STYLE,
+	LCSP_PROP_BORDER_LEFT_STYLE,
+	LCSP_PROP_BORDER_TOP_WIDTH,
+	LCSP_PROP_BORDER_RIGHT_WIDTH,
+	LCSP_PROP_BORDER_BOTTOM_WIDTH,
+	LCSP_PROP_BORDER_LEFT_WIDTH,
+	LCSP_PROP_BORDER_WIDTH,
+	LCSP_PROP_BORDER_TOP_LEFT_RADIUS,
+	LCSP_PROP_BORDER_TOP_RIGHT_RADIUS,
+	LCSP_PROP_BORDER_BOTTOM_LEFT_RADIUS,
+	LCSP_PROP_BORDER_BOTTOM_RIGHT_RADIUS,
+	LCSP_PROP_BORDER_RADIUS,
+	LCSP_PROP_BORDER,
+	LCSP_PROP_BOTTOM,
+	LCSP_PROP_BOX_SIZING,
+	LCSP_PROP_CAPTION_SIDE,
+	LCSP_PROP_CLEAR,
+	LCSP_PROP_CLIP,
+	LCSP_PROP_COLOR,
+	LCSP_PROP_CONTENT,
+	LCSP_PROP_COUNTER_INCREMENT,
+	LCSP_PROP_COUNTER_RESET,
+	LCSP_PROP_CUE_AFTER,
+	LCSP_PROP_CUE_BEFORE,
+	LCSP_PROP_CUE,
+	LCSP_PROP_CURSOR,
+	LCSP_PROP_DIRECTION,
+	LCSP_PROP_DISPLAY,
+	LCSP_PROP_ELEVATION,
+	LCSP_PROP_EMPTY_CELLS,
+	LCSP_PROP_FLOAT,
+	LCSP_PROP_FONT_FAMILY,
+	LCSP_PROP_FONT_SIZE,
+	LCSP_PROP_FONT_STYLE,
+	LCSP_PROP_FONT_VARAIANT,
+	LCSP_PROP_FONT_WEIGHT,
+	LCSP_PROP_FONT,
+	LCSP_PROP_HEIGHT,
+	LCSP_PROP_LEFT,
+	LCSP_PROP_LETTER_SPACING,
+	LCSP_PROP_LINE_HEIGHT,
+	LCSP_PROP_LIST_STYLE_IMAGE,
+	LCSP_PROP_LIST_STYLE_POSITION,
+	LCSP_PROP_LIST_STYLE_TYPE,
+	LCSP_PROP_LIST_STYLE,
+	LCSP_PROP_MARGIN_RIGHT,
+	LCSP_PROP_MARGIN_LEFT,
+	LCSP_PROP_MARGIN_TOP,
+	LCSP_PROP_MARGIN_BOTTOM,
+	LCSP_PROP_MARGIN,
+	LCSP_PROP_MAX_HEIGHT,
+	LCSP_PROP_MAX_WIDTH,
+	LCSP_PROP_MIN_HEIGHT,
+	LCSP_PROP_MIN_WIDTH,
+	LCSP_PROP_ORPHANS,
+	LCSP_PROP_OUTLINE_COLOR,
+	LCSP_PROP_OUTLINE_STYLE,
+	LCSP_PROP_OUTLINE_WIDTH,
+	LCSP_PROP_OUTLINE,
+	LCSP_PROP_OVERFLOW,
+	LCSP_PROP_PADDING_TOP,
+	LCSP_PROP_PADDING_RIGHT,
+	LCSP_PROP_PADDING_BOTTOM,
+	LCSP_PROP_PADDING_LEFT,
+	LCSP_PROP_PADDING,
+	LCSP_PROP_PAGE_BREAK_AFTER,
+	LCSP_PROP_PAGE_BREAK_BEFORE,
+	LCSP_PROP_PAGE_BREAK_INSIDE,
+	LCSP_PROP_PAUSE_AFTER,
+	LCSP_PROP_PAUSE_BEFORE,
+	LCSP_PROP_PAUSE,
+	LCSP_PROP_PITCH_RANGE,
+	LCSP_PROP_PITCH,
+	LCSP_PROP_PLAY_DURING,
+	LCSP_PROP_POSITION,
+	LCSP_PROP_QUOTES,
+	LCSP_PROP_RICHNESS,
+	LCSP_PROP_RIGHT,
+	LCSP_PROP_SPEAK_HEADER,
+	LCSP_PROP_SPEAK_NUMERAL,
+	LCSP_PROP_SPEAK_PUNCTUATION,
+	LCSP_PROP_SPEAK,
+	LCSP_PROP_SPEECH_RATE,
+	LCSP_PROP_STRESS,
+	LCSP_PROP_TABLE_LAYOUT,
+	LCSP_PROP_TEXT_ALIGN,
+	LCSP_PROP_TEXT_DECORATION,
+	LCSP_PROP_TEXT_INDENT,
+	LCSP_PROP_TEXT_TRANSFORM,
+	LCSP_PROP_TOP,
+	LCSP_PROP_UNICODE_BIDI,
+	LCSP_PROP_VERTICAL_ALIGN,
+	LCSP_PROP_VISIBILITY,
+	LCSP_PROP_VOICE_FAMILY,
+	LCSP_PROP_VOLUME,
+	LCSP_PROP_WHITE_SPACE,
+	LCSP_PROP_WIDOWS,
+	LCSP_PROP_WIDTH,
+	LCSP_PROP_WORD_SPACING,
+	LCSP_PROP_Z_INDEX,
+
+	/* appended: the lextable index is the enum value */
+	LCSP_PROP_OPACITY,
+	LCSP_PROP_FLEX,
+	LCSP_PROP_FLEX_DIRECTION,
+	LCSP_PROP_FLEX_GROW,
+	LCSP_PROP_FLEX_SHRINK,
+	LCSP_PROP_FLEX_BASIS,
+	LCSP_PROP_FLEX_WRAP,
+	LCSP_PROP_ALIGN_ITEMS,
+	LCSP_PROP_ALIGN_SELF,
+	LCSP_PROP_JUSTIFY_CONTENT,
+	LCSP_PROP_GAP,
+	LCSP_PROP_COLUMN_GAP,
+	LCSP_PROP_ROW_GAP,
+
+	/* logical properties, mapped to the physical sides (ltr, horizontal) */
+	LCSP_PROP_MARGIN_INLINE,
+	LCSP_PROP_MARGIN_INLINE_START,
+	LCSP_PROP_MARGIN_INLINE_END,
+	LCSP_PROP_MARGIN_BLOCK,
+	LCSP_PROP_MARGIN_BLOCK_START,
+	LCSP_PROP_MARGIN_BLOCK_END,
+	LCSP_PROP_PADDING_INLINE,
+	LCSP_PROP_PADDING_INLINE_START,
+	LCSP_PROP_PADDING_INLINE_END,
+	LCSP_PROP_PADDING_BLOCK,
+	LCSP_PROP_PADDING_BLOCK_START,
+	LCSP_PROP_PADDING_BLOCK_END,
+	LCSP_PROP_INSET,
+	LCSP_PROP_INSET_INLINE,
+	LCSP_PROP_INSET_INLINE_START,
+	LCSP_PROP_INSET_INLINE_END,
+	LCSP_PROP_INSET_BLOCK,
+	LCSP_PROP_INSET_BLOCK_START,
+	LCSP_PROP_INSET_BLOCK_END,
+
+	LCSP_PROP__COUNT /* always last */
+} lcsp_props_t;
+
+/*
+ * Indexes for the well-known property values
+ */
+
+typedef enum {
+	LCSP_PROPVAL_ABOVE,
+	LCSP_PROPVAL_ABSOLUTE,
+	LCSP_PROPVAL_ALWAYS,
+	LCSP_PROPVAL_ARMENIAN,
+	LCSP_PROPVAL_AUTO,
+	LCSP_PROPVAL_AVOID,
+	LCSP_PROPVAL_BASELINE,
+	LCSP_PROPVAL_BEHIND,
+	LCSP_PROPVAL_BELOW,
+	LCSP_PROPVAL_BIDI_OVERRIDE,
+	LCSP_PROPVAL_BLINK,
+	LCSP_PROPVAL_BLOCK,
+	LCSP_PROPVAL_BOLD,
+	LCSP_PROPVAL_BOLDER,
+	LCSP_PROPVAL_BORDER_BOX,
+	LCSP_PROPVAL_BOTH,
+	LCSP_PROPVAL_BOTTOM,
+	LCSP_PROPVAL_CAPITALIZE,
+	LCSP_PROPVAL_CAPTION,
+	LCSP_PROPVAL_CENTER,
+	LCSP_PROPVAL_CIRCLE,
+	LCSP_PROPVAL_CLOSE_QUOTE,
+	LCSP_PROPVAL_CODE,
+	LCSP_PROPVAL_COLLAPSE,
+	LCSP_PROPVAL_CONTENT_BOX,
+	LCSP_PROPVAL_CONTINUOUS,
+	LCSP_PROPVAL_CROSSHAIR,
+	LCSP_PROPVAL_DECIMAL_LEADING_ZERO,
+	LCSP_PROPVAL_DECIMAL,
+	LCSP_PROPVAL_DIGITS,
+	LCSP_PROPVAL_DISC,
+	LCSP_PROPVAL_EMBED,
+	LCSP_PROPVAL_E_RESIZE,
+	LCSP_PROPVAL_FIXED,
+	LCSP_PROPVAL_GEORGIAN,
+	LCSP_PROPVAL_HELP,
+	LCSP_PROPVAL_HIDDEN,
+	LCSP_PROPVAL_HIDE,
+	LCSP_PROPVAL_HIGH,
+	LCSP_PROPVAL_HIGHER,
+	LCSP_PROPVAL_ICON,
+	LCSP_PROPVAL_INHERIT,
+	LCSP_PROPVAL_INLINE,
+	LCSP_PROPVAL_INLINE_BLOCK,
+	LCSP_PROPVAL_INLINE_TABLE,
+	LCSP_PROPVAL_INVERT,
+	LCSP_PROPVAL_ITALIC,
+	LCSP_PROPVAL_JUSTIFY,
+	LCSP_PROPVAL_LEFT,
+	LCSP_PROPVAL_LIGHTER,
+	LCSP_PROPVAL_LINE_THROUGH,
+	LCSP_PROPVAL_LIST_ITEM,
+	LCSP_PROPVAL_LOW,
+	LCSP_PROPVAL_LOWER,
+	LCSP_PROPVAL_LOWER_ALPHA,
+	LCSP_PROPVAL_LOWERCASE,
+	LCSP_PROPVAL_LOWER_GREEK,
+	LCSP_PROPVAL_LOWER_LATIN,
+	LCSP_PROPVAL_LOWER_ROMAN,
+	LCSP_PROPVAL_LTR,
+	LCSP_PROPVAL_MENU,
+	LCSP_PROPVAL_MESSAGE_BOX,
+	LCSP_PROPVAL_MIDDLE,
+	LCSP_PROPVAL_MIX,
+	LCSP_PROPVAL_MOVE,
+	LCSP_PROPVAL_NE_RESIZE,
+	LCSP_PROPVAL_NO_CLOSE_QUOTE,
+	LCSP_PROPVAL_NONE,
+	LCSP_PROPVAL_NO_OPEN_QUOTE,
+	LCSP_PROPVAL_NO_REPEAT,
+	LCSP_PROPVAL_NORMAL,
+	LCSP_PROPVAL_NOWRAP,
+	LCSP_PROPVAL_N_RESIZE,
+	LCSP_PROPVAL_NW_RESIZE,
+	LCSP_PROPVAL_OBLIQUE,
+	LCSP_PROPVAL_ONCE,
+	LCSP_PROPVAL_OPEN_QUOTE,
+	LCSP_PROPVAL_OUTSIDE,
+	LCSP_PROPVAL_OVERLINE,
+	LCSP_PROPVAL_POINTER,
+	LCSP_PROPVAL_PRE,
+	LCSP_PROPVAL_PRE_LINE,
+	LCSP_PROPVAL_PRE_WRAP,
+	LCSP_PROPVAL_PROGRESS,
+	LCSP_PROPVAL_RELATIVE,
+	LCSP_PROPVAL_REPEAT,
+	LCSP_PROPVAL_REPEAT_X,
+	LCSP_PROPVAL_REPEAT_Y,
+	LCSP_PROPVAL_RIGHT,
+	LCSP_PROPVAL_RTL,
+	LCSP_PROPVAL_SCROLL,
+	LCSP_PROPVAL_SEPARATE,
+	LCSP_PROPVAL_SE_RESIZE,
+	LCSP_PROPVAL_SHOW,
+	LCSP_PROPVAL_SILENT,
+	LCSP_PROPVAL_SMALL_CAPS,
+	LCSP_PROPVAL_SMALL_CAPTION,
+	LCSP_PROPVAL_SPELL_OUT,
+	LCSP_PROPVAL_SQUARE,
+	LCSP_PROPVAL_S_RESIZE,
+	LCSP_PROPVAL_STATIC,
+	LCSP_PROPVAL_STATUS_BAR,
+	LCSP_PROPVAL_SUB,
+	LCSP_PROPVAL_SUPER,
+	LCSP_PROPVAL_SW_RESIZE,
+	LCSP_PROPVAL_TABLE,
+	LCSP_PROPVAL_TABLE_CAPTION,
+	LCSP_PROPVAL_TABLE_CELL,
+	LCSP_PROPVAL_TABLE_COLUMN,
+	LCSP_PROPVAL_TABLE_COLUMN_GROUP,
+	LCSP_PROPVAL_TABLE_FOOTER_GROUP,
+	LCSP_PROPVAL_TABLE_HEADER_GROUP,
+	LCSP_PROPVAL_TABLE_ROW,
+	LCSP_PROPVAL_TABLE_ROW_GROUP,
+	LCSP_PROPVAL_TEXT_BOTTOM,
+	LCSP_PROPVAL_TEXT_TOP,
+	LCSP_PROPVAL_TEXT,
+	LCSP_PROPVAL_TOP,
+	LCSP_PROPVAL_TRANSPARENT,
+	LCSP_PROPVAL_UNDERLINE,
+	LCSP_PROPVAL_UPPER_ALPHA,
+	LCSP_PROPVAL_UPPERCASE,
+	LCSP_PROPVAL_UPPER_LATIN,
+	LCSP_PROPVAL_UPPER_ROMAN,
+	LCSP_PROPVAL_VISIBLE,
+	LCSP_PROPVAL_WAIT,
+	LCSP_PROPVAL_W_RESIZE,
+
+	/* appended: the lextable index is the enum value */
+	LCSP_PROPVAL_FLEX,
+	LCSP_PROPVAL_INLINE_FLEX,
+	LCSP_PROPVAL_ROW,
+	LCSP_PROPVAL_COLUMN,
+	LCSP_PROPVAL_SPACE_BETWEEN,
+	LCSP_PROPVAL_SPACE_AROUND,
+	LCSP_PROPVAL_SPACE_EVENLY,
+	LCSP_PROPVAL_FLEX_START,
+	LCSP_PROPVAL_FLEX_END,
+	LCSP_PROPVAL_STRETCH,
+	LCSP_PROPVAL_WRAP,
+	LCSP_PROPVAL_START,
+	LCSP_PROPVAL_END,
+	LCSP_PROPVAL_COVER,
+	LCSP_PROPVAL_CONTAIN,
+	LCSP_PROPVAL_NOT_ALLOWED,
+	LCSP_PROPVAL_DEFAULT,
+
+	LCSP_PROPVAL__COUNT /* always last */
+} lcsp_propvals_t;
+
+struct lhp_ctx;
+typedef lws_stateful_ret_t (*lhp_callback)(struct lhp_ctx *ctx, char reason);
+
+/* html attribute */
+
+typedef struct lhp_atr {
+	lws_dll2_t		list;
+	size_t			name_len;	/* 0 if it is elem tag */
+	size_t			value_len;
+
+	/* name+NUL then value+NUL follow */
+} lhp_atr_t;
+
+/* a closed element remembered on its parent for sibling selectors */
+
+typedef struct lhp_sib {
+	lws_dll2_t		list;	/* parent's sibs, newest last */
+	lws_dll2_owner_t	atr;	/* lhp_atr_t moved from the level */
+} lhp_sib_t;
+
+/*
+ * In order to lay out the table, we have to incrementally adjust all foregoing
+ * DLOs as newer cells change the situation.  So we have to keep track of all
+ * cell DLOs in a stack of tables until it's all done.
+ */
+
+typedef struct {
+	lws_dll2_t			list; /* ps->table_cols */
+
+	lws_dll2_owner_t		row_dlos; /* lws_dlo_t in column */
+
+	lws_fx_t			height; /* currently computed row height */
+} lhp_table_row_t;
+
+typedef struct {
+	lws_dll2_t			list; /* ps->table_cols */
+
+	lws_dll2_owner_t		col_dlos; /* lws_dlo_t in column */
+
+	lws_fx_t			width; /* computed column width */
+	lws_fx_t			min_w; /* widest min-content cell */
+	lws_fx_t			max_w; /* widest max-content cell */
+} lhp_table_col_t;
+
+struct lcsp_atr;
+struct lcsp_match;
+
+#define CCPAS_TOP 0
+#define CCPAS_RIGHT 1
+#define CCPAS_BOTTOM 2
+#define CCPAS_LEFT 3
+
+typedef struct lhp_pstack {
+	lws_dll2_t			list;
+	void				*user;	/* private to the stack level */
+	lhp_callback			cb;
+
+	/* static: x,y: offset from parent, w,h: surface size of this object */
+	lws_box_t			drt;
+
+	/*
+	 * Layout state for an element that is a block container (has a dlo
+	 * and lays its children out inside it).  Coordinates are relative to
+	 * our dlo box: the content area starts at (ox, oy) and is cw wide;
+	 * (curx, cury) is the inline cursor inside it, cury being the top of
+	 * the line being built.
+	 */
+	lws_fx_t			ox;
+	lws_fx_t			oy;
+	lws_fx_t			cw;
+	lws_fx_t			abs_h; /* an absolute box's percentage
+						* height, resolved against its
+						* positioned ancestor's padding
+						* box at open */
+	lws_fx_t			abs_bot; /* an absolute box anchored by
+						  * bottom: the y of its bottom
+						  * margin edge */
+	lws_fx_t			curx;
+	lws_fx_t			cury;
+
+	lws_fx_t			line_h;	 /* tallest non-text item on line */
+	lws_dlo_t			*line_first; /* first dlo of the open line */
+	int16_t				line_asc; /* max ascent above baseline on line */
+	int16_t				line_desc; /* max descent below baseline on line */
+	int16_t				last_base; /* baseline of our last line, from
+						    * our box top (valid if has_base) */
+
+	lws_fx_t			maxc;	 /* max-content width so far */
+	lws_fx_t			minc;	 /* min-content width so far */
+	lws_fx_t			nowrap;	 /* width of current line if unwrapped */
+	lws_fx_t			rfloat_w; /* width taken by right floats on line */
+	lws_fx_t			pend_mb; /* last block child's bottom margin */
+	int32_t				abs_y;	 /* approx surface y of our box top */
+	uint16_t			idx;	 /* list item / table cell counter */
+
+	lws_dll2_owner_t		atr; /* lhp_atr_t */
+	lws_dll2_owner_t		sibs; /* lhp_sib_t: our closed children */
+
+	const lws_display_font_t	*f;
+
+	const struct lcsp_atr		*css_background_color;
+	const struct lcsp_atr		*css_color;
+
+	const struct lcsp_atr		*css_position;
+	const struct lcsp_atr		*css_display;
+	const struct lcsp_atr		*css_width;
+	const struct lcsp_atr		*css_height;
+	const struct lcsp_atr		*css_text_indent;
+	const struct lcsp_atr		*css_box_sizing;
+
+	/*
+	 * Stanzas whose selector matched this element with a :before / :after
+	 * pseudo-element suffix: a generated box for each is added when the
+	 * element closes
+	 */
+	struct lcsp_stanza		*pseudo_before;
+	struct lcsp_stanza		*pseudo_after;
+
+	const struct lcsp_atr		*css_border_radius[4];
+
+	const struct lcsp_atr		*css_pos[4];
+	const struct lcsp_atr		*css_margin[4];
+	const struct lcsp_atr		*css_padding[4];
+
+	/*
+	 * css resolution for this element: the stanzas whose selectors matched
+	 * it, lowest precedence first, plus the parsed style="" attribute (in
+	 * styleac) as the highest.  Properties absent here are looked up on
+	 * the parent if the property inherits, else take their initial value.
+	 */
+	struct lcsp_match		*matched;
+	struct lwsac			*styleac;
+	lws_fx_t			font_size; /* computed font-size, px */
+	uint16_t			nmatched;
+
+	uint8_t				is_block:1; /* we are a block container */
+	uint8_t				is_table:1;
+	uint8_t				is_row:1;
+	uint8_t				is_cell:1;
+	uint8_t				is_inline:1; /* style scope only, no box */
+	uint8_t				is_ilevel:1; /* inline-level box (inline-block) */
+	uint8_t				is_abs:1;    /* absolutely positioned */
+	uint8_t				is_float:1;
+	uint8_t				is_float_right:1;
+	uint8_t				is_flex:1;   /* row flex container */
+	uint8_t				is_flex_item:1;
+	uint8_t				flex_wrap:1;
+	uint8_t				shrink:1;    /* width decided by content at close */
+	uint8_t				in_shrink:1; /* auto width inside a shrinking container */
+	uint8_t				has_line:1;  /* a line is being built */
+	uint8_t				has_base:1;  /* last_base is valid */
+	uint8_t				last_space:1; /* line so far ends with a space */
+	uint8_t				explicit_w:1;
+	uint8_t				explicit_h:1;
+	uint8_t				abs_h_set:1; /* abs_h is the resolved
+						      * percentage height */
+	uint8_t				abs_minh_set:1; /* ... or min-height */
+	uint8_t				abs_bot_set:1; /* abs_bot places us at
+							* close */
+	uint8_t				abs_stretch_set:1; /* top + bottom stretch,
+							    * abs_bot the bottom
+							    * offset, sized when
+							    * the ancestor closes */
+	uint8_t				css_resolved:1;
+	uint8_t				in_body:1;
+	uint8_t				hidden:1; /* display: none on us or an ancestor */
+	uint8_t				ti_done:1; /* applied our text-indent already */
+
+	/* user layout owns these after initial values set */
+
+	lws_dlo_t			*dlo;
+	const lws_display_font_t	*font;
+
+	/*
+	 * A css background-image on this element: its dlo is created when
+	 * the element is parsed, before the layout has made the element's
+	 * own dlo, so it is parked on the parent block and then moved into
+	 * the element's dlo at (bg_ox, bg_oy) when that exists
+	 */
+	lws_dlo_t			*bg_dlo;
+	lws_fx_t			bg_ox;
+	lws_fx_t			bg_oy;
+
+} lhp_pstack_t;
+
+typedef enum lcsp_css_units {
+	LCSP_UNIT_NONE,
+
+	LCSP_UNIT_NUM,			/* u.i */
+
+	LCSP_UNIT_LENGTH_EM,		/* u.i */
+	LCSP_UNIT_LENGTH_EX,		/* u.i */
+	LCSP_UNIT_LENGTH_IN,		/* u.i */
+	LCSP_UNIT_LENGTH_CM,		/* u.i */
+	LCSP_UNIT_LENGTH_MM,		/* u.i */
+	LCSP_UNIT_LENGTH_PT,		/* u.i */
+	LCSP_UNIT_LENGTH_PC,		/* u.i */
+	LCSP_UNIT_LENGTH_PX,		/* u.i */
+	LCSP_UNIT_LENGTH_PERCENT,	/* u.i */
+	LCSP_UNIT_LENGTH_REM,		/* u.i */
+	LCSP_UNIT_LENGTH_VW,		/* u.i, 1vw is 1% of surface width */
+	LCSP_UNIT_LENGTH_VH,		/* u.i, 1vh is 1% of surface height */
+	LCSP_UNIT_LENGTH_VMIN,		/* u.i, smaller of vw / vh */
+	LCSP_UNIT_LENGTH_VMAX,		/* u.i, larger of vw / vh */
+
+	LCSP_UNIT_CALC,			/* u.i is index in string chunk */
+
+	LCSP_UNIT_ANGLE_ABS_DEG,	/* u.i */
+	LCSP_UNIT_ANGLE_REL_DEG,	/* u.i */
+
+	LCSP_UNIT_FREQ_HZ,		/* u.i */
+
+	LCSP_UNIT_RGBA,			/* u.rgba */
+
+	LCSP_UNIT_URL,			/* string at end of atr */
+	LCSP_UNIT_STRING,		/* string at end of atr */
+	LCSP_UNIT_DATA,			/* binary data at end of atr */
+
+} lcsp_css_units_t;
+
+typedef struct lcsp_atr {
+	lws_dll2_t		list;
+
+	int			propval; /* lcsp_propvals_t LCSP_PROPVAL_ */
+
+	size_t			value_len;	/* for string . url */
+	lcsp_css_units_t	unit;
+
+	union {
+		lws_fx_t	i;
+		uint32_t 	rgba;	/* for colours */
+	} u;
+
+	lws_fx_t		r;
+
+	uint8_t			op;
+
+	/* .value_len bytes follow (for strings and blobs) */
+} lcsp_atr_t;
+
+/* css definitions like font-weight:  */
+typedef struct lcsp_defs {
+	lws_dll2_t		list;
+	lws_dll2_owner_t	atrs;		/* lcsp_atr_t */
+	struct lhp_css_var	*var;		/* if prop == LCSP_PROP__COUNT:
+						 * the --name this declares */
+	lcsp_props_t		prop;		/* lcsp_props_t, LCSP_PROP_* */
+	uint8_t			important;	/* declared !important */
+} lcsp_defs_t;
+
+/*
+ * One selector of a stanza's selector list, eg, "div.x > p" from
+ * "div.x > p, .y { ... }".  Stored normalized: a single space is the
+ * descendant combinator, no spaces around '>', '+', '~' or inside [...].
+ */
+
+typedef struct lcsp_names {
+	lws_dll2_t		list;
+	size_t			name_len;
+	uint32_t		specificity;	/* (layer << 18) | (ids << 12) |
+						 * (classes << 6) | tags */
+	uint16_t		key_ofs;	/* rightmost compound's most
+						 * selective simple selector,
+						 * for the cascade prefilter */
+	uint16_t		key_len;
+	uint8_t			key_kind;	/* LHP_SELKEY_ */
+
+	/* name + NUL follow */
+} lcsp_names_t;
+
+typedef struct lcsp_stanza { /* css stanza, with names and defs */
+	lws_dll2_t		list;
+
+	lws_dll2_owner_t	names; /* lcsp_names_t */
+	lws_dll2_owner_t	defs; /* lcsp_defs_t */
+
+	uint32_t		seq;	/* source order, for cascade ties */
+	uint32_t		hit_serial; /* cascade pass that last hit it */
+	uint32_t		hit_best; /* best specificity in that pass */
+} lcsp_stanza_t;
+
+/*
+ * The selector index: every selector of every stanza, bucketed by its key
+ * (see lhp_sel_key()), so the cascade for an element only visits the
+ * selectors whose key it can satisfy plus the keyless ones
+ */
+
+typedef struct lhp_selidx {
+	struct lhp_selidx	*next;
+	lcsp_names_t		*nm;
+	lcsp_stanza_t		*stz;
+} lhp_selidx_t;
+
+#define LHP_SELIDX_BUCKETS	64
+
+/*
+ * A list of stanza references can easily have to bring in the same stanza
+ * multiple times, eg, <div><span class=x><div> won't work unless the div
+ * stanzas are listed twice at different places in the list.  It means we can't
+ * use dll2 directly since the number of references is open-ended.
+ *
+ * lcsp_stanza_ptr provides indirection that allows multiple listings.
+ */
+
+typedef struct lcsp_stanza_ptr {
+	lws_dll2_t		list;
+
+	lcsp_stanza_t		*stz;
+} lcsp_stanza_ptr_t;
+
+typedef struct lcsp_atr_ptr {
+	lws_dll2_t		list;
+
+	lcsp_atr_t		*atr;
+} lcsp_atr_ptr_t;
+
+/*
+ * A stanza that matched an element, with the specificity of the best selector
+ * that matched.  Each open element keeps a sorted array of these; the last
+ * entry has the highest precedence.
+ */
+
+typedef struct lcsp_match {
+	lcsp_stanza_t		*stz;
+	uint32_t		specificity;
+} lcsp_match_t;
+
+typedef struct lhp_css_var {
+	lws_dll2_t list;
+	size_t name_len;
+	lcsp_defs_t *def;
+	/* name+NUL follows */
+} lhp_css_var_t;
+
+/*
+ * A cascade layer (@layer): its position in css_layers is its order in the
+ * cascade, with the first-declared layer the weakest.  Unlayered rules beat
+ * every layer.
+ */
+
+typedef struct lhp_css_layer {
+	lws_dll2_t list;
+	/* name+NUL follows (empty for an anonymous layer) */
+} lhp_css_layer_t;
+
+enum {
+	LHP_SELKEY_NONE,
+	LHP_SELKEY_TAG,
+	LHP_SELKEY_CLASS,
+	LHP_SELKEY_ID
+};
+
+/* layer indexes are 1-based, this is the unlayered ("strongest") value */
+#define LHP_CSS_LAYER_NONE	63
+
+#define LHP_FLAG_DOCUMENT_END					(1 << 0)
+
+/*
+ * One URL block rule prepared by lws_lhp_set_filter(): a lowercased copy of
+ * the rule text, with host_anchor set if it was "||host..." form.  Allocated
+ * in ctx->blockac, on ctx->block_rules.
+ */
+typedef struct lhp_block_rule {
+	lws_dll2_t		list;
+	size_t			len;
+	uint8_t			host_anchor:1;
+
+	/* lowercased rule text + NUL follows */
+} lhp_block_rule_t;
+
+typedef struct lhp_ctx {
+	lws_dll2_owner_t	stack; /* lhp_pstack_t */
+
+	struct lwsac		*cssac; /* css allocations all in an ac */
+	struct lwsac		*cascadeac; /* active_stanzas ac */
+	struct lwsac		*propatrac; /* prop atr query results ac */
+	lws_dll2_owner_t	css; /* lcsp_stanza_t (all in ac) */
+
+	lws_dll2_owner_t	*ids;
+
+	lws_fx_t		tf;
+	lcsp_css_units_t	unit;
+	lcsp_stanza_t		*stz; /* current stanza getting properties */
+	lcsp_defs_t		*def; /* current property getting values */
+
+	lws_dll2_owner_t	active_stanzas; /* lcsp_stanza_ptr_t allocated
+						 * in cascadeac */
+	lws_dll2_owner_t	active_atr; /* lcsp_atr_ptr_t allocated in
+					     * propatrac */
+
+	lws_dll2_owner_t	css_vars; /* lhp_css_var_t allocated in cssac */
+	lws_dll2_owner_t	css_layers; /* lhp_css_layer_t allocated in
+					     * cascade order */
+
+	struct lwsac		*idxac; /* selector index allocations */
+	lhp_selidx_t		*selidx[LHP_SELIDX_BUCKETS];
+	lhp_selidx_t		*selidx_nokey; /* selectors without a key */
+	lcsp_stanza_t		**hits; /* stanzas hit in the current pass */
+	uint32_t		hits_alloc;
+	uint32_t		hits_count;
+	uint32_t		selidx_count; /* stanzas indexed */
+	uint32_t		cascade_serial;
+	uint32_t		stz_seq;
+
+	/* ad / junk filtering, see lws_lhp_set_filter() */
+
+	char			*filter_css; /* strdup of cosmetic filter css */
+	lws_dll2_owner_t	block_rules; /* lhp_block_rule_t in blockac */
+	struct lwsac		*blockac;
+
+	lws_surface_info_t	ic;
+
+	const char		*base_url; /* strdup of https://x.com/y.html */
+	sul_cb_t		ssevcb; /* callback for ss events */
+	lws_sorted_usec_list_t	*ssevsul; /* sul to use to resume rz */
+	sul_cb_t		sshtmlevcb; /* callback for more html parse */
+	lws_sorted_usec_list_t	*sshtmlevsul; /* sul for more html parse */
+
+	void			*user;
+	void			*user1;
+	const char		*tag; /* private */
+	size_t			tag_len; /* private */
+
+	int			npos;
+	int			state; /* private */
+	int			state_css_comm; /* private */
+	int			nl_temp;
+	int			temp_count;
+	int			saved_state;
+	int			entity_start;
+
+	uint32_t		flags;
+	uint32_t		temp;
+	int32_t			window; /* 0, or ss item flow control limit */
+	int32_t			viewport_h; /* 0, or the css viewport height
+					     * when the surface is taller */
+	lws_fx_t		viewport_h_fx;
+
+	union {
+		uint32_t	s;
+		struct {
+			uint32_t	first:1;
+			uint32_t	closing:1;
+			uint32_t	void_element:1;
+			uint32_t	doctype:1;
+			uint32_t	inq:1;
+			uint32_t	tag_used:1;
+			uint32_t	arg:1;
+			uint32_t	default_css:1;
+			uint32_t	style_attr:1; /* nested parse of a style="" value: declarations only */
+			uint32_t	filter_css:1; /* parsing injected filter css */
+#define LHP_CSS_PROPVAL_INT_WHOLE	1
+#define LHP_CSS_PROPVAL_INT_FRAC	2
+#define LHP_CSS_PROPVAL_INT_UNIT	3
+			uint32_t	integer:2;
+			uint32_t	color:2;
+			uint32_t	infunc:1; /* inside name( ... ) value */
+			uint32_t	negval:1; /* '-' seen, number is negative */
+			uint32_t	sq:1; /* attribute value quoted with ' */
+			uint32_t	atr_drop:1; /* current attribute overflowed
+						* the chunk and is discarded */
+		} f;
+	} u;
+
+	int			prop; /* lcsp_props_t */
+	int			propval; /* lcsp_propvals_t */
+	int16_t			css_state; /* private */
+	int16_t			cssval_state; /* private */
+
+	/*
+	 * The url of the stylesheet <link> the parse is waiting on, so
+	 * streams for stylesheets that are not the awaited one cannot
+	 * complete it early
+	 */
+	char			await_css_url[240]; /* LHP_URL_LEN */
+
+	uint8_t			in_body:1;
+	uint8_t			finish_css:1;
+	uint8_t			is_css:1;
+	uint8_t			await_css_done:1;
+	uint8_t			await_assets:1; /* doc end deferred for dlo assets */
+	uint8_t			cancelled:1; /* document torn down: assets must
+					     * not resume the parse for it */
+
+	uint8_t			css_block_depth; /* inside applicable @media */
+	uint8_t			css_skip_depth;  /* skipping unusable @-rule */
+	uint8_t			css_layer;	 /* 0: unlayered, else the
+						  * 1-based @layer index */
+	uint8_t			css_layer_depth; /* css_block_depth of the
+						  * open @layer block */
+	uint8_t			css_lhs_partial:1; /* stanza already created
+						    * for an overlong selector
+						    * list */
+	uint8_t			css_lhs_skip:1;	 /* selector too long: skip
+						  * its block */
+
+	/* at end so we can memset members above it in one go */
+
+	char			buf[LHP_STRING_CHUNK + 1];
+
+} lhp_ctx_t;
+
+/*
+ * lws_lhp_construct() - Construct an lhp context
+ *
+ * \param ctx: the lhp context to prepare
+ * \param cb: the stream parsing callback
+ * \param user: opaque user pointer available from the lhp context
+ * \param ic: struct with arguments for lhp context
+ *
+ * The lhp context is allocated by the caller (the size is known).
+ * Prepares an lhp context to parse html.  Returns 0 for OK, or nonzero if OOM.
+ */
+LWS_VISIBLE LWS_EXTERN int
+lws_lhp_construct(lhp_ctx_t *ctx, lhp_callback cb, void *user,
+		  const lws_surface_info_t *ic);
+
+/*
+ * lws_lhp_destruct() - Destroy an lhp context
+ *
+ * \param ctx: the lhp context to prepare
+ *
+ * Destroys an lhp context.  The lhp context is allocated by the caller (the
+ * size is known).  But there are suballocations that must be destroyed with
+ * this.
+ */
+LWS_VISIBLE LWS_EXTERN void
+lws_lhp_destruct(lhp_ctx_t *ctx);
+
+/**
+ * struct lws_lhp_filter - ad / junk filtering policy for lws_lhp_set_filter()
+ *
+ * \p cosmetic_css: css text hiding junk elements, or NULL for none.  It is
+ * applied with higher precedence than any document css, so plain
+ * ".junk { display: none; }" rules are already authoritative; "!important" is
+ * also available for grouping with other declarations.  Any selector the css
+ * engine understands can be used (classes, ids, [attr^=...] and so on).
+ *
+ * \p block_rules: newline-separated URL block rules, or NULL for none.
+ * Lines starting with '#' and empty lines are ignored; other lines are either
+ * "||host.tld" (matches any subdomain of host.tld) or a plain substring that
+ * matches anywhere in the resolved asset URL.  Matching is case-insensitive.
+ * A blocked asset is never fetched; the element is laid out without it.
+ */
+typedef struct lws_lhp_filter {
+	const char		*cosmetic_css;
+	const char		*block_rules;
+} lws_lhp_filter_t;
+
+/**
+ * lws_lhp_set_filter() - install an ad / junk filter on a prepared context
+ *
+ * \param ctx: the lhp context
+ * \param filter: the filtering policy, or NULL to remove any existing one
+ *
+ * Installs the filter described in \p filter.  The strings are copied, so the
+ * caller's storage only needs to stay valid for the call.  Must be called
+ * after lws_lhp_construct() and before the first lws_lhp_parse() on \p ctx;
+ * returns nonzero if called too late or on OOM, else 0.
+ */
+LWS_VISIBLE LWS_EXTERN int
+lws_lhp_set_filter(lhp_ctx_t *ctx, const lws_lhp_filter_t *filter);
+
+/**
+ * lws_lhp_ss_browse() - browse url using SS and parse via lhp to DLOs
+ *
+ * \param cx: the lws_context
+ * \param rs: the user's render state object
+ * \param url: the https://x.com/y.xyz URL to browse
+ * \param render: the user's linewise render callback (called from \p rs.sul)
+ *
+ * High level network fetch via SS and render html via lhp / DLO
+ *
+ * rs->ic must be prepared before calling.
+ *
+ * Returns nonzero if an early, fatal problem, else returns 0 and  continues
+ * asynchronously.
+ *
+ * If rs->box is (0,0,0,0) on entry, it is set to represent the whole display
+ * surface.  Otherwise if not representing the whole display surface, it
+ * indicates partial mode should be used.
+ */
+LWS_VISIBLE LWS_EXTERN int
+lws_lhp_ss_browse(struct lws_context *cx, lws_display_render_state_t *rs,
+		  const char *url, sul_cb_t render);
+
+/**
+ * lws_lhp_ss_browse_filter() - as lws_lhp_ss_browse(), with content filtering
+ *
+ * \param cx: the lws_context
+ * \param rs: the user's render state object
+ * \param url: the https://x.com/y.xyz URL to browse
+ * \param render: the user's linewise render callback (called from \p rs.sul)
+ * \param filter: ad / junk filter to apply, see lws_lhp_set_filter()
+ *
+ * Identical to lws_lhp_ss_browse() but applies \p filter (which may be NULL,
+ * giving the same result as lws_lhp_ss_browse()).
+ */
+LWS_VISIBLE LWS_EXTERN int
+lws_lhp_ss_browse_filter(struct lws_context *cx,
+				 lws_display_render_state_t *rs, const char *url,
+				 sul_cb_t render, const lws_lhp_filter_t *filter);
+
+/**
+ * lws_lhp_ss_cancel() - cancel and tear down the browse on a render state
+ *
+ * \param rs: the render state the document was browsed onto
+ *
+ * Stops the document bound to \p rs completely: destroys its html stream
+ * (including its lhp parse state), and stops any of its assets that are
+ * still fetching or queued.  Nothing further runs on \p rs for the old
+ * document; \p rs can be browsed again immediately afterwards.  It is
+ * meant for navigating away, or laying a document out again at a new size.
+ *
+ * Note it stops any assets active on the lws_context, so it suits the
+ * single-document-at-a-time render state usage.
+ */
+LWS_VISIBLE LWS_EXTERN void
+lws_lhp_ss_cancel(lws_display_render_state_t *rs);
+
+/**
+ * lws_lhp_parse() - parses a chunk of input HTML
+ *
+ * \p ctx: the parsing context
+ * \p buf: pointer to the start of the chunk of html
+ * \p len: pointer the number of bytes of html available at *\pbuf
+ *
+ * Parses up to *len bytes at *buf.  On exit, *buf and *len are adjusted
+ * according to how much data was used.  May return before processing all the
+ * input.
+ *
+ * Returns LWS_SRET_WANT_INPUT if the parsing is stalled on some other async
+ * event (eg, fetch of image to find out the dimensions).
+ *
+ * The lws_lhp_ss_browse() api wraps this.
+ */
+LWS_VISIBLE LWS_EXTERN lws_stateful_ret_t
+lws_lhp_parse(lhp_ctx_t *ctx, const uint8_t **buf, size_t *len);
+
+/**
+ * lws_css_cascade_get_prop_atr() - find the css declaration in effect for a property
+ *
+ * \p ctx: the parsing context
+ * \p prop: the LCSP_PROP_ property to look up
+ *
+ * Looks up \p prop for the element currently at the top of the parse stack.
+ * The winning declaration is the one from the highest-precedence stanza that
+ * matched the element (style="" attribute, then !important, then selector
+ * specificity, then source order).  If no matched stanza declares it, an
+ * inherited property (color, font-*, text-align, white-space...) is looked up
+ * on the ancestors in turn; a non-inherited one returns NULL, meaning "use
+ * the initial value".  A declared value of "inherit" also defers to the
+ * parent.
+ *
+ * Returns NULL if nothing applies or OOM.  Otherwise the values of the
+ * winning declaration are listed in ctx->active_atr (so shorthands like
+ * margin: 1px 2px can be walked) and the last value is returned.
+ */
+LWS_VISIBLE LWS_EXTERN const lcsp_atr_t *
+lws_css_cascade_get_prop_atr(lhp_ctx_t *ctx, lcsp_props_t prop);
+
+/**
+ * lws_css_get_prop_atr_ps() - as lws_css_cascade_get_prop_atr() for any open element
+ *
+ * \p ctx: the parsing context
+ * \p ps: the open element (any level of the parse stack)
+ * \p prop: the LCSP_PROP_ property to look up
+ */
+LWS_VISIBLE LWS_EXTERN const lcsp_atr_t *
+lws_css_get_prop_atr_ps(lhp_ctx_t *ctx, lhp_pstack_t *ps, lcsp_props_t prop);
+
+/**
+ * lws_http_rel_to_url() - make absolute url from base and relative
+ *
+ * \param dest: place to store the result
+ * \param len: max length of result including NUL
+ * \param base: a reference url including a file part
+ * \param rel: the absolute or relative url or path to apply to base
+ *
+ * Copy the url formof rel into dest, using base to fill in missing context
+ *
+ * If base is https://x.com/y/z.html
+ *
+ *   a.html               -> https://x.com/y/a/html
+ *   ../b.html            -> https://x.com/b.html
+ *   /c.html              -> https://x.com/c.html
+ *   https://y.com/a.html -> https://y.com/a.html
+ */
+LWS_VISIBLE LWS_EXTERN int
+lws_http_rel_to_url(char *dest, size_t len, const char *base, const char *rel);
+
+LWS_VISIBLE LWS_EXTERN lhp_pstack_t *
+lws_css_get_parent_block(lhp_ctx_t *ctx, lhp_pstack_t *ps);
+
+LWS_VISIBLE LWS_EXTERN const char *
+lws_css_pstack_name(lhp_pstack_t *ps);
+
+LWS_VISIBLE LWS_EXTERN const char *
+lws_html_get_atr(lhp_pstack_t *ps, const char *aname, size_t aname_len);
+
+LWS_VISIBLE LWS_EXTERN const lws_fx_t *
+lws_csp_px(const lcsp_atr_t *a, lhp_pstack_t *ps);
+
+/*
+ * The winning declaration's value for one side (idx 0..3 = T R B L) of a
+ * shorthand-or-longhand property like border-width / border-color
+ */
+LWS_VISIBLE LWS_EXTERN const lcsp_atr_t *
+lws_css_get_side_atr_ps(lhp_pstack_t *ps, int longhand, int shorthand,
+			int idx, int radii);
+
+/*
+ * As lws_csp_px(), but lengths in calc() resolve their % terms against base
+ * (the containing block content width) when it is non-NULL
+ */
+/**
+ * lws_csp_calc() - evaluate a calc() attribute value
+ *
+ * \param a: the LCSP_UNIT_CALC atr
+ * \param ps: the element it is for
+ * \param base: the containing block length for %, or NULL
+ * \param unitless: NULL, or set nonzero if the result is a bare number
+ */
+LWS_VISIBLE LWS_EXTERN lws_fx_t
+lws_csp_calc(const lcsp_atr_t *a, lhp_pstack_t *ps, const lws_fx_t *base,
+	     int *unitless);
+
+LWS_VISIBLE LWS_EXTERN const lws_fx_t *
+lws_csp_px_base(const lcsp_atr_t *a, lhp_pstack_t *ps, const lws_fx_t *base);
+
+LWS_VISIBLE LWS_EXTERN void
+lws_lhp_tag_dlo_id(lhp_ctx_t *ctx, lhp_pstack_t *ps, lws_dlo_t *dlo);
+
+void
+lhp_set_dlo_padding_margin(lhp_pstack_t *ps, lws_dlo_t *dlo);
+
+#define LWS_LHPREF_WIDTH		0
+#define LWS_LHPREF_HEIGHT		1
+#define LWS_LHPREF_NONE			2
+
+LWS_VISIBLE LWS_EXTERN int
+lhp_prop_axis(const lcsp_atr_t *a);
+
+LWS_VISIBLE LWS_EXTERN const lcsp_atr_t *
+lhp_resolve_var_color(lhp_ctx_t *ctx, const lcsp_atr_t *a);
+
+LWS_VISIBLE LWS_EXTERN const lcsp_atr_t *
+lhp_resolve_var(lhp_ctx_t *ctx, const lcsp_atr_t *a);
