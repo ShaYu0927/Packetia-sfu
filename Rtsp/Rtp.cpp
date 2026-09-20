@@ -1,9 +1,11 @@
 #include "Rtp.h"
+#include "../Common/memory/MemoryPool.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <limits>
 #include <string>
+#include <stdexcept>
 
 
 static inline std::string hex8(uint8_t v)
@@ -296,27 +298,15 @@ void RtpTrackDescription::setInterleavedChannel(uint8_t rtp_channel, uint8_t rtc
 
 void RtpPacket::setPayload(const uint8_t* payload, size_t len)
 {
-    if (!payload || len == 0)
+    if (len == 0)
     {
         payload_len_ = 0;
-        data_.reset();
+        size_ = std::min(size_, payload_off_);
         return;
     }
-
-    if (!data_)
-    {
-        LOG_ERROR("setPayload data_ is null, capacity=", capacity_, " payload_off_=", payload_off_, " len=", len);
-    }
-
-    if (payload_off_ > capacity_)
-    {
-        LOG_ERROR("setPayload invalid payload_off_, payload_off_=", payload_off_, " capacity_=", capacity_);
-    }
-
-    if (payload_off_ + len > capacity_)
-    {
-        LOG_ERROR("setPayload no enough capacity, payload_off_=", payload_off_, " len=", len, " capacity_=", capacity_);
-    }
+    if (!payload) throw std::invalid_argument("null RTP payload");
+    if (!data_ || payload_off_ > capacity_ || len > capacity_ - payload_off_)
+        throw std::out_of_range("RTP payload exceeds packet capacity");
 
     std::memcpy(data_.get() + payload_off_, payload, len);
     payload_len_ = len;
@@ -331,10 +321,9 @@ void RtpPacket::setRaw(const uint8_t* data, size_t len)
         return;
     }
 
-    if (len > getCapacity())
+    if (!data_ || len > getCapacity())
     {
-        data_.reset(new uint8_t[len]);
-        capacity_ = len;
+        if (!reserve(len)) throw std::bad_alloc();
     }
 
     memcpy(data_.get(), data, len);
@@ -378,6 +367,7 @@ void RtpPacket::resetForReuse()
 }
 
 bool RtpPacket::reserve(size_t capacity)
+try
 {
     if (capacity == 0)
     {
@@ -389,7 +379,9 @@ bool RtpPacket::reserve(size_t capacity)
         return true;
     }
 
-    std::shared_ptr<uint8_t[]> buf(new uint8_t[capacity], std::default_delete<uint8_t[]>());
+    auto allocation = common::MemoryPool::Default().TryAllocate(capacity);
+    if (!allocation) return false;
+    std::shared_ptr<uint8_t[]> buf(std::move(allocation));
     if (!buf)
     {
         return false;
@@ -400,3 +392,5 @@ bool RtpPacket::reserve(size_t capacity)
     size_ = 0;
     return true;
 }
+
+catch (const std::bad_alloc&) { return false; }

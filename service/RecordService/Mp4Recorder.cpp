@@ -122,7 +122,7 @@ void Mp4Recorder::Write(const media::EncodedFrameEvent& event) {
         frame.info.timestamp.time_base_num != first.info.timestamp.time_base_num ||
         frame.info.timestamp.time_base_den != first.info.timestamp.time_base_den ||
         frame.sample_rate != first.sample_rate || frame.channels != first.channels ||
-        (frame.codec_config && first.codec_config && *frame.codec_config != *first.codec_config) ||
+        (frame.codec_config && first.codec_config && frame.codec_config != first.codec_config) ||
         (frame.info.media_type == media::MediaType::Video &&
          (frame.video.width != first.video.width || frame.video.height != first.video.height))) {
         Fail("track parameters changed; restart publishing to begin a new recording");
@@ -256,7 +256,7 @@ void Mp4Recorder::InputFrame(const media::EncodedFrameEvent& event, uint64_t now
         }
         if (track != recording.tracks.end() && !event.frame->IsConfigFrame()) 
         {
-            if (!context_.ReservePending(event.frame->size))
+            if (!context_.ReservePending(event.frame->Size()))
                 Fail("codec discovery buffer limit reached");
             else 
             {
@@ -266,10 +266,10 @@ void Mp4Recorder::InputFrame(const media::EncodedFrameEvent& event, uint64_t now
                 } 
                 catch (...) 
                 {
-                    context_.pending_bytes -= event.frame->size;
+                    context_.pending_bytes -= event.frame->Size();
                     throw;
                 }
-                recording.pending_bytes += event.frame->size;
+                recording.pending_bytes += event.frame->Size();
             }
         } else ++context_.dropped;
     }

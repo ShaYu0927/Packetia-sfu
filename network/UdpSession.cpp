@@ -175,25 +175,14 @@ void UdpMuxHandler::OnDatagram(const network::SocketAddr& src,
     }
 
     auto endpoint_id = sess->Id();
-    Packet* pkt = PacketPool::instance().acquire();
-    if (!pkt)
-    {
-        LOG_ERROR("PacketPool acquire failed, endpoint_id=", endpoint_id);
-        return;
-    }
-    pkt->recv_ts = Timestamp::NowMs();
-    pkt->assign(data, len);
-
     WorkJob job{};
-    job.key  = endpoint_id;
+    job.key = endpoint_id;
+    job.target_id = endpoint_id;
     job.type = ToWorkJobType(proto);
-    job.pkt  = pkt;
-    job.enqueue_ts = pkt->recv_ts;
+    job.payload = common::SharedBuffer::TryCopy(data, len);
+    if (job.payload.Empty()) return;
+    job.enqueue_ts = Timestamp::NowMs();
     job.handler = DispatchHandler(proto);
-    job.deleter = [](WorkJob& job) {
-        WorkerService::realse(job.pkt);
-        job.pkt = nullptr;
-    };
 
     WorkerService::post("endpoint_pool", std::move(job));
   

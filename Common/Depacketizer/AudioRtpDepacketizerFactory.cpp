@@ -37,9 +37,7 @@ EncodedFrame MakePacketFrame(const RtpView& view, CodecType codec,
     frame.sample_rate = sample_rate;
     frame.channels = channels;
     frame.sample_count = sample_count;
-    frame.buffer = std::make_shared<std::vector<uint8_t>>(
-        view.payload, view.payload + view.payload_len);
-    frame.size = view.payload_len;
+    frame.buffer = common::SharedBuffer::Copy(view.payload, view.payload_len);
     return frame;
 }
 

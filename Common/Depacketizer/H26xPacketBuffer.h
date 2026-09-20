@@ -1,6 +1,7 @@
 #ifndef _H26X_PACKET_BUFFER_H_
 #define _H26X_PACKET_BUFFER_H_
 
+#include "../memory/PoolAllocator.h"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -63,7 +64,7 @@ private:
     void FindFrames(int64_t inserted_seq, InsertResult& result);
     bool MaybeAssembleFrame(int64_t start_seq, int64_t end_seq, H264AccessUnit& frame);
     bool ValidatePacketUnits(const H264ParsedPacket& packet,bool& fu_active) const;
-    bool AppendPacketUnits(H264ParsedPacket& packet, bool& fu_active, std::vector<uint8_t>& fu_nalu, H264AccessUnit& frame);
+    bool AppendPacketUnits(H264ParsedPacket& packet, bool& fu_active, common::ByteVector& fu_nalu, H264AccessUnit& frame);
     void RemovePackets(int64_t start_seq, int64_t end_seq);
     void ClearInternal();
 

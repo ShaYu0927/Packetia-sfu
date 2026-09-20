@@ -3,8 +3,6 @@
 #include "MediaStreamAffinity.h"
 #include "ShardedWorkerPool.h"
 
-#include <limits>
-#include <memory>
 #include <utility>
 
 namespace media::transport
@@ -12,28 +10,24 @@ namespace media::transport
 
 MediaPacketIngressResult MediaEndpointIngress::OnMediaPacket(ReceivedMediaPacket packet)
 {
-    if (!packet.IsValid() || endpoint_id_ == 0 || packet.Size() > std::numeric_limits<uint32_t>::max())
+    if (!packet.IsValid() || endpoint_id_ == 0)
     {
         return MediaPacketIngressResult::Dropped;
     }
 
-    auto owner = std::make_shared<ReceivedMediaPacket>(std::move(packet));
-
     uint32_t media_ssrc = 0;
-    const bool has_media_ssrc = owner->type == MediaPacketType::Rtcp
+    const bool has_media_ssrc = packet.type == MediaPacketType::Rtcp
         ? media_affinity::TryGetRtcpMediaSsrc(
-              owner->Data(), owner->Size(), media_ssrc)
+              packet.Data(), packet.Size(), media_ssrc)
         : media_affinity::TryGetRtpSsrc(
-              owner->Data(), owner->Size(), media_ssrc);
+              packet.Data(), packet.Size(), media_ssrc);
 
     WorkJob job{};
     job.target_id = endpoint_id_;
     job.key = has_media_ssrc ? media_affinity::MakeStreamHandle(endpoint_id_, media_ssrc).affinity_key : endpoint_id_;
-    job.type = owner->type == MediaPacketType::Rtcp ? WorkType::Rtcp : WorkType::Rtp;
-    job.raw.data = owner->Data();
-    job.raw.len = static_cast<uint32_t>(owner->Size());
-    job.enqueue_ts = owner->receive_time_ms;
-    job.owner = std::move(owner);
+    job.type = packet.type == MediaPacketType::Rtcp ? WorkType::Rtcp : WorkType::Rtp;
+    job.enqueue_ts = packet.receive_time_ms;
+    job.payload = std::move(packet.payload);
 
     return WorkerService::post("media", std::move(job)) == 0 ? MediaPacketIngressResult::Accepted : MediaPacketIngressResult::Dropped;
 }

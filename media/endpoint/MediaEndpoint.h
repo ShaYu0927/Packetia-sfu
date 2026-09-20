@@ -44,10 +44,10 @@ public:
     void OnDtls(WorkJob& job) override;
 
 protected:
-    virtual void HandleRtpPacket(Packet* pkt) = 0;
-    virtual void HandleRtcpPacket(Packet* pkt) {}
-    virtual void HandleStunPacket(Packet* pkt) {}
-    virtual void HandleDtlsPacket(Packet* pkt) {}
+    virtual void HandleRtpPacket(common::BufferView packet) = 0;
+    virtual void HandleRtcpPacket(common::BufferView packet) {}
+    virtual void HandleStunPacket(common::BufferView packet) {}
+    virtual void HandleDtlsPacket(common::BufferView packet) {}
 
     std::shared_ptr<RtpTrackDescription> SourceTrack() const
     {
@@ -112,8 +112,8 @@ public:
     void RemoveEncodedFrameCallback(FrameSubscriptionId id);
 
 protected:
-    void HandleRtpPacket(Packet* pkt) override;
-    void HandleRtcpPacket(Packet* pkt) override;
+    void HandleRtpPacket(common::BufferView packet) override;
+    void HandleRtcpPacket(common::BufferView packet) override;
 
     void ForwardRtpToSubscribers(uint32_t source_ssrc, const uint8_t* data, size_t len);
 

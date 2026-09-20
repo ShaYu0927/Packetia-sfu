@@ -650,7 +650,7 @@ TEST(RtcpChainTest, H264SingleNaluProducesCompleteEncodedFrame)
     EXPECT_EQ(output->rtp.rtp_timestamp, 90000U);
     EXPECT_GT(output->info.timestamp.receive_time_ms, 0);
     EXPECT_FALSE(output->info.timestamp.capture_time_valid);
-    EXPECT_EQ(*output->buffer,
+    EXPECT_EQ(output->buffer.ToVector(),
               (std::vector<uint8_t>{0, 0, 0, 1, 0x65, 0xAA, 0xBB}));
 }
 
@@ -713,7 +713,7 @@ TEST(RtcpChainTest, H264FrameWaitsForRetransmittedGap)
 
     ASSERT_NE(tracker.inputRtp(middle, sizeof(middle)), nullptr);
     ASSERT_EQ(outputs.size(), 1U);
-    EXPECT_EQ(*outputs.front()->buffer,
+    EXPECT_EQ(outputs.front()->buffer.ToVector(),
               (std::vector<uint8_t>{0, 0, 0, 1, 0x65, 0xAA, 0xBB, 0xCC}));
     EXPECT_EQ(outputs.front()->rtp.first_sequence, 100U);
     EXPECT_EQ(outputs.front()->rtp.last_sequence, 102U);
@@ -742,7 +742,7 @@ TEST(RtcpChainTest, H264PacketBufferHandlesSequenceWrap)
     ASSERT_NE(output, nullptr);
     EXPECT_EQ(output->rtp.first_sequence, 65535U);
     EXPECT_EQ(output->rtp.last_sequence, 0U);
-    EXPECT_EQ(*output->buffer,
+    EXPECT_EQ(output->buffer.ToVector(),
               (std::vector<uint8_t>{0, 0, 0, 1, 0x65, 0x11, 0x22}));
 }
 

@@ -1,6 +1,9 @@
 #ifndef _RTP_SENDER_TRACKER_H_
 #define _RTP_SENDER_TRACKER_H_
 
+#include "../Common/memory/SharedBuffer.h"
+#include "../Common/memory/PoolAllocator.h"
+
 #include <cstdint>
 #include <cstddef>
 #include <vector>
@@ -157,12 +160,12 @@ public:
 private:
     bool ParseRtpHeader(const uint8_t* data, size_t len, RtpHeader& header);
 
-    bool RewriteRtpPacket(std::vector<uint8_t>& packet, const RtpHeader& in_header, uint16_t& out_seq, uint32_t& out_timestamp);
+    bool RewriteRtpPacket(common::ByteVector& packet, const RtpHeader& in_header, uint16_t& out_seq, uint32_t& out_timestamp);
 
-    bool WriteTransportCcExtension(std::vector<uint8_t>& packet,
+    bool WriteTransportCcExtension(common::ByteVector& packet,
                                    uint16_t transport_sequence) const;
 
-    bool PrepareTransportCc(std::vector<uint8_t>& packet,
+    bool PrepareTransportCc(common::ByteVector& packet,
                             media::TransportSequenceNumber& sequence) const;
 
     void NotifyPacketSent(const media::TransportSequenceNumber& sequence,
@@ -173,15 +176,15 @@ private:
 
     uint32_t RewriteTimestamp(uint32_t in_timestamp);
 
-    void CacheRtpPacket(uint16_t out_seq, const std::vector<uint8_t>& packet);
+    void CacheRtpPacket(uint16_t out_seq, const common::ByteVector& packet);
 
-    bool SendRtpPacket(const std::vector<uint8_t>& packet,
+    bool SendRtpPacket(const common::ByteVector& packet,
                        bool retransmit = false);
 
 private:
     struct CachedRtpPacket
     {
-        std::vector<uint8_t> packet;
+        common::SharedBuffer packet;
         uint64_t last_retransmit_ms = 0;
         uint32_t retransmit_count = 0;
     };

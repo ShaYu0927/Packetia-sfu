@@ -1,6 +1,7 @@
 #ifndef _AUDIO_DEPACKETIZER_H_
 #define _AUDIO_DEPACKETIZER_H_
 
+#include "../memory/PoolAllocator.h"
 #include "Depacketizer.h"
 #include "MediaFrame.h"
 #include <deque>
@@ -65,7 +66,7 @@ private:
         uint32_t expected_size = 0;
         uint16_t first_seq = 0;
         uint16_t last_seq = 0;
-        std::vector<uint8_t> data;
+        common::ByteVector data;
     };
 
 private:
@@ -73,7 +74,7 @@ private:
     uint32_t sample_rate_ = 0;
     uint16_t channels_ = 1;
     AacPayloadConfig aac_config_;
-    std::shared_ptr<const std::vector<uint8_t>> codec_config_;
+    common::SharedBuffer codec_config_;
     AacFragment aac_fragment_;
 
     std::deque<EncodedFrame> frames_;

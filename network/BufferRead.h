@@ -2,6 +2,7 @@
 #define _BUFFERREAD_H_
 
 
+#include "../Common/memory/PoolAllocator.h"
 #include <algorithm>
 #include <cstdint>
 #include <string>
@@ -99,7 +100,7 @@ private:
 	{ return Begin() + writer_index_; }
 
 
-    std::vector<char> buffer_;
+    common::PoolVector<char> buffer_;
 	size_t reader_index_ = 0;
 	size_t writer_index_ = 0;
 

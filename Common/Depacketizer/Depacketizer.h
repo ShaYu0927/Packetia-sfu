@@ -1,6 +1,7 @@
 #ifndef _DEPACKETIZER_H__
 #define _DEPACKETIZER_H__
 
+#include "../memory/PoolAllocator.h"
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -20,7 +21,7 @@ struct iVideoFrame
 {
     uint32_t ssrc = 0;
     uint32_t ts = 0;
-    std::vector<uint8_t> annexb;
+    common::ByteVector annexb;
 };
 
 class Depacketizer 
@@ -29,7 +30,7 @@ public:
     virtual ~Depacketizer() = default;
     virtual bool input(const RtpView& pkt) = 0;
     virtual bool hasFrame() const = 0;
-    virtual std::vector<uint8_t> popFrame() = 0;
+    virtual common::ByteVector popFrame() = 0;
 };
 
 

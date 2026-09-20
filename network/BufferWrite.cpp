@@ -1,4 +1,5 @@
 #include "BufferWrite.h"
+#include "../Common/memory/MemoryPool.h"
 #include "SocketUtil.h"
 #include <cstring>
 #include <utility>
@@ -44,7 +45,10 @@ bool BufferWirte::Append(const char* data,uint32_t size,uint32_t index)
     }
 
     Packet pkt;
-    pkt.data.reset(new char[size], std::default_delete<char[]>());
+    auto allocation = common::MemoryPool::Default().TryAllocate(size);
+    if (!allocation) return false;
+    std::shared_ptr<uint8_t[]> storage(std::move(allocation));
+    pkt.data = std::shared_ptr<char>(storage, reinterpret_cast<char*>(storage.get()));
 	memcpy(pkt.data.get(), data, size);
 	pkt.size = size;
 	pkt.writeIndex = index;

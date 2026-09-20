@@ -1,6 +1,7 @@
 #ifndef _H264_PARAMETER_SET_TRACKER_H_
 #define _H264_PARAMETER_SET_TRACKER_H_
 
+#include "../memory/PoolAllocator.h"
 #include <cstddef>
 #include <cstdint>
 #include <unordered_map>
@@ -16,14 +17,14 @@ struct SpsInfo
     uint32_t sps_id = 0;
     int width = -1;
     int height = -1;
-    std::vector<uint8_t> payload;
+    common::ByteVector payload;
 };
 
 struct PpsInfo
 {
     uint32_t pps_id = 0;
     uint32_t sps_id = 0;
-    std::vector<uint8_t> payload;
+    common::ByteVector payload;
 };
 
 class H264ParameterSetTracker

@@ -115,7 +115,7 @@ bool UdpMediaTransport::Start()
                 if (protocol == DatagramProtocol::Rtcp) type = MediaPacketType::Rtcp;
                 else if (protocol != DatagramProtocol::Rtp) return;
             }
-            self->InputDatagram(packet.remote, type, packet.Data(), packet.Size(), packet.receive_time_ms);
+            self->InputOwnedDatagram(packet.remote, type, std::move(packet.payload), packet.receive_time_ms);
         });
         datagrams_[i]->SetDatagramSink(port_sinks_[i]);
     }
@@ -201,6 +201,14 @@ MediaPacketIngressResult UdpMediaTransport::InputDatagram(
     const uint8_t* data, size_t size, uint64_t receive_time_ms)
 {
     if (!ValidPacket(type, data, size)) return MediaPacketIngressResult::Dropped;
+    return InputOwnedDatagram(source, type, common::SharedBuffer::TryCopy(data, size), receive_time_ms);
+}
+
+MediaPacketIngressResult UdpMediaTransport::InputOwnedDatagram(
+    const network::SocketAddr& source, MediaPacketType type,
+    common::SharedBuffer payload, uint64_t receive_time_ms)
+{
+    if (!ValidPacket(type, payload.Data(), payload.Size())) return MediaPacketIngressResult::Dropped;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (State() != MediaTransportState::Connected) return MediaPacketIngressResult::Closed;
@@ -211,6 +219,6 @@ MediaPacketIngressResult UdpMediaTransport::InputDatagram(
         }
         if (!(peers_[index] == source)) return MediaPacketIngressResult::Dropped;
     }
-    return PublishPacket(type, data, size, receive_time_ms);
+    return PublishPacket(type, std::move(payload), receive_time_ms);
 }
 }

@@ -1,6 +1,7 @@
 #include "BufferRead.h"
 #include "Socket.h"
 #include <cstdint>
+#include <cerrno>
 
 
 const char BufferReader::kCRLF[] = "\r\n";
@@ -30,6 +31,7 @@ char *BufferReader::Peek()
 }
 
 int BufferReader::Read(int sockfd)
+try
 {
     uint32_t size = WritableBytes();
     if (size == 0) 
@@ -51,6 +53,11 @@ int BufferReader::Read(int sockfd)
 		writer_index_ += bytes_read;
 	}
     return bytes_read;
+}
+catch (const std::bad_alloc&)
+{
+    errno = ENOMEM;
+    return -1;
 }
 
 uint32_t BufferReader::ReadAll(std::string &data)

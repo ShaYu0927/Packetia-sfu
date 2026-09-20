@@ -1,6 +1,7 @@
 #ifndef _H264_PAYLOAD_H_
 #define _H264_PAYLOAD_H_
 
+#include "../memory/PoolAllocator.h"
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -27,7 +28,7 @@ struct H264PayloadUnit
 {
     H264PayloadUnitType unit_type = H264PayloadUnitType::Unknown;
     uint8_t nal_type = 0;
-    std::vector<uint8_t> data;
+    common::ByteVector data;
     bool fu_start = false;
     bool fu_end = false;
     uint8_t reconstructed_nal_header = 0;
@@ -68,7 +69,7 @@ struct H264AccessUnit
     bool has_sps = false;
     bool has_pps = false;
     bool has_idr = false;
-    std::vector<std::vector<uint8_t>> nalus;
+    std::vector<common::ByteVector> nalus;
 
     size_t SizeBytes() const
     {
@@ -77,10 +78,10 @@ struct H264AccessUnit
         return total;
     }
 
-    std::vector<uint8_t> ToAnnexB() const
+    common::ByteVector ToAnnexB() const
     {
         static const uint8_t start_code[4] = {0, 0, 0, 1};
-        std::vector<uint8_t> out;
+        common::ByteVector out;
         for (const auto& nalu : nalus)
         {
             out.insert(out.end(), start_code, start_code + 4);

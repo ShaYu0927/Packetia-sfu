@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <utility>
 #include <vector>
+#include "../../Common/memory/SharedBuffer.h"
 
 enum class MediaPacketType
 {
@@ -39,7 +40,7 @@ public:
     {
         if (data && size > 0)
         {
-            payload.assign(data, data + size);
+            payload = common::SharedBuffer::TryCopy(data, size);
         }
     }
 
@@ -52,25 +53,33 @@ public:
           transport_id(source_transport_id),
           receive_time_ms(received_at_ms),
           channel(source_channel),
-          payload(std::move(owned_payload))
+          payload(common::SharedBuffer::TryCopy(owned_payload.data(), owned_payload.size()))
     {
     }
+
+    ReceivedMediaPacket(MediaPacketType packet_type,
+                        uint64_t source_transport_id,
+                        uint64_t received_at_ms,
+                        common::SharedBuffer owned_payload,
+                        int source_channel = kNoChannel)
+        : type(packet_type), transport_id(source_transport_id),
+          receive_time_ms(received_at_ms), channel(source_channel),
+          payload(std::move(owned_payload)) {}
 
     bool IsValid() const noexcept
     {
-        return transport_id != 0 && !payload.empty();
+        return transport_id != 0 && !payload.Empty();
     }
 
-    const uint8_t* Data() const noexcept { return payload.data(); }
-    uint8_t* Data() noexcept { return payload.data(); }
-    size_t Size() const noexcept { return payload.size(); }
+    const uint8_t* Data() const noexcept { return payload.Data(); }
+    size_t Size() const noexcept { return payload.Size(); }
 
 public:
     MediaPacketType type = MediaPacketType::Rtp;
     uint64_t transport_id = 0;
     uint64_t receive_time_ms = 0;
     int channel = kNoChannel;
-    std::vector<uint8_t> payload;
+    common::SharedBuffer payload;
 };
 
 #endif /* _MEDIA_TRANSPORT_PACKET_H_ */

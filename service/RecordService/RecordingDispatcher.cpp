@@ -70,7 +70,7 @@ public:
         if (stale) 
         {
             ++owner_.dropped_;
-            owner_.Complete(frame->stream, frame->event.frame->size);
+            owner_.Complete(frame->stream, frame->event.frame->StorageSize());
             return;
         }
 
@@ -114,7 +114,7 @@ public:
             if (found != shard.end()) shard.erase(found);
             MarkInactive(frame->stream);
         }
-        owner_.Complete(frame->stream, frame->event.frame->size);
+        owner_.Complete(frame->stream, frame->event.frame->StorageSize());
     }
 
     void on_worker_tick(size_t worker) override
@@ -230,7 +230,7 @@ bool RecordingDispatcher::Post(const media::EncodedFrameEvent& event)
         }
         if (new_stream) found = streams_.emplace(key, std::make_shared<StreamEntry>(key)).first;
         stream = found->second;
-        const size_t bytes = event.frame->size;
+        const size_t bytes = event.frame->StorageSize();
         const bool full = queued_.frames >= options_.max_queue_frames ||
             bytes > options_.max_queue_bytes - queued_.bytes ||
             stream->frames >= options_.max_stream_queue_frames ||

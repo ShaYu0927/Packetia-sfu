@@ -17,20 +17,20 @@ std::vector<uint8_t> ParameterSets(const media::EncodedFrame& frame)
     std::vector<uint8_t> result;
     const auto* data = frame.Data();
     auto prefix = [&](size_t pos) -> size_t {
-        if (pos + 3 <= frame.size && !data[pos] && !data[pos+1]) {
+        if (pos + 3 <= frame.Size() && !data[pos] && !data[pos+1]) {
             if (data[pos+2] == 1) return 3;
-            if (pos + 4 <= frame.size && !data[pos+2] && data[pos+3] == 1) return 4;
+            if (pos + 4 <= frame.Size() && !data[pos+2] && data[pos+3] == 1) return 4;
         }
         return 0;
     };
     bool sps = false, pps = false;
-    for (size_t pos = 0; pos < frame.size;) 
+    for (size_t pos = 0; pos < frame.Size();)
     {
         const auto size = prefix(pos);
         if (!size) { ++pos; continue; }
         const auto start = pos + size;
         auto end = start;
-        while (end < frame.size && !prefix(end)) ++end;
+        while (end < frame.Size() && !prefix(end)) ++end;
         if (start < end) {
             const auto type = data[start] & 31;
             if (type == 7 || type == 8) {
@@ -54,7 +54,7 @@ bool Mp4Writer::Ready(const media::EncodedFrame& frame)
                !ParameterSets(frame).empty();
     if (frame.info.codec == media::CodecType::AAC)
         return frame.sample_rate > 0 && frame.channels > 0 && frame.codec_config &&
-               frame.codec_config->size() >= 2;
+               frame.codec_config.Size() >= 2;
     return false;
 }
 
@@ -139,7 +139,7 @@ bool Mp4Writer::Open(std::unique_ptr<ISeekableFile> file,
             parameters->channels = frame.channels;
             parameters->channel_layout = av_get_default_channel_layout(frame.channels);
 #endif
-            config = *frame.codec_config;
+            config = frame.codec_config.ToVector();
         }
         parameters->extradata = static_cast<uint8_t*>(av_mallocz(config.size() + AV_INPUT_BUFFER_PADDING_SIZE));
         if (!parameters->extradata) return Fail("allocate codec parameters", AVERROR(ENOMEM));
@@ -180,13 +180,13 @@ bool Mp4Writer::Write(const media::EncodedFrameEvent& event, int64_t timestamp_u
     auto& track = it->second;
     const auto* stream = context_->streams[track.index];
     const auto& frame = *event.frame;
-    if (frame.size > static_cast<size_t>(std::numeric_limits<int>::max()))
+    if (frame.Size() > static_cast<size_t>(std::numeric_limits<int>::max()))
         return Fail("oversized frame", AVERROR(EINVAL));
     auto* packet = av_packet_alloc();
     if (!packet) return Fail("allocate packet", AVERROR(ENOMEM));
-    int result = av_new_packet(packet, static_cast<int>(frame.size));
+    int result = av_new_packet(packet, static_cast<int>(frame.Size()));
     if (result < 0) { av_packet_free(&packet); return Fail("allocate payload", result); }
-    std::memcpy(packet->data, frame.Data(), frame.size);
+    std::memcpy(packet->data, frame.Data(), frame.Size());
     packet->stream_index = track.index;
     packet->pts = packet->dts = av_rescale_q(timestamp_us, AVRational{1, 1000000}, stream->time_base);
     if (frame.IsKeyFrame()) packet->flags |= AV_PKT_FLAG_KEY;

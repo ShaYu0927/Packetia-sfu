@@ -55,7 +55,7 @@ uint32_t CalculateRttMs(uint32_t lsr, uint32_t dlsr)
     return static_cast<uint32_t>((static_cast<uint64_t>(rtt_ntp) * 1000ULL + 32768ULL) / 65536ULL);
 }
 
-size_t RtpPayloadOffset(const std::vector<uint8_t>& packet)
+size_t RtpPayloadOffset(const common::ByteVector& packet)
 {
     if (packet.size() < RtpHeader::kSize)
     {
@@ -98,6 +98,7 @@ RtpSenderTrack::~RtpSenderTrack()
 }
 
 bool RtpSenderTrack::InputRtpPacket(const uint8_t* data, size_t len)
+try
 {
     RtpHeader in_header;
     if (!ParseRtpHeader(data, len, in_header))
@@ -111,7 +112,7 @@ bool RtpSenderTrack::InputRtpPacket(const uint8_t* data, size_t len)
         return false;
     }
 
-    std::vector<uint8_t> packet(data, data + len);
+    common::ByteVector packet(data, data + len);
 
     uint16_t out_seq = 0;
     uint32_t out_timestamp = 0;
@@ -146,7 +147,10 @@ bool RtpSenderTrack::InputRtpPacket(const uint8_t* data, size_t len)
     return true;
 }
 
+catch (const std::bad_alloc&) { return false; }
+
 void RtpSenderTrack::OnRtcpNack(const std::vector<uint16_t>& lost_seqs)
+try
 {
     const auto transport = _transport.lock();
     if (!transport || transport->IsClosed() || !transport->IsWritable() || lost_seqs.empty())
@@ -180,7 +184,7 @@ void RtpSenderTrack::OnRtcpNack(const std::vector<uint16_t>& lost_seqs)
         // RTP sequence 必须保持为对端 NACK 请求的原值；但重传是一次新的
         // 网络发送，因此必须复制缓存包并重新分配 TWCC sequence。
         // 不能直接发送 cached.packet，否则原发送和重传会共用同一个 TWCC 序号。
-        std::vector<uint8_t> retransmit_packet = cached.packet;
+        common::ByteVector retransmit_packet(cached.packet.Data(), cached.packet.Data() + cached.packet.Size());
         media::TransportSequenceNumber transport_sequence;
         if (!PrepareTransportCc(retransmit_packet, transport_sequence))
         {
@@ -195,6 +199,8 @@ void RtpSenderTrack::OnRtcpNack(const std::vector<uint16_t>& lost_seqs)
         }
     }
 }
+
+catch (const std::bad_alloc&) {} // Retry on subsequent feedback when capacity is available.
 
 void RtpSenderTrack::OnRtcpReceiverReport(uint32_t reporter_ssrc, uint32_t media_ssrc, uint8_t fraction_lost, int32_t cumulative_lost, uint32_t highest_seq, uint32_t jitter, uint32_t lsr, uint32_t dlsr)
 {
@@ -290,7 +296,7 @@ bool RtpSenderTrack::ParseRtpHeader(const uint8_t* data, size_t len, RtpHeader& 
     return true;
 }
 
-bool RtpSenderTrack::RewriteRtpPacket(std::vector<uint8_t>& packet, const RtpHeader& in_header, uint16_t& out_seq, uint32_t& out_timestamp)
+bool RtpSenderTrack::RewriteRtpPacket(common::ByteVector& packet, const RtpHeader& in_header, uint16_t& out_seq, uint32_t& out_timestamp)
 {
     if (packet.size() < RtpHeader::kSize)
     {
@@ -314,7 +320,7 @@ bool RtpSenderTrack::RewriteRtpPacket(std::vector<uint8_t>& packet, const RtpHea
     return true;
 }
 
-bool RtpSenderTrack::WriteTransportCcExtension(std::vector<uint8_t>& packet,
+bool RtpSenderTrack::WriteTransportCcExtension(common::ByteVector& packet,
                                                 uint16_t transport_sequence) const
 {
     // extension ID 来自 SDP a=extmap 协商。0 表示未启用，1~14 是 RFC 8285
@@ -412,7 +418,7 @@ bool RtpSenderTrack::WriteTransportCcExtension(std::vector<uint8_t>& packet,
     return true;
 }
 
-bool RtpSenderTrack::PrepareTransportCc(std::vector<uint8_t>& packet,
+bool RtpSenderTrack::PrepareTransportCc(common::ByteVector& packet,
                                         media::TransportSequenceNumber& sequence) const
 {
     // 没有通过 SDP 启用 transport-cc 时保持原发送行为，也不触发发送历史回调。
@@ -492,12 +498,15 @@ uint32_t RtpSenderTrack::RewriteTimestamp(uint32_t in_timestamp)
     return _base_out_timestamp + (in_timestamp - _base_in_timestamp);
 }
 
-void RtpSenderTrack::CacheRtpPacket(uint16_t out_seq, const std::vector<uint8_t>& packet)
+void RtpSenderTrack::CacheRtpPacket(uint16_t out_seq, const common::ByteVector& packet)
 {
     if (_config.rtp_cache_size == 0)
     {
         return;
     }
+
+    auto bytes = common::SharedBuffer::TryCopy(packet.data(), packet.size());
+    if (bytes.Empty()) return;
 
     auto it = _rtp_cache.find(out_seq);
     if (it == _rtp_cache.end())
@@ -506,7 +515,7 @@ void RtpSenderTrack::CacheRtpPacket(uint16_t out_seq, const std::vector<uint8_t>
     }
 
     CachedRtpPacket cached;
-    cached.packet = packet;
+    cached.packet = std::move(bytes);
     _rtp_cache[out_seq] = std::move(cached);
 
     while (_rtp_cache.size() > _config.rtp_cache_size && !_cache_order.empty())
@@ -517,7 +526,7 @@ void RtpSenderTrack::CacheRtpPacket(uint16_t out_seq, const std::vector<uint8_t>
     }
 }
 
-bool RtpSenderTrack::SendRtpPacket(const std::vector<uint8_t>& packet,
+bool RtpSenderTrack::SendRtpPacket(const common::ByteVector& packet,
                                    bool retransmit)
 {
     const auto transport = _transport.lock();

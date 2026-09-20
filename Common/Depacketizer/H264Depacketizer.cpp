@@ -23,7 +23,7 @@ H264Depacketizer::H264Depacketizer(const std::string& fmtp)
         while (std::getline(values, encoded, ',')) {
             encoded = trim(encoded);
             if (encoded.empty() || encoded.size() > 16384) continue;
-            std::vector<uint8_t> decoded;
+            common::ByteVector decoded;
             uint32_t accumulator = 0;
             int bits = 0;
             bool valid = true, padding = false;
@@ -47,6 +47,7 @@ H264Depacketizer::H264Depacketizer(const std::string& fmtp)
 
 
 bool H264Depacketizer::input(const RtpView& pkt)
+try
 {
     if (!pkt.valid())
     {
@@ -74,6 +75,13 @@ bool H264Depacketizer::input(const RtpView& pkt)
 
     return result.inserted || result.duplicate;
 }
+catch (const std::bad_alloc&)
+{
+    // Assembly may already have moved NALs out of buffered packets.
+    packet_buffer_.Reset();
+    ready_frames_.clear();
+    return false;
+}
 
 
 bool H264Depacketizer::hasFrame() const
@@ -81,7 +89,7 @@ bool H264Depacketizer::hasFrame() const
     return !ready_frames_.empty();
 }
 
-std::vector<uint8_t> H264Depacketizer::popFrame()
+common::ByteVector H264Depacketizer::popFrame()
 {
     if (ready_frames_.empty())
     {

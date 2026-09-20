@@ -1,6 +1,7 @@
 #ifndef _SHARDEDWORKERPOOL_H_
 #define _SHARDEDWORKERPOOL_H_
 
+#include <algorithm>
 #include <cstdint>
 #include <cstddef>
 #include <vector>
@@ -16,7 +17,7 @@
 #include <string_view>
 #include <unordered_map>
 
-#include "PacketPool.h"
+#include "../Common/memory/SharedBuffer.h"
 
 enum class WorkType : uint32_t
 {
@@ -45,31 +46,28 @@ enum class WorkType : uint32_t
 
 struct WorkJob
 {
+    WorkJob() = default;
+    WorkJob(const WorkJob&) = delete;
+    WorkJob& operator=(const WorkJob&) = delete;
+    WorkJob(WorkJob&&) noexcept = default;
+    WorkJob& operator=(WorkJob&&) noexcept = default;
+
     // key selects a worker shard. target_id identifies the endpoint/session
     // that owns the job; keeping them separate allows per-stream affinity.
     uint64_t key = 0;
     uint64_t target_id = 0;
     WorkType type = WorkType::Invalid;
 
-    union
-    {
-        Packet* pkt = nullptr;       // RTP / RTCP / STUN
-        struct
-        {
-            uint8_t* data;
-            uint32_t len;
-        } raw;                      // TCP / UDP
-    };
+    // Byte ownership and bounds always travel together across the queue.
+    common::SharedBuffer payload;
 
     uint64_t enqueue_ts = 0;
 
-    // Optional type-erased owner for memory referenced by pkt/raw. Keeping
-    // ownership on the job makes cross-thread views safe without coupling the
-    // generic worker layer to a protocol-specific packet type.
+    // Non-byte business objects, e.g. RecordingDispatcher::FrameJob.
+    // Media packet bytes belong exclusively in payload.
     std::shared_ptr<void> owner;
 
     void (*handler)(WorkJob&, void* ctx) = nullptr;
-    void (*deleter)(WorkJob&) = nullptr;
 
     std::function<void()> function;
 };
@@ -122,6 +120,7 @@ class ShardedWorkerPool
 {
 public:
     enum class DropPolicy { DropHead, DropTail };
+    static constexpr size_t kDefaultMaxQueueBytes = 16 * 1024 * 1024;
 
     typedef struct ThreadStats
     {
@@ -130,6 +129,8 @@ public:
         std::uint64_t dropped  = 0;
         std::size_t   max_depth_seen = 0;
         std::size_t   queue_depth = 0;
+        std::size_t   queue_bytes = 0;
+        std::size_t   max_bytes_seen = 0;
         std::size_t   worker_count = 0;
     }ThreadStats;
 
@@ -144,7 +145,8 @@ public:
     int start(std::size_t worker_count,
                std::shared_ptr<IJobHandler> handler,
                std::size_t max_queue_len = 4096,
-               DropPolicy drop = DropPolicy::DropHead);
+               DropPolicy drop = DropPolicy::DropHead,
+               std::size_t max_queue_bytes = kDefaultMaxQueueBytes);
 
 
     ThreadStats Status() const
@@ -159,6 +161,8 @@ public:
             sum.dequeued += up->st.dequeued;
             sum.dropped  += up->st.dropped;
             sum.queue_depth += up->q.size();
+            sum.queue_bytes += up->st.queue_bytes;
+            sum.max_bytes_seen = std::max(sum.max_bytes_seen, up->st.max_bytes_seen);
             if (up->st.max_depth_seen > sum.max_depth_seen)
                 sum.max_depth_seen = up->st.max_depth_seen;
         }
@@ -188,6 +192,7 @@ private:
     std::shared_ptr<IJobHandler> handler_;
 
     std::size_t max_queue_len_ = 4096;
+    std::size_t max_queue_bytes_ = kDefaultMaxQueueBytes;
     DropPolicy drop_policy_ = DropPolicy::DropHead;
     std::atomic<bool> started_{false};
     mutable std::mutex lifecycle_mtx_;
@@ -218,7 +223,8 @@ public:
                            std::size_t worker_count,
                            std::shared_ptr<IJobHandler> handler,
                            std::size_t max_queue_len = 2048,
-                           ShardedWorkerPool::DropPolicy drop = ShardedWorkerPool::DropPolicy::DropHead);
+                           ShardedWorkerPool::DropPolicy drop = ShardedWorkerPool::DropPolicy::DropHead,
+                           std::size_t max_queue_bytes = ShardedWorkerPool::kDefaultMaxQueueBytes);
 
     static int create_function_pool(
         std::string_view name,
@@ -244,7 +250,6 @@ public:
     static std::vector<PoolStatus> status();
     static std::vector<std::string> pool_names();
 
-    static void realse(Packet* p);
 
 private:
     WorkerService() = delete;

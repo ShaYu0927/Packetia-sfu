@@ -61,10 +61,6 @@ public:
             Stop();
         }
 
-        if (job.deleter)
-        {
-            job.deleter(job);
-        }
     }
 
     bool WaitHandledCount(std::size_t expected,

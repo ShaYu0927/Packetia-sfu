@@ -59,6 +59,15 @@ void MediaTransportBase::DetachPacketSink()
 
 MediaPacketIngressResult MediaTransportBase::PublishPacket(MediaPacketType type, const uint8_t* data, size_t size, uint64_t receive_time_ms, int channel)
 {
+    if (!data || !size) return MediaPacketIngressResult::Dropped;
+    return PublishPacket(type, common::SharedBuffer::TryCopy(data, size), receive_time_ms, channel);
+}
+
+MediaPacketIngressResult MediaTransportBase::PublishPacket(MediaPacketType type,
+    common::SharedBuffer payload, uint64_t receive_time_ms, int channel)
+{
+    const auto* data = payload.Data();
+    const auto size = payload.Size();
     if (State() != MediaTransportState::Connected || !data || size == 0)
     {
         return MediaPacketIngressResult::Dropped;
@@ -85,7 +94,7 @@ MediaPacketIngressResult MediaTransportBase::PublishPacket(MediaPacketType type,
         return MediaPacketIngressResult::Closed;
     }
 
-    ReceivedMediaPacket packet(type, Id(), receive_time_ms, data, size, channel);
+    ReceivedMediaPacket packet(type, Id(), receive_time_ms, std::move(payload), channel);
     return sink->OnMediaPacket(std::move(packet));
 }
 

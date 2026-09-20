@@ -33,16 +33,13 @@ public:
     using Ptr = std::shared_ptr<RtpPacketPool>;
 
     explicit RtpPacketPool(size_t capacity, size_t packet_capacity = RtpPacket::kRtpMaxSize)
+        : packet_capacity_(packet_capacity)
     {
         packets_.reserve(capacity);
         free_.reserve(capacity);
         for (size_t i = 0; i < capacity; ++i)
         {
             auto packet = std::make_unique<RtpPacket>();
-            if (!packet->reserve(packet_capacity))
-            {
-                continue;
-            }
             free_.push_back(packet.get());
             packets_.push_back(std::move(packet));
         }
@@ -50,6 +47,7 @@ public:
 
     RtpPacket::Ptr Acquire()
     {
+        auto self = shared_from_this();
         RtpPacket* packet = nullptr;
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -61,7 +59,13 @@ public:
             free_.pop_back();
         }
 
-        auto self = shared_from_this();
+        // Allocate bytes lazily. A temporary budget refusal must not shrink
+        // the object pool permanently; a later Acquire can retry.
+        if (!packet->reserve(packet_capacity_))
+        {
+            Release(packet);
+            return nullptr;
+        }
         return RtpPacket::Ptr(packet, [self](RtpPacket* item) {
             self->Release(item);
         });
@@ -91,6 +95,7 @@ private:
         free_.push_back(packet);
     }
 
+    const size_t packet_capacity_;
     mutable std::mutex mutex_;
     std::vector<std::unique_ptr<RtpPacket>> packets_;
     std::vector<RtpPacket*> free_;
@@ -302,7 +307,7 @@ public:
      *
      * @return Parsed RtpPacket on success, nullptr on failure.
      */
-    virtual RtpPacket::Ptr inputRtp(uint8_t *ptr, size_t len) = 0;
+    virtual RtpPacket::Ptr inputRtp(const uint8_t *ptr, size_t len) = 0;
 
     virtual void OnRtcpSenderReport(uint32_t sender_ssrc, uint64_t ntp, uint32_t rtp_ts, uint32_t packet_count, uint32_t octet_count)
     {
@@ -543,7 +548,7 @@ public:
     ~RtpVideoTracker() override = default;
 
 public:
-    RtpPacket::Ptr inputRtp(uint8_t* ptr, size_t len) override;
+    RtpPacket::Ptr inputRtp(const uint8_t* ptr, size_t len) override;
 
     void TickNack(uint64_t now_ms)
     {
@@ -607,7 +612,7 @@ public:
      */
     Ptr Clone();
 
-    RtpPacket::Ptr inputRtp(uint8_t* ptr, size_t len) override;
+    RtpPacket::Ptr inputRtp(const uint8_t* ptr, size_t len) override;
 protected:
     void onRtpSorted(const RtpPacket::Ptr& pkt) override;
 

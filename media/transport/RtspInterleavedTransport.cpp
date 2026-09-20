@@ -56,16 +56,17 @@ SendResult RtspInterleavedTransport::Send(MediaPacketType type,
         : rtcp_channel_;
     const auto payload_size = static_cast<uint16_t>(size);
 
-    auto frame = std::make_shared<std::vector<char>>(4 + size);
-    (*frame)[0] = '$';
-    (*frame)[1] = static_cast<char>(channel);
-    (*frame)[2] = static_cast<char>((payload_size >> 8) & 0xFF);
-    (*frame)[3] = static_cast<char>(payload_size & 0xFF);
-    std::memcpy(frame->data() + 4, data, size);
+    auto allocation = common::MemoryPool::Default().TryAllocate(4 + size);
+    if (!allocation) return SendResult::NotWritable;
+    allocation[0] = '$';
+    allocation[1] = channel;
+    allocation[2] = static_cast<uint8_t>((payload_size >> 8) & 0xFF);
+    allocation[3] = static_cast<uint8_t>(payload_size & 0xFF);
+    std::memcpy(allocation.get() + 4, data, size);
 
-    // Alias the immutable frame storage, avoiding a second payload copy.
-    std::shared_ptr<char> bytes(frame, frame->data());
-    switch (connection->Send(std::move(bytes), static_cast<uint32_t>(frame->size())))
+    std::shared_ptr<uint8_t[]> storage(std::move(allocation));
+    std::shared_ptr<char> bytes(storage, reinterpret_cast<char*>(storage.get()));
+    switch (connection->Send(std::move(bytes), static_cast<uint32_t>(4 + size)))
     {
         case TcpConnection::SendResult::Queued: return SendResult::Ok;
         case TcpConnection::SendResult::QueueFull: return SendResult::NotWritable;

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include <vector>
+#include "../../Common/memory/SharedBuffer.h"
 
 namespace media
 {
@@ -119,22 +120,26 @@ struct EncodedFrame
     uint16_t channels               = 0;
 
     // Codec initialization bytes (AAC AudioSpecificConfig from SDP).
-    std::shared_ptr<const std::vector<uint8_t>> codec_config;
+    common::SharedBuffer codec_config;
 
-    std::shared_ptr<const std::vector<uint8_t>> buffer;
-
-    size_t offset                   = 0;
-    size_t size                     = 0;
+    // Storage, offset and length are one owning range. Use Slice() for a
+    // subframe instead of keeping independent, potentially stale bounds.
+    common::SharedBuffer buffer;
 
     const uint8_t* Data() const noexcept
     {
-        if (!buffer || offset > buffer->size() || size > buffer->size() - offset)
-        {
-            return nullptr;
-        }
-
-        return buffer->data() + offset;
+        return buffer.Data();
     }
+
+    // Charge retained owners, including codec configuration, to queue budgets.
+    size_t StorageSize() const noexcept
+    {
+        const auto bytes = buffer.StorageSize();
+        const auto config = codec_config.StorageSize();
+        return config > SIZE_MAX - bytes ? SIZE_MAX : bytes + config;
+    }
+
+    size_t Size() const noexcept { return buffer.Size(); }
 
     bool IsKeyFrame() const noexcept
     {
@@ -158,12 +163,7 @@ struct EncodedFrame
             return false;
         }
 
-        if (offset > buffer->size() || size > buffer->size() - offset)
-        {
-            return false;
-        }
-
-        return size > 0;
+        return true;
     }
 
     uint64_t DurationMs() const noexcept

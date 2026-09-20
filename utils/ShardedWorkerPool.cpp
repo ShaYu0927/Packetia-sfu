@@ -13,6 +13,16 @@ namespace
 constexpr std::string_view kEndpointPoolAlias = "endpointpool";
 constexpr std::string_view kEndpointPoolName = "endpoint_pool";
 
+template<class Hook>
+void RunWorkerHook(Hook hook, size_t index, const char* name)
+{
+    try { hook(); }
+    catch (const std::exception& error) {
+        LOG_ERROR("worker hook failed, idx=", index, " hook=", name, " error=", error.what());
+    }
+    catch (...) { LOG_ERROR("worker hook failed, idx=", index, " hook=", name); }
+}
+
 } // namespace
 
 std::shared_mutex WorkerService::mtx_;
@@ -52,7 +62,7 @@ void ShardedWorkerPool::shutdown(bool drain)
                     {
                         WorkJob job = std::move(w.q.front());
                         w.q.pop_front();
-                        if (job.deleter) job.deleter(job);
+                        w.st.queue_bytes -= job.payload.StorageSize();
                     }
                 }
             }
@@ -74,7 +84,7 @@ void ShardedWorkerPool::shutdown(bool drain)
 
 static inline void safe_release_job(WorkJob& job)
 {
-    if (job.deleter) job.deleter(job);
+    job = WorkJob{};
 }
 
 int ShardedWorkerPool::post(WorkJob&& job)
@@ -106,41 +116,29 @@ int ShardedWorkerPool::post(WorkJob&& job)
             return -1;
         }
 
-        if (before_size >= max_queue_len_)
+        const auto bytes = job.payload.StorageSize();
+        if (bytes > max_queue_bytes_)
         {
-            shard_worker.st.dropped++;
-
-            LOG_ERROR("[worker post] queue full, key={}, type={}, shard={}, queue_size={}, max_queue_len={}, drop_policy={}",
-                      job.key,
-                      static_cast<int>(job.type),
-                      idx,
-                      before_size,
-                      max_queue_len_,
-                      static_cast<int>(drop_policy_));
-
-            if (drop_policy_ == DropPolicy::DropHead)
+            ++shard_worker.st.dropped;
+            safe_release_job(job);
+            return -1;
+        }
+        while (shard_worker.q.size() >= max_queue_len_ ||
+               bytes > max_queue_bytes_ - shard_worker.st.queue_bytes)
+        {
+            ++shard_worker.st.dropped;
+            if (drop_policy_ == DropPolicy::DropTail)
             {
-                WorkJob old = std::move(shard_worker.q.front());
-
-                LOG_ERROR("[worker post] drop head, shard={}, old_key={}, old_type={}",
-                          idx,
-                          old.key,
-                          static_cast<int>(old.type));
-
-                shard_worker.q.pop_front();
-                safe_release_job(old);
-            }
-            else
-            {
-                LOG_ERROR("[worker post] drop tail/current job, shard={}, key={}, type={}",
-                          idx,
-                          job.key,
-                          static_cast<int>(job.type));
                 safe_release_job(job);
                 return -1;
             }
+            shard_worker.st.queue_bytes -= shard_worker.q.front().payload.StorageSize();
+            shard_worker.q.pop_front();
         }
         shard_worker.q.emplace_back(std::move(job));
+        shard_worker.st.queue_bytes += bytes;
+        shard_worker.st.max_bytes_seen = std::max(shard_worker.st.max_bytes_seen,
+                                                shard_worker.st.queue_bytes);
         shard_worker.st.enqueued++;
 
         const size_t after_size = shard_worker.q.size();
@@ -153,7 +151,7 @@ int ShardedWorkerPool::post(WorkJob&& job)
     return 0;
 }
 
-int ShardedWorkerPool::start(std::size_t worker_count, std::shared_ptr<IJobHandler> handler, std::size_t max_queue_len, DropPolicy drop)
+int ShardedWorkerPool::start(std::size_t worker_count, std::shared_ptr<IJobHandler> handler, std::size_t max_queue_len, DropPolicy drop, std::size_t max_queue_bytes)
 {
     std::lock_guard<std::mutex> lifecycle_lock(lifecycle_mtx_);
 
@@ -164,6 +162,7 @@ int ShardedWorkerPool::start(std::size_t worker_count, std::shared_ptr<IJobHandl
     handler_ = std::move(handler);
     max_queue_len_ = (max_queue_len == 0) ? 1 : max_queue_len;
     drop_policy_ = drop;
+    max_queue_bytes_ = max_queue_bytes;
 
     workers_.reserve(worker_count);
 
@@ -199,7 +198,7 @@ void ShardedWorkerPool::worker_loop(Worker &worker, std::size_t idx)
             if (!worker.running.load() && worker.q.empty())
             {
                 lk.unlock();
-                if (handler_) handler_->on_worker_stop(idx);
+                if (handler_) RunWorkerHook([&] { handler_->on_worker_stop(idx); }, idx, "stop");
                 LOG_INFO("worker exit by stop, idx=", idx);
                 break;
             }
@@ -207,12 +206,13 @@ void ShardedWorkerPool::worker_loop(Worker &worker, std::size_t idx)
             if (worker.q.empty())
             {
                 lk.unlock();
-                if (handler_) handler_->on_worker_tick(idx);
+                if (handler_) RunWorkerHook([&] { handler_->on_worker_tick(idx); }, idx, "tick");
                 continue;
             }
 
             job = std::move(worker.q.front());
             worker.q.pop_front();
+            worker.st.queue_bytes -= job.payload.StorageSize();
             worker.st.dequeued++;
         }
 
@@ -244,8 +244,20 @@ void ShardedWorkerPool::worker_loop(Worker &worker, std::size_t idx)
             safe_release_job(job);
             continue;
         }
-        handler_->handle(job, idx);
-        handler_->on_worker_tick(idx);
+        try
+        {
+            handler_->handle(job, idx);
+            handler_->on_worker_tick(idx);
+        }
+        catch (const std::exception& ex)
+        {
+            LOG_ERROR("worker handler threw exception, idx=", idx, " what=", ex.what());
+        }
+        catch (...)
+        {
+            LOG_ERROR("worker handler threw unknown exception, idx=", idx);
+        }
+        // job's RAII members release bytes and business objects on every exit.
     }
 }
 
@@ -269,7 +281,8 @@ int WorkerService::create_pool(const std::string& name,
                                std::size_t worker_count,
                                std::shared_ptr<IJobHandler> handler,
                                std::size_t max_queue_len,
-                               ShardedWorkerPool::DropPolicy drop)
+                               ShardedWorkerPool::DropPolicy drop,
+                               std::size_t max_queue_bytes)
 {
     const auto normalized_name = NormalizeName(name);
     if (normalized_name.empty() || !handler)
@@ -280,7 +293,7 @@ int WorkerService::create_pool(const std::string& name,
     }
 
     auto pool = std::make_shared<ShardedWorkerPool>();
-    const int ret = pool->start(worker_count, std::move(handler), max_queue_len, drop);
+    const int ret = pool->start(worker_count, std::move(handler), max_queue_len, drop, max_queue_bytes);
     if (ret != 0)
     {
         LOG_ERROR("[WorkerService] start pool failed, pool=", normalized_name,
@@ -477,18 +490,4 @@ std::vector<std::string> WorkerService::pool_names()
     std::transform(statuses.begin(), statuses.end(), std::back_inserter(names),
                    [](const PoolStatus& item) { return item.name; });
     return names;
-}
-
-void WorkerService::realse(Packet *p)
-{
-    if (!p) return;
-
-    PacketPool* pool = p->owner;
-    if (!pool)
-    {
-        LOG_ERROR("Packet without pool, leak or corruption");
-        return;
-    }
-
-    pool->release(p);
 }

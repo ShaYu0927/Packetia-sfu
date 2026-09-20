@@ -1,4 +1,5 @@
 #include "RtpReceiver.h"
+#include "../Common/memory/MutableBuffer.h"
 #include "logger.h"
 
 #include <algorithm>
@@ -11,15 +12,14 @@ namespace
 {
 const uint8_t kAnnexBStartCode[] = {0, 0, 0, 1};
 
-void AppendAnnexBNalu(std::vector<uint8_t>& out, const std::vector<uint8_t>& nalu)
+void AppendAnnexBNalu(common::MutableBuffer& out, const common::ByteVector& nalu)
 {
     if (nalu.empty())
     {
         return;
     }
-    out.insert(out.end(), kAnnexBStartCode,
-               kAnnexBStartCode + sizeof(kAnnexBStartCode));
-    out.insert(out.end(), nalu.begin(), nalu.end());
+    out.Append(common::BufferView(kAnnexBStartCode, sizeof(kAnnexBStartCode)));
+    out.Append(common::BufferView(nalu.data(), nalu.size()));
 }
 
 uint64_t NowMs()
@@ -69,7 +69,7 @@ RtpReceiverTrack::Ptr RtpReceiverTrack::Create(const TrackInfo& info)
 }
 
 
-RtpPacket::Ptr RtpVideoTracker::inputRtp(uint8_t *ptr, size_t len)
+RtpPacket::Ptr RtpVideoTracker::inputRtp(const uint8_t *ptr, size_t len)
 {
     if (!ptr || len < RtpHeader::kSize)
     {
@@ -239,7 +239,7 @@ void RtpVideoTracker::onRtpSorted(const RtpPacket::Ptr &pkt)
         }
 
         const bool config_only = !au.has_idr && (au.has_sps || au.has_pps) &&
-            std::all_of(au.nalus.begin(), au.nalus.end(), [](const std::vector<uint8_t>& nalu) {
+            std::all_of(au.nalus.begin(), au.nalus.end(), [](const common::ByteVector& nalu) {
                 if (nalu.empty()) return false;
                 const uint8_t type = media::H264GetNalType(nalu[0]);
                 return type == static_cast<uint8_t>(media::H264NalType::Sps) ||
@@ -251,7 +251,6 @@ void RtpVideoTracker::onRtpSorted(const RtpPacket::Ptr &pkt)
                                               : media::EncodedFrameType::Delta);
         frame->sample_rate           = pkt->getSampleRate();
 
-        auto buffer = std::make_shared<std::vector<uint8_t>>();
         size_t annexb_size = 0;
         for (const auto& nalu : au.nalus)
             annexb_size += sizeof(kAnnexBStartCode) + nalu.size();
@@ -265,14 +264,15 @@ void RtpVideoTracker::onRtpSorted(const RtpPacket::Ptr &pkt)
             if (const auto* pps = _depacketizer->parameterSets().LatestPps())
                 annexb_size += sizeof(kAnnexBStartCode) + pps->payload.size();
         }
-        buffer->reserve(annexb_size);
+        auto buffer = common::MutableBuffer::Allocate(annexb_size);
+        buffer.Resize(0);
         if (au.has_idr)
         {
             if (!au.has_sps)
             {
                 if (const auto* sps = _depacketizer->parameterSets().LatestSps())
                 {
-                    AppendAnnexBNalu(*buffer, sps->payload);
+                    AppendAnnexBNalu(buffer, sps->payload);
                     frame->video.has_sps = true;
                     frame->video.parameter_sets_injected = true;
                 }
@@ -281,7 +281,7 @@ void RtpVideoTracker::onRtpSorted(const RtpPacket::Ptr &pkt)
             {
                 if (const auto* pps = _depacketizer->parameterSets().LatestPps())
                 {
-                    AppendAnnexBNalu(*buffer, pps->payload);
+                    AppendAnnexBNalu(buffer, pps->payload);
                     frame->video.has_pps = true;
                     frame->video.parameter_sets_injected = true;
                 }
@@ -289,10 +289,9 @@ void RtpVideoTracker::onRtpSorted(const RtpPacket::Ptr &pkt)
         }
         for (const auto& nalu : au.nalus)
         {
-            AppendAnnexBNalu(*buffer, nalu);
+            AppendAnnexBNalu(buffer, nalu);
         }
-        frame->buffer                = std::move(buffer);
-        frame->size                  = frame->buffer->size();
+        frame->buffer = std::move(buffer).Freeze();
 
         emitEncodedFrame(frame);
     }
@@ -389,7 +388,7 @@ std::vector<RtpAudioTracker::Ptr> RtpAudioTracker::SnapshotClones()
     return result;
 }
 
-RtpPacket::Ptr RtpAudioTracker::inputRtp(uint8_t* ptr, size_t len)
+RtpPacket::Ptr RtpAudioTracker::inputRtp(const uint8_t* ptr, size_t len)
 {
     if (!ptr || len < RtpHeader::kSize)
     {

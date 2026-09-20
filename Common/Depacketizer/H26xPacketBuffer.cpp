@@ -259,7 +259,7 @@ bool H264PacketBuffer::MaybeAssembleFrame(int64_t start_seq, int64_t end_seq, H2
     }
 
     bool fu_active = false;
-    std::vector<uint8_t> fu_nalu;
+    common::ByteVector fu_nalu;
     frame.nalus.reserve(unit_count);
     fu_nalu.reserve(payload_bytes + 1);
     for (int64_t seq = start_seq; seq <= end_seq; ++seq)
@@ -322,7 +322,7 @@ bool H264PacketBuffer::ValidatePacketUnits(const H264ParsedPacket& packet,
 }
 
 bool H264PacketBuffer::AppendPacketUnits(H264ParsedPacket& packet, bool& fu_active,
-                                         std::vector<uint8_t>& fu_nalu,
+                                         common::ByteVector& fu_nalu,
                                          H264AccessUnit& frame)
 {
     for (auto& unit : packet.units)

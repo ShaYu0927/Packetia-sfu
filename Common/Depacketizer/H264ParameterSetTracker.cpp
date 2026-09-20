@@ -7,9 +7,9 @@ namespace media
 namespace
 {
 
-std::vector<uint8_t> NaluToRbsp(const uint8_t* nalu, size_t size)
+common::ByteVector NaluToRbsp(const uint8_t* nalu, size_t size)
 {
-    std::vector<uint8_t> rbsp;
+    common::ByteVector rbsp;
     if (!nalu || size < 2)
         return rbsp;
     rbsp.reserve(size - 1);
@@ -31,7 +31,7 @@ std::vector<uint8_t> NaluToRbsp(const uint8_t* nalu, size_t size)
 class BitReader
 {
 public:
-    explicit BitReader(const std::vector<uint8_t>& data) : data_(data) {}
+    explicit BitReader(const common::ByteVector& data) : data_(data) {}
 
     bool ReadBits(size_t count, uint32_t& value)
     {
@@ -81,7 +81,7 @@ public:
     }
 
 private:
-    const std::vector<uint8_t>& data_;
+    const common::ByteVector& data_;
     size_t bit_offset_ = 0;
 };
 

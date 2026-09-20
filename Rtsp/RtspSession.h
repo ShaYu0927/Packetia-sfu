@@ -104,7 +104,6 @@ private:
     RtspConnection::Ptr conn_;
     std::unique_ptr<RtspRequest> rtsp_request_;
     std::unique_ptr<sdp::Sdp> sdp_;
-    std::unique_ptr<PacketPool> packet_pool_;
     ShardedWorkerPool* media_pool_ = nullptr;
     int session_id_{0};
 

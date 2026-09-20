@@ -290,7 +290,7 @@ TEST_F(RtspUdpIntegration, SetupReceiveFrameRtcpFeedbackAndTeardown) {
     ASSERT_EQ(rtp_client.socket.SendTo(SocketAddr::FromIPPort("127.0.0.1", transport.server_rtp_port),
         kRtp.data(), kRtp.size()), 0);
     ASSERT_EQ(frame.wait_for(2s), std::future_status::ready);
-    EXPECT_EQ(*frame.get()->buffer, (std::vector<uint8_t>{0, 0, 0, 1, 0x65, 0xAA, 0xBB}));
+    EXPECT_EQ(frame.get()->buffer.ToVector(), (std::vector<uint8_t>{0, 0, 0, 1, 0x65, 0xAA, 0xBB}));
     // Sender Report on the RTCP port must reach the receiver statistics path
     // and produce a Receiver Report from that same RTCP port.
     std::vector<uint8_t> sr{0x80, 200, 0, 6, 0x11, 0x22, 0x33, 0x44,

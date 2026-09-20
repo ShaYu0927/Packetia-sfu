@@ -34,10 +34,10 @@ TEST(AudioDepacketizerTest, ParsesSingleAacHbrAccessUnit)
     ASSERT_TRUE(depacketizer.Input(MakeView(payload, 10, 1000)));
     media::EncodedFrame frame;
     ASSERT_TRUE(depacketizer.PopFrame(frame));
-    ASSERT_EQ(frame.size, 4U);
+    ASSERT_EQ(frame.Size(), 4U);
     EXPECT_EQ(frame.sample_count, 1024U);
     EXPECT_EQ(frame.info.timestamp.pts, 1000);
-    EXPECT_EQ(std::vector<uint8_t>(frame.Data(), frame.Data() + frame.size),
+    EXPECT_EQ(std::vector<uint8_t>(frame.Data(), frame.Data() + frame.Size()),
               (std::vector<uint8_t>{0x11, 0x22, 0x33, 0x44}));
 }
 
@@ -58,8 +58,8 @@ TEST(AudioDepacketizerTest, ParsesMultipleAacAccessUnits)
     media::EncodedFrame second;
     ASSERT_TRUE(depacketizer.PopFrame(first));
     ASSERT_TRUE(depacketizer.PopFrame(second));
-    EXPECT_EQ(first.size, 3U);
-    EXPECT_EQ(second.size, 2U);
+    EXPECT_EQ(first.Size(), 3U);
+    EXPECT_EQ(second.Size(), 2U);
     EXPECT_EQ(first.info.timestamp.pts, 2000);
     EXPECT_EQ(second.info.timestamp.pts, 3024);
 }
@@ -82,7 +82,7 @@ TEST(AudioDepacketizerTest, ReassemblesFragmentedAacAccessUnit)
     ASSERT_TRUE(depacketizer.PopFrame(frame));
     EXPECT_EQ(frame.rtp.first_sequence, 30);
     EXPECT_EQ(frame.rtp.last_sequence, 31);
-    EXPECT_EQ(std::vector<uint8_t>(frame.Data(), frame.Data() + frame.size),
+    EXPECT_EQ(std::vector<uint8_t>(frame.Data(), frame.Data() + frame.Size()),
               (std::vector<uint8_t>{1, 2, 3, 4, 5, 6}));
 }
 

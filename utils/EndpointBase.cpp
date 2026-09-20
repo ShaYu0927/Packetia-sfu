@@ -58,7 +58,6 @@ void EndpointJobHandler::handle(WorkJob& job)
 {
     if (!mgr_)
     {
-        if (job.deleter) job.deleter(job);
         LOG_INFO("ERROR mgr_");
         return;
     }
@@ -67,7 +66,6 @@ void EndpointJobHandler::handle(WorkJob& job)
     auto endpoint = mgr_->Find(endpoint_id);
     if (!endpoint)
     {
-        if (job.deleter) job.deleter(job);
         LOG_ERROR("endpoint not found, target_id=", endpoint_id,
                   " affinity_key=", job.key);
         return;
@@ -75,10 +73,6 @@ void EndpointJobHandler::handle(WorkJob& job)
 
     endpoint->ProcessJob(job);
 
-    if (job.deleter)
-    {
-        job.deleter(job);
-    }
 }
 
 void EndpointBase::ProcessJob(WorkJob& job)

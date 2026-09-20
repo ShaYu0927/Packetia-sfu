@@ -30,6 +30,7 @@ find_package(GTest REQUIRED)
 find_package(OpenSSL REQUIRED)
 set(THREADS_PREFER_PTHREAD_FLAG TRUE)
 find_package(Threads REQUIRED)
+add_subdirectory(Common/memory)
 
 option(PACKETIA_WITH_LIBWEBSOCKETS "Build the libwebsockets signaling server" ON)
 if(PACKETIA_WITH_LIBWEBSOCKETS)
@@ -152,12 +153,10 @@ add_library(COMMON STATIC
 
 add_library(utils STATIC
     utils/TimeUtil.cpp
-    utils/MemoryManager.cpp
     utils/TaskScheduler.cpp
     utils/SelectTaskScheduler.cpp
     utils/EpollTaskScheduler.cpp
     utils/ShardedWorkerPool.cpp
-    utils/PacketPool.cpp
     utils/ShardedWorkerPool.h
     utils/MediaStreamAffinity.h
     utils/EventLoop.cpp
@@ -169,7 +168,9 @@ add_library(utils STATIC
 
 )
 
-target_link_libraries(utils PUBLIC LOGGER Threads::Threads)
+target_link_libraries(utils PUBLIC LOGGER Threads::Threads packetia_memory)
+target_link_libraries(COMMON PUBLIC packetia_memory)
+target_link_libraries(network PUBLIC packetia_memory)
 
 add_library(rtp STATIC
     Rtsp/Rtp.cpp
@@ -190,6 +191,8 @@ add_library(rtp STATIC
     Rtsp/RtspUtil.cpp
     Rtsp/RtspUtil.h
 )
+
+target_link_libraries(rtp PUBLIC packetia_memory)
 
 add_library(rtsp STATIC
     Rtsp/Rtsp.h
@@ -237,6 +240,7 @@ add_subdirectory(service)
 add_subdirectory(server)
 
 enable_testing()
+add_subdirectory(Common/memory/Test)
 option(PACKETIA_BUILD_RECORDING_TESTS "Build FFmpeg recording integration tests" OFF)
 if(PACKETIA_BUILD_RECORDING_TESTS)
     add_subdirectory(service/RecordService/Test)

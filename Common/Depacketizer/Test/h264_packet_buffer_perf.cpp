@@ -126,7 +126,7 @@ void ValidateSingleNalu()
     auto result = buffer.InsertPacket(Parse(parser, 10, 1000, true, {0x65, 0xAA, 0xBB}));
     Require(result.frames.size() == 1, "single NALU did not produce one frame");
     Require(result.frames[0].complete && result.frames[0].has_idr, "single NALU metadata is invalid");
-    Require(result.frames[0].nalus[0] == std::vector<uint8_t>({0x65, 0xAA, 0xBB}),
+    Require(result.frames[0].nalus[0] == common::ByteVector({0x65, 0xAA, 0xBB}),
             "single NALU bytes differ");
 }
 

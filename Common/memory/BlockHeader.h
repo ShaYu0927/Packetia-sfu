@@ -1,27 +1,19 @@
-#ifndef _BLOCK_HEADER_H_
-#define _BLOCK_HEADER_H_
-
+#pragma once
+#include <cstddef>
 #include <cstdint>
 
-namespace common 
+namespace common
 {
-struct BlockHeader 
+struct PoolSlab;
+// Payload begins immediately after the header and is max_align_t aligned.
+struct alignas(std::max_align_t) BlockHeader
 {
-    uint32_t magic;
-    uint16_t class_index;
-    uint16_t flags;
-    uint32_t request_size;
-
-    void* owner;
-    BlockHeader* next;
+    PoolSlab* slab = nullptr;
+    BlockHeader* next = nullptr;
+    std::size_t request_size = 0;
+    std::uint32_t magic = 0;
 };
-
-static constexpr uint32_t kMagicUsed = 0xABCD1234;
-static constexpr uint32_t kMagicFree = 0xDEAD5678;
-
-static constexpr uint16_t kFlagLarge = 0x01;
-
-}
-
-
-#endif /* _BLOCK_HEADER_H_ */
+inline constexpr std::uint32_t kMagicUsed = 0xABCD1234;
+inline constexpr std::uint32_t kMagicFree = 0xDEAD5678;
+static_assert(sizeof(BlockHeader) % alignof(std::max_align_t) == 0);
+} // namespace common

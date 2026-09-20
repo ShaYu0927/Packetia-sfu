@@ -1,37 +1,25 @@
-#ifndef _THREAD_CACHE_H_
-#define _THREAD_CACHE_H_
-
-#include <cstddef>
+#pragma once
 #include "BlockHeader.h"
+#include "MemoryPool.h"
 #include "SizeClass.h"
 
-namespace common 
+namespace common
 {
-class ThreadCache 
+// One cache per thread, bound to at most one pool. Switching pools flushes it,
+// so short-lived pool handles cannot create an unbounded TLS registry.
+class ThreadCache
 {
 public:
-    void* Alloc(std::size_t size);
-    void Free(void* ptr);
-
+    ~ThreadCache();
+    ThreadCache() = default;
+    ThreadCache(const ThreadCache&) = delete;
+    ThreadCache& operator=(const ThreadCache&) = delete;
+    BlockHeader* Allocate(const std::shared_ptr<PoolState>& state, std::size_t size) noexcept;
+    void Flush() noexcept;
+    void FlushFor(const std::shared_ptr<PoolState>& state) noexcept;
 private:
-    struct LocalList 
-    {
-        BlockHeader* head = nullptr;
-        std::size_t count = 0;
-    };
-
-private:
-    BlockHeader* Pop(std::size_t class_index);
-    void Push(std::size_t class_index, BlockHeader* block);
-
-    void Refill(std::size_t class_index);
-    void MaybeReleaseToCentral(std::size_t class_index);
-
-private:
-    LocalList lists_[kNumSizeClasses];
+    std::shared_ptr<PoolState> state_;
+    BlockHeader* lists_[kNumSizeClasses]{};
 };
-
-}
-
-
-#endif /* _THREAD_CACHE_H_ */
+ThreadCache& GetThreadCache();
+} // namespace common

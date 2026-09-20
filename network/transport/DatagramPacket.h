@@ -2,6 +2,7 @@
 #define _NETWORK_TRANSPORT_DATAGRAM_PACKET_H_
 
 #include "UdpSocket.h"
+#include "../../Common/memory/SharedBuffer.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -23,7 +24,7 @@ struct ReceivedDatagram
     uint64_t transport_id = 0;
     uint64_t receive_time_ms = 0;
     network::SocketAddr remote{};
-    std::vector<uint8_t> payload;
+    common::SharedBuffer payload;
 
     ReceivedDatagram() = default;
 
@@ -38,17 +39,17 @@ struct ReceivedDatagram
     {
         if (data && size > 0)
         {
-            payload.assign(data, data + size);
+            payload = common::SharedBuffer::TryCopy(data, size);
         }
     }
 
     bool IsValid() const noexcept
     {
-        return transport_id != 0 && remote.len != 0 && !payload.empty();
+        return transport_id != 0 && remote.len != 0 && !payload.Empty();
     }
 
-    const uint8_t* Data() const noexcept { return payload.data(); }
-    size_t Size() const noexcept { return payload.size(); }
+    const uint8_t* Data() const noexcept { return payload.Data(); }
+    size_t Size() const noexcept { return payload.Size(); }
 };
 
 } // namespace network::transport

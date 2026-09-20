@@ -89,8 +89,8 @@ void UdpDatagramTransport::OnDatagram(const network::SocketAddr& source,
     }
     if (sink)
     {
-        sink->OnDatagram(ReceivedDatagram(
-            id_, Timestamp::NowMs(), source, data, size));
+        ReceivedDatagram packet(id_, Timestamp::NowMs(), source, data, size);
+        if (packet.IsValid()) sink->OnDatagram(std::move(packet));
     }
 }
 

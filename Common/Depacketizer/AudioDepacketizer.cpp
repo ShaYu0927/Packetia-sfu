@@ -109,6 +109,7 @@ bool ParseUint(const std::string& text, uint32_t& value)
 }
 
 bool AudioDepacketizer::Input(const RtpView& view)
+try
 {
     if (!view.valid() || !view.payload || view.payload_len == 0)
     {
@@ -137,6 +138,12 @@ bool AudioDepacketizer::Input(const RtpView& view)
         return false;
     }
 }
+catch (const std::bad_alloc&)
+{
+    Reset();
+    return false;
+}
+
 
 void AudioDepacketizer::ParseAacFmtp(const std::string& fmtp)
 {
@@ -154,7 +161,7 @@ void AudioDepacketizer::ParseAacFmtp(const std::string& fmtp)
         if (key == "config")
         {
             const auto hex = Trim(item.substr(equal + 1));
-            auto bytes = std::make_shared<std::vector<uint8_t>>();
+            common::ByteVector bytes;
             auto digit = [](char c) -> int {
                 if (c >= '0' && c <= '9') return c - '0';
                 if (c >= 'a' && c <= 'f') return c - 'a' + 10;
@@ -165,9 +172,9 @@ void AudioDepacketizer::ParseAacFmtp(const std::string& fmtp)
             for (size_t i = 0; valid && i < hex.size(); i += 2) {
                 const int high = digit(hex[i]), low = digit(hex[i + 1]);
                 valid = high >= 0 && low >= 0;
-                if (valid) bytes->push_back(static_cast<uint8_t>((high << 4) | low));
+                if (valid) bytes.push_back(static_cast<uint8_t>((high << 4) | low));
             }
-            codec_config_ = valid ? bytes : nullptr;
+            codec_config_ = valid ? common::SharedBuffer::Copy(bytes.data(), bytes.size()) : common::SharedBuffer{};
             continue;
         }
         uint32_t value = 0;
@@ -387,9 +394,7 @@ void AudioDepacketizer::EmitAacFrame(const uint8_t* data,
     frame.codec_config = codec_config_;
     frame.sample_rate = sample_rate_;
     frame.channels = channels_;
-    auto buffer = std::make_shared<std::vector<uint8_t>>(data, data + len);
-    frame.buffer = std::move(buffer);
-    frame.size = len;
+    frame.buffer = common::SharedBuffer::Copy(data, len);
     frames_.push_back(std::move(frame));
 }
 
@@ -423,10 +428,7 @@ bool AudioDepacketizer::InputSimplePayload(const RtpView& view)
         frame.sample_count = static_cast<uint32_t>(view.payload_len);
     }
 
-    auto buffer = std::make_shared<std::vector<uint8_t>>(view.payload,
-                                                         view.payload + view.payload_len);
-    frame.buffer = std::move(buffer);
-    frame.size = view.payload_len;
+    frame.buffer = common::SharedBuffer::Copy(view.payload, view.payload_len);
 
     frames_.push_back(std::move(frame));
     return true;

@@ -316,7 +316,7 @@ void MediaFlow()
     CHECK(f.sink->packets.empty());
     f.Deliver(Rtp(), f.peer); f.Deliver(Rtcp(), f.peer);
     CHECK(f.sink->packets.size() == 2);
-    CHECK(f.sink->packets[0].payload == Rtp());
+    CHECK(f.sink->packets[0].payload.ToVector() == Rtp());
     CHECK(f.sink->packets[0].receive_time_ms == 1234);
     CHECK(f.sink->packets[1].type == MediaPacketType::Rtcp);
     CHECK(f.session->SendRtp(Rtp()) && f.udp->last.back() == 0xaa);

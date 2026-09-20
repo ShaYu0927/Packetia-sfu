@@ -14,6 +14,11 @@ target_include_directories(h264_packet_buffer_perf PRIVATE ..)
 if(TARGET COMMON)
     target_link_libraries(h264_packet_buffer_perf PRIVATE COMMON)
 else()
+    find_package(Threads REQUIRED)
+    if(NOT TARGET packetia_memory)
+        add_subdirectory(../../memory memory-library)
+    endif()
+    target_link_libraries(h264_packet_buffer_perf PRIVATE packetia_memory)
     target_sources(h264_packet_buffer_perf PRIVATE
         ../H264RtpPayloadParser.cpp
         ../H26xPacketBuffer.cpp

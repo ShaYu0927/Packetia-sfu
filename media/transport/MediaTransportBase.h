@@ -30,6 +30,11 @@ protected:
                                            uint64_t receive_time_ms,
                                            int channel = ReceivedMediaPacket::kNoChannel);
 
+    MediaPacketIngressResult PublishPacket(MediaPacketType type,
+                                           common::SharedBuffer payload,
+                                           uint64_t receive_time_ms,
+                                           int channel = ReceivedMediaPacket::kNoChannel);
+
 private:
     const uint64_t id_;
     std::atomic<MediaTransportState> state_{MediaTransportState::Created};

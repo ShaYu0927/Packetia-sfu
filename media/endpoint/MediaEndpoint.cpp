@@ -62,60 +62,26 @@ static uint32_t ReadUint32BE(const uint8_t* data)
            static_cast<uint32_t>(data[3]);
 }
 
-/* 网络协议包 转成 RtpPacket */
+// Views remain valid for the synchronous call; the WorkJob retains storage.
 void MediaEndpoint::OnRtp(WorkJob& job)
 {
-    if (!job.raw.data || job.raw.len == 0)
-    {
-        LOG_ERROR("invalid raw rtp packet");
-        return;
-    }
-    Packet pkt;
-    pkt.assign(job.raw.data, job.raw.len);
-    pkt.enqueue_ts = job.enqueue_ts;
-    HandleRtpPacket(&pkt);
+    if (!job.payload.Empty()) HandleRtpPacket(job.payload.View());
 }
 
 void MediaEndpoint::OnRtcp(WorkJob& job)
 {
-    if (!job.raw.data || job.raw.len == 0)
-    {
-        LOG_ERROR("invalid raw rtcp packet");
-        return;
-    }
-
-    Packet pkt;
-    pkt.assign(job.raw.data, job.raw.len);
-    pkt.enqueue_ts = job.enqueue_ts;
-    HandleRtcpPacket(&pkt);
+    if (!job.payload.Empty()) HandleRtcpPacket(job.payload.View());
 }
 
 void MediaEndpoint::OnStun(WorkJob& job)
 {
-    if (!job.raw.data || job.raw.len == 0)
-    {
-        return;
-    }
-
-    Packet pkt;
-    pkt.assign(job.raw.data, job.raw.len);
-    pkt.enqueue_ts = job.enqueue_ts;
-    HandleStunPacket(&pkt);
+    if (!job.payload.Empty()) HandleStunPacket(job.payload.View());
 }
 
 void MediaEndpoint::OnDtls(WorkJob& job)
 {
-    if (!job.raw.data || job.raw.len == 0)
-    {
-        return;
-    }
-
-    Packet pkt;
-    pkt.assign(job.raw.data, job.raw.len);
-    pkt.enqueue_ts = job.enqueue_ts;
-    HandleDtlsPacket(&pkt);
+    if (!job.payload.Empty()) HandleDtlsPacket(job.payload.View());
 }
-
 
 rtsp::RtpReceiverTrack::Ptr SfuEndpoint::FindReceiverTrackBySsrc(uint32_t ssrc)
 {
@@ -130,14 +96,14 @@ rtsp::RtpReceiverTrack::Ptr SfuEndpoint::FindReceiverTrackBySsrc(uint32_t ssrc)
     return it->second;
 }
 
-void SfuEndpoint::HandleRtpPacket(Packet* pkt)
+void SfuEndpoint::HandleRtpPacket(common::BufferView packet)
 {
-    if (!pkt || pkt->len < 12)
+    if (packet.Size() < 12)
     {
         return;
     }
 
-    const uint8_t* data = pkt->data;
+    const uint8_t* data = packet.Data();
 
     uint8_t vpxcc = data[0];
     uint8_t mpt   = data[1];
@@ -156,7 +122,7 @@ void SfuEndpoint::HandleRtpPacket(Packet* pkt)
 
     uint32_t ssrc = (uint32_t(data[8]) << 24) | (uint32_t(data[9]) << 16) | (uint32_t(data[10]) << 8) | data[11];
 
-    media_affinity::TryGetRtpSsrc(pkt->data, pkt->len, ssrc);
+    media_affinity::TryGetRtpSsrc(packet.Data(), packet.Size(), ssrc);
 
     auto source_track = SourceTrack();
     auto source_session = SourceSession();
@@ -205,11 +171,11 @@ void SfuEndpoint::HandleRtpPacket(Packet* pkt)
                   " ssrc=", ssrc,
                   " seq=", seq,
                   " rtp_ts=", timestamp,
-                  " bytes=", pkt->len);
+                  " bytes=", packet.Size());
     }
-    if (track->inputRtp(pkt->data, pkt->len))
+    if (track->inputRtp(packet.Data(), packet.Size()))
     {
-        ForwardRtpToSubscribers(ssrc, pkt->data, pkt->len);
+        ForwardRtpToSubscribers(ssrc, packet.Data(), packet.Size());
     }
 }
 
@@ -308,24 +274,24 @@ std::shared_ptr<rtsp::RtpReceiverTrack> SfuEndpoint::GetOrCreateReceiverTrack(ui
     return new_track;
 }
 
-void SfuEndpoint::HandleRtcpPacket(Packet* pkt)
+void SfuEndpoint::HandleRtcpPacket(common::BufferView packet)
 {
-    if (!pkt || pkt->len < 4)
+    if (packet.Size() < 4)
     {
         LOG_ERROR("invalid rtcp packet");
         return;
     }
 
-    const uint8_t first_byte    = pkt->data[0];
+    const uint8_t first_byte    = packet.Data()[0];
     const uint8_t version       = (first_byte >> 6) & 0x03;
     const uint8_t count_or_fmt  = first_byte & 0x1F;
-    const uint8_t packet_type   = pkt->data[1];
-    const uint16_t length_words = utils::Utils::ReadUint16BE(pkt->data + 2);
+    const uint8_t packet_type   = packet.Data()[1];
+    const uint16_t length_words = utils::Utils::ReadUint16BE(packet.Data() + 2);
 
     rtcpx::RtcpPacketInfo rtcp_info;
-    if (!rtcpx::InspectRtcpPacket(pkt->data, pkt->len, &rtcp_info))
+    if (!rtcpx::InspectRtcpPacket(packet.Data(), packet.Size(), &rtcp_info))
     {
-        LOG_ERROR("[RTCP] invalid rtcp packet, len=", pkt->len);
+        LOG_ERROR("[RTCP] invalid rtcp packet, len=", packet.Size());
         return;
     }
 
@@ -337,9 +303,9 @@ void SfuEndpoint::HandleRtcpPacket(Packet* pkt)
         GetOrCreateReceiverTrack(rtcp_info.media_ssrc);
     }
 
-    if (!rtcp_receiver_ || !rtcp_receiver_->OnRtcpPacket(pkt->data, pkt->len))
+    if (!rtcp_receiver_ || !rtcp_receiver_->OnRtcpPacket(packet.Data(), packet.Size()))
     {
-        LOG_ERROR("[RTCP] parse failed, len=", pkt->len);
+        LOG_ERROR("[RTCP] parse failed, len=", packet.Size());
     }
 }
 
@@ -442,7 +408,7 @@ void SfuEndpoint::DispatchEncodedFrame(const media::EncodedFrame::Ptr& frame)
                      ", ssrc=", event.source.ssrc,
                      ", media_type=", static_cast<int>(frame->info.media_type),
                      ", codec=", static_cast<int>(frame->info.codec),
-                     ", bytes=", frame->size,
+                     ", bytes=", frame->Size(),
                      ", accepted_sinks=", accepted);
         }
         else if (count % 300 == 0)
@@ -450,7 +416,7 @@ void SfuEndpoint::DispatchEncodedFrame(const media::EncodedFrame::Ptr& frame)
             LOG_DEBUG("[FRAME_SOURCE] encoded frame published, count=", count,
                       ", endpoint_id=", event.source.endpoint_id,
                       ", track_id=", event.source.track_id,
-                      ", bytes=", frame->size,
+                      ", bytes=", frame->Size(),
                       ", accepted_sinks=", accepted);
         }
     }

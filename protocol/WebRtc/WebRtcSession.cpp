@@ -435,6 +435,7 @@ bool WebRtcSession::Tick(uint64_t nowMs)
 }
 
 void WebRtcSession::OnWebRtcDatagram(Protocol protocol, network::transport::ReceivedDatagram datagram)
+try
 {
     if ((state_ != WebRtcSessionState::Connecting && state_ != WebRtcSessionState::Connected) ||
         !datagram.IsValid() || Classifier::Classify(datagram.Data(), datagram.Size()) != protocol) return;
@@ -448,6 +449,8 @@ void WebRtcSession::OnWebRtcDatagram(Protocol protocol, network::transport::Rece
     default: break;
     }
 }
+
+catch (const std::bad_alloc&) {} // Drop under memory pressure; keep IO alive.
 
 void WebRtcSession::HandleStun(network::transport::ReceivedDatagram datagram)
 {
@@ -482,17 +485,21 @@ bool WebRtcSession::AllowsRtp(const std::vector<uint8_t>& packet, bool sending) 
 
 void WebRtcSession::HandleEncryptedRtp(network::transport::ReceivedDatagram datagram)
 {
-    if (!srtp_ready_ || !srtp_->UnprotectRtp(datagram.payload) || !AllowsRtp(datagram.payload, false)) return;
+    if (!srtp_ready_) return;
+    auto plaintext = datagram.payload.ToVector();
+    if (!srtp_->UnprotectRtp(plaintext) || !AllowsRtp(plaintext, false)) return;
     endpoint_->OnMediaPacket(ReceivedMediaPacket(MediaPacketType::Rtp, datagram.transport_id,
-        datagram.receive_time_ms, std::move(datagram.payload)));
+        datagram.receive_time_ms, std::move(plaintext)));
 }
 
 void WebRtcSession::HandleEncryptedRtcp(network::transport::ReceivedDatagram datagram)
 {
-    if (!srtp_ready_ || !srtp_->UnprotectRtcp(datagram.payload) ||
-        !Classifier::IsRtcp(datagram.Data(), datagram.Size())) return;
+    if (!srtp_ready_) return;
+    auto plaintext = datagram.payload.ToVector();
+    if (!srtp_->UnprotectRtcp(plaintext) ||
+        !Classifier::IsRtcp(plaintext.data(), plaintext.size())) return;
     endpoint_->OnMediaPacket(ReceivedMediaPacket(MediaPacketType::Rtcp, datagram.transport_id,
-        datagram.receive_time_ms, std::move(datagram.payload)));
+        datagram.receive_time_ms, std::move(plaintext)));
 }
 
 bool WebRtcSession::SendRtp(std::vector<uint8_t> packet)

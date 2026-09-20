@@ -46,6 +46,9 @@ public:
         const uint8_t* data, size_t size, uint64_t receive_time_ms);
 
 private:
+    MediaPacketIngressResult InputOwnedDatagram(const network::SocketAddr& source,
+        MediaPacketType type, common::SharedBuffer payload, uint64_t receive_time_ms);
+
     static size_t Index(MediaPacketType type) { return type == MediaPacketType::Rtcp ? 1 : 0; }
     const bool rtcp_mux_;
     mutable std::mutex mutex_;
