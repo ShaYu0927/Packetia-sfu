@@ -1,7 +1,8 @@
-#pragma once
+#ifndef PACKETIA_SERVICE_RECORDSERVICE_RECORDINGDISPATCHER_H_
+#define PACKETIA_SERVICE_RECORDSERVICE_RECORDINGDISPATCHER_H_
 
 #include "RecordingSession.h"
-#include "ShardedWorkerPool.h"
+#include "WorkerRegistry.h"
 #include <atomic>
 #include <map>
 #include <memory>
@@ -146,8 +147,10 @@ private:
     bool accepting_ = false;
     QueueStats queued_;
     std::map<Key, std::shared_ptr<StreamEntry>> streams_;
-    std::shared_ptr<JobHandler> handler_;
+    std::unique_ptr<WorkerRegistry> workers_;
     bool started_ = false;
 };
 
 }
+
+#endif // PACKETIA_SERVICE_RECORDSERVICE_RECORDINGDISPATCHER_H_

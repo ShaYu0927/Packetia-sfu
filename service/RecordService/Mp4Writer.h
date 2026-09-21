@@ -1,4 +1,5 @@
-#pragma once
+#ifndef PACKETIA_SERVICE_RECORDSERVICE_MP4WRITER_H_
+#define PACKETIA_SERVICE_RECORDSERVICE_MP4WRITER_H_
 
 #include "ISeekableFile.h"
 #include "EncodedFrameRouter.h"
@@ -45,3 +46,5 @@ private:
     std::string error_;
 };
 }
+
+#endif // PACKETIA_SERVICE_RECORDSERVICE_MP4WRITER_H_

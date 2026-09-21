@@ -1,4 +1,5 @@
-#pragma once
+#ifndef PACKETIA_SERVICE_RECORDSERVICE_RECORDINGINSTANCE_H_
+#define PACKETIA_SERVICE_RECORDSERVICE_RECORDINGINSTANCE_H_
 
 #include "IRecorder.h"
 #include "RecordingTypes.h"
@@ -34,3 +35,5 @@ private:
 };
 
 }
+
+#endif // PACKETIA_SERVICE_RECORDSERVICE_RECORDINGINSTANCE_H_

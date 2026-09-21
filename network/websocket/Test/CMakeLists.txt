@@ -12,6 +12,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     get_filename_component(PACKETIA_SOURCE_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
     add_library(utils STATIC
         "${PACKETIA_SOURCE_ROOT}/utils/TaskScheduler.cpp"
+        "${PACKETIA_SOURCE_ROOT}/utils/MediaLatency.cpp"
         "${PACKETIA_SOURCE_ROOT}/utils/EpollTaskScheduler.cpp"
         "${PACKETIA_SOURCE_ROOT}/utils/EventLoop.cpp"
         "${PACKETIA_SOURCE_ROOT}/utils/Pip.cpp"

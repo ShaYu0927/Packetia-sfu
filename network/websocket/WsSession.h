@@ -1,4 +1,5 @@
-#pragma once
+#ifndef PACKETIA_NETWORK_WEBSOCKET_WSSESSION_H_
+#define PACKETIA_NETWORK_WEBSOCKET_WSSESSION_H_
 
 #include "WsLimits.h"
 #include <cstddef>
@@ -88,3 +89,5 @@ private:
     MessageCallback on_message_;
 };
 }
+
+#endif // PACKETIA_NETWORK_WEBSOCKET_WSSESSION_H_

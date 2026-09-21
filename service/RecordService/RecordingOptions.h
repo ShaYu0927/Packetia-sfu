@@ -1,4 +1,5 @@
-#pragma once
+#ifndef PACKETIA_SERVICE_RECORDSERVICE_RECORDINGOPTIONS_H_
+#define PACKETIA_SERVICE_RECORDSERVICE_RECORDINGOPTIONS_H_
 
 #include <cstddef>
 #include <cstdint>
@@ -21,3 +22,5 @@ struct RecordingOptions {
     size_t max_stream_queue_bytes = 16 * 1024 * 1024;
 };
 }
+
+#endif // PACKETIA_SERVICE_RECORDSERVICE_RECORDINGOPTIONS_H_

@@ -65,6 +65,7 @@ static uint32_t ReadUint32BE(const uint8_t* data)
 // Views remain valid for the synchronous call; the WorkJob retains storage.
 void MediaEndpoint::OnRtp(WorkJob& job)
 {
+    media_latency::PacketScope trace_scope(job.media_trace);
     if (!job.payload.Empty()) HandleRtpPacket(job.payload.View());
 }
 
@@ -759,7 +760,16 @@ void SfuEndpoint::EvaluateReceiveQuality(uint32_t source_ssrc)
 
 void SfuEndpoint::ForwardRtpToSubscribers(uint32_t source_ssrc, const uint8_t* data, size_t len)
 {
+    const auto trace = media_latency::CurrentPacket();
+    const auto start = trace ? media_latency::NowNs() : 0;
     auto senders = router_.GetSenderTracks(source_ssrc);
+
+    if (trace)
+    {
+        media_latency::Count(senders.empty() ? media_latency::Counter::NoSubscribers
+                                         : media_latency::Counter::ForwardInputs);
+        media_latency::Observe(media_latency::Stage::BeforeForward, trace.worker_ns, start);
+    }
 
     if (!senders.empty())
     {
@@ -780,8 +790,12 @@ void SfuEndpoint::ForwardRtpToSubscribers(uint32_t source_ssrc, const uint8_t* d
             continue;
         }
 
-        sender->InputRtpPacket(data, len);
+        if (trace) media_latency::Count(media_latency::Counter::SenderAttempts);
+        const bool accepted = sender->InputRtpPacket(data, len);
+        if (trace && !accepted) media_latency::Count(media_latency::Counter::SenderRejected);
     }
+    if (trace && !senders.empty())
+        media_latency::Observe(media_latency::Stage::Fanout, start, media_latency::NowNs());
 }
 
 }

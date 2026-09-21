@@ -1,9 +1,7 @@
-#ifndef _SERVER_APP_H_
-#define _SERVER_APP_H_
-
 #ifndef _SERVER_LAUNCHER_H_
 #define _SERVER_LAUNCHER_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -11,169 +9,67 @@
 #include <utility>
 #include <vector>
 
+namespace service
+{
+class IService;
+}
+
 namespace server
 {
 
+// Lifecycle calls are serialized by the owner. Registration is allowed only
+// before startup or after all services have stopped, never from a callback.
 class ServerLauncher
 {
 public:
     ServerLauncher() = default;
-    ~ServerLauncher()
-    {
-        StopAll();
-    }
+    ~ServerLauncher() noexcept;
 
     ServerLauncher(const ServerLauncher&) = delete;
     ServerLauncher& operator=(const ServerLauncher&) = delete;
 
-public:
-    /**
-     * @brief 添加一个 ip + port 类型的服务。
-     *
-     * 要求 ServiceT 支持：
-     * bool Start(const std::string& ip, uint16_t port);
-     * void Stop();
-     *
-     */
+    // ServiceT implements bool Start(const std::string&, uint16_t) and Stop().
     template <typename ServiceT, typename... Args>
-    std::shared_ptr<ServiceT> AddIpPortService(const std::string& name, const std::string& ip, uint16_t port, Args&&... args)
+    std::shared_ptr<ServiceT> AddIpPortService(const std::string& name,
+        const std::string& ip, uint16_t port, Args&&... args)
     {
-        auto service = std::make_shared<ServiceT>(std::forward<Args>(args)...);
-
-        ServiceItem item;
-        item.name = name;
-
-        item.start = [service, ip, port]() -> bool {
-            return service->Start(ip, port);
-        };
-
-        item.stop = [service]() {
-            service->Stop();
-        };
-
-        services_.push_back(std::move(item));
-        return service;
+        auto instance = std::make_shared<ServiceT>(std::forward<Args>(args)...);
+        AddCustomService(name,
+            [instance, ip, port] { return instance->Start(ip, port); },
+            [instance] { instance->Stop(); });
+        return instance;
     }
 
-    /**
-     * @brief 添加一个普通服务。
-     *
-     * 要求 ServiceT 支持：
-     * bool Start();
-     * void Stop();
-     */
-    template <typename ServiceT, typename... Args>
-    std::shared_ptr<ServiceT> AddService(const std::string& name, Args&&... args)
-    {
-        auto service = std::make_shared<ServiceT>(std::forward<Args>(args)...);
+    // Owns the service through Init/Start and Stop/Shutdown, including rollback.
+    void AddService(std::string name, std::shared_ptr<service::IService> instance);
 
-        ServiceItem item;
-        item.name = name;
+    // Names must be nonempty and unique, and both callbacks must be supplied.
+    // Stop must tolerate a partially completed or failed start attempt.
+    void AddCustomService(const std::string& name,
+        std::function<bool()> start, std::function<void()> stop);
 
-        item.start = [service]() -> bool 
-        {
-            return service->Start();
-        };
-
-        item.stop = [service]() 
-        {
-            service->Stop();
-        };
-
-        services_.push_back(std::move(item));
-        return service;
-    }
-
-    /**
-     * @brief 添加自定义启动逻辑的服务。
-     *
-     * 适合某些接口不统一的服务。
-     */
-    void AddCustomService(const std::string& name, std::function<bool()> start, std::function<void()> stop)
-    {
-        ServiceItem item;
-        item.name = name;
-        item.start = std::move(start);
-        item.stop = std::move(stop);
-
-        services_.push_back(std::move(item));
-    }
-
-    bool StartAll()
-    {
-        for (auto& service : services_)
-        {
-            if (service.started)
-            {
-                continue;
-            }
-
-            if (!service.start || !service.start())
-            {
-                StopStartedServices();
-                return false;
-            }
-
-            service.started = true;
-
-        }
-
-        return true;
-    }
-
-    void StopAll()
-    {
-        for (auto it = services_.rbegin(); it != services_.rend(); ++it)
-        {
-            if (!it->started)
-            {
-                continue;
-            }
-
-            if (it->stop)
-            {
-                it->stop();
-            }
-
-            it->started = false;
-        }
-    }
+    // Starts in registration order; failure rolls back in reverse order.
+    // Repeated calls while running succeed without starting services again.
+    bool StartAll();
+    void StopAll() noexcept;
 
 private:
-    void StopStartedServices()
-    {
-        for (auto it = services_.rbegin(); it != services_.rend(); ++it)
-        {
-            if (!it->started)
-            {
-                continue;
-            }
+    enum class State { Stopped, Starting, Running, Stopping };
 
-            if (it->stop)
-            {
-                it->stop();
-            }
-
-            it->started = false;
-        }
-    }
-
-private:
     struct ServiceItem
     {
         std::string name;
         std::function<bool()> start;
         std::function<void()> stop;
-        bool started{false};
     };
 
+    void StopServices() noexcept;
+
     std::vector<ServiceItem> services_;
+    std::size_t active_count_{0};
+    State state_{State::Stopped};
 };
 
 } // namespace server
 
-#endif
-
-
-
-#endif /* _SERVER_APP_H_ */
+#endif // _SERVER_LAUNCHER_H_

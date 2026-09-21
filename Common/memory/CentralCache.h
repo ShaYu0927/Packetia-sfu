@@ -1,4 +1,5 @@
-#pragma once
+#ifndef PACKETIA_COMMON_MEMORY_CENTRALCACHE_H_
+#define PACKETIA_COMMON_MEMORY_CENTRALCACHE_H_
 #include "BlockHeader.h"
 #include "MemoryPool.h"
 #include "SizeClass.h"
@@ -47,3 +48,5 @@ public:
     CentralCache central;
 };
 } // namespace common
+
+#endif // PACKETIA_COMMON_MEMORY_CENTRALCACHE_H_

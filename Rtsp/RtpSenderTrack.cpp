@@ -1,4 +1,5 @@
 #include "RtpSenderTrack.h"
+#include "../utils/MediaLatency.h"
 #include "../media/quality/SendSideController.h"
 
 #include <algorithm>
@@ -535,6 +536,7 @@ bool RtpSenderTrack::SendRtpPacket(const common::ByteVector& packet,
         return false;
     }
 
+    media_latency::SendScope trace_scope(retransmit);
     return transport->SendRtp(packet.data(), packet.size(), retransmit) == SendResult::Ok;
 }
 

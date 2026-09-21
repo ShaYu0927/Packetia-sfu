@@ -1,4 +1,5 @@
-#pragma once
+#ifndef PACKETIA_COMMON_MEMORY_MEMORYPOOL_H_
+#define PACKETIA_COMMON_MEMORY_MEMORYPOOL_H_
 
 #include <cstddef>
 #include <cstdint>
@@ -67,3 +68,5 @@ private:
     std::shared_ptr<PoolState> state_;
 };
 } // namespace common
+
+#endif // PACKETIA_COMMON_MEMORY_MEMORYPOOL_H_

@@ -10,9 +10,6 @@
 
 namespace
 {
-constexpr std::string_view kEndpointPoolAlias = "endpointpool";
-constexpr std::string_view kEndpointPoolName = "endpoint_pool";
-
 template<class Hook>
 void RunWorkerHook(Hook hook, size_t index, const char* name)
 {
@@ -63,6 +60,7 @@ void ShardedWorkerPool::shutdown(bool drain)
                         WorkJob job = std::move(w.q.front());
                         w.q.pop_front();
                         w.st.queue_bytes -= job.payload.StorageSize();
+                        if (job.media_trace) media_latency::Count(media_latency::Counter::QueueDropped);
                     }
                 }
             }
@@ -89,12 +87,14 @@ static inline void safe_release_job(WorkJob& job)
 
 int ShardedWorkerPool::post(WorkJob&& job)
 {
+    if (job.media_trace) job.media_trace.enqueue_ns = media_latency::NowNs();
     std::lock_guard<std::mutex> lifecycle_lock(lifecycle_mtx_);
 
     if (!started_.load() || workers_.empty())
     {
         LOG_ERROR("[worker post] pool not started, key={}, type={}",
                   job.key, static_cast<int>(job.type));
+        if (job.media_trace) media_latency::Count(media_latency::Counter::QueueDropped);
         safe_release_job(job);
         return -1;
     }
@@ -112,6 +112,7 @@ int ShardedWorkerPool::post(WorkJob&& job)
                       static_cast<int>(job.type),
                       idx,
                       before_size);
+            if (job.media_trace) media_latency::Count(media_latency::Counter::QueueDropped);
             safe_release_job(job);
             return -1;
         }
@@ -120,6 +121,7 @@ int ShardedWorkerPool::post(WorkJob&& job)
         if (bytes > max_queue_bytes_)
         {
             ++shard_worker.st.dropped;
+            if (job.media_trace) media_latency::Count(media_latency::Counter::QueueDropped);
             safe_release_job(job);
             return -1;
         }
@@ -129,10 +131,13 @@ int ShardedWorkerPool::post(WorkJob&& job)
             ++shard_worker.st.dropped;
             if (drop_policy_ == DropPolicy::DropTail)
             {
+                if (job.media_trace) media_latency::Count(media_latency::Counter::QueueDropped);
                 safe_release_job(job);
                 return -1;
             }
             shard_worker.st.queue_bytes -= shard_worker.q.front().payload.StorageSize();
+            if (shard_worker.q.front().media_trace)
+                media_latency::Count(media_latency::Counter::QueueDropped);
             shard_worker.q.pop_front();
         }
         shard_worker.q.emplace_back(std::move(job));
@@ -187,6 +192,7 @@ void ShardedWorkerPool::worker_loop(Worker &worker, std::size_t idx)
 {
     for (;;)
     {
+        media_latency::ReportIfDue();
         WorkJob job;
         {
             std::unique_lock<std::mutex> lk(worker.mtx);
@@ -199,6 +205,7 @@ void ShardedWorkerPool::worker_loop(Worker &worker, std::size_t idx)
             {
                 lk.unlock();
                 if (handler_) RunWorkerHook([&] { handler_->on_worker_stop(idx); }, idx, "stop");
+                media_latency::ReportIfDue(true);
                 LOG_INFO("worker exit by stop, idx=", idx);
                 break;
             }
@@ -215,6 +222,8 @@ void ShardedWorkerPool::worker_loop(Worker &worker, std::size_t idx)
             worker.st.queue_bytes -= job.payload.StorageSize();
             worker.st.dequeued++;
         }
+
+        media_latency::WorkerStarted(job.media_trace);
 
         if (job.type == WorkType::Function)
         {
@@ -270,9 +279,9 @@ std::string WorkerService::NormalizeName(std::string_view name)
                        return static_cast<char>(std::tolower(ch));
                    });
 
-    if (normalized == kEndpointPoolAlias)
+    if (normalized == POOL_ENDPOINT_ALIAS)
     {
-        normalized.assign(kEndpointPoolName.data(), kEndpointPoolName.size());
+        normalized.assign(POOL_ENDPOINT);
     }
     return normalized;
 }
@@ -405,6 +414,7 @@ int WorkerService::post(std::string_view name, WorkJob&& job)
     if (!pool)
     {
         LOG_ERROR("[WorkerService] post failed, pool not found: ", std::string(name));
+        if (job.media_trace) media_latency::Count(media_latency::Counter::QueueDropped);
         safe_release_job(job);
         return -1;
     }

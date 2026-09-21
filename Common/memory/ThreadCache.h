@@ -1,4 +1,5 @@
-#pragma once
+#ifndef PACKETIA_COMMON_MEMORY_THREADCACHE_H_
+#define PACKETIA_COMMON_MEMORY_THREADCACHE_H_
 #include "BlockHeader.h"
 #include "MemoryPool.h"
 #include "SizeClass.h"
@@ -23,3 +24,5 @@ private:
 };
 ThreadCache& GetThreadCache();
 } // namespace common
+
+#endif // PACKETIA_COMMON_MEMORY_THREADCACHE_H_

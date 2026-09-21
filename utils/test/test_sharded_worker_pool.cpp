@@ -188,8 +188,8 @@ TEST(MediaStreamAffinityTest, StreamHandleIsStableAndSeparatesEndpoints)
 
 TEST(MediaStreamAffinityTest, UnifiedPostPreservesStreamOrderAndOwnerThread)
 {
-    GlobalPoolGuard guard("media");
-    ASSERT_EQ(0, WorkerService::create_function_pool("media", 4, 64));
+    GlobalPoolGuard guard(POOL_MEDIA);
+    ASSERT_EQ(0, WorkerService::create_function_pool(POOL_MEDIA, 4, 64));
 
     std::mutex mutex;
     std::vector<int> values;

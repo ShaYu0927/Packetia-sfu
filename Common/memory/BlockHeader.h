@@ -1,4 +1,5 @@
-#pragma once
+#ifndef PACKETIA_COMMON_MEMORY_BLOCKHEADER_H_
+#define PACKETIA_COMMON_MEMORY_BLOCKHEADER_H_
 #include <cstddef>
 #include <cstdint>
 
@@ -17,3 +18,5 @@ inline constexpr std::uint32_t kMagicUsed = 0xABCD1234;
 inline constexpr std::uint32_t kMagicFree = 0xDEAD5678;
 static_assert(sizeof(BlockHeader) % alignof(std::max_align_t) == 0);
 } // namespace common
+
+#endif // PACKETIA_COMMON_MEMORY_BLOCKHEADER_H_

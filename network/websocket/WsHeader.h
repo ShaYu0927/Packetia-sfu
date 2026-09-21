@@ -1,3 +1,6 @@
-#pragma once
+#ifndef PACKETIA_NETWORK_WEBSOCKET_WSHEADER_H_
+#define PACKETIA_NETWORK_WEBSOCKET_WSHEADER_H_
 
 #include <libwebsockets.h>
+
+#endif // PACKETIA_NETWORK_WEBSOCKET_WSHEADER_H_

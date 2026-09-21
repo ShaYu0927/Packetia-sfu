@@ -5,6 +5,7 @@
 #include <queue>
 #include <cstdint>
 #include <cstddef>
+#include "../utils/MediaLatency.h"
 
 
 void WriteUint32BE(char* p, uint32_t value);
@@ -22,7 +23,7 @@ public:
     static constexpr std::size_t KDefaultMaxQueuedBytes = 4 * 1024 * 1024;
 
     explicit BufferWirte(std::size_t max_queued_bytes = KDefaultMaxQueuedBytes);
-	~BufferWirte() {}
+    ~BufferWirte();
     bool IsEmpty() const
     {
         return buffer_.empty();
@@ -50,6 +51,7 @@ private:
         std::shared_ptr<char> data;
         uint32_t size;
         uint32_t writeIndex;
+        media_latency::SendTrace trace;
     }Packet;
 
     std::size_t max_queued_bytes_ = KDefaultMaxQueuedBytes;

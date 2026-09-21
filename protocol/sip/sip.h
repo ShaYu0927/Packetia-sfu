@@ -1,4 +1,5 @@
-#pragma once
+#ifndef PACKETIA_PROTOCOL_SIP_SIP_H_
+#define PACKETIA_PROTOCOL_SIP_SIP_H_
 
 #include <string>
 #include <unordered_map>
@@ -73,3 +74,5 @@ typedef struct SipMessage
     SipRequest&  as_req()  { return std::get<SipRequest>(msg); }
     SipResponse& as_resp() { return std::get<SipResponse>(msg); }
 }SipMessage;
+
+#endif // PACKETIA_PROTOCOL_SIP_SIP_H_

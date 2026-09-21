@@ -1,4 +1,5 @@
-#pragma once
+#ifndef PACKETIA_COMMON_MEMORY_POOLALLOCATOR_H_
+#define PACKETIA_COMMON_MEMORY_POOLALLOCATOR_H_
 #include "MemoryPool.h"
 #include <limits>
 #include <new>
@@ -44,3 +45,5 @@ private:
 template<class T> using PoolVector = std::vector<T, PoolAllocator<T>>;
 using ByteVector = PoolVector<uint8_t>;
 } // namespace common
+
+#endif // PACKETIA_COMMON_MEMORY_POOLALLOCATOR_H_

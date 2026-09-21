@@ -1,4 +1,5 @@
-#pragma once
+#ifndef PACKETIA_SERVICE_RECORDSERVICE_RECORDINGSEGMENT_H_
+#define PACKETIA_SERVICE_RECORDSERVICE_RECORDINGSEGMENT_H_
 
 #include "Mp4Writer.h"
 #include "RecordingTypes.h"
@@ -77,3 +78,5 @@ private:
 };
 
 }
+
+#endif // PACKETIA_SERVICE_RECORDSERVICE_RECORDINGSEGMENT_H_

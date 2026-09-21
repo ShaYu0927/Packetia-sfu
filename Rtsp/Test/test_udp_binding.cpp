@@ -2,7 +2,8 @@
 #include "UdpMediaTransport.h"
 #include "RtspServer.h"
 #include "RtspUtil.h"
-#include "IWorkerModule.h"
+#include "WorkerRegistry.h"
+#include "EndpointBase.h"
 #include "core/EncodedFrameRouter.h"
 
 #include <array>
@@ -218,8 +219,9 @@ public:
 class RtspUdpIntegration : public testing::Test {
 protected:
     void SetUp() override {
-        registry.Add(std::make_shared<MediaWorkerModule>());
-        ASSERT_EQ(registry.RegisterAll(), 0);
+        registry.Add({POOL_MEDIA, 4, 4096, ShardedWorkerPool::DropPolicy::DropHead},
+            std::make_shared<utils::EndpointJobHandler>(&utils::EndpointManager::Instance()));
+        ASSERT_EQ(registry.Start(), 0);
         ASSERT_TRUE(loop.Start());
         server = std::make_shared<RtspServer>(&loop);
         ASSERT_TRUE(server->Start("127.0.0.1", 0));
@@ -233,7 +235,7 @@ protected:
     void TearDown() override {
         if (client >= 0) ::close(client);
         if (server) server->Stop();
-        registry.UnregisterAll();
+        registry.Stop();
         auto session = MediaSessionManager::Instance().GetSessionBySuffix("live/udp_binding");
         if (session) MediaSessionManager::Instance().RemoveSession(session->GetId());
         server.reset();
@@ -258,7 +260,7 @@ protected:
         ASSERT_NE(response.find("200 OK"), std::string::npos) << response;
     }
     EventLoop loop;
-    WorkerModuleRegistry registry;
+    WorkerRegistry registry;
     std::shared_ptr<RtspServer> server;
     int client = -1, cseq = 0;
 };

@@ -185,29 +185,30 @@ void RecordingDispatcher::Start()
         !options_.max_queue_bytes || !options_.max_stream_queue_frames ||
         !options_.max_stream_queue_bytes || !options_.max_streams)
         throw std::invalid_argument("invalid recording dispatcher limits");
-    handler_ = std::make_shared<JobHandler>(*this, options_.worker_count);
-    if (WorkerService::exists("recording") ||
-        WorkerService::create_pool("recording", options_.worker_count, handler_,
-            options_.max_queue_frames, ShardedWorkerPool::DropPolicy::DropTail) != 0) 
+    auto workers = std::make_unique<WorkerRegistry>();
+    workers->Add({POOL_RECORD, options_.worker_count, options_.max_queue_frames,
+                  ShardedWorkerPool::DropPolicy::DropTail},
+                 std::make_shared<JobHandler>(*this, options_.worker_count));
+    if (workers->Start() != 0)
     {
-        handler_.reset();
-        throw std::runtime_error("start recording worker module failed");
+        throw std::runtime_error("start recording worker pool failed");
     }
+    workers_ = std::move(workers);
     started_ = true;
     accepting_ = true;
 }
 
 void RecordingDispatcher::Stop()
 {
-    bool started = false;
+    std::unique_ptr<WorkerRegistry> workers;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         accepting_ = false;
-        started = std::exchange(started_, false);
+        started_ = false;
+        workers = std::move(workers_);
     }
-    if (started) WorkerService::destroy_pool("recording", true);
+    if (workers) workers->Stop(true);
     std::lock_guard<std::mutex> lock(mutex_);
-    handler_.reset();
     streams_.clear();
     queued_ = {};
 }
@@ -250,7 +251,7 @@ bool RecordingDispatcher::Post(const media::EncodedFrameEvent& event)
         job.type = WorkType::Recording;
         job.owner = std::make_shared<FrameJob>(std::move(payload));
         ++accepted_;
-        if (WorkerService::post("recording", std::move(job)) == 0) return true;
+        if (WorkerService::post(POOL_RECORD, std::move(job)) == 0) return true;
         --accepted_;
         --stream->frames;
         stream->bytes -= bytes;

@@ -1,4 +1,5 @@
-#pragma once
+#ifndef PACKETIA_SERVICE_RECORDSERVICE_IRECORDER_H_
+#define PACKETIA_SERVICE_RECORDSERVICE_IRECORDER_H_
 
 #include <cstdint>
 
@@ -23,3 +24,5 @@ public:
 };
 
 }
+
+#endif // PACKETIA_SERVICE_RECORDSERVICE_IRECORDER_H_

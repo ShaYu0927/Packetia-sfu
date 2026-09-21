@@ -19,6 +19,7 @@ add_executable(test_memory_model
     "${PACKETIA_MEMORY_ROOT}/Common/Depacketizer/H26xPacketBuffer.cpp"
     "${PACKETIA_MEMORY_ROOT}/Common/Depacketizer/H264ParameterSetTracker.cpp"
     "${PACKETIA_MEMORY_ROOT}/utils/ShardedWorkerPool.cpp"
+    "${PACKETIA_MEMORY_ROOT}/utils/MediaLatency.cpp"
     "${PACKETIA_MEMORY_ROOT}/utils/EndpointBase.cpp"
     "${PACKETIA_MEMORY_ROOT}/media/transport/MediaEndpointIngress.cpp"
     "${PACKETIA_MEMORY_ROOT}/media/core/EncodedFrameRouter.cpp"

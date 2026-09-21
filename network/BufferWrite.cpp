@@ -12,6 +12,16 @@ BufferWirte::BufferWirte(std::size_t max_queued_bytes)
 {
 }
 
+BufferWirte::~BufferWirte()
+{
+    while (!buffer_.empty())
+    {
+        if (buffer_.front().trace)
+            media_latency::Count(media_latency::Counter::TcpAbandoned);
+        buffer_.pop();
+    }
+}
+
 bool BufferWirte::Append(std::shared_ptr<char> data, uint32_t size, uint32_t index)
 {
     if (!data || size == 0 || index >= size)
@@ -25,7 +35,7 @@ bool BufferWirte::Append(std::shared_ptr<char> data, uint32_t size, uint32_t ind
         return false;
     }
 
-    Packet pkt = {std::move(data), size, index};
+    Packet pkt = {std::move(data), size, index, media_latency::CurrentSend()};
     buffer_.emplace(std::move(pkt));
     queued_bytes_ += remaining;
     return true;
@@ -52,6 +62,7 @@ bool BufferWirte::Append(const char* data,uint32_t size,uint32_t index)
 	memcpy(pkt.data.get(), data, size);
 	pkt.size = size;
 	pkt.writeIndex = index;
+    pkt.trace = media_latency::CurrentSend();
 	buffer_.emplace(std::move(pkt));
     queued_bytes_ += remaining;
     return true;
@@ -79,6 +90,8 @@ int  BufferWirte::Send(int socketfd,int timeOut)
             queued_bytes_ -= static_cast<std::size_t>(ret);
             if (pkt.writeIndex == pkt.size)
             {
+                if (pkt.trace)
+                    media_latency::SocketSent(pkt.trace, true, media_latency::NowNs());
                 buffer_.pop();
             }
         } 

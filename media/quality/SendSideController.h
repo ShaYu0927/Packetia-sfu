@@ -1,4 +1,5 @@
-#pragma once
+#ifndef PACKETIA_MEDIA_QUALITY_SENDSIDECONTROLLER_H_
+#define PACKETIA_MEDIA_QUALITY_SENDSIDECONTROLLER_H_
 
 #include "GoogCcNetworkController.h"
 #include "PacketHistory.h"
@@ -55,3 +56,5 @@ private:
     std::unordered_map<uint32_t, uint32_t> sender_clock_rates_;
 };
 }
+
+#endif // PACKETIA_MEDIA_QUALITY_SENDSIDECONTROLLER_H_

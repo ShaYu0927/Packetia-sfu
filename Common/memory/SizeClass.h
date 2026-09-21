@@ -1,4 +1,5 @@
-#pragma once
+#ifndef PACKETIA_COMMON_MEMORY_SIZECLASS_H_
+#define PACKETIA_COMMON_MEMORY_SIZECLASS_H_
 #include <cstddef>
 
 namespace common
@@ -25,3 +26,5 @@ inline std::size_t GetAllocationCapacity(std::size_t size)
     return !size || size > kMaxPooledObjectSize ? size : GetClassSize(GetSizeClassIndex(size));
 }
 } // namespace common
+
+#endif // PACKETIA_COMMON_MEMORY_SIZECLASS_H_

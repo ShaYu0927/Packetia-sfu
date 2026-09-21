@@ -1,4 +1,5 @@
-#pragma once
+#ifndef PACKETIA_COMMON_MEMORY_MUTABLEBUFFER_H_
+#define PACKETIA_COMMON_MEMORY_MUTABLEBUFFER_H_
 #include "SharedBuffer.h"
 
 namespace common
@@ -65,3 +66,5 @@ private:
     size_t capacity_ = 0;
 };
 } // namespace common
+
+#endif // PACKETIA_COMMON_MEMORY_MUTABLEBUFFER_H_

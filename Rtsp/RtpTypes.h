@@ -1,4 +1,5 @@
-#pragma once
+#ifndef PACKETIA_RTSP_RTPTYPES_H_
+#define PACKETIA_RTSP_RTPTYPES_H_
 
 
 #include <algorithm>
@@ -277,3 +278,5 @@ inline const char* TrackTypeToString(TrackType type)
         return "invalid";
     }
 }
+
+#endif // PACKETIA_RTSP_RTPTYPES_H_

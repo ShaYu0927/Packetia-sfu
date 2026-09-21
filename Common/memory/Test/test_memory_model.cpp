@@ -246,7 +246,7 @@ void MediaIngressRetainsBytesAndStreamAffinity()
     handler->callback = [&](WorkJob& job) {
         captured.set_value({job.payload, job.enqueue_ts, job.target_id, job.key, job.type});
     };
-    CHECK(WorkerService::create_pool("media", 1, handler) == 0);
+    CHECK(WorkerService::create_pool(POOL_MEDIA, 1, handler) == 0);
     std::vector<uint8_t> bytes(4096, 0x5a);
     bytes[0] = 0x80;
     bytes[1] = 96;
@@ -256,7 +256,7 @@ void MediaIngressRetainsBytesAndStreamAffinity()
     ReceivedMediaPacket packet(MediaPacketType::Rtp, 9, 123, std::move(pooled));
     media::transport::MediaEndpointIngress ingress(77);
     const auto result = ingress.OnMediaPacket(std::move(packet));
-    WorkerService::destroy_pool("media", true);
+    WorkerService::destroy_pool(POOL_MEDIA, true);
     CHECK(result == MediaPacketIngressResult::Accepted);
     CHECK(!packet.IsValid());
     CHECK(received.wait_for(0s) == std::future_status::ready);

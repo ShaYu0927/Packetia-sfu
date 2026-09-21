@@ -1,4 +1,5 @@
-#pragma once
+#ifndef PACKETIA_PROTOCOL_SIP_SIPSESSION_H_
+#define PACKETIA_PROTOCOL_SIP_SIPSESSION_H_
 
 #include "TcpSession.h"
 #include "sip.h"
@@ -41,3 +42,5 @@ private:
 };
 
 } // namespace sip
+
+#endif // PACKETIA_PROTOCOL_SIP_SIPSESSION_H_

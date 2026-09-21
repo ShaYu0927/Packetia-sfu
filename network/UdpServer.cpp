@@ -1,4 +1,5 @@
 #include "UdpServer.h"
+#include "../utils/MediaLatency.h"
 namespace network
 {
 UdpServer::UdpServer(EventLoop *loop)
@@ -120,9 +121,19 @@ UdpServer::SendResult UdpServer::TrySendTo(const network::SocketAddr& dst,
         return SendResult::Failed;
     if (!scheduler_ || !started_) return SendResult::Closed;
     SendResult result = SendResult::Closed;
-    scheduler_->Invoke([&] {
-        if (!started_ || scheduler_->IsStopped()) return;
+    const auto trace = media_latency::CurrentSend();
+    scheduler_->Invoke([&, trace] {
+        if (!started_ || scheduler_->IsStopped())
+        {
+            if (trace) media_latency::Count(media_latency::Counter::UdpFailed);
+            return;
+        }
         const int n = sock_.SendTo(dst, data, len);
+        if (trace)
+        {
+            if (n == 0) media_latency::SocketSent(trace, false, media_latency::NowNs());
+            else media_latency::Count(media_latency::Counter::UdpFailed);
+        }
         result = n == 0 ? SendResult::Sent :
             n == -1 ? SendResult::NotWritable : SendResult::Failed;
     });

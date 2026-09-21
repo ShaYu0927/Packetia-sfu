@@ -1,4 +1,5 @@
-#pragma once
+#ifndef PACKETIA_SERVICE_RECORDSERVICE_RECORDINGSESSION_H_
+#define PACKETIA_SERVICE_RECORDSERVICE_RECORDINGSESSION_H_
 
 #include "RecordingInstance.h"
 #include "RecordingTypes.h"
@@ -45,3 +46,5 @@ private:
 };
 
 }
+
+#endif // PACKETIA_SERVICE_RECORDSERVICE_RECORDINGSESSION_H_

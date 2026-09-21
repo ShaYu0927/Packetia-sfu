@@ -18,6 +18,18 @@
 #include <unordered_map>
 
 #include "../Common/memory/SharedBuffer.h"
+#include "MediaLatency.h"
+
+// Shared names for worker pool registration, submission and shutdown.
+#define POOL_MEDIA "media"
+#define POOL_SIP "sip"
+#define POOL_RTSP "rtsp"
+#define POOL_ENDPOINT "endpoint_pool"
+#define POOL_RECORD "recording"
+#define POOL_TRANSCODE "transcode"
+
+// Legacy endpoint pool spelling accepted by NormalizeName().
+#define POOL_ENDPOINT_ALIAS "endpointpool"
 
 enum class WorkType : uint32_t
 {
@@ -62,6 +74,7 @@ struct WorkJob
     common::SharedBuffer payload;
 
     uint64_t enqueue_ts = 0;
+    media_latency::PacketTrace media_trace;
 
     // Non-byte business objects, e.g. RecordingDispatcher::FrameJob.
     // Media packet bytes belong exclusively in payload.
@@ -204,15 +217,6 @@ private:
 class WorkerService final 
 {
 public:
-    enum class WorkerPoolId : std::size_t
-    {
-        Media = 0,
-        Sip,
-        Rtsp,
-        Endpoint,
-        Count,
-    };
-
     struct PoolStatus
     {
         std::string name;
@@ -258,15 +262,6 @@ private:
 
     static std::shared_mutex mtx_;
     static std::unordered_map<std::string, std::shared_ptr<ShardedWorkerPool>> pools_;
-};
-
-struct WorkerModuleConfig
-{
-    WorkerService::WorkerPoolId id;
-    std::size_t worker_count;
-    std::size_t max_queue_len;
-    ShardedWorkerPool::DropPolicy drop_policy;
-    std::shared_ptr<IJobHandler> handler;
 };
 
 #endif

@@ -1,4 +1,5 @@
-#pragma once
+#ifndef PACKETIA_NETWORK_WEBSOCKET_WSLIMITS_H_
+#define PACKETIA_NETWORK_WEBSOCKET_WSLIMITS_H_
 
 #include <cstddef>
 #include <mutex>
@@ -62,3 +63,5 @@ private:
     WsSendStats used_;
 };
 }
+
+#endif // PACKETIA_NETWORK_WEBSOCKET_WSLIMITS_H_

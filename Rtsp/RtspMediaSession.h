@@ -1,4 +1,5 @@
-#pragma once
+#ifndef PACKETIA_RTSP_RTSPMEDIASESSION_H_
+#define PACKETIA_RTSP_RTSPMEDIASESSION_H_
 
 #include <cstdint>
 #include <memory>
@@ -142,3 +143,5 @@ private:
     std::atomic_uint64_t last_id_{0};
     std::shared_ptr<media::IEncodedFramePublisher> frame_publisher_;
 };
+
+#endif // PACKETIA_RTSP_RTSPMEDIASESSION_H_

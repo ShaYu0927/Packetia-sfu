@@ -115,7 +115,7 @@ inline int PostToMediaStream(const MediaStreamHandle& stream, std::function<void
 {
     if (stream.endpoint_id == 0 || !fn)
         return -1;
-    return WorkerService::post_fn("media", stream.affinity_key, std::move(fn));
+    return WorkerService::post_fn(POOL_MEDIA, stream.affinity_key, std::move(fn));
 }
 
 inline int PostToMediaStream(uint64_t endpoint_id, uint32_t ssrc, std::function<void()> fn)

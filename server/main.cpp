@@ -1,133 +1,13 @@
-#include "RtspServer.h"
-#include "SipServer.h"
-#include "rtmp_server.h"
-#include "EventLoop.h"
-#include "logger.h"
-#include "UdpServer.h"
-#include "UdpSession.h"
-#include "IWorkerModule.h"
-#include "ServerLauncher.h"
-#include "websocket/WsServer.h"
-#include "AIService/AIService.h"
-#include "AIService/UnavailableModelProvider.h"
-#include "core/EncodedFrameRouter.h"
-#include "RecordService/RecordingService.h"
-#include <cstdlib>
-
-#include <algorithm>
-#include <thread>
+#include "ServerApp.h"
 
 int main()
 {
-    server::ServerLauncher launcher;
-    WorkerModuleRegistry registry;
-
-    auto media_module = std::make_shared<MediaWorkerModule>();
-    registry.Add(media_module);
-    registry.Add(std::make_shared<EndpointWorkerModule>());
-    const auto hardware_threads = std::thread::hardware_concurrency();
-    const auto transcode_threads = std::clamp<std::size_t>(hardware_threads / 2, 1, 4);
-    registry.Add(std::make_shared<FunctionWorkerModule>("transcode", transcode_threads, 512, ShardedWorkerPool::DropPolicy::DropTail));
-
-    launcher.AddCustomService(
-        "WorkerModuleRegistry",
-        [&registry]() -> bool {
-            int ret = registry.RegisterAll();
-            if (ret != 0)
-            {
-                LOG_ERROR("worker modules init failed");
-                return false;
-            }
-
-            return true;
-        },
-        [&registry]() {
-            registry.UnregisterAll(true);
-        }
-    );
-
-    auto event_loop = std::make_shared<EventLoop>(1);
-
-    launcher.AddCustomService(
-        "EventLoop",
-        [event_loop]() -> bool {
-            if (!event_loop->Start())
-            {
-                LOG_ERROR("event loop start failed");
-                return false;
-            }
-
-            return true;
-        },
-        [event_loop]() {
-            event_loop->Stop();
-        }
-    );
-
-    auto frame_router = std::make_shared<media::EncodedFrameRouter>();
-    MediaSessionManager::Instance().SetFramePublisher(frame_router);
-
-    const char* recording_enabled = std::getenv("PACKETIA_RECORDING");
-    if (!recording_enabled || std::string(recording_enabled) != "0") 
-    {
-        service::RecordingOptions options;
-        if (const char* directory = std::getenv("PACKETIA_RECORD_DIR")) options.directory = directory;
-        auto recording = std::make_shared<service::RecordingService>(frame_router, options);
-        launcher.AddCustomService("RecordingService",
-            [recording] { return recording->Init() && recording->Start(); },
-            [recording] { recording->Stop(); });
-    }
-
-    auto ai_service = std::make_shared<service::ai::AIService>(
-        std::make_shared<service::ai::UnavailableModelProvider>(),
-        frame_router);
-
-    launcher.AddCustomService(
-        "AIService",
-        [ai_service]() -> bool {
-            return ai_service->Init() && ai_service->Start();
-        },
-        [ai_service]() {
-            ai_service->Stop();
-            ai_service->Shutdown();
-        }
-    );
-
-    auto rtsp_server = launcher.AddIpPortService<RtspServer>("RtspServer", "0.0.0.0", 554, event_loop.get());
-    auto sip_server   = launcher.AddIpPortService<SipServer>("SipServer", "0.0.0.0", 5060, event_loop.get());
-    auto rtmp_server  = launcher.AddIpPortService<protocol::rtmp::RtmpServer>("RtmpServer", "0.0.0.0", 1935, event_loop.get());
-    auto udp_server   = launcher.AddIpPortService<network::UdpServer>("UdpServer","0.0.0.0", 9000,  event_loop.get());
-    auto mux_handler                              = std::make_shared<network::UdpMuxHandler>(udp_server.get());
-    udp_server->SetHandler(mux_handler);
-
-#ifdef PACKETIA_WITH_LIBWEBSOCKETS
-    auto ws_server = launcher.AddIpPortService<network::websocket::WsServer>(
-        "WsServer", "0.0.0.0", 8080, event_loop.get());
-
-    ws_server->SetOnOpen([](const network::websocket::WsConnectionInfo& info) {
-        LOG_DEBUG("ws open, connId=", info.connId);
-    });
-
-    ws_server->SetOnMessage(
-        [](const std::string& connId, const std::string& message) -> std::string {
-            LOG_DEBUG("ws message, connId=", connId, ", bytes=", message.size());
-            return R"({"code":0,"msg":"ok"})";
-        }
-    );
-
-    ws_server->SetOnClose([](const std::string& connId) {
-        LOG_DEBUG("ws close, connId=", connId);
-    });
-
-#endif
-
-    if (!launcher.StartAll())
+    server::ServerApp app(server::ServerConfig::FromEnvironment());
+    if (!app.Start())
     {
         return -1;
     }
-
-    event_loop->Loop();
-    launcher.StopAll();
-
+    app.Run();
+    app.Stop();
     return 0;
 }

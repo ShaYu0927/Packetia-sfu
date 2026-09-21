@@ -1,4 +1,5 @@
-#pragma once
+#ifndef PACKETIA_SERVICE_RECORDSERVICE_ISEEKABLEFILE_H_
+#define PACKETIA_SERVICE_RECORDSERVICE_ISEEKABLEFILE_H_
 
 #include <cstdint>
 #include <string>
@@ -26,3 +27,5 @@ public:
 };
 
 }
+
+#endif // PACKETIA_SERVICE_RECORDSERVICE_ISEEKABLEFILE_H_

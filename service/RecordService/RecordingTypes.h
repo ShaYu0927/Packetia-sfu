@@ -1,4 +1,5 @@
-#pragma once
+#ifndef PACKETIA_SERVICE_RECORDSERVICE_RECORDINGTYPES_H_
+#define PACKETIA_SERVICE_RECORDSERVICE_RECORDINGTYPES_H_
 
 #include "RecordingOptions.h"
 #include <atomic>
@@ -128,3 +129,5 @@ struct RecordingContext
 };
 
 }
+
+#endif // PACKETIA_SERVICE_RECORDSERVICE_RECORDINGTYPES_H_

@@ -1,4 +1,5 @@
 #include "TaskScheduler.h"
+#include "MediaLatency.h"
 #include <signal.h>
 
 TaskScheduler::TaskScheduler(int id)
@@ -69,6 +70,7 @@ void TaskScheduler::Run()
         HandleEvent(timeout);
         HandlePendingTasks();
         if (!shutdown_) timer_queue_.HandleTimerEvent();
+        media_latency::ReportIfDue();
         std::lock_guard<std::mutex> lock(task_mutex_);
         if (shutdown_ && pending_tasks_.empty())
         {
@@ -76,6 +78,7 @@ void TaskScheduler::Run()
             break;
         }
     }
+    media_latency::ReportIfDue(true);
     current_ = nullptr;
 }
 

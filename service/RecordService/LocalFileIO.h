@@ -1,4 +1,5 @@
-#pragma once
+#ifndef PACKETIA_SERVICE_RECORDSERVICE_LOCALFILEIO_H_
+#define PACKETIA_SERVICE_RECORDSERVICE_LOCALFILEIO_H_
 
 #include "ISeekableFile.h"
 #include <cstdio>
@@ -46,3 +47,5 @@ private:
 };
 
 }
+
+#endif // PACKETIA_SERVICE_RECORDSERVICE_LOCALFILEIO_H_

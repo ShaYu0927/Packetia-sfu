@@ -1,4 +1,5 @@
-#pragma once
+#ifndef PACKETIA_COMMON_MEMORY_SHAREDBUFFER_H_
+#define PACKETIA_COMMON_MEMORY_SHAREDBUFFER_H_
 
 #include "MemoryPool.h"
 
@@ -170,3 +171,5 @@ private:
 };
 
 } // namespace common
+
+#endif // PACKETIA_COMMON_MEMORY_SHAREDBUFFER_H_

@@ -45,3 +45,5 @@ add_test(
     NAME ShardedWorkerLifecycleTest
     COMMAND test_sharded_worker_lifecycle
 )
+
+add_subdirectory(workers)

@@ -157,13 +157,14 @@ add_library(utils STATIC
     utils/SelectTaskScheduler.cpp
     utils/EpollTaskScheduler.cpp
     utils/ShardedWorkerPool.cpp
+    utils/MediaLatency.cpp
     utils/ShardedWorkerPool.h
     utils/MediaStreamAffinity.h
     utils/EventLoop.cpp
     utils/Acceptor.cpp
     utils/Pip.cpp
     utils/EndpointBase.cpp
-    utils/IWorkerModule.cpp
+    utils/WorkerRegistry.cpp
     utils/utils.cpp
 
 )
@@ -250,6 +251,8 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/Common/Depacketizer/Test)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/media/quality/Test)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/Rtsp/Test)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/utils/test)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/utils/test/latency)
+add_subdirectory(server/Test)
 
 
 # test
@@ -258,13 +261,17 @@ add_executable(ice_unit_tests
     protocol/ice/test/test_IceChecklist.cpp
     protocol/ice/test/test_IceAgent.cpp
 )
-add_executable(Packetia ${CMAKE_SOURCE_DIR}/server/main.cpp)
+add_executable(Packetia
+    server/main.cpp
+    server/ServerApp.cpp
+    server/WorkerSetup.cpp
+)
 
 
 target_link_libraries(Packetia
     PRIVATE
     -Wl,--start-group
-    media rtsp rtp sip Rtmp network utils Rtcp LOGGER ROOM_LIB COMMON ICE WebRtc Interleaved service hv_static
+    server media rtsp rtp sip Rtmp network utils Rtcp LOGGER ROOM_LIB COMMON ICE WebRtc Interleaved service hv_static
     -Wl,--end-group
     ${FFMPEG_LIBRARIES}
     pthread

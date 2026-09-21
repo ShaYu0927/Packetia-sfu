@@ -1,4 +1,5 @@
-#pragma once
+#ifndef PACKETIA_SERVICE_RECORDSERVICE_RECORDINGSERVICE_H_
+#define PACKETIA_SERVICE_RECORDSERVICE_RECORDINGSERVICE_H_
 
 #include "core/IService.h"
 #include "RecordingOptions.h"
@@ -43,3 +44,5 @@ private:
     std::atomic<uint64_t> accepted_{0}, written_{0}, dropped_{0}, completed_{0}, errors_{0};
 };
 }
+
+#endif // PACKETIA_SERVICE_RECORDSERVICE_RECORDINGSERVICE_H_
