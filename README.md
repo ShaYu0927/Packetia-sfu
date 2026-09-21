@@ -338,7 +338,7 @@ existing RTP/RTCP data path logic.
 # Version 0.4.2 - 2026-02-08
 ## feat(core): add signal-based subscription framework for stream dispatch
 - Add ISubscription / ISignal interfaces for callback subscription model
-- Implement SignalCOW with copy-on-write snapshot for lock-free emit path
+- Implement SignalCOW with copy-on-write snapshots; emit does not hold the subscription writer mutex
 - Provide subscribe/cancel mechanism to manage listener lifecycle
 - Introduce SourceBase<T> abstraction to expose publish/subscribe pattern for stream modules
 - Prepare foundation for RTP/frame fan-out and modular pipeline extension

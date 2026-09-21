@@ -242,6 +242,7 @@ add_subdirectory(server)
 
 enable_testing()
 add_subdirectory(Common/memory/Test)
+add_subdirectory(Common/CallbackEmitter/Test)
 option(PACKETIA_BUILD_RECORDING_TESTS "Build FFmpeg recording integration tests" OFF)
 if(PACKETIA_BUILD_RECORDING_TESTS)
     add_subdirectory(service/RecordService/Test)
