@@ -2,7 +2,13 @@
 #include "TcpServer.h"
 #include "UdpServer.h"
 #include "transport/UdpDatagramTransport.h"
+#if defined(__APPLE__)
+#include "KqueueTaskScheduler.h"
+using NetworkScheduler = KqueueTaskScheduler;
+#else
 #include "EpollTaskScheduler.h"
+using NetworkScheduler = EpollTaskScheduler;
+#endif
 #include "rtmp_transport.h"
 
 #include <gtest/gtest.h>
@@ -34,7 +40,7 @@ protected:
 
 TEST(NetworkLifecycle, TcpAdmissionIsBoundedAndRtmpSeesBackpressure) {
     // A scheduler not yet running keeps accepted bytes queued deterministically.
-    auto scheduler = std::make_shared<EpollTaskScheduler>();
+    auto scheduler = std::make_shared<NetworkScheduler>();
     SocketPair sockets;
     auto connection = std::make_shared<TcpConnection>(scheduler.get(), sockets.TakeFirst());
     auto transport = std::make_shared<protocol::rtmp::RtmpTcpTransport>(connection);
@@ -120,7 +126,7 @@ TEST(NetworkLifecycle, TcpWriteToClosedPeerDoesNotRaiseSigpipe) {
     loop.Stop();
 }
 
-class SaturatedScheduler : public EpollTaskScheduler {
+class SaturatedScheduler : public NetworkScheduler {
 public:
     void FillWakeupPipe() {
         char bytes[4096]{};
@@ -202,6 +208,11 @@ TEST(NetworkLifecycle, UdpReceivesLargeDatagramsAndDestructionCompletesCleanup) 
     ASSERT_EQ(::getsockname(server->Fd(), reinterpret_cast<sockaddr*>(&address), &address_size), 0);
     const int client = ::socket(AF_INET, SOCK_DGRAM, 0);
     ASSERT_GE(client, 0);
+    // macOS defaults SO_SNDBUF to 9216 bytes, which rejects this 16 KB
+    // datagram with EMSGSIZE before it reaches the server.
+    const int send_buffer = 64 * 1024;
+    EXPECT_EQ(::setsockopt(client, SOL_SOCKET, SO_SNDBUF,
+                          &send_buffer, sizeof(send_buffer)), 0);
     std::vector<uint8_t> payload(16000, 0xA5);
     EXPECT_EQ(::sendto(client, payload.data(), payload.size(), 0,
                       reinterpret_cast<sockaddr*>(&address), address_size), payload.size());
@@ -270,8 +281,19 @@ TEST(NetworkLifecycle, TcpServerStopsActiveConnectionsOnOwnerAndAfterLoopStop) {
         auto owner = loop.GetTaskScheduler();
         if (stop_loop_first) { loop.Stop(); server.Stop(); }
         else owner->Invoke([&] { server.Stop(); });
-        char byte;
-        EXPECT_EQ(::recv(client, &byte, 1, MSG_DONTWAIT), 0);
+        // Closing the server descriptor does not guarantee the TCP FIN has
+        // reached the peer yet. Wait for EOF with a bounded receive timeout.
+        const timeval timeout{2, 0};
+        const int configured = ::setsockopt(client, SOL_SOCKET, SO_RCVTIMEO,
+                                            &timeout, sizeof(timeout));
+        EXPECT_EQ(configured, 0);
+        if (configured == 0) {
+            char byte;
+            ssize_t result;
+            do { result = ::recv(client, &byte, 1, 0); }
+            while (result < 0 && errno == EINTR);
+            EXPECT_EQ(result, 0);
+        }
         ::close(client);
         loop.Stop();
     }

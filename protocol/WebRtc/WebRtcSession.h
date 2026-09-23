@@ -9,6 +9,7 @@
 #include "IMediaPacketSink.h"
 
 #include <memory>
+#include <atomic>
 
 namespace protocol::webrtc
 {
@@ -22,15 +23,16 @@ struct WebRtcSessionOptions
 {
     // Supply fresh cryptographically random credentials and gathered candidates.
     IceParameters ice;
-    // One capability entry per media kind. fmtp matching is deliberately exact;
-    // codec-specific negotiation (including RTX apt remapping) is not provided.
+    // One capability entry per media kind. H264 and Opus use codec-specific
+    // fmtp negotiation. Repair codecs (RTX/RED/FEC) are not advertised.
     std::vector<WebRtcMediaDescription> medias;
     sdp::SdpOrigin origin;
 };
 
 // ICE-lite answerer, one transport, RTP/RTCP mux, optional single BUNDLE group.
-// The owner must serialize all calls (including transport callbacks and Tick)
-// on one event loop. Renegotiation/ICE restart require a new session for now.
+// The owner must serialize mutations (including transport callbacks and Tick)
+// on one event loop. State() may be read by media workers. Renegotiation/ICE
+// restart require a new session for now.
 class WebRtcSession : public IWebRtcTransportSink, public std::enable_shared_from_this<WebRtcSession>
 {
 public:
@@ -42,7 +44,9 @@ public:
     ~WebRtcSession() override;
 
     bool ApplyRemoteOffer(const WebRtcSessionDescription& offer);
+    bool ApplyRemoteOffer(const std::string& offerSdp);
     bool CreateLocalAnswer(WebRtcSessionDescription& answer);
+    bool CreateLocalAnswer(std::string& answerSdp);
 
     bool start();
     bool stop();
@@ -50,7 +54,8 @@ public:
     bool SendRtp(std::vector<uint8_t> packet);
     bool SendRtcp(std::vector<uint8_t> packet);
 
-    WebRtcSessionState State() const noexcept { return state_; }
+    WebRtcSessionState State() const noexcept { return state_.load(std::memory_order_acquire); }
+    uint64_t TransportId() const noexcept { return transport_ ? transport_->Id() : 0; }
     const std::string& LastError() const noexcept { return last_error_; }
 
     void OnWebRtcDatagram(network::transport::DatagramProtocol protocol, network::transport::ReceivedDatagram datagram) override;
@@ -79,7 +84,7 @@ private:
     WebRtcSessionOptions options_;
     WebRtcSessionDescription remote_offer_;
     WebRtcSessionDescription local_answer_;
-    WebRtcSessionState state_ = WebRtcSessionState::New;
+    std::atomic<WebRtcSessionState> state_{WebRtcSessionState::New};
     std::string last_error_;
     bool dtls_started_ = false;
     bool srtp_ready_ = false;

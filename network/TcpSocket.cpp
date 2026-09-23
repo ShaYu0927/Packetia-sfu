@@ -20,13 +20,25 @@ TcpSocket::~TcpSocket()
 
 int TcpSocket::Create()
 {
-    m_socket_ = socket(AF_INET, SOCK_STREAM, 0);
+    int fd;
+    do { fd = socket(AF_INET, SOCK_STREAM, 0); }
+    while (fd < 0 && errno == EINTR);
+    if (fd < 0) return -1;
+    if (!SocketUtil::SetCloseOnExec(fd) || !SocketUtil::SetNoSigpipe(fd))
+    {
+        const int error = errno;
+        ::close(fd);
+        errno = error;
+        return -1;
+    }
+    Close();
+    m_socket_ = fd;
     return m_socket_;
 }
 
 bool TcpSocket::Bind(std::string ip, uint16_t port)
 {
-    struct sockaddr_in addr;
+    struct sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
     addr.sin_addr.s_addr = inet_addr(ip.c_str());
@@ -53,19 +65,45 @@ bool TcpSocket::Listen(int backlog)
 
 int TcpSocket::Accept()
 {
-    struct sockaddr_in addr;
+    struct sockaddr_in addr{};
     socklen_t len = sizeof(addr);
-    int fd = ::accept4(m_socket_, (sockaddr*)&addr, &len, SOCK_NONBLOCK | SOCK_CLOEXEC);
+    int fd;
+    do
+    {
+#if defined(__linux) || defined(__linux__)
+        fd = ::accept4(m_socket_, (sockaddr*)&addr, &len, SOCK_NONBLOCK | SOCK_CLOEXEC);
+#else
+        fd = ::accept(m_socket_, (sockaddr*)&addr, &len);
+#endif
+    }
+    while (fd < 0 && errno == EINTR);
     if(fd < 0)
     {
         if (errno == EAGAIN || errno == EWOULDBLOCK) 
         {
             return -1;
         }
-        LOG_ERROR("accept failed errno=" + std::to_string(errno));
+        const int error = errno;
+        LOG_ERROR("accept failed errno=" + std::to_string(error));
+        errno = error;
         return -1;
     }
-    SocketUtil::SetNonBlock(fd);
+#if !defined(__linux) && !defined(__linux__)
+    if (!SocketUtil::SetNonBlock(fd) || !SocketUtil::SetCloseOnExec(fd))
+    {
+        const int error = errno;
+        ::close(fd);
+        errno = error;
+        return -1;
+    }
+#endif
+    if (!SocketUtil::SetNoSigpipe(fd))
+    {
+        const int error = errno;
+        ::close(fd);
+        errno = error;
+        return -1;
+    }
     return fd;
 }
 
@@ -73,7 +111,7 @@ bool TcpSocket::Connect(std::string ip, uint16_t port, int timeout)
 {
     if (timeout == 0)
     {
-        struct sockaddr_in addr;
+        struct sockaddr_in addr{};
         addr.sin_family = AF_INET;
         addr.sin_port = htons(port);
         addr.sin_addr.s_addr = inet_addr(ip.c_str());
@@ -89,7 +127,7 @@ bool TcpSocket::Connect(std::string ip, uint16_t port, int timeout)
 
 void TcpSocket::Close()
 {
-    close(m_socket_);
+    if (m_socket_ >= 0) close(m_socket_);
     m_socket_ = -1;
 }
 

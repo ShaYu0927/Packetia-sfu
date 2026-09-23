@@ -3,8 +3,12 @@ cmake_minimum_required(VERSION 3.16)
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     project(PacketiaWebSocketTests LANGUAGES C CXX)
     enable_testing()
-    if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        message(FATAL_ERROR "The project's EventLoop uses epoll and pipe2; standalone WebSocket tests require Linux")
+    if(APPLE)
+        set(PACKETIA_WS_SCHEDULER KqueueTaskScheduler.cpp)
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        set(PACKETIA_WS_SCHEDULER EpollTaskScheduler.cpp)
+    else()
+        message(FATAL_ERROR "Standalone WebSocket tests require Linux or macOS")
     endif()
     set(CMAKE_CXX_STANDARD 17)
     set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -13,7 +17,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     add_library(utils STATIC
         "${PACKETIA_SOURCE_ROOT}/utils/TaskScheduler.cpp"
         "${PACKETIA_SOURCE_ROOT}/utils/MediaLatency.cpp"
-        "${PACKETIA_SOURCE_ROOT}/utils/EpollTaskScheduler.cpp"
+        "${PACKETIA_SOURCE_ROOT}/utils/${PACKETIA_WS_SCHEDULER}"
         "${PACKETIA_SOURCE_ROOT}/utils/EventLoop.cpp"
         "${PACKETIA_SOURCE_ROOT}/utils/Pip.cpp"
         "${PACKETIA_SOURCE_ROOT}/utils/TimeUtil.cpp"

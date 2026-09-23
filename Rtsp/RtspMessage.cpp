@@ -699,40 +699,53 @@ std::string RtspRequest::HandleCmdSetup(RtspRequestInfo& req, const SetupTranspo
     if (media_session->FindEndpointByTrack(track_id) != 0)
         return BuildStatusResponse(req.cseq, "455 Method Not Valid in This State");
 
-    const auto endpoint_id = utils::EndpointBase::NextEndpointId();
-    auto endpoint = std::make_shared<media::SfuEndpoint>(
-        endpoint_id, track, media_session, media_session->GetFramePublisher());
-    if (!endpoint->Start()) return BuildStatusResponse(req.cseq, "500 Internal Server Error");
+    auto endpoint = std::dynamic_pointer_cast<media::SfuEndpoint>(
+        utils::EndpointManager::Instance().Find(media_endpoint_id_));
+    if (endpoint && setup_media_session_id_ != media_session->GetId())
+        return BuildStatusResponse(req.cseq, "455 Method Not Valid in This State");
+    const bool new_endpoint = !endpoint;
+    const auto endpoint_id = endpoint ? endpoint->Id() : utils::EndpointBase::NextEndpointId();
+    const auto media_track_id = std::to_string(track_id);
+    if (new_endpoint) {
+        endpoint = std::make_shared<media::SfuEndpoint>(
+            endpoint_id, track, media_session, media_session->GetFramePublisher());
+        if (!endpoint->Start()) return BuildStatusResponse(req.cseq, "500 Internal Server Error");
+    } else if (!endpoint->AddPublishedTrack(media_track_id, track)) {
+        return BuildStatusResponse(req.cseq, "455 Method Not Valid in This State");
+    }
+    const auto rollback = [&] {
+        endpoint->RemovePublishedTrack(media_track_id, false);
+        if (new_endpoint) endpoint->Stop();
+    };
     if (factory && !factory(endpoint_id, transport)) {
-        endpoint->Stop();
+        rollback();
         return BuildStatusResponse(req.cseq, "461 Unsupported Transport");
     }
     if (!tcp && (transport.server_rtp_port <= 0 || transport.server_rtp_port > 65535 ||
                  transport.server_rtcp_port <= 0 || transport.server_rtcp_port > 65535 ||
                  transport.server_rtp_port == transport.server_rtcp_port)) {
-        endpoint->Stop();
+        rollback();
         return BuildStatusResponse(req.cseq, "500 Internal Server Error");
     }
-    if (!utils::EndpointManager::Instance().Add(endpoint)) {
-        endpoint->Stop();
+    if (new_endpoint && !utils::EndpointManager::Instance().Add(endpoint)) {
+        rollback();
         return BuildStatusResponse(req.cseq, "500 Internal Server Error");
     }
 
-    bool bound = media_session->BindTrackEndpoint(track_id, endpoint_id);
-    if (bound && tcp) {
-        bound = media_session->BindInterleavedChannel(
-            static_cast<uint8_t>(transport.interleaved_rtp), track_id, false, endpoint_id) &&
-            media_session->BindInterleavedChannel(
-            static_cast<uint8_t>(transport.interleaved_rtcp), track_id, true, endpoint_id);
-    }
+    const bool bound = media_session->BindTrackEndpoint(track_id, endpoint_id,
+        tcp ? transport.interleaved_rtp : -1, tcp ? transport.interleaved_rtcp : -1);
     if (!bound) {
-        media_session->UnbindTrackEndpoint(endpoint_id);
-        endpoint->Stop();
-        utils::EndpointManager::Instance().Remove(endpoint_id);
+        rollback();
+        if (new_endpoint) {
+            media_session->UnbindTrackEndpoint(endpoint_id);
+            utils::EndpointManager::Instance().Remove(endpoint_id);
+        }
         return BuildStatusResponse(req.cseq, "500 Internal Server Error");
     }
 
     last_setup_endpoint_id_ = endpoint_id;
+    media_endpoint_id_ = endpoint_id;
+    setup_media_session_id_ = media_session->GetId();
     const auto session_id = std::to_string(media_session->GetId());
     if (tcp) {
         track->setInterleavedChannel(transport.interleaved_rtp, transport.interleaved_rtcp);

@@ -73,6 +73,11 @@ bool Mp4Writer::FailFile(const std::string& operation) {
 }
 
 int Mp4Writer::WritePacket(void* opaque, uint8_t* data, int bytes) {
+    // Older FFmpeg versions declare a mutable AVIO write buffer.
+    return WritePacket(opaque, static_cast<const uint8_t*>(data), bytes);
+}
+
+int Mp4Writer::WritePacket(void* opaque, const uint8_t* data, int bytes) {
     if (!opaque || bytes < 0 || (!data && bytes)) return AVERROR(EINVAL);
     if (!bytes) return 0;
     auto* file = static_cast<ISeekableFile*>(opaque);

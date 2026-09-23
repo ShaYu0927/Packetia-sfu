@@ -92,6 +92,7 @@ private:
     {
         ~TransportBinding() { if (transport) transport->Close(); }
         uint64_t endpoint_id = 0;
+        std::string track_id;
         std::shared_ptr<IMediaTransport> transport;
         std::shared_ptr<media::transport::RtspInterleavedTransport> interleaved;
         std::shared_ptr<media::transport::MediaEndpointIngress> ingress;

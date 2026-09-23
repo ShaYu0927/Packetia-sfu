@@ -1,4 +1,5 @@
 #include "RtspMediaSession.h"
+#include "SdpTrackBinding.h"
 #include "SdpMode.h"
 #include "RtspUtil.h"
 #include "StreamContext.h"
@@ -31,65 +32,6 @@ std::string NormalizeControlKey(const std::string& control)
     return slash == std::string::npos ? value : value.substr(slash + 1);
 }
 
-uint8_t FindTransportCcExtensionId(const sdp::SdpMedia& media)
-{
-    for (const auto& attribute : media.attributes)
-    {
-        if (attribute.key != "extmap")
-        {
-            continue;
-        }
-
-        const auto separator = attribute.value.find(' ');
-        if (separator == std::string::npos)
-        {
-            continue;
-        }
-        const std::string uri = attribute.value.substr(separator + 1);
-        if (uri.find("transport-wide-cc") == std::string::npos)
-        {
-            continue;
-        }
-
-        // extmap ID 后面可能带方向，例如 a=extmap:3/sendrecv <uri>。
-        const std::string id_text = attribute.value.substr(0, separator);
-        char* end = nullptr;
-        const long id = std::strtol(id_text.c_str(), &end, 10);
-        if (end != id_text.c_str() && id >= 1 && id <= 14)
-        {
-            return static_cast<uint8_t>(id);
-        }
-    }
-    return 0;
-}
-
-bool FillStaticPayloadType(int pt, TrackType type, TrackInfo* info)
-{
-    if (!info || type != TrackType::TrackAudio)
-    {
-        return false;
-    }
-
-    if (pt == 0)
-    {
-        info->codec_name = "PCMU";
-        info->codec_id = CodecId::PCMU;
-    }
-    else if (pt == 8)
-    {
-        info->codec_name = "PCMA";
-        info->codec_id = CodecId::PCMA;
-    }
-    else
-    {
-        return false;
-    }
-
-    info->payload_type = static_cast<uint8_t>(pt);
-    info->clock_rate = 8000;
-    info->channels = 1;
-    return true;
-}
 }
 
 static uint64_t MakeStreamKey(uint32_t session_id, uint32_t track_id)
@@ -208,7 +150,7 @@ void MediaSession::ResetTracks()
     track_infos_.clear();
     control_to_track_.clear();
     track_descriptions_.clear();
-    endpoint_to_track_.clear();
+    track_to_endpoint_.clear();
     ssrc_to_track_.clear();
     channel_bindings_ = {};
     stream_context_.reset();
@@ -217,123 +159,13 @@ void MediaSession::ResetTracks()
 
 bool MediaSession::ParseTrackInfoFromMedia(const sdp::SdpMedia& media, int track_index, TrackInfo* info, std::string* err) const
 {
-      if (!info)
-    {
-        if (err)
-        {
-            *err = "invalid TrackInfo output";
-        }
+    if (!info) {
+        if (err) *err = "invalid TrackInfo output";
         return false;
     }
-
-    *info = TrackInfo{};
-    info->track_index = track_index;
-    info->transport_cc_extension_id = FindTransportCcExtensionId(media);
-
-    if (media.media == "audio")
-    {
-        info->type = TrackType::TrackAudio;
-    }
-    else if (media.media == "video")
-    {
-        info->type = TrackType::TrackVideo;
-    }
-    else
-    {
-        info->type = TrackType::TrackInvalid;
-        if (err)
-        {
-            *err = "unsupported media type: " + media.media;
-        }
-        return false;
-    }
-
-    info->control = NormalizeControlKey(media.GetAttribute("control"));
-
-    bool got_payload = false;
-    for (const auto& fmt : media.fmts)
-    {
-        int pt = -1;
-        if (!StreamContextBuilder::ParsePayloadType(fmt, pt) || pt < 0 || pt > 127)
-        {
-            continue;
-        }
-
-        auto rtpmap = std::find_if(media.rtpmaps.begin(), media.rtpmaps.end(),
-            [pt](const sdp::SdpRtpMap& item) { return item.payloadType == pt; });
-
-        TrackInfo candidate = *info;
-        if (rtpmap != media.rtpmaps.end())
-        {
-            candidate.payload_type = static_cast<uint8_t>(pt);
-            candidate.codec_name = rtpmap->encodingName;
-            candidate.codec_id = StringToCodecId(candidate.codec_name);
-            candidate.clock_rate = static_cast<uint32_t>(rtpmap->clockRate);
-            candidate.channels = rtpmap->channels;
-        }
-        else if (!FillStaticPayloadType(pt, info->type, &candidate))
-        {
-            continue;
-        }
-
-        if (candidate.codec_id == CodecId::Unknown)
-        {
-            continue;
-        }
-
-        auto fmtp = std::find_if(media.fmtps.begin(), media.fmtps.end(),
-            [pt](const sdp::SdpFmtp& item) { return item.payloadType == pt; });
-        if (fmtp != media.fmtps.end())
-        {
-            candidate.fmtp = fmtp->params;
-        }
-
-        *info = std::move(candidate);
-        got_payload = true;
-        break;
-    }
-
-    if (!got_payload)
-    {
-        if (err)
-        {
-            *err = "no supported payload in media track index " + std::to_string(track_index);
-        }
-        return false;
-    }
-
-    if (info->codec_id == CodecId::Unknown)
-    {
-        if (err)
-        {
-            *err = "unsupported codec '" + info->codec_name +
-                   "' for track index " + std::to_string(track_index);
-        }
-        return false;
-    }
-
-    if (info->clock_rate == 0)
-    {
-        if (const auto* traits = GetCodecTraits(info->codec_id))
-        {
-            info->clock_rate = traits->default_clock_rate;
-        }
-    }
-
-    if (info->clock_rate == 0)
-    {
-        if (err)
-        {
-            *err = "invalid clock rate for track index " + std::to_string(track_index);
-        }
-        return false;
-    }
-
-    if (info->control.empty())
-    {
-        info->control = "trackID=" + std::to_string(track_index);
-    }
-
+    if (!media::BuildRtpTrackInfo(media, track_index, *info, err)) return false;
+    info->control = NormalizeControlKey(info->control);
+    if (info->control.empty()) info->control = "trackID=" + std::to_string(track_index);
     return true;
 }
 
@@ -652,25 +484,48 @@ bool MediaSession::GetChannelBinding(uint8_t channel, ChannelBinding* out) const
     return true;
 }
 
-bool MediaSession::BindTrackEndpoint(int track_id, uint64_t endpoint_id)
+bool MediaSession::BindTrackEndpoint(int track_id, uint64_t endpoint_id, int rtp_channel, int rtcp_channel)
 {
     std::lock_guard<std::mutex> lk(track_mtx_);
-    endpoint_to_track_[endpoint_id] = track_id;
+    if (track_id < 0 || endpoint_id == 0 || track_to_endpoint_.count(track_id) || !track_descriptions_.count(track_id)) return false;
+    const bool tcp = rtp_channel != -1 || rtcp_channel != -1;
+    if (tcp && (rtp_channel < 0 || rtp_channel > 255 || rtcp_channel < 0 || rtcp_channel > 255 ||
+                rtp_channel == rtcp_channel || channel_bindings_[rtp_channel].valid ||
+                channel_bindings_[rtcp_channel].valid)) return false;
+    track_to_endpoint_[track_id] = endpoint_id;
+    if (tcp) {
+        for (int channel : {rtp_channel, rtcp_channel}) {
+            auto& binding = channel_bindings_[channel];
+            binding.valid = true;
+            binding.track_id = track_id;
+            binding.is_rtcp = channel == rtcp_channel;
+            binding.endpoint_id = endpoint_id;
+            binding.key = MakeStreamKey(session_id_, static_cast<uint32_t>(track_id));
+            if (stream_context_) stream_context_->channel_to_media_index[channel] = track_id;
+        }
+        if (stream_context_) for (auto& track : stream_context_->tracks) {
+            if (track.media_index != track_id) continue;
+            track.rtp_channel = rtp_channel;
+            track.rtcp_channel = rtcp_channel;
+        }
+    }
     return true;
 }
 
 uint64_t MediaSession::FindEndpointByTrack(int track_id) const
 {
     std::lock_guard<std::mutex> lk(track_mtx_);
-    auto it = std::find_if(endpoint_to_track_.begin(), endpoint_to_track_.end(),
-        [track_id](const auto& pair) { return pair.second == track_id; });
-    return (it != endpoint_to_track_.end()) ? it->first : 0;
+    const auto it = track_to_endpoint_.find(track_id);
+    return it != track_to_endpoint_.end() ? it->second : 0;
 }
 
 void MediaSession::UnbindTrackEndpoint(uint64_t endpoint_id)
 {
     std::lock_guard<std::mutex> lk(track_mtx_);
-    endpoint_to_track_.erase(endpoint_id);
+    for (auto it = track_to_endpoint_.begin(); it != track_to_endpoint_.end();) {
+        if (it->second == endpoint_id) it = track_to_endpoint_.erase(it);
+        else ++it;
+    }
     for (size_t channel = 0; channel < channel_bindings_.size(); ++channel) {
         auto& binding = channel_bindings_[channel];
         if (!binding.valid || binding.endpoint_id != endpoint_id) continue;

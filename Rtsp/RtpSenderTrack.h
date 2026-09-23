@@ -11,6 +11,7 @@
 #include <unordered_map>
 #include <functional>
 #include <memory>
+#include <string>
 #include "IMediaTransport.h"
 #include "Rtp.h"
 #include "../media/quality/TransportSequenceAllocator.h"
@@ -88,6 +89,12 @@ struct RtpSenderTrackConfig
      */
     uint8_t transport_cc_extension_id = 0;
 
+    // Rebuild extensions for a different RTP session. Drop upstream extension
+    // IDs, write the downstream MID, then let PrepareTransportCc append TWCC.
+    bool rewrite_header_extensions = false;
+    uint8_t mid_extension_id = 0;
+    std::string mid;
+
     /*
      * 当前下行 Transport 共享的 TWCC 分配器。音频、视频和 RTX Track
      * 必须注入同一个实例，不能每个 Track 单独创建。
@@ -161,6 +168,7 @@ private:
     bool ParseRtpHeader(const uint8_t* data, size_t len, RtpHeader& header);
 
     bool RewriteRtpPacket(common::ByteVector& packet, const RtpHeader& in_header, uint16_t& out_seq, uint32_t& out_timestamp);
+    bool RewriteHeaderExtensions(common::ByteVector& packet);
 
     bool WriteTransportCcExtension(common::ByteVector& packet,
                                    uint16_t transport_sequence) const;

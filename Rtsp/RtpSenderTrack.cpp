@@ -123,6 +123,7 @@ try
     }
 
     media::TransportSequenceNumber transport_sequence;
+    if (_config.rewrite_header_extensions && !RewriteHeaderExtensions(packet)) return false;
     if (!PrepareTransportCc(packet, transport_sequence))
     {
         return false;
@@ -318,6 +319,30 @@ bool RtpSenderTrack::RewriteRtpPacket(common::ByteVector& packet, const RtpHeade
     WriteUint32(packet.data() + 4, out_timestamp);
     WriteUint32(packet.data() + 8, _config.local_ssrc);
 
+    return true;
+}
+
+bool RtpSenderTrack::RewriteHeaderExtensions(common::ByteVector& packet)
+{
+    const size_t base = RtpHeader::kSize + 4 * (packet[0] & 15);
+    if (packet.size() < base) return false;
+    if (packet[0] & 0x10) {
+        if (packet.size() < base + 4) return false;
+        const size_t end = base + 4 + 4 * ((packet[base + 2] << 8) | packet[base + 3]);
+        if (end > packet.size()) return false;
+        packet.erase(packet.begin() + base, packet.begin() + end);
+        packet[0] &= ~0x10;
+    }
+    if (!_config.mid_extension_id) return _config.mid.empty();
+    if (_config.mid_extension_id > 14 || _config.mid.empty() || _config.mid.size() > 16 ||
+        _config.mid_extension_id == _config.transport_cc_extension_id) return false;
+    common::ByteVector extension{0xBE, 0xDE, 0, 0,
+        static_cast<uint8_t>((_config.mid_extension_id << 4) | (_config.mid.size() - 1))};
+    extension.insert(extension.end(), _config.mid.begin(), _config.mid.end());
+    while (extension.size() % 4) extension.push_back(0);
+    WriteUint16(extension.data() + 2, static_cast<uint16_t>((extension.size() - 4) / 4));
+    packet.insert(packet.begin() + base, extension.begin(), extension.end());
+    packet[0] |= 0x10;
     return true;
 }
 

@@ -261,6 +261,8 @@ private:
 
     MediaSession::Ptr media_session;
     uint64_t last_setup_endpoint_id_ = 0;
+    uint64_t media_endpoint_id_ = 0;
+    uint32_t setup_media_session_id_ = 0;
     uint8_t last_setup_rtp_channel_ = 0;
     uint8_t last_setup_rtcp_channel_ = 0;
 

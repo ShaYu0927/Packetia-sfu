@@ -343,6 +343,9 @@ void RtspSession::HandleCmdSetup(RtspRequest::RtspRequestInfo& req)
         [&](uint64_t endpoint_id, RtspTransport& transport) {
             pending = std::make_shared<TransportBinding>();
             pending->endpoint_id = endpoint_id;
+            const auto description = rtsp_request_->GetMediaSession()->GetTrackDescription(req.GetControlFromUrl());
+            if (!description) return false;
+            pending->track_id = std::to_string(description->getTrackIndex());
             if (transport.lower_transport == "TCP") {
                 const auto rtp_channel = static_cast<uint8_t>(transport.interleaved_rtp);
                 const auto rtcp_channel = static_cast<uint8_t>(transport.interleaved_rtcp);
@@ -362,7 +365,7 @@ void RtspSession::HandleCmdSetup(RtspRequest::RtspRequestInfo& req)
                 transport.server_rtcp_port = udp->LocalPort(MediaPacketType::Rtcp);
                 pending->transport = std::move(udp);
             }
-            pending->ingress = std::make_shared<media::transport::MediaEndpointIngress>(endpoint_id);
+            pending->ingress = std::make_shared<media::transport::MediaEndpointIngress>(endpoint_id, pending->track_id);
             pending->transport->SetPacketSink(pending->ingress);
             negotiated = transport;
             return true;
@@ -382,7 +385,7 @@ void RtspSession::HandleCmdSetup(RtspRequest::RtspRequestInfo& req)
             utils::EndpointManager::Instance().Find(endpoint_id));
         if (endpoint) {
             std::weak_ptr<IMediaTransport> weak = pending->transport;
-            endpoint->SetRtcpSendCallback([weak](const uint8_t* data, size_t size) {
+            endpoint->SetTrackRtcpSendCallback(pending->track_id, [weak](const uint8_t* data, size_t size) {
                 auto transport = weak.lock();
                 return transport && transport->SendRtcp(data, size) == SendResult::Ok;
             });
@@ -419,9 +422,11 @@ void RtspSession::HandleCmdTeardown(RtspRequest::RtspRequestInfo& req)
 void RtspSession::CloseMediaTransports()
 {
     std::unordered_set<uint64_t> closed;
+    std::unordered_set<const TransportBinding*> released;
     auto release = [&](const std::shared_ptr<TransportBinding>& binding) {
-        if (!binding || !closed.insert(binding->endpoint_id).second) return;
+        if (!binding || !released.insert(binding.get()).second) return;
         if (binding->transport) binding->transport->Close();
+        if (!closed.insert(binding->endpoint_id).second) return;
         auto endpoint = std::dynamic_pointer_cast<media::SfuEndpoint>(
             utils::EndpointManager::Instance().Find(binding->endpoint_id));
         if (endpoint) {

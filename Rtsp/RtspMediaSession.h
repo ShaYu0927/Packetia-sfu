@@ -75,7 +75,7 @@ public:
     bool BindInterleavedChannel(uint8_t channel, int track_id, bool is_rtcp, uint64_t endpoint_id = 0);
     bool GetChannelBinding(uint8_t channel, ChannelBinding* out) const;
 
-    bool BindTrackEndpoint(int track_id, uint64_t endpoint_id);
+    bool BindTrackEndpoint(int track_id, uint64_t endpoint_id, int rtp_channel = -1, int rtcp_channel = -1);
     void UnbindTrackEndpoint(uint64_t endpoint_id);
     uint64_t FindEndpointByTrack(int track_id) const;
     void SetFramePublisher(std::shared_ptr<media::IEncodedFramePublisher> publisher);
@@ -108,7 +108,7 @@ private:
     std::unordered_map<std::string, int>                control_to_track_;
     std::unordered_map<int, std::shared_ptr<RtpTrackDescription>> track_descriptions_;
     std::unordered_map<uint32_t, int>                   ssrc_to_track_;
-    std::unordered_map<uint64_t, int>                   endpoint_to_track_;
+    std::unordered_map<int, uint64_t>                   track_to_endpoint_;
     std::array<ChannelBinding, 256>                     channel_bindings_;
     std::shared_ptr<StreamContext>                      stream_context_;
     std::shared_ptr<media::IEncodedFramePublisher>      frame_publisher_;

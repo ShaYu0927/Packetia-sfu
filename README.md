@@ -1,3 +1,31 @@
+## macOS 编译
+
+需要 Xcode Command Line Tools（`xcode-select --install`）及 Homebrew。
+在项目根目录执行：
+
+```sh
+brew install cmake ninja pkgconf googletest openssl@3 ffmpeg libwebsockets
+git submodule update --init --recursive
+
+cmake -S . -B build/macos -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
+  -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)" \
+  -DPACKETIA_LIBWEBSOCKETS_ROOT="$(brew --prefix libwebsockets)"
+cmake --build build/macos --parallel "$(sysctl -n hw.ncpu)"
+ctest --test-dir build/macos --output-on-failure
+```
+
+只构建主程序可以在构建命令中加入 `--target Packetia`，产物为
+`build/macos/Packetia`。完整构建也会生成测试程序；只构建主程序后不要直接运行全量 CTest。
+
+macOS 使用 kqueue 事件调度，Linux 使用 epoll。依赖库必须与编译架构一致；
+Apple Silicon 建议使用原生 arm64 Homebrew，避免混用 Rosetta 的 x86_64 库。
+`third/libwebsocket` 中预编译的 Linux 库不用于 macOS。
+
+服务默认监听 RTSP 554、SIP 5060、RTMP 1935、UDP 9000 和 WebSocket 8080，
+启动前请确认这些端口可用。默认配置见 `server/ServerConfig.h`。
+
 ## Version 0.2.0 – 2025-12-19
 
 ### Highlights
@@ -664,3 +692,28 @@ RTCP SR
 
 - 当前 GCC 链路接至控制输出接口，继续接入实际 Pacer 发包和编码器调码率。
 - 实现 TWCC 超时后的 RR 回退策略。
+
+## 2026-09-23 — 重构 SFU 端点，支持多轨发布与订阅
+
+### 本次完成
+
+- 将 SDP 媒体描述统一转换为现有 RTP Track 参数，复用 `StreamContext` 和 `SdpTrackBinding`。
+- 支持单个 `SfuEndpoint` 管理多条发布轨道，按 MID、SSRC 和轨道提示分流。
+- 将接收 Track 归属发布端点、发送 Track 归属订阅端点，通过工作线程投递完成跨端点转发。
+- 接通房间发布、订阅、取消订阅、取消发布和参与者退出的媒体生命周期。
+- 支持下游 RTP 参数及 MID/TWCC 改写，接通 NACK 缓存重传和 PLI 反馈。
+- 调整 RTSP 多轨共享端点，完善 SETUP 失败回滚和 TEARDOWN 清理。
+- 新增 `WebRtcMediaTransport`，适配 WebRTC 会话与统一媒体收发接口。
+- 完善订阅失效、排队旧包丢弃及端点停止后的资源清理。
+- 补充多轨转发、房间订阅、SDP 绑定、WebRTC 传输适配和 RTSP 多轨集成测试。
+
+### 验证情况
+
+- 主程序编译通过，新增 10 项测试全部通过，RTSP、SDP 和录制相关回归通过。
+- 完整回归仍有两项已知失败：WebRTC STUN 提名、超大 RTP 包计数。
+
+### 当前限制
+
+- WebRTC 应用层信令组装及实际 DTLS/SRTP 后端仍待接入，尚未完成真实浏览器链路验证。
+- 暂不支持 RTX 和 simulcast 层选择；每条订阅固定转发一个源编码的 SSRC。
+- 房间接入仍需应用层绑定参与者端点，并根据下游协商结果配置订阅参数。

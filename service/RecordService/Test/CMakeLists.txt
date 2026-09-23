@@ -9,7 +9,7 @@ if(RECORDING_FFMPEG)
     set_tests_properties(recording_fixture PROPERTIES FIXTURES_SETUP recording_media TIMEOUT 30)
     add_executable(test_recording test_recording.cpp)
     target_compile_definitions(test_recording PRIVATE RECORDING_FIXTURE="${RECORDING_FIXTURE}")
-    target_link_libraries(test_recording PRIVATE -Wl,--start-group service media rtsp rtp network utils Rtcp LOGGER ROOM_LIB COMMON ICE Interleaved -Wl,--end-group
+    target_link_libraries(test_recording PRIVATE "$<$<PLATFORM_ID:Linux>:-Wl,--start-group>" service media rtsp rtp network utils Rtcp LOGGER ROOM_LIB COMMON ICE Interleaved "$<$<PLATFORM_ID:Linux>:-Wl,--end-group>"
         ${FFMPEG_LIBRARIES} GTest::gtest GTest::gtest_main OpenSSL::Crypto pthread)
     add_test(NAME test_recording COMMAND test_recording)
     set_tests_properties(test_recording PROPERTIES FIXTURES_REQUIRED recording_media TIMEOUT 30)

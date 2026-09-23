@@ -68,6 +68,8 @@ struct WorkJob
     // that owns the job; keeping them separate allows per-stream affinity.
     uint64_t key = 0;
     uint64_t target_id = 0;
+    // Optional negotiated media binding (e.g. an RTSP SETUP track).
+    std::string media_track_id;
     WorkType type = WorkType::Invalid;
 
     // Byte ownership and bounds always travel together across the queue.

@@ -21,11 +21,13 @@ add_library(media STATIC
     core/EncodedFrameRouter.h
     core/EncodedFrameRouter.cpp
     endpoint/MediaEndpoint.cpp
+    endpoint/SfuEndpointTracks.cpp
     endpoint/MediaSession.cpp
     transport/IMediaPacketSink.h
     transport/MediaTransportPacket.h
     transport/MediaEndpointIngress.h
     transport/MediaEndpointIngress.cpp
+    transport/WebRtcMediaTransport.cpp
     transport/MediaTransportBase.h
     transport/MediaTransportBase.cpp
     transport/RtspInterleavedTransport.h
@@ -51,6 +53,7 @@ target_include_directories(media
 )
 
 target_compile_features(media PUBLIC cxx_std_17)
+target_link_libraries(ROOM_LIB PUBLIC media)
 
 target_link_libraries(media
     PUBLIC
@@ -61,8 +64,8 @@ target_link_libraries(media
         utils
         Rtcp
         LOGGER
-        ROOM_LIB
         COMMON
         ICE
         Interleaved
+        WebRtc
 )

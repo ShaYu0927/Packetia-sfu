@@ -1,0 +1,980 @@
+2026/09/22 03:43:16  26-09-22 03:43:16.918 MRF:  TASK(0x7f2de316f700) INFO: register [17] process [ENDP REG] state [3].
+2026/09/22 03:43:16  26-09-22 03:43:16.918 SIP:  TASK(0x7f2de316f700) INFO: module MsgCreate dbuf 0x125c3d8 msg 0x7f2db401d340.
+2026/09/22 03:43:16  26-09-22 03:43:16.918 MRF:  TASK(0x7f2de316f700) INFO: RegGetIpsecSA pstRegIpsecSA pstLst=0x127c9a4, state=4, pstLst->iCount=1
+2026/09/22 03:43:16  26-09-22 03:43:16.918 MRF:  TASK(0x7f2de316f700) INFO: RegGetIpsecSA pstLst=0x127c9a4, only one ipsec sa pstRegIpsecSA=0x1269484, state=4 found.
+2026/09/22 03:43:16  26-09-22 03:43:16.918 MRF:  TASK(0x7f2de316f700) INFO: RegGetIpsecSA pstLst=0x127c9a4, pstRegIpsecSA=0x1269484, state=4 found.
+2026/09/22 03:43:16  26-09-22 03:43:16.918 ZOS:  TASK(0x7f2de316f700) DEBUG: UserInfo decode iRet=0, 15
+2026/09/22 03:43:16  26-09-22 03:43:16.918 ZOS:  TASK(0x7f2de316f700) DEBUG: UserInfo decode iRet=0, 15
+2026/09/22 03:43:16  26-09-22 03:43:16.918 MRF:  TASK(0x7f2de316f700) INFO: SipAddContactByAddr isEM <0> set sos contact
+2026/09/22 03:43:16  26-09-22 03:43:16.919 MRF:  TASK(0x7f2de316f700) INFO: RegGetIpsecSA pstRegIpsecSA pstLst=0x127c9a4, state=4, pstLst->iCount=1
+2026/09/22 03:43:16  26-09-22 03:43:16.919 MRF:  TASK(0x7f2de316f700) INFO: RegGetIpsecSA pstLst=0x127c9a4, only one ipsec sa pstRegIpsecSA=0x1269484, state=4 found.
+2026/09/22 03:43:16  26-09-22 03:43:16.919 MRF:  TASK(0x7f2de316f700) INFO: RegGetIpsecSA pstLst=0x127c9a4, pstRegIpsecSA=0x1269484, state=4 found.
+2026/09/22 03:43:16  26-09-22 03:43:16.919 MRF:  TASK(0x7f2de316f700) INFO: RegSipSend aka version:1
+2026/09/22 03:43:16  26-09-22 03:43:16.919 MRF:  TASK(0x7f2de316f700) INFO: SipAddSecMechX 1 0
+2026/09/22 03:43:16  26-09-22 03:43:16.919 MRF:  TASK(0x7f2de316f700) INFO: SipAddSecMechX 1 0
+2026/09/22 03:43:16  26-09-22 03:43:16.919 MRF:  TASK(0x7f2de316f700) INFO: SipAddSecMechX 1 0
+2026/09/22 03:43:16  26-09-22 03:43:16.919 MRF:  TASK(0x7f2de316f700) INFO: SipAddSecMechX 1 0
+2026/09/22 03:43:16  26-09-22 03:43:16.919 MRF:  TASK(0x7f2de316f700) INFO: SipAddSecMech 1 0
+2026/09/22 03:43:16  26-09-22 03:43:16.919 MRF:  TASK(0x7f2de316f700) INFO: SipAddSecMechX 1 0
+2026/09/22 03:43:16  26-09-22 03:43:16.919 MRF:  TASK(0x7f2de316f700) INFO: AuthCalcRsp cal A1[27839ca444171d5102933ee906d1f42f].
+2026/09/22 03:43:16  26-09-22 03:43:16.919 MRF:  TASK(0x7f2de316f700) INFO: AuthCalcRsp cal A2[858b2df367aac67e3d4aee9cce91fdf9].
+2026/09/22 03:43:16  26-09-22 03:43:16.919 MRF:  TASK(0x7f2de316f700) INFO: RegGetIpsecSA pstRegIpsecSA pstLst=0x127c9a4, state=4, pstLst->iCount=1
+2026/09/22 03:43:16  26-09-22 03:43:16.919 MRF:  TASK(0x7f2de316f700) INFO: RegGetIpsecSA pstLst=0x127c9a4, only one ipsec sa pstRegIpsecSA=0x1269484, state=4 found.
+2026/09/22 03:43:16  26-09-22 03:43:16.919 MRF:  TASK(0x7f2de316f700) INFO: RegGetIpsecSA pstLst=0x127c9a4, pstRegIpsecSA=0x1269484, state=4 found.
+2026/09/22 03:43:16  26-09-22 03:43:16.919 SIP:  TASK(0x7f2de316f700) INFO: module MsgDelete msg 0x7f2dd8035330.
+2026/09/22 03:43:16  26-09-22 03:43:16.919 SIP:  TASK(0x7f2de316f700) INFO: module MsgCreate dbuf 0x125c228 msg 0x7f2dd8035330.
+2026/09/22 03:43:16  26-09-22 03:43:16.920 ZOS:  TASK(0x7f2de316f700) INFO: AddUsDigitX acTempStr=5, iLen=1.
+2026/09/22 03:43:16  26-09-22 03:43:16.920 ZOS:  TASK(0x7f2de316f700) INFO: AbnfGetUsDigitX 0.5, wData=5, ucZeros=0
+2026/09/22 03:43:16  26-09-22 03:43:16.920 SIP:  TASK(0x7f2de316f700) INFO: module MsgDelete msg 0x7f2dd80221b0.
+2026/09/22 03:43:16  26-09-22 03:43:16.920 SIP:  TASK(0x7f2de316f700) INFO: module MsgCreate dbuf 0x125c270 msg 0x7f2dd80221b0.
+2026/09/22 03:43:16  26-09-22 03:43:16.920 ZOS:  TASK(0x7f2de316f700) INFO: AddUsDigitX acTempStr=5, iLen=1.
+2026/09/22 03:43:16  26-09-22 03:43:16.920 ZOS:  TASK(0x7f2de316f700) INFO: AbnfGetUsDigitX 0.5, wData=5, ucZeros=0
+2026/09/22 03:43:16  26-09-22 03:43:16.920 MSF:  TASK(0x7f2de316f700) INFO: TmrStart start <0x0003> timer [ENDP REG] 300s ok.
+2026/09/22 03:43:16  26-09-22 03:43:16.920 ZOS:  TASK(0x7f2de316f700) INFO: fsm(MRF_REG) reg@[17] state <REGED> run [ENDP REG] event ok.
+2026/09/22 03:43:16  26-09-22 03:43:16.920 ZOS:  TASK(0x7f2de316f700) INFO: fsm(MRF_REG) reg@[17] state <REGED> to <REGING>.
+2026/09/22 03:43:16  26-09-22 03:43:16.920 SIP:  TASK(0x7f2de3180700) INFO: module process user event.
+2026/09/22 03:43:16  26-09-22 03:43:16.920 SIP:  TASK(0x7f2de3180700) INFO: core process event [CIM REQ].
+2026/09/22 03:43:16  26-09-22 03:43:16.920 SIP:  TASK(0x7f2de3180700) INFO: core -->me comp@19394404 evnt@31 method@5.
+2026/09/22 03:43:16  26-09-22 03:43:16.920 SIP:  TASK(0x7f2de3180700) INFO: core -->me sess@FFFFFFFF <----> sess user id@11.
+2026/09/22 03:43:16  26-09-22 03:43:16.920 SIP:  TASK(0x7f2de3180700) INFO: core -->me dlg@FFFFFFFF <----> dlg user id@ffffffff.
+2026/09/22 03:43:16  26-09-22 03:43:16.920 SIP:  TASK(0x7f2de3180700) INFO: core -->me trans@0 <----> trans user id@0.
+2026/09/22 03:43:16  26-09-22 03:43:16.920 ZOS:  TASK(0x7f2de3180700) WARN: BkFromId invalid id[0xFFFFFFFB].
+2026/09/22 03:43:16  26-09-22 03:43:16.920 ZOS:  TASK(0x7f2de3180700) DEBUG: Page 65534/5, Slot 65530/4
+2026/09/22 03:43:16  26-09-22 03:43:16.920 SIP:  TASK(0x7f2de3180700) DEBUG: core UaSEvntToMEvnt tpt type<3> [2607:fc20:7e70:92d0:ac39:52c3:6658:b61]:38851 -> [fd00:976a:2:550::5]:65529.
+2026/09/22 03:43:16  26-09-22 03:43:16.920 SIP:  TASK(0x7f2de3180700) DEBUG: core call<0x1279650> set user id<19394404>.
+2026/09/22 03:43:16  26-09-22 03:43:16.920 SIP:  TASK(0x7f2de3180700) INFO: core call@10003 UacProcCimReq call create.
+2026/09/22 03:43:16  26-09-22 03:43:16.920 SIP:  TASK(0x7f2de3180700) INFO: core sess@10004 created.
+2026/09/22 03:43:16  26-09-22 03:43:16.920 SIP:  TASK(0x7f2de3180700) INFO: core sess@10004 UacProcCimReq session create.
+2026/09/22 03:43:16  26-09-22 03:43:16.920 SIP:  TASK(0x7f2de3180700) INFO: core sess@10004 UacProcCimReq dialog create.
+2026/09/22 03:43:16  26-09-22 03:43:16.921 SIP:  TASK(0x7f2de3180700) INFO: dlg @10005 process event [CIM REQ].
+2026/09/22 03:43:16  26-09-22 03:43:16.921 SIP:  TASK(0x7f2de3180700) INFO: dlg @10005 process request <REGISTER>.
+2026/09/22 03:43:16  26-09-22 03:43:16.921 ZOS:  TASK(0x7f2de3180700) INFO: qtimer create task<0x6> timer<76> ok.
+2026/09/22 03:43:16  26-09-22 03:43:16.921 SIP:  TASK(0x7f2de3180700) INFO: module create tmr<0x4C> [TIMER E] ok.
+2026/09/22 03:43:16  26-09-22 03:43:16.921 ZOS:  TASK(0x7f2de3180700) INFO: qtimer create task<0x6> timer<77> ok.
+2026/09/22 03:43:16  26-09-22 03:43:16.921 SIP:  TASK(0x7f2de3180700) INFO: module create tmr<0x4D> [TIMER F] ok.
+2026/09/22 03:43:16  26-09-22 03:43:16.921 ZOS:  TASK(0x7f2de3180700) INFO: qtimer create task<0x6> timer<78> ok.
+2026/09/22 03:43:16  26-09-22 03:43:16.921 SIP:  TASK(0x7f2de3180700) INFO: module create tmr<0x4E> [TIMER K] ok.
+2026/09/22 03:43:16  26-09-22 03:43:16.921 ZOS:  TASK(0x7f2de3180700) INFO: qtimer create task<0x6> timer<79> ok.
+2026/09/22 03:43:16  26-09-22 03:43:16.921 SIP:  TASK(0x7f2de3180700) INFO: module create tmr<0x4F> [TIMER WAIT_CONN] ok.
+2026/09/22 03:43:16  26-09-22 03:43:16.921 ZOS:  TASK(0x7f2de3180700) INFO: qtimer create task<0x6> timer<80> ok.
+2026/09/22 03:43:16  26-09-22 03:43:16.921 SIP:  TASK(0x7f2de3180700) INFO: module create tmr<0x50> [TIMER C] ok.
+2026/09/22 03:43:16  26-09-22 03:43:16.921 SIP:  TASK(0x7f2de3180700) INFO: trans @10009 created.
+2026/09/22 03:43:16  26-09-22 03:43:16.921 SIP:  TASK(0x7f2de3180700) INFO: dlg VrtdIdleOnCimReq trans create.
+2026/09/22 03:43:16  26-09-22 03:43:16.921 SIP:  TASK(0x7f2de3180700) INFO: dlg @10005 notify event [SEND NONINVITE].
+2026/09/22 03:43:16  26-09-22 03:43:16.921 SIP:  TASK(0x7f2de3180700) DEBUG: dlg @10005 notify event [SEND NONINVITE] addr<[2607:fc20:7e70:92d0:ac39:52c3:6658:b61]:38851>.
+2026/09/22 03:43:16  26-09-22 03:43:16.921 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_VRTD) vrtd@[65541] state <IDLE> run [CIM_REQ] event ok.
+2026/09/22 03:43:16  26-09-22 03:43:16.921 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_VRTD) vrtd@[65541] state <IDLE> to <REQ OUT>.
+2026/09/22 03:43:16  26-09-22 03:43:16.921 SIP:  TASK(0x7f2de3180700) INFO: module MsgDelete msg 0x7f2db401d340.
+2026/09/22 03:43:16  26-09-22 03:43:16.921 SIP:  TASK(0x7f2de3180700) INFO: module CoreSessMsgProc process event queue.
+2026/09/22 03:43:16  26-09-22 03:43:16.921 SIP:  TASK(0x7f2de3180700) INFO: core event queue process the next event.
+2026/09/22 03:43:16  26-09-22 03:43:16.921 SIP:  TASK(0x7f2de3180700) INFO: trans @10009 process request <REGISTER>.
+2026/09/22 03:43:16  26-09-22 03:43:16.921 ZOS:  TASK(0x7f2de3180700) INFO: AddUsDigitX acTempStr=5, iLen=1.
+2026/09/22 03:43:16  26-09-22 03:43:16.921 SIP:  TASK(0x7f2de3180700) INFO: tpt TptLocateReqTcpTptId only open utpt for register.
+2026/09/22 03:43:16  26-09-22 03:43:16.921 SIP:  TASK(0x7f2de3180700) INFO: tpt TptLocateReqTcpTptId No Conn LclPort:38851 RmtPort:65529 1.
+2026/09/22 03:43:16  26-09-22 03:43:16.921 SIP:  TASK(0x7f2de3180700) INFO: tpt TptOpen use the same previous opened conn<0x10007>.
+2026/09/22 03:43:16  26-09-22 03:43:16.921 SIP:  TASK(0x7f2de3180700) INFO: core sess@10004 update transport.
+2026/09/22 03:43:16  26-09-22 03:43:16.921 SIP:  TASK(0x7f2de3180700) INFO: tpt TptLocateReqTcpTptId No Conn LclPort:38851 RmtPort:65529 2.
+2026/09/22 03:43:16  26-09-22 03:43:16.921 SIP:  TASK(0x7f2de3180700) INFO: module Sip_SresLock.
+2026/09/22 03:43:16  26-09-22 03:43:16.921 SIP:  TASK(0x7f2de3180700) INFO: module Sip_SresUnlock.
+2026/09/22 03:43:16  26-09-22 03:43:16.921 SIP:  TASK(0x7f2de3180700) DEBUG: 
+data length: 1868
+data content[text]:
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+REGISTER sip:msg.pc.t-mobile.com SIP/2.0
+To:"310240389277421"<sip:310240389277421@ims.mnc240.mcc310.3gppnetwork.org>
+From:"310240389277421"<sip:310240389277421@ims.mnc240.mcc310.3gppnetwork.org>;tag=hiDu6QM3211tPwI3J0tN3*ea*2
+Contact:<sip:[2607:fc20:7e70:92d0:ac39:52c3:6658:b61]:5157;transport=tcp>;+sip.instance="<urn:gsma:imei:35297335-835639-4>";audio;+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip
+Expires:600000
+Supported:100rel,path,replaces
+Allow:INVITE,ACK,OPTIONS,BYE,CANCEL,UPDATE,INFO,PRACK,SUBSCRIBE,NOTIFY,MESSAGE,REFER
+Geolocation:<cid:a326ffe09db6cba8@msg.pc.t-mobile.com>
+Security-Client:ipsec-3gpp;prot=esp;alg=hmac-md5-96;ealg=null;mod=trans;spi-c=1313440236;spi-s=1313440236;port-c=38852;port-s=5157,ipsec-3gpp;prot=esp;alg=hmac-md5-96;ealg=aes-cbc;mod=trans;spi-c=1313440236;spi-s=1313440236;port-c=38852;port-s=5157,ipsec-3gpp;prot=esp;alg=hmac-sha-1-96;ealg=null;mod=trans;spi-c=1313440236;spi-s=1313440236;port-c=38852;port-s=5157,ipsec-3gpp;prot=esp;alg=hmac-sha-1-96;ealg=aes-cbc;mod=trans;spi-c=1313440236;spi-s=1313440236;port-c=38852;port-s=5157
+Security-Verify:ipsec-3gpp;prot=esp;alg=hmac-sha-1-96;ealg=aes-cbc;mod=trans;spi-c=3685690206;spi-s=3685690207;port-c=65528;port-s=65529;q=0.5
+Proxy-Require:sec-agree
+Require:sec-agree
+CSeq:5 REGISTER
+Call-ID:1HGxJ7.DO6VhiHrosx321M9J31@[2607:fc20:7e70:92d0:ac39:52c3:6658:b61]
+Authorization:Digest realm="msg.pc.t-mobile.com",algorithm=AKAv1-MD5,nonce="T6+TKH9UM1lBMRwMM9Vqa8sGjKQYBwAArOLfSaSL0uw=",username="310240389277421@msg.pc.t-mobile.com",uri="sip:msg.pc.t-mobile.com",response="a7d04029ed39d5c7fa754ea72e218afc"
+P-Access-Network-Info:IEEE-802.11;i-wlan-node-id=ffffffffffff
+Max-Forwards:70
+User-Agent:SIP/1.0
+Via:SIP/2.0/TCP [2607:fc20:7e70:92d0:ac39:52c3:6658:b61]:5157;branch=z9hG4bK2hiDu6QN321E9cJs3J0tN3*ea*;rport
+Content-Length:0
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2026/09/22 03:43:16  26-09-22 03:43:16.921 ZOS:  TASK(0x7f2de3180700) DEBUG: UserInfo decode iRet=0, 19
+2026/09/22 03:43:16  26-09-22 03:43:16.922 ZOS:  TASK(0x7f2de3180700) DEBUG: UserInfo decode iRet=0, 15
+2026/09/22 03:43:16  26-09-22 03:43:16.922 ZOS:  TASK(0x7f2de3180700) DEBUG: UserInfo decode iRet=0, 15
+2026/09/22 03:43:16  26-09-22 03:43:16.922 ZOS:  TASK(0x7f2de3180700) DEBUG: UserInfo decode iRet=1, 0
+2026/09/22 03:43:16  26-09-22 03:43:16.922 ZOS:  TASK(0x7f2de3180700) INFO: AbnfGetUsDigitX 0.5, wData=5, ucZeros=0
+2026/09/22 03:43:16  26-09-22 03:43:16.922 ZOS:  TASK(0x7f2de3180700) DEBUG: UserInfo decode iRet=0, 19
+2026/09/22 03:43:16  parse_sip_method first line: REGISTER sip:msg.pc.t-mobile.com SIP/2.0
+2026/09/22 03:43:16  ims send parse_sip_method REGISTER
+2026/09/22 03:43:16  ims send extract_cseq_and_method UNKNOWN cseq -1
+2026/09/22 03:43:16  process_ims_message: 19-0-0
+2026/09/22 03:43:16  IMS 检测到REGISTER消息，method=REGISTER, cseq_method=UNKNOWN
+2026/09/22 03:43:16  26-09-22 03:43:16.922 UTPT:  TASK(0x7f2de3180700) INFO: Send Before Lock id[0x6].
+2026/09/22 03:43:16  26-09-22 03:43:16.922 UTPT:  TASK(0x7f2de3180700) INFO: Utpt_SresLock.
+2026/09/22 03:43:16  26-09-22 03:43:16.922 UTPT:  TASK(0x7f2de3180700) INFO: Send After Lock id[0x6].
+2026/09/22 03:43:16  26-09-22 03:43:16.922 UTPT:  TASK(0x7f2de3180700) INFO: Send Before Socket id[0x6].
+2026/09/22 03:43:16  26-09-22 03:43:16.923 UTPT:  TASK(0x7f2de3180700) INFO: Send After Socket id[0x6].
+2026/09/22 03:43:16  26-09-22 03:43:16.923 UTPT:  TASK(0x7f2de3180700) INFO: Utpt_SresUnlock.
+2026/09/22 03:43:16  26-09-22 03:43:16.923 UTPT:  TASK(0x7f2de3180700) DEBUG: conn[0x6] send data[1868] to [fd00:976a:2:550::5:65529] ok.
+2026/09/22 03:43:16  26-09-22 03:43:16.923 SIP:  TASK(0x7f2de3180700) INFO: tpt conn<0x10007> send message ok.
+2026/09/22 03:43:16  26-09-22 03:43:16.923 SIP:  TASK(0x7f2de3180700) INFO: module MsgDelete msg 0x7f2dc000b020.
+2026/09/22 03:43:16  26-09-22 03:43:16.923 SIP:  TASK(0x7f2de3180700) INFO: module Sip_SresLock.
+2026/09/22 03:43:16  26-09-22 03:43:16.923 SIP:  TASK(0x7f2de3180700) INFO: module Sip_SresUnlock.
+2026/09/22 03:43:16  26-09-22 03:43:16.923 SIP:  TASK(0x7f2de3180700) INFO: trans NictIdleOnSendNonInvite conn<0x10007> expires<1790648596>.
+2026/09/22 03:43:16  26-09-22 03:43:16.923 SIP:  TASK(0x7f2de3180700) INFO: module start tmr<0x4D> [TIMER F] <32000ms> ok.
+2026/09/22 03:43:16  26-09-22 03:43:16.923 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_NICT) trans@[65545] state <IDLE> run [SEND_NONINVITE] event ok.
+2026/09/22 03:43:16  26-09-22 03:43:16.923 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_NICT) trans@[65545] state <IDLE> to <TRYING>.
+2026/09/22 03:43:16  26-09-22 03:43:16.923 SIP:  TASK(0x7f2de3180700) INFO: core event queue process the last event.
+2026/09/22 03:43:16  26-09-22 03:43:16.923 SIP:  TASK(0x7f2de3180700) INFO: module MsgDelete msg 0x7f2db401d340.
+2026/09/22 03:43:17  26-09-22 03:43:17.136 ZOS:  TASK(0x7f2de31c4700) INFO: SockTaskEpollEntry socket[30] iProtoType[1] iTerType[0] iTcpStatType[2] recv data.
+2026/09/22 03:43:17  26-09-22 03:43:17.136 ZOS:  TASK(0x7f2de31c4700) INFO: SockTaskEpollEntry socket[30] iProtoType[1] iTerType[0] iTcpStatType[2] send data.
+2026/09/22 03:43:17  26-09-22 03:43:17.136 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.136 UTPT:  TASK(0x7f2de31a2700) DEBUG: recv tcp data(len:1296) from [fd00:976a:2:550::5:65529].
+2026/09/22 03:43:17  26-09-22 03:43:17.136 UTPT:  TASK(0x7f2de31a2700) INFO: ConnProcTcpData conn[0x6] of user[65543].
+2026/09/22 03:43:17  26-09-22 03:43:17.136 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.136 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.136 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresUnlock.
+2026/09/22 03:43:17  parse_sip_method first line: SIP/2.0 200 OK
+2026/09/22 03:43:17  parse_sip_method status_code: 200
+2026/09/22 03:43:17  ims recv parse_sip_method 7:200 OK
+2026/09/22 03:43:17  ims recv extract_cseq_and_method 7:200 OK REGISTER cseq 5
+2026/09/22 03:43:17  ims recv process_ims_message 7:200 OK
+2026/09/22 03:43:17  process_ims_message: 7-1-0
+2026/09/22 03:43:17  IMS 检测到REGISTER消息，method=200 OK, cseq_method=REGISTER
+2026/09/22 03:43:17  IMS REGISTER成功
+2026/09/22 03:43:17  26-09-22 03:43:17.137 SIP:  TASK(0x7f2de31a2700) INFO: tpt utpt[6] of conn<0x10007> report data message<0x7f2dd0002da0> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.137 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.137 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.137 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.137 UTPT:  TASK(0x7f2de31a2700) INFO: conn[0x6] on write data.
+2026/09/22 03:43:17  26-09-22 03:43:17.137 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.137 SIP:  TASK(0x7f2de3180700) INFO: module process tpt event.
+2026/09/22 03:43:17  26-09-22 03:43:17.137 UTPT:  TASK(0x7f2de3180700) INFO: Utpt_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.137 UTPT:  TASK(0x7f2de3180700) INFO: Utpt_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.137 SIP:  TASK(0x7f2de3180700) INFO: tpt conn<0x10007> process data message<0x7f2dd0002da0>.
+2026/09/22 03:43:17  26-09-22 03:43:17.137 SIP:  TASK(0x7f2de3180700) INFO: module Sip_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.137 SIP:  TASK(0x7f2de3180700) INFO: module Sip_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.137 SIP:  TASK(0x7f2de3180700) DEBUG: 
+data length: 1296
+data content[text]:
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+SIP/2.0 200 OK
+Via: SIP/2.0/TCP [2607:fc20:7e70:92d0:ac39:52c3:6658:b61]:5157;received=2607:fc20:7e70:92d0:ac39:52c3:6658:b61;rport=38851;branch=z9hG4bK2hiDu6QN321E9cJs3J0tN3*ea*
+Path: <sip:[FD00:976A:2:550::5]:65529;transport=tcp;lr>
+Service-Route: <sip:[FD00:976A:2:550::5]:65529;transport=tcp;lr>
+Contact: <sip:[2607:fc20:7e70:92d0:ac39:52c3:6658:b61]:5157;transport=tcp>;expires=3600;+g.3gpp.smsip;+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";audio;+sip.instance="<urn:gsma:imei:35297335-835639-4>"
+To: "310240389277421" <sip:310240389277421@ims.mnc240.mcc310.3gppnetwork.org>;tag=h7g4Esbg_mavodi-0-4b-8c-7-ffffffc7-220004-ffffffffffffffff-82460000-6a2eb347-_4984c40-6ab1f955-1879d
+From: "310240389277421" <sip:310240389277421@ims.mnc240.mcc310.3gppnetwork.org>;tag=hiDu6QM3211tPwI3J0tN3*ea*2
+Call-ID: 1HGxJ7.DO6VhiHrosx321M9J31@[2607:fc20:7e70:92d0:ac39:52c3:6658:b61]
+CSeq: 5 REGISTER
+Reason: SIP;cause=200;text="CC_NO_ERROR"
+P-Associated-URI: <sip:14172278115@msg.pc.t-mobile.com>
+P-Associated-URI: <sip:+14172278115@ims.mnc240.mcc310.3gppnetwork.org>
+P-Associated-URI: <sip:310240389277421@ims.mnc240.mcc310.3gppnetwork.org>
+P-Associated-URI: <sip:+14172278115@msg.pc.t-mobile.com>
+Feature-Caps: *;+g.3gpp.verstat
+Eric-Sbg-Thid: pch7l
+Content-Length: 0
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2026/09/22 03:43:17  26-09-22 03:43:17.137 ZOS:  TASK(0x7f2de3180700) DEBUG: UserInfo decode iRet=1, 0
+2026/09/22 03:43:17  26-09-22 03:43:17.137 ZOS:  TASK(0x7f2de3180700) DEBUG: UserInfo decode iRet=1, 0
+2026/09/22 03:43:17  26-09-22 03:43:17.137 ZOS:  TASK(0x7f2de3180700) DEBUG: UserInfo decode iRet=0, 15
+2026/09/22 03:43:17  26-09-22 03:43:17.137 ZOS:  TASK(0x7f2de3180700) DEBUG: UserInfo decode iRet=0, 15
+2026/09/22 03:43:17  26-09-22 03:43:17.137 ZOS:  TASK(0x7f2de3180700) DEBUG: UserInfo decode iRet=0, 11
+2026/09/22 03:43:17  26-09-22 03:43:17.137 ZOS:  TASK(0x7f2de3180700) DEBUG: UserInfo decode iRet=0, 12
+2026/09/22 03:43:17  26-09-22 03:43:17.137 ZOS:  TASK(0x7f2de3180700) DEBUG: UserInfo decode iRet=0, 15
+2026/09/22 03:43:17  26-09-22 03:43:17.137 ZOS:  TASK(0x7f2de3180700) DEBUG: UserInfo decode iRet=0, 12
+2026/09/22 03:43:17  26-09-22 03:43:17.137 SIP:  TASK(0x7f2de3180700) INFO: module TptMsgProc process incoming event.
+2026/09/22 03:43:17  26-09-22 03:43:17.137 SIP:  TASK(0x7f2de3180700) INFO: trans TransPreProcEvnt preprocess old trans event.
+2026/09/22 03:43:17  26-09-22 03:43:17.137 SIP:  TASK(0x7f2de3180700) INFO: trans @10009 process response <REGISTER:200>.
+2026/09/22 03:43:17  26-09-22 03:43:17.137 SIP:  TASK(0x7f2de3180700) INFO: module stop tmr<0x4D> [TIMER F] ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.138 SIP:  TASK(0x7f2de3180700) INFO: trans @10009 report event [RECV 2XX].
+2026/09/22 03:43:17  26-09-22 03:43:17.138 SIP:  TASK(0x7f2de3180700) INFO: module Sip_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.138 SIP:  TASK(0x7f2de3180700) INFO: module Sip_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.138 SIP:  TASK(0x7f2de3180700) INFO: trans NictTryingOnRecv2xx conn<0x10007> expires<1790052197>.
+2026/09/22 03:43:17  26-09-22 03:43:17.138 SIP:  TASK(0x7f2de3180700) INFO: module start tmr<0x4E> [TIMER K] <500ms> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.138 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_NICT) trans@[65545] state <TRYING> run [RECV_2XX] event ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.138 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_NICT) trans@[65545] state <TRYING> to <COMPLETED>.
+2026/09/22 03:43:17  26-09-22 03:43:17.138 SIP:  TASK(0x7f2de3180700) INFO: module TptMsgProc process event queue.
+2026/09/22 03:43:17  26-09-22 03:43:17.138 SIP:  TASK(0x7f2de3180700) INFO: core event queue process the next event.
+2026/09/22 03:43:17  26-09-22 03:43:17.138 SIP:  TASK(0x7f2de3180700) INFO: core sess@10004 UacProcCimCnf process.
+2026/09/22 03:43:17  26-09-22 03:43:17.138 SIP:  TASK(0x7f2de3180700) INFO: dlg @10005 process event [RECV RSP].
+2026/09/22 03:43:17  26-09-22 03:43:17.138 SIP:  TASK(0x7f2de3180700) INFO: dlg @10005 process response <REGISTER:200>.
+2026/09/22 03:43:17  26-09-22 03:43:17.138 SIP:  TASK(0x7f2de3180700) INFO: dlg @10005 report event.
+2026/09/22 03:43:17  26-09-22 03:43:17.138 SIP:  TASK(0x7f2de3180700) INFO: core report event [CIM CNF].
+2026/09/22 03:43:17  26-09-22 03:43:17.138 SIP:  TASK(0x7f2de3180700) INFO: core -->comp@19394404 evnt@13 method@5.
+2026/09/22 03:43:17  26-09-22 03:43:17.138 SIP:  TASK(0x7f2de3180700) INFO: core -->upper sess@10004 <----> sess user id@11.
+2026/09/22 03:43:17  26-09-22 03:43:17.138 SIP:  TASK(0x7f2de3180700) INFO: core -->upper dlg@10005 <----> dlg user id@ffffffff.
+2026/09/22 03:43:17  26-09-22 03:43:17.138 SIP:  TASK(0x7f2de3180700) INFO: core -->upper trans@10009 <----> trans user id@0.
+2026/09/22 03:43:17  26-09-22 03:43:17.138 SIP:  TASK(0x7f2de3180700) INFO: core sess@10004 UaReportCimCnf report.
+2026/09/22 03:43:17  26-09-22 03:43:17.138 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_VRTD) vrtd@[65541] state <REQ OUT> run [RECV_RSP] event ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.138 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_VRTD) vrtd@[65541] state <REQ OUT> to <TERMINATED>.
+2026/09/22 03:43:17  26-09-22 03:43:17.138 SIP:  TASK(0x7f2de3180700) INFO: core event queue process the last event.
+2026/09/22 03:43:17  26-09-22 03:43:17.138 SIP:  TASK(0x7f2de3180700) INFO: module MsgDelete msg 0x7f2dc000b830.
+2026/09/22 03:43:17  26-09-22 03:43:17.138 SIP:  TASK(0x7f2de3180700) INFO: module MsgDelete msg 0x7f2dc000b830.
+2026/09/22 03:43:17  26-09-22 03:43:17.138 SIP:  TASK(0x7f2de3180700) INFO: module TptMsgProc check tpt alive.
+2026/09/22 03:43:17  26-09-22 03:43:17.138 SIP:  TASK(0x7f2de3180700) INFO: module Sip_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.138 SIP:  TASK(0x7f2de3180700) INFO: module Sip_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.138 MRF:  TASK(0x7f2de316f700) INFO: CompProcRsp recv register rsp<200>
+2026/09/22 03:43:17  26-09-22 03:43:17.138 MRF:  TASK(0x7f2de316f700) INFO: RegGetIpsecSA pstRegIpsecSA pstLst=0x127c9a4, state=2, pstLst->iCount=1
+2026/09/22 03:43:17  26-09-22 03:43:17.138 MRF:  TASK(0x7f2de316f700) INFO: RegGetIpsecSA pstLst=0x127c9a4, only one ipsec sa pstRegIpsecSA=0x1269484, state=2 found.
+2026/09/22 03:43:17  26-09-22 03:43:17.138 MRF:  TASK(0x7f2de316f700) INFO: RegGetIpsecSA pstLst=0x127c9a4, return only one ipsec sa pstOnlyOneSA=0x1269484, state=2 found.
+2026/09/22 03:43:17  26-09-22 03:43:17.138 MRF:  TASK(0x7f2de316f700) INFO: register [17] process [CIM CNF] state [2].
+2026/09/22 03:43:17  26-09-22 03:43:17.138 MRF:  TASK(0x7f2de316f700) INFO: RegGetIpsecSA pstRegIpsecSA pstLst=0x127c9a4, state=2, pstLst->iCount=1
+2026/09/22 03:43:17  26-09-22 03:43:17.138 MRF:  TASK(0x7f2de316f700) INFO: RegGetIpsecSA pstLst=0x127c9a4, only one ipsec sa pstRegIpsecSA=0x1269484, state=2 found.
+2026/09/22 03:43:17  26-09-22 03:43:17.138 MRF:  TASK(0x7f2de316f700) INFO: RegGetIpsecSA pstLst=0x127c9a4, return only one ipsec sa pstOnlyOneSA=0x1269484, state=2 found.
+2026/09/22 03:43:17  26-09-22 03:43:17.138 MSF:  TASK(0x7f2de316f700) INFO: TmrStop stop <3> [ENDP REG] ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.139 MRF:  TASK(0x7f2de316f700) DEBUG: RegRegingOnCimCnf old contact address <[2607:fc20:7e70:92d0:ac39:52c3:6658:b61]:38851>
+2026/09/22 03:43:17  26-09-22 03:43:17.139 MRF:  TASK(0x7f2de316f700) INFO: EndpUpdateAddr unchanged.
+2026/09/22 03:43:17  26-09-22 03:43:17.139 MRF:  TASK(0x7f2de316f700) DEBUG: RegRegingOnCimCnf new contact address <[2607:fc20:7e70:92d0:ac39:52c3:6658:b61]:38851>
+2026/09/22 03:43:17  26-09-22 03:43:17.139 MRF:  TASK(0x7f2de316f700) DEBUG: SipGetContactParm via addr <[2607:fc20:7e70:92d0:ac39:52c3:6658:b61]:5157>
+2026/09/22 03:43:17  26-09-22 03:43:17.139 MRF:  TASK(0x7f2de316f700) WARN: SipGetContactParm match contact except uri tpt parm
+2026/09/22 03:43:17  26-09-22 03:43:17.139 MRF:  TASK(0x7f2de316f700) WARN: SipGetContactParm get first contact
+2026/09/22 03:43:17  26-09-22 03:43:17.139 MRF:  TASK(0x7f2de316f700) DEBUG: RegRegingOnCimCnf iTimeDiff:0
+2026/09/22 03:43:17  26-09-22 03:43:17.139 MRF:  TASK(0x7f2de316f700) INFO: SipGetAssoUri using sip MSISDN uri.
+2026/09/22 03:43:17  26-09-22 03:43:17.139 MRF:  TASK(0x7f2de316f700) DEBUG: SipGetContactParm via addr <[2607:fc20:7e70:92d0:ac39:52c3:6658:b61]:5157>
+2026/09/22 03:43:17  26-09-22 03:43:17.139 MRF:  TASK(0x7f2de316f700) WARN: SipGetContactParm match contact except uri tpt parm
+2026/09/22 03:43:17  26-09-22 03:43:17.139 MRF:  TASK(0x7f2de316f700) WARN: SipGetContactParm get first contact
+2026/09/22 03:43:17  26-09-22 03:43:17.139 MSF:  TASK(0x7f2de316f700) INFO: TmrStart start <0x0004> timer [ENDP EXPIRE] 3600s ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.139 MSF:  TASK(0x7f2de316f700) INFO: TmrStart start <0x0003> timer [ENDP REG] 3000s ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.139 MRF:  TASK(0x7f2de316f700) INFO: endp subs register state.
+2026/09/22 03:43:17  26-09-22 03:43:17.139 ZOS:  TASK(0x7f2de316f700) INFO: fsm(MRF_REG) reg@[17] state <REGING> run [CIM CNF] event ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.139 ZOS:  TASK(0x7f2de316f700) INFO: fsm(MRF_REG) reg@[17] state <REGING> to <REGED>.
+2026/09/22 03:43:17  26-09-22 03:43:17.139 MSF:  TASK(0x7f2de316f700) INFO: comp<MRF> proc evnt.
+2026/09/22 03:43:17  26-09-22 03:43:17.139 SIP:  TASK(0x7f2de316f700) INFO: module Sip_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.139 SIP:  TASK(0x7f2de316f700) INFO: module MsgDelete msg 0x7f2dc000b830.
+2026/09/22 03:43:17  26-09-22 03:43:17.139 SIP:  TASK(0x7f2de316f700) INFO: module Sip_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.139 RSD:  TASK(0x7f2de316f700) INFO: dispatch msf event to enabler<0x1281064>.
+2026/09/22 03:43:17  26-09-22 03:43:17.139 RRE:  TASK(0x7f2de316f700) INFO: reg report reg ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.139 MTC:  TASK(0x7f2de316f700) INFO: client reg state 2.
+2026/09/22 03:43:17  26-09-22 03:43:17.139 MTC:  TASK(0x7f2de316f700) INFO: reging call refresh ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.139 RSD:  TASK(0x7f2de316f700) INFO: enabler heave event.
+2026/09/22 03:43:17  26-09-22 03:43:17.139 MTC:  TASK(0x7f2de316f700) INFO: CliDrive client drive ok zEvntId:0x7f2dd8025814.
+2026/09/22 03:43:17  26-09-22 03:43:17.139 MTC:  TASK(0x7f2de316f700) DEBUG: Mtc_CliSysRunRsdEvnt zEvntId:0x7f2dd8025814
+2026/09/22 03:43:17  26-09-22 03:43:17.139 MRF:  TASK(0x7f2de316f700) INFO: subs process [USER SUBSCRIBE].
+2026/09/22 03:43:17  26-09-22 03:43:17.139 SIP:  TASK(0x7f2de316f700) INFO: module MsgCreate dbuf 0x7f2dd8025a50 msg 0x7f2dc000b020.
+2026/09/22 03:43:17  26-09-22 03:43:17.139 ZOS:  TASK(0x7f2de316f700) DEBUG: UserInfo decode iRet=0, 448
+2026/09/22 03:43:17  26-09-22 03:43:17.140 MRF:  TASK(0x7f2de316f700) INFO: SipAddContactByAddr isEM <0> set sos contact
+2026/09/22 03:43:17  26-09-22 03:43:17.140 ZOS:  TASK(0x7f2de316f700) DEBUG: UserInfo decode iRet=0, 12
+2026/09/22 03:43:17  26-09-22 03:43:17.140 MRF:  TASK(0x7f2de316f700) INFO: RegGetIpsecSA pstRegIpsecSA pstLst=0x127c9a4, state=4, pstLst->iCount=1
+2026/09/22 03:43:17  26-09-22 03:43:17.140 MRF:  TASK(0x7f2de316f700) INFO: RegGetIpsecSA pstLst=0x127c9a4, only one ipsec sa pstRegIpsecSA=0x1269484, state=4 found.
+2026/09/22 03:43:17  26-09-22 03:43:17.140 MRF:  TASK(0x7f2de316f700) INFO: RegGetIpsecSA pstLst=0x127c9a4, pstRegIpsecSA=0x1269484, state=4 found.
+2026/09/22 03:43:17  26-09-22 03:43:17.140 MRF:  TASK(0x7f2de316f700) INFO: SipSend iAkaVer=1
+2026/09/22 03:43:17  26-09-22 03:43:17.140 MRF:  TASK(0x7f2de316f700) INFO: SipAddSecMech 1 0
+2026/09/22 03:43:17  26-09-22 03:43:17.140 MRF:  TASK(0x7f2de316f700) INFO: SipAddSecMechX 1 0
+2026/09/22 03:43:17  26-09-22 03:43:17.140 SIP:  TASK(0x7f2de316f700) INFO: module MsgDelete msg 0x7f2dd803c370.
+2026/09/22 03:43:17  26-09-22 03:43:17.140 SIP:  TASK(0x7f2de316f700) INFO: module MsgCreate dbuf 0x7f2dd8025a98 msg 0x7f2dd8042580.
+2026/09/22 03:43:17  26-09-22 03:43:17.140 ZOS:  TASK(0x7f2de316f700) INFO: AddUsDigitX acTempStr=5, iLen=1.
+2026/09/22 03:43:17  26-09-22 03:43:17.140 ZOS:  TASK(0x7f2de316f700) INFO: AbnfGetUsDigitX 0.5, wData=5, ucZeros=0
+2026/09/22 03:43:17  26-09-22 03:43:17.140 MSF:  TASK(0x7f2de316f700) INFO: TmrStart start <0x0016> timer [WAIT NOTIFY] 10s ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.140 ZOS:  TASK(0x7f2de316f700) INFO: fsm(MRF_SUBS) subs@[18] state <CONFIRMED> run [USER SUBSCRIBE] event ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.140 ZOS:  TASK(0x7f2de316f700) INFO: fsm(MRF_SUBS) subs@[18] state <CONFIRMED> to <RESUBS>.
+2026/09/22 03:43:17  26-09-22 03:43:17.140 MSF:  TASK(0x7f2de316f700) INFO: comp<MRF> proc comp evnt.
+2026/09/22 03:43:17  26-09-22 03:43:17.140 SIP:  TASK(0x7f2de3180700) INFO: module process user event.
+2026/09/22 03:43:17  26-09-22 03:43:17.140 SIP:  TASK(0x7f2de3180700) INFO: core process event [DAM REQ].
+2026/09/22 03:43:17  26-09-22 03:43:17.140 SIP:  TASK(0x7f2de3180700) INFO: core -->me comp@19394404 evnt@29 method@7.
+2026/09/22 03:43:17  26-09-22 03:43:17.140 SIP:  TASK(0x7f2de3180700) INFO: core -->me sess@10003 <----> sess user id@12.
+2026/09/22 03:43:17  26-09-22 03:43:17.140 SIP:  TASK(0x7f2de3180700) INFO: core -->me dlg@80010005 <----> dlg user id@ffffffff.
+2026/09/22 03:43:17  26-09-22 03:43:17.140 SIP:  TASK(0x7f2de3180700) INFO: core -->me trans@0 <----> trans user id@0.
+2026/09/22 03:43:17  26-09-22 03:43:17.140 ZOS:  TASK(0x7f2de3180700) WARN: BkFromId invalid id[0xFFFFFFFB].
+2026/09/22 03:43:17  26-09-22 03:43:17.140 ZOS:  TASK(0x7f2de3180700) DEBUG: Page 65534/5, Slot 65530/4
+2026/09/22 03:43:17  26-09-22 03:43:17.140 SIP:  TASK(0x7f2de3180700) INFO: core UaSEvntToMEvnt exist sess.
+2026/09/22 03:43:17  26-09-22 03:43:17.140 SIP:  TASK(0x7f2de3180700) INFO: core UaSEvntToMEvnt exist sess@10003 dlg@10004 call@10002.
+2026/09/22 03:43:17  26-09-22 03:43:17.140 SIP:  TASK(0x7f2de3180700) DEBUG: core UaSEvntToMEvnt tpt type<3> [2607:fc20:7e70:92d0:ac39:52c3:6658:b61]:38851 -> [fd00:976a:2:550::5]:65529.
+2026/09/22 03:43:17  26-09-22 03:43:17.141 SIP:  TASK(0x7f2de3180700) INFO: dlg DlgProcEvnt preprocess subscription event.
+2026/09/22 03:43:17  26-09-22 03:43:17.141 SIP:  TASK(0x7f2de3180700) INFO: dlg sub@80010005 process event [SUBS REQ].
+2026/09/22 03:43:17  26-09-22 03:43:17.141 SIP:  TASK(0x7f2de3180700) INFO: dlg sub@80010005 process request <SUBSCRIBE>.
+2026/09/22 03:43:17  26-09-22 03:43:17.141 ZOS:  TASK(0x7f2de3180700) INFO: qtimer create task<0x6> timer<81> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.141 SIP:  TASK(0x7f2de3180700) INFO: module create tmr<0x51> [TIMER E] ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.141 ZOS:  TASK(0x7f2de3180700) INFO: qtimer create task<0x6> timer<82> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.141 SIP:  TASK(0x7f2de3180700) INFO: module create tmr<0x52> [TIMER F] ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.141 ZOS:  TASK(0x7f2de3180700) INFO: qtimer create task<0x6> timer<83> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.141 SIP:  TASK(0x7f2de3180700) INFO: module create tmr<0x53> [TIMER K] ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.141 ZOS:  TASK(0x7f2de3180700) INFO: qtimer create task<0x6> timer<84> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.141 SIP:  TASK(0x7f2de3180700) INFO: module create tmr<0x54> [TIMER WAIT_CONN] ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.141 ZOS:  TASK(0x7f2de3180700) INFO: qtimer create task<0x6> timer<85> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.141 SIP:  TASK(0x7f2de3180700) INFO: module create tmr<0x55> [TIMER C] ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.141 SIP:  TASK(0x7f2de3180700) INFO: trans @10008 created.
+2026/09/22 03:43:17  26-09-22 03:43:17.141 SIP:  TASK(0x7f2de3180700) INFO: dlg sub@80010005 SubsdCnfOnSubsReq trans create.
+2026/09/22 03:43:17  26-09-22 03:43:17.141 SIP:  TASK(0x7f2de3180700) INFO: dlg sub@80010005 SubsdCnfOnSubsReq notify event to trans.
+2026/09/22 03:43:17  26-09-22 03:43:17.141 SIP:  TASK(0x7f2de3180700) INFO: dlg @10004 notify event [SEND NONINVITE].
+2026/09/22 03:43:17  26-09-22 03:43:17.141 SIP:  TASK(0x7f2de3180700) DEBUG: dlg @10004 notify event [SEND NONINVITE] addr<[2607:fc20:7e70:92d0:ac39:52c3:6658:b61]:38851>.
+2026/09/22 03:43:17  26-09-22 03:43:17.141 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_SUBS) subs@[2147549189] state <CONFIRMED> run [SUBS_REQ] event ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.141 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_SUBS) subs@[2147549189] state <CONFIRMED> to <SUBS_OUT>.
+2026/09/22 03:43:17  26-09-22 03:43:17.141 SIP:  TASK(0x7f2de3180700) INFO: module MsgDelete msg 0x7f2dc000b020.
+2026/09/22 03:43:17  26-09-22 03:43:17.141 SIP:  TASK(0x7f2de3180700) INFO: module CoreSessMsgProc process event queue.
+2026/09/22 03:43:17  26-09-22 03:43:17.141 SIP:  TASK(0x7f2de3180700) INFO: core event queue process the next event.
+2026/09/22 03:43:17  26-09-22 03:43:17.141 SIP:  TASK(0x7f2de3180700) INFO: trans @10008 process request <SUBSCRIBE>.
+2026/09/22 03:43:17  26-09-22 03:43:17.141 ZOS:  TASK(0x7f2de3180700) INFO: AddUsDigitX acTempStr=5, iLen=1.
+2026/09/22 03:43:17  26-09-22 03:43:17.141 SIP:  TASK(0x7f2de3180700) INFO: tpt TptLocateTpt using TCP transport.
+2026/09/22 03:43:17  26-09-22 03:43:17.141 SIP:  TASK(0x7f2de3180700) INFO: tpt TptLocateReqTcpTptId No Trans Conn LclPort:38851 RmtPort:65529 address type<3>, transport type<3>.
+2026/09/22 03:43:17  26-09-22 03:43:17.141 SIP:  TASK(0x7f2de3180700) INFO: tpt TptOpen use the same previous opened conn<0x10007>.
+2026/09/22 03:43:17  26-09-22 03:43:17.141 SIP:  TASK(0x7f2de3180700) INFO: module Sip_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.141 SIP:  TASK(0x7f2de3180700) INFO: module Sip_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.141 SIP:  TASK(0x7f2de3180700) DEBUG: 
+data length: 1631
+data content[text]:
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+SUBSCRIBE sip:974EEBBEEBFA5C2E3609D4B18C0F5842AEB090F29B018E17D62C5DA1909C1B425F0C138A8FEA09C3274E00FE038B52370CA42B7C1D7E97A1012E703404765C43896FDC7F25DBC0A4AC00F655B41F458E9CB07118349D3626B960869B984A661F494FD0AE3E732C5F2546D6A984C71B78EA84BF5657C72636327A9C8889E8AD62D2702ADB8A86D596F192941063FFE0EF25C4C9541CADA69E6443EE741D7BCC68E4941131F9E08E347FCCC2E0D8109A385F3AD169FC2DAE983B17C0D505C73A392381137B50065AA89FD476F7E52122A38ECDDAB86CC3DE67BED7C7C487266D0B@th.bpatf403.sip.t-mobile.com;tokenized-by=th.bpatf403.sip.t-mobile.com;ivec=281B93866347B0E2A25554F2EFFC5C13 SIP/2.0
+From:<sip:+14172278115@ims.mnc240.mcc310.3gppnetwork.org>;tag=1tPwH1HGxJ7.DO6VhiHrosC321
+To:<sip:+14172278115@ims.mnc240.mcc310.3gppnetwork.org>;tag=h7g4Esbg_mavodi-0-4d-1303-7-ffffffff-220004-ffffffffffffffff-e3f40000-6a2eb345-_49749da-6ab1d62c-600e5
+Contact:<sip:[2607:fc20:7e70:92d0:ac39:52c3:6658:b61]:5157;transport=tcp>;+sip.instance="<urn:gsma:imei:35297335-835639-4>"
+Supported:100rel,path,replaces
+Event:reg
+Accept:application/reginfo+xml
+Expires:3660
+P-Preferred-Identity:<sip:+14172278115@ims.mnc240.mcc310.3gppnetwork.org>
+Security-Verify:ipsec-3gpp;prot=esp;alg=hmac-sha-1-96;ealg=aes-cbc;mod=trans;spi-c=3685690206;spi-s=3685690207;port-c=65528;port-s=65529;q=0.5
+Proxy-Require:sec-agree
+Require:sec-agree
+Route:<sip:[fd00:976a:2:550::5]:65529;transport=tcp;lr>
+Call-ID:9J311HGxJ7.DO6VhiHrosB321M@[2607:fc20:7e70:92d0:ac39:52c3:6658:b61]
+CSeq:6 SUBSCRIBE
+Max-Forwards:70
+User-Agent:SIP/1.0
+Via:SIP/2.0/TCP [2607:fc20:7e70:92d0:ac39:52c3:6658:b61]:5157;branch=z9hG4bK*2hiDu6QO3211tPwI3J0tN3*ea;rport
+Content-Length:0
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2026/09/22 03:43:17  26-09-22 03:43:17.141 ZOS:  TASK(0x7f2de3180700) DEBUG: UserInfo decode iRet=0, 448
+2026/09/22 03:43:17  26-09-22 03:43:17.141 ZOS:  TASK(0x7f2de3180700) DEBUG: UserInfo decode iRet=0, 12
+2026/09/22 03:43:17  26-09-22 03:43:17.141 ZOS:  TASK(0x7f2de3180700) DEBUG: UserInfo decode iRet=0, 12
+2026/09/22 03:43:17  26-09-22 03:43:17.141 ZOS:  TASK(0x7f2de3180700) DEBUG: UserInfo decode iRet=1, 0
+2026/09/22 03:43:17  26-09-22 03:43:17.141 ZOS:  TASK(0x7f2de3180700) DEBUG: UserInfo decode iRet=0, 12
+2026/09/22 03:43:17  26-09-22 03:43:17.141 ZOS:  TASK(0x7f2de3180700) INFO: AbnfGetUsDigitX 0.5, wData=5, ucZeros=0
+2026/09/22 03:43:17  26-09-22 03:43:17.141 ZOS:  TASK(0x7f2de3180700) DEBUG: UserInfo decode iRet=1, 0
+2026/09/22 03:43:17  parse_sip_method first line: 
+2026/09/22 03:43:17  未知请求方法: 
+2026/09/22 03:43:17  ims send parse_sip_method UNKNOWN
+2026/09/22 03:43:17  26-09-22 03:43:17.142 UTPT:  TASK(0x7f2de3180700) INFO: Send Before Lock id[0x6].
+2026/09/22 03:43:17  26-09-22 03:43:17.142 UTPT:  TASK(0x7f2de3180700) INFO: Utpt_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.142 UTPT:  TASK(0x7f2de3180700) INFO: Send After Lock id[0x6].
+2026/09/22 03:43:17  26-09-22 03:43:17.142 UTPT:  TASK(0x7f2de3180700) INFO: Send Before Socket id[0x6].
+2026/09/22 03:43:17  26-09-22 03:43:17.142 UTPT:  TASK(0x7f2de3180700) INFO: Send After Socket id[0x6].
+2026/09/22 03:43:17  26-09-22 03:43:17.142 UTPT:  TASK(0x7f2de3180700) INFO: Utpt_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.142 UTPT:  TASK(0x7f2de3180700) DEBUG: conn[0x6] send data[1631] to [fd00:976a:2:550::5:65529] ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.142 SIP:  TASK(0x7f2de3180700) INFO: tpt conn<0x10007> send message ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.142 SIP:  TASK(0x7f2de3180700) INFO: module MsgDelete msg 0x7f2dc002c350.
+2026/09/22 03:43:17  26-09-22 03:43:17.142 SIP:  TASK(0x7f2de3180700) INFO: module start tmr<0x52> [TIMER F] <32000ms> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.142 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_NICT) trans@[65544] state <IDLE> run [SEND_NONINVITE] event ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.142 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_NICT) trans@[65544] state <IDLE> to <TRYING>.
+2026/09/22 03:43:17  26-09-22 03:43:17.142 SIP:  TASK(0x7f2de3180700) INFO: core event queue process the last event.
+2026/09/22 03:43:17  26-09-22 03:43:17.142 SIP:  TASK(0x7f2de3180700) INFO: module MsgDelete msg 0x7f2dc000b020.
+2026/09/22 03:43:17  26-09-22 03:43:17.142 ZOS:  TASK(0x7f2de31c4700) INFO: SockTaskEpollEntry socket[30] iProtoType[1] iTerType[0] iTcpStatType[2] recv data.
+2026/09/22 03:43:17  26-09-22 03:43:17.142 ZOS:  TASK(0x7f2de31c4700) INFO: SockTaskEpollEntry socket[30] iProtoType[1] iTerType[0] iTcpStatType[2] send data.
+2026/09/22 03:43:17  26-09-22 03:43:17.142 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.142 UTPT:  TASK(0x7f2de31a2700) DEBUG: recv tcp data(len:1166) from [fd00:976a:2:550::5:65529].
+2026/09/22 03:43:17  26-09-22 03:43:17.142 UTPT:  TASK(0x7f2de31a2700) INFO: ConnProcTcpData conn[0x6] of user[65543].
+2026/09/22 03:43:17  26-09-22 03:43:17.142 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.142 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.142 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.142 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.142 UTPT:  TASK(0x7f2de31a2700) INFO: conn[0x6] on write data.
+2026/09/22 03:43:17  26-09-22 03:43:17.142 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.186 ZOS:  TASK(0x7f2de31c4700) INFO: SockTaskEpollEntry socket[30] iProtoType[1] iTerType[0] iTcpStatType[2] recv data.
+2026/09/22 03:43:17  26-09-22 03:43:17.186 ZOS:  TASK(0x7f2de31c4700) INFO: SockTaskEpollEntry socket[30] iProtoType[1] iTerType[0] iTcpStatType[2] send data.
+2026/09/22 03:43:17  26-09-22 03:43:17.187 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.187 UTPT:  TASK(0x7f2de31a2700) DEBUG: recv tcp data(len:2332) from [fd00:976a:2:550::5:65529].
+2026/09/22 03:43:17  26-09-22 03:43:17.187 UTPT:  TASK(0x7f2de31a2700) INFO: ConnProcTcpData conn[0x6] of user[65543].
+2026/09/22 03:43:17  26-09-22 03:43:17.187 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.187 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.187 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.187 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.187 UTPT:  TASK(0x7f2de31a2700) INFO: conn[0x6] on write data.
+2026/09/22 03:43:17  26-09-22 03:43:17.187 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.190 ZOS:  TASK(0x7f2de31c4700) INFO: SockTaskEpollEntry socket[30] iProtoType[1] iTerType[0] iTcpStatType[2] recv data.
+2026/09/22 03:43:17  26-09-22 03:43:17.190 ZOS:  TASK(0x7f2de31c4700) INFO: SockTaskEpollEntry socket[30] iProtoType[1] iTerType[0] iTcpStatType[2] send data.
+2026/09/22 03:43:17  26-09-22 03:43:17.190 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.190 UTPT:  TASK(0x7f2de31a2700) DEBUG: recv tcp data(len:534) from [fd00:976a:2:550::5:65529].
+2026/09/22 03:43:17  26-09-22 03:43:17.190 UTPT:  TASK(0x7f2de31a2700) INFO: ConnProcTcpData conn[0x6] of user[65543].
+2026/09/22 03:43:17  26-09-22 03:43:17.190 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresUnlock.
+2026/09/22 03:43:17  parse_sip_method first line: NOTIFY sip:[2607:fc20:7e70:92d0:ac39:52c3:6658:b61]:5157;transport=tcp SIP/2.0
+2026/09/22 03:43:17  ims recv parse_sip_method 22:NOTIFY
+2026/09/22 03:43:17  ims recv extract_cseq_and_method 22:NOTIFY UNKNOWN cseq 9
+2026/09/22 03:43:17  ims recv process_ims_message 22:NOTIFY
+2026/09/22 03:43:17  process_ims_message: 22-0-0
+2026/09/22 03:43:17  IMS 忽略非呼叫消息: NOTIFY
+2026/09/22 03:43:17  26-09-22 03:43:17.191 SIP:  TASK(0x7f2de31a2700) INFO: tpt utpt[6] of conn<0x10007> report data message<0x7f2dd8025840> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.191 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.191 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.191 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.191 UTPT:  TASK(0x7f2de31a2700) INFO: conn[0x6] on write data.
+2026/09/22 03:43:17  26-09-22 03:43:17.191 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.191 SIP:  TASK(0x7f2de3180700) INFO: module process tpt event.
+2026/09/22 03:43:17  26-09-22 03:43:17.191 UTPT:  TASK(0x7f2de3180700) INFO: Utpt_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.191 UTPT:  TASK(0x7f2de3180700) INFO: Utpt_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.191 SIP:  TASK(0x7f2de3180700) INFO: tpt conn<0x10007> process data message<0x7f2dd8025840>.
+2026/09/22 03:43:17  26-09-22 03:43:17.191 SIP:  TASK(0x7f2de3180700) INFO: module Sip_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.191 SIP:  TASK(0x7f2de3180700) INFO: module Sip_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.191 SIP:  TASK(0x7f2de3180700) DEBUG: 
+data length: 4032
+data content[text]:
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+NOTIFY sip:[2607:fc20:7e70:92d0:ac39:52c3:6658:b61]:5157;transport=tcp SIP/2.0
+Via: SIP/2.0/TCP [fd00:976a:2:550::5]:65529;branch=z9hG4bKg3Zqkv7ihy7rj8vxmrhm85g3fe2fx1pqy;eric_th_id=1;be-route=MTkyLjE2OC4yMi44OjgwODA
+Max-Forwards: 69
+Contact: <sip:974EEBBEEBFA5C2E3609D4B18C0F5842AEB090F29B018E17D62C5DA1909C1B425F0C138A8FEA09C3274E00FE038B52370CA42B7C1D7E97A1012E703404765C43896FDC7F25DBC0A4AC00F655B41F458E9CB07118349D3626B960869B984A661F494FD0AE3E732C5F2546D6A984C71B78EA84BF5657C72636327A9C8889E8AD62D2702ADB8A86D596F192941063FFE0EF25C4C9541CADA69E6443EE741D7BCC68E4941131F9E08E347FCCC2E0D8109A385F3AD169FC2DAE983B17C0D505C73A392381137B50065AA89FD476F7E52122A38ECDDAB86CC3DE67BED7C7C487266D0B@th.bpatf403.sip.t-mobile.com;tokenized-by=th.bpatf403.sip.t-mobile.com;ivec=281B93866347B0E2A25554F2EFFC5C13>
+To: <sip:+14172278115@ims.mnc240.mcc310.3gppnetwork.org>;tag=1tPwH1HGxJ7.DO6VhiHrosC321
+From: <sip:+14172278115@ims.mnc240.mcc310.3gppnetwork.org>;tag=h7g4Esbg_mavodi-0-4d-1303-7-ffffffff-220004-ffffffffffffffff-e3f40000-6a2eb345-_49749da-6ab1d62c-600e5
+Call-ID: 9J311HGxJ7.DO6VhiHrosB321M@[2607:fc20:7e70:92d0:ac39:52c3:6658:b61]
+CSeq: 9 NOTIFY
+Allow: INVITE, BYE, CANCEL, ACK, SUBSCRIBE, NOTIFY, PUBLISH, MESSAGE, REFER, REGISTER, UPDATE
+Content-Type: application/reginfo+xml
+Subscription-State: active;expires=1155
+Event: reg
+Eric-Sbg-Thid: nfwkf;pch7l
+Content-Length: 2632
+
+<?xml version="1.0"?>
+<reginfo xmlns="urn:ietf:params:xml:ns:reginfo" xmlns:cp="urn:ietf:params:xml:ns:common-policy" xmlns:eri="urn:3gpp:ns:extRegInfo:1.0" version="7" state="full">
+        <registration aor="sip:14172278115@msg.pc.t-mobile.com" id="2" state="active">
+                <contact id="4" state="active" event="refreshed" expires="3600">
+                        <uri>sip:62161274720184@10.166.156.1:5060;transport=udp;EriBindingId=62161274720184;eribind-generated-at=10.166.156.1</uri>
+                        <unknown-param name="+sip.instance">&quot;&lt;urn:gsma:imei:35297335-835639-4&gt;&quot; </unknown-param>
+                        <unknown-param name="audio" />
+                        <unknown-param name="+g.3gpp.icsi-ref">&quot;urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel&quot; </unknown-param>
+                        <unknown-param name="+g.3gpp.smsip" />
+                </contact>
+        </registration>
+        <registration aor="sip:+14172278115@ims.mnc240.mcc310.3gppnetwork.org" id="3" state="active">
+                <contact id="4" state="active" event="refreshed" expires="3600">
+                        <uri>sip:62161274720184@10.166.156.1:5060;transport=udp;EriBindingId=62161274720184;eribind-generated-at=10.166.156.1</uri>
+                        <unknown-param name="+sip.instance">&quot;&lt;urn:gsma:imei:35297335-835639-4&gt;&quot; </unknown-param>
+                        <unknown-param name="audio" />
+                        <unknown-param name="+g.3gpp.icsi-ref">&quot;urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel&quot; </unknown-param>
+                        <unknown-param name="+g.3gpp.smsip" />
+                </contact>
+        </registration>
+        <registration aor="sip:310240389277421@ims.mnc240.mcc310.3gppnetwork.org" id="4" state="active">
+                <contact id="4" state="active" event="refreshed" expires="3600">
+                        <uri>sip:62161274720184@10.166.156.1:5060;transport=udp;EriBindingId=62161274720184;eribind-generated-at=10.166.156.1</uri>
+                        <unknown-param name="+sip.instance">&quot;&lt;urn:gsma:imei:35297335-835639-4&gt;&quot; </unknown-param>
+                        <unknown-param name="audio" />
+                        <unknown-param name="+g.3gpp.icsi-ref">&quot;urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel&quot; </unknown-param>
+                        <unknown-param name="+g.3gpp.smsip" />
+                </contact>
+        </registration>
+        <registration aor="sip:+14172278115@msg.pc.t-mobile.com" id="5" state="active">
+                <contact id="4" state="active" event="refreshed" expires="3600">
+                        <uri>sip:62161274720184@10.166.156.1:5060;transport=udp;EriBindingId=62161274720184;eribind-generated-at=10.166.156.1</uri>
+                        <unknown-param name="+sip.instance">&quot;&lt;urn:gsma:imei:35297335-835639-4&gt;&quot; </unknown-param>
+                        <unknown-param name="audio" />
+                        <unknown-param name="+g.3gpp.icsi-ref">&quot;urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel&quot; </unknown-param>
+                        <unknown-param name="+g.3gpp.smsip" />
+                </contact>
+        </registration>
+</reginfo>
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2026/09/22 03:43:17  26-09-22 03:43:17.191 ZOS:  TASK(0x7f2de3180700) DEBUG: UserInfo decode iRet=1, 0
+2026/09/22 03:43:17  26-09-22 03:43:17.191 ZOS:  TASK(0x7f2de3180700) DEBUG: UserInfo decode iRet=0, 448
+2026/09/22 03:43:17  26-09-22 03:43:17.192 ZOS:  TASK(0x7f2de3180700) DEBUG: UserInfo decode iRet=0, 12
+2026/09/22 03:43:17  26-09-22 03:43:17.192 ZOS:  TASK(0x7f2de3180700) DEBUG: UserInfo decode iRet=0, 12
+2026/09/22 03:43:17  26-09-22 03:43:17.192 SIP:  TASK(0x7f2de3180700) INFO: module TptMsgProc process incoming event.
+2026/09/22 03:43:17  26-09-22 03:43:17.192 SIP:  TASK(0x7f2de3180700) INFO: trans TransPreProcEvnt preprocess new trans event.
+2026/09/22 03:43:17  26-09-22 03:43:17.192 ZOS:  TASK(0x7f2de3180700) INFO: qtimer create task<0x6> timer<86> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.192 SIP:  TASK(0x7f2de3180700) INFO: module create tmr<0x56> [TIMER J] ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.192 ZOS:  TASK(0x7f2de3180700) INFO: qtimer create task<0x6> timer<87> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.192 SIP:  TASK(0x7f2de3180700) INFO: module create tmr<0x57> [TIMER C] ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.192 SIP:  TASK(0x7f2de3180700) INFO: trans @10007 created.
+2026/09/22 03:43:17  26-09-22 03:43:17.192 SIP:  TASK(0x7f2de3180700) INFO: trans TransNewPreProcEvnt trans create.
+2026/09/22 03:43:17  26-09-22 03:43:17.192 SIP:  TASK(0x7f2de3180700) INFO: trans @10007 process request <NOTIFY>.
+2026/09/22 03:43:17  26-09-22 03:43:17.192 SIP:  TASK(0x7f2de3180700) INFO: module start tmr<0x57> [TIMER C] <180000ms> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.192 SIP:  TASK(0x7f2de3180700) INFO: trans @10007 report event [RECV NONINVITE].
+2026/09/22 03:43:17  26-09-22 03:43:17.192 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_NIST) trans@[65543] state <IDLE> run [RECV_NONINVITE] event ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.192 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_NIST) trans@[65543] state <IDLE> to <TRYING>.
+2026/09/22 03:43:17  26-09-22 03:43:17.192 SIP:  TASK(0x7f2de3180700) INFO: module TptMsgProc process event queue.
+2026/09/22 03:43:17  26-09-22 03:43:17.192 SIP:  TASK(0x7f2de3180700) INFO: core event queue process the next event.
+2026/09/22 03:43:17  26-09-22 03:43:17.192 SIP:  TASK(0x7f2de3180700) INFO: dlg DlgProcEvnt preprocess subscription event.
+2026/09/22 03:43:17  26-09-22 03:43:17.192 SIP:  TASK(0x7f2de3180700) INFO: dlg sub@80010005 process event [RECV NTFY].
+2026/09/22 03:43:17  26-09-22 03:43:17.192 SIP:  TASK(0x7f2de3180700) INFO: dlg sub@80010005 process request <NOTIFY>.
+2026/09/22 03:43:17  26-09-22 03:43:17.192 SIP:  TASK(0x7f2de3180700) INFO: module stop tmr<0x1A> [TIMER SUBS] ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.192 SIP:  TASK(0x7f2de3180700) INFO: module start tmr<0x1A> [TIMER SUBS] <1155000ms> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.192 SIP:  TASK(0x7f2de3180700) INFO: dlg sub@80010005 report event.
+2026/09/22 03:43:17  26-09-22 03:43:17.192 SIP:  TASK(0x7f2de3180700) INFO: core report event [DAM IND].
+2026/09/22 03:43:17  26-09-22 03:43:17.192 SIP:  TASK(0x7f2de3180700) INFO: core -->comp@19394404 evnt@12 method@8.
+2026/09/22 03:43:17  26-09-22 03:43:17.192 SIP:  TASK(0x7f2de3180700) INFO: core -->upper sess@10003 <----> sess user id@12.
+2026/09/22 03:43:17  26-09-22 03:43:17.192 SIP:  TASK(0x7f2de3180700) INFO: core -->upper dlg@80010005 <----> dlg user id@ffffffff.
+2026/09/22 03:43:17  26-09-22 03:43:17.192 SIP:  TASK(0x7f2de3180700) INFO: core -->upper trans@10007 <----> trans user id@ffffffff.
+2026/09/22 03:43:17  26-09-22 03:43:17.192 SIP:  TASK(0x7f2de3180700) INFO: core sess@10003 UaReportDamInd report.
+2026/09/22 03:43:17  26-09-22 03:43:17.192 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_SUBS) subs@[2147549189] state <SUBS_OUT> run [RECV_NTFY] event ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.192 SIP:  TASK(0x7f2de3180700) INFO: core event queue process the last event.
+2026/09/22 03:43:17  26-09-22 03:43:17.192 SIP:  TASK(0x7f2de3180700) INFO: module MsgDelete msg 0x7f2dc002c350.
+2026/09/22 03:43:17  26-09-22 03:43:17.192 SIP:  TASK(0x7f2de3180700) INFO: module MsgDelete msg 0x7f2dc002c350.
+2026/09/22 03:43:17  26-09-22 03:43:17.192 SIP:  TASK(0x7f2de3180700) INFO: module TptMsgProc check tpt alive.
+2026/09/22 03:43:17  26-09-22 03:43:17.192 SIP:  TASK(0x7f2de3180700) INFO: module Sip_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.193 SIP:  TASK(0x7f2de3180700) INFO: module Sip_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.193 MRF:  TASK(0x7f2de316f700) INFO: subs process [DAM IND].
+2026/09/22 03:43:17  26-09-22 03:43:17.193 SIP:  TASK(0x7f2de316f700) INFO: module MsgCreate dbuf 0x7f2dc000d390 msg 0x7f2dd80431c0.
+2026/09/22 03:43:17  26-09-22 03:43:17.193 MSF:  TASK(0x7f2de316f700) INFO: TmrStop stop <16> [WAIT NOTIFY] ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.193 MRF:  TASK(0x7f2de316f700) INFO: endp notify [FSM SUBSCRIBE NOTIFY].
+2026/09/22 03:43:17  26-09-22 03:43:17.193 MSF:  TASK(0x7f2de316f700) INFO: TmrStart start <0x0016> timer [SUBS REFRESH] 577s ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.193 ZOS:  TASK(0x7f2de316f700) INFO: fsm(MRF_SUBS) subs@[18] state <RESUBS> run [DAM IND] event ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.193 ZOS:  TASK(0x7f2de316f700) INFO: fsm(MRF_SUBS) subs@[18] state <RESUBS> to <CONFIRMED>.
+2026/09/22 03:43:17  26-09-22 03:43:17.193 MSF:  TASK(0x7f2de316f700) INFO: comp<MRF> proc evnt.
+2026/09/22 03:43:17  26-09-22 03:43:17.193 MSF:  TASK(0x7f2de316f700) INFO: event queue run event.
+2026/09/22 03:43:17  26-09-22 03:43:17.193 MRF:  TASK(0x7f2de316f700) INFO: register [17] process [FSM SUBSCRIBE NOTIFY] state [3].
+2026/09/22 03:43:17  26-09-22 03:43:17.193 ZOS:  TASK(0x7f2de316f700) INFO: fsm(MRF_REG) reg@[17] state <REGED> run [FSM SUBSCRIBE NOTIFY] event ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.193 SIP:  TASK(0x7f2de316f700) INFO: module Sip_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.193 SIP:  TASK(0x7f2de316f700) INFO: module MsgDelete msg 0x7f2dc002c350.
+2026/09/22 03:43:17  26-09-22 03:43:17.193 SIP:  TASK(0x7f2de316f700) INFO: module Sip_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.193 SIP:  TASK(0x7f2de3180700) INFO: module process user event.
+2026/09/22 03:43:17  26-09-22 03:43:17.193 SIP:  TASK(0x7f2de3180700) INFO: core process event [DAM RSP].
+2026/09/22 03:43:17  26-09-22 03:43:17.193 SIP:  TASK(0x7f2de3180700) INFO: core -->me comp@19394404 evnt@30 method@8.
+2026/09/22 03:43:17  26-09-22 03:43:17.193 SIP:  TASK(0x7f2de3180700) INFO: core -->me sess@10003 <----> sess user id@12.
+2026/09/22 03:43:17  26-09-22 03:43:17.193 SIP:  TASK(0x7f2de3180700) INFO: core -->me dlg@80010005 <----> dlg user id@12.
+2026/09/22 03:43:17  26-09-22 03:43:17.193 SIP:  TASK(0x7f2de3180700) INFO: core -->me trans@10007 <----> trans user id@ffffffff.
+2026/09/22 03:43:17  26-09-22 03:43:17.193 SIP:  TASK(0x7f2de3180700) INFO: core UaSEvntToMEvnt exist sess.
+2026/09/22 03:43:17  26-09-22 03:43:17.193 SIP:  TASK(0x7f2de3180700) INFO: core UaSEvntToMEvnt exist sess@10003 dlg@10004 call@10002.
+2026/09/22 03:43:17  26-09-22 03:43:17.193 SIP:  TASK(0x7f2de3180700) INFO: core UaSEvntToMEvnt exist trans@10007.
+2026/09/22 03:43:17  26-09-22 03:43:17.193 SIP:  TASK(0x7f2de3180700) DEBUG: core UaSEvntToMEvnt tpt type<3> [2607:fc20:7e70:92d0:ac39:52c3:6658:b61]:38851 -> [fd00:976a:2:550::5]:65529.
+2026/09/22 03:43:17  26-09-22 03:43:17.194 SIP:  TASK(0x7f2de3180700) INFO: core sess@10003 UasProcDamRsp process.
+2026/09/22 03:43:17  26-09-22 03:43:17.194 SIP:  TASK(0x7f2de3180700) INFO: dlg DlgProcEvnt preprocess subscription event.
+2026/09/22 03:43:17  26-09-22 03:43:17.194 SIP:  TASK(0x7f2de3180700) INFO: dlg sub@80010005 process event [DAM RSP].
+2026/09/22 03:43:17  26-09-22 03:43:17.194 SIP:  TASK(0x7f2de3180700) INFO: dlg sub@80010005 process response <NOTIFY:200>.
+2026/09/22 03:43:17  26-09-22 03:43:17.194 SIP:  TASK(0x7f2de3180700) INFO: module stop tmr<0x1A> [TIMER SUBS] ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.194 SIP:  TASK(0x7f2de3180700) INFO: module start tmr<0x1A> [TIMER SUBS] <3660ms> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.194 SIP:  TASK(0x7f2de3180700) INFO: dlg sub@80010005 SubsdSubsOutOnSubsRsp notify event to trans.
+2026/09/22 03:43:17  26-09-22 03:43:17.194 SIP:  TASK(0x7f2de3180700) INFO: dlg @10004 notify event [SEND 2XX].
+2026/09/22 03:43:17  26-09-22 03:43:17.194 SIP:  TASK(0x7f2de3180700) DEBUG: dlg @10004 notify event [SEND 2XX] addr<[2607:fc20:7e70:92d0:ac39:52c3:6658:b61]:38851>.
+2026/09/22 03:43:17  26-09-22 03:43:17.194 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_SUBS) subs@[2147549189] state <SUBS_OUT> run [DAM_RSP] event ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.194 SIP:  TASK(0x7f2de3180700) INFO: module MsgDelete msg 0x7f2dd80431c0.
+2026/09/22 03:43:17  26-09-22 03:43:17.194 SIP:  TASK(0x7f2de3180700) INFO: module CoreSessMsgProc process event queue.
+2026/09/22 03:43:17  26-09-22 03:43:17.194 SIP:  TASK(0x7f2de3180700) INFO: core event queue process the next event.
+2026/09/22 03:43:17  26-09-22 03:43:17.194 SIP:  TASK(0x7f2de3180700) INFO: trans @10007 process response <NOTIFY:200>.
+2026/09/22 03:43:17  26-09-22 03:43:17.194 SIP:  TASK(0x7f2de3180700) INFO: module Sip_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.194 SIP:  TASK(0x7f2de3180700) INFO: module Sip_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.194 SIP:  TASK(0x7f2de3180700) DEBUG: 
+data length: 613
+data content[text]:
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+SIP/2.0 200 OK
+From:<sip:+14172278115@ims.mnc240.mcc310.3gppnetwork.org>;tag=h7g4Esbg_mavodi-0-4d-1303-7-ffffffff-220004-ffffffffffffffff-e3f40000-6a2eb345-_49749da-6ab1d62c-600e5
+To:<sip:+14172278115@ims.mnc240.mcc310.3gppnetwork.org>;tag=1tPwH1HGxJ7.DO6VhiHrosC321
+Supported:100rel,path,replaces
+Call-ID:9J311HGxJ7.DO6VhiHrosB321M@[2607:fc20:7e70:92d0:ac39:52c3:6658:b61]
+CSeq:9 NOTIFY
+Max-Forwards:70
+Server:SIP/1.0
+Via:SIP/2.0/TCP [fd00:976a:2:550::5]:65529;branch=z9hG4bKg3Zqkv7ihy7rj8vxmrhm85g3fe2fx1pqy;eric_th_id=1;be-route=MTkyLjE2OC4yMi44OjgwODA;received=fd00:976a:2:550::5
+Content-Length:0
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2026/09/22 03:43:17  26-09-22 03:43:17.194 ZOS:  TASK(0x7f2de3180700) DEBUG: UserInfo decode iRet=0, 12
+2026/09/22 03:43:17  26-09-22 03:43:17.194 ZOS:  TASK(0x7f2de3180700) DEBUG: UserInfo decode iRet=0, 12
+2026/09/22 03:43:17  parse_sip_method first line: SIP/2.0 200 OK
+2026/09/22 03:43:17  parse_sip_method status_code: 200
+2026/09/22 03:43:17  ims send parse_sip_method 200 OK
+2026/09/22 03:43:17  ims send extract_cseq_and_method UNKNOWN cseq 9
+2026/09/22 03:43:17  process_ims_message: 7-1-0
+2026/09/22 03:43:17  IMS 忽略非呼叫事务的200 OK
+2026/09/22 03:43:17  26-09-22 03:43:17.194 UTPT:  TASK(0x7f2de3180700) INFO: Send Before Lock id[0x6].
+2026/09/22 03:43:17  26-09-22 03:43:17.194 UTPT:  TASK(0x7f2de3180700) INFO: Utpt_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.194 UTPT:  TASK(0x7f2de3180700) INFO: Send After Lock id[0x6].
+2026/09/22 03:43:17  26-09-22 03:43:17.194 UTPT:  TASK(0x7f2de3180700) INFO: Send Before Socket id[0x6].
+2026/09/22 03:43:17  26-09-22 03:43:17.194 UTPT:  TASK(0x7f2de3180700) INFO: Send After Socket id[0x6].
+2026/09/22 03:43:17  26-09-22 03:43:17.194 UTPT:  TASK(0x7f2de3180700) INFO: Utpt_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.194 UTPT:  TASK(0x7f2de3180700) DEBUG: conn[0x6] send data[613] to [fd00:976a:2:550::5:65529] ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.194 SIP:  TASK(0x7f2de3180700) INFO: tpt conn<0x10007> send message ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.194 SIP:  TASK(0x7f2de3180700) INFO: module MsgDelete msg 0x7f2dc002c350.
+2026/09/22 03:43:17  26-09-22 03:43:17.194 SIP:  TASK(0x7f2de3180700) INFO: module stop tmr<0x57> [TIMER C] ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.194 SIP:  TASK(0x7f2de3180700) INFO: module start tmr<0x56> [TIMER J] <500ms> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.194 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_NIST) trans@[65543] state <TRYING> run [SEND_2XX] event ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.194 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_NIST) trans@[65543] state <TRYING> to <COMPLETED>.
+2026/09/22 03:43:17  26-09-22 03:43:17.195 SIP:  TASK(0x7f2de3180700) INFO: core event queue process the last event.
+2026/09/22 03:43:17  26-09-22 03:43:17.195 SIP:  TASK(0x7f2de3180700) INFO: module MsgDelete msg 0x7f2dd80431c0.
+2026/09/22 03:43:17  26-09-22 03:43:17.304 ZOS:  TASK(0x7f2de31c4700) INFO: SockTaskEpollEntry socket[30] iProtoType[1] iTerType[0] iTcpStatType[2] recv data.
+2026/09/22 03:43:17  26-09-22 03:43:17.305 ZOS:  TASK(0x7f2de31c4700) INFO: SockTaskEpollEntry socket[30] iProtoType[1] iTerType[0] iTcpStatType[2] send data.
+2026/09/22 03:43:17  26-09-22 03:43:17.305 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.305 UTPT:  TASK(0x7f2de31a2700) DEBUG: recv tcp data(len:1166) from [fd00:976a:2:550::5:65529].
+2026/09/22 03:43:17  26-09-22 03:43:17.305 UTPT:  TASK(0x7f2de31a2700) INFO: ConnProcTcpData conn[0x6] of user[65543].
+2026/09/22 03:43:17  26-09-22 03:43:17.305 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.305 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.305 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresUnlock.
+2026/09/22 03:43:17  parse_sip_method first line: SIP/2.0 200 OK
+2026/09/22 03:43:17  parse_sip_method status_code: 200
+2026/09/22 03:43:17  ims recv parse_sip_method 7:200 OK
+2026/09/22 03:43:17  ims recv extract_cseq_and_method 7:200 OK UNKNOWN cseq 6
+2026/09/22 03:43:17  ims recv process_ims_message 7:200 OK
+2026/09/22 03:43:17  process_ims_message: 7-1-0
+2026/09/22 03:43:17  IMS 忽略非呼叫事务的200 OK
+2026/09/22 03:43:17  26-09-22 03:43:17.305 SIP:  TASK(0x7f2de31a2700) INFO: tpt utpt[6] of conn<0x10007> report data message<0x7f2dd80258d0> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.305 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.305 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.305 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.305 UTPT:  TASK(0x7f2de31a2700) INFO: conn[0x6] on write data.
+2026/09/22 03:43:17  26-09-22 03:43:17.305 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.306 SIP:  TASK(0x7f2de3180700) INFO: module process tpt event.
+2026/09/22 03:43:17  26-09-22 03:43:17.306 UTPT:  TASK(0x7f2de3180700) INFO: Utpt_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.306 UTPT:  TASK(0x7f2de3180700) INFO: Utpt_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.306 SIP:  TASK(0x7f2de3180700) INFO: tpt conn<0x10007> process data message<0x7f2dd80258d0>.
+2026/09/22 03:43:17  26-09-22 03:43:17.306 SIP:  TASK(0x7f2de3180700) INFO: module Sip_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.306 SIP:  TASK(0x7f2de3180700) INFO: module Sip_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.306 SIP:  TASK(0x7f2de3180700) DEBUG: 
+data length: 1166
+data content[text]:
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+SIP/2.0 200 OK
+Via: SIP/2.0/TCP [2607:fc20:7e70:92d0:ac39:52c3:6658:b61]:5157;received=2607:fc20:7e70:92d0:ac39:52c3:6658:b61;rport=38851;branch=z9hG4bK*2hiDu6QO3211tPwI3J0tN3*ea
+Contact: <sip:974EEBBEEBFA5C2E3609D4B18C0F5842AEB090F29B018E17D62C5DA1909C1B425F0C138A8FEA09C3274E00FE038B52370CA42B7C1D7E97A1012E703404765C43896FDC7F25DBC0A4AC00F655B41F458E9CB07118349D3626B960869B984A661F494FD0AE3E732C5F2546D6A984C71B78EA84BF5657C72636327A9C8889E8AD62D2702ADB8A86D596F192941063FFE0EF25C4C9541CADA69E6443EE741D7BCC68E4941131F9E08E347FCCC2E0D8109A385F3AD169FC2DAE983B17C0D505C73A392381137B50065AA89FD476F7E52122A38ECDDAB86CC3DE67BED7C7C487266D0B@th.bpatf403.sip.t-mobile.com;tokenized-by=th.bpatf403.sip.t-mobile.com;ivec=281B93866347B0E2A25554F2EFFC5C13>
+To: <sip:+14172278115@ims.mnc240.mcc310.3gppnetwork.org>;tag=h7g4Esbg_mavodi-0-4d-1303-7-ffffffff-220004-ffffffffffffffff-e3f40000-6a2eb345-_49749da-6ab1d62c-600e5
+From: <sip:+14172278115@ims.mnc240.mcc310.3gppnetwork.org>;tag=1tPwH1HGxJ7.DO6VhiHrosC321
+Call-ID: 9J311HGxJ7.DO6VhiHrosB321M@[2607:fc20:7e70:92d0:ac39:52c3:6658:b61]
+CSeq: 6 SUBSCRIBE
+Expires: 3660
+Eric-Sbg-Thid: pch7l
+Content-Length: 0
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2026/09/22 03:43:17  26-09-22 03:43:17.306 ZOS:  TASK(0x7f2de3180700) DEBUG: UserInfo decode iRet=0, 448
+2026/09/22 03:43:17  26-09-22 03:43:17.306 ZOS:  TASK(0x7f2de3180700) DEBUG: UserInfo decode iRet=0, 12
+2026/09/22 03:43:17  26-09-22 03:43:17.306 ZOS:  TASK(0x7f2de3180700) DEBUG: UserInfo decode iRet=0, 12
+2026/09/22 03:43:17  26-09-22 03:43:17.307 SIP:  TASK(0x7f2de3180700) INFO: module TptMsgProc process incoming event.
+2026/09/22 03:43:17  26-09-22 03:43:17.307 SIP:  TASK(0x7f2de3180700) INFO: trans TransPreProcEvnt preprocess old trans event.
+2026/09/22 03:43:17  26-09-22 03:43:17.307 ZOS:  TASK(0x7f2de3180700) WARN: BkFromId invalid id[0x80010002].
+2026/09/22 03:43:17  26-09-22 03:43:17.307 ZOS:  TASK(0x7f2de3180700) DEBUG: Page 32768/10, Slot 1/2
+2026/09/22 03:43:17  26-09-22 03:43:17.307 SIP:  TASK(0x7f2de3180700) INFO: trans @10008 process response <SUBSCRIBE:200>.
+2026/09/22 03:43:17  26-09-22 03:43:17.307 SIP:  TASK(0x7f2de3180700) INFO: module stop tmr<0x52> [TIMER F] ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.307 SIP:  TASK(0x7f2de3180700) INFO: trans @10008 report event [RECV 2XX].
+2026/09/22 03:43:17  26-09-22 03:43:17.307 SIP:  TASK(0x7f2de3180700) INFO: module Sip_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.307 SIP:  TASK(0x7f2de3180700) INFO: module Sip_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.307 SIP:  TASK(0x7f2de3180700) INFO: module start tmr<0x53> [TIMER K] <500ms> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.307 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_NICT) trans@[65544] state <TRYING> run [RECV_2XX] event ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.307 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_NICT) trans@[65544] state <TRYING> to <COMPLETED>.
+2026/09/22 03:43:17  26-09-22 03:43:17.307 SIP:  TASK(0x7f2de3180700) INFO: module TptMsgProc process event queue.
+2026/09/22 03:43:17  26-09-22 03:43:17.307 SIP:  TASK(0x7f2de3180700) INFO: core event queue process the next event.
+2026/09/22 03:43:17  26-09-22 03:43:17.307 SIP:  TASK(0x7f2de3180700) INFO: core sess@10003 UacProcDamCnf process.
+2026/09/22 03:43:17  26-09-22 03:43:17.307 SIP:  TASK(0x7f2de3180700) INFO: dlg DlgProcEvnt preprocess subscription event.
+2026/09/22 03:43:17  26-09-22 03:43:17.307 SIP:  TASK(0x7f2de3180700) INFO: dlg sub@80010005 process event [RECV SUBS RSP].
+2026/09/22 03:43:17  26-09-22 03:43:17.307 SIP:  TASK(0x7f2de3180700) INFO: dlg sub@80010005 process response <SUBSCRIBE:200>.
+2026/09/22 03:43:17  26-09-22 03:43:17.307 SIP:  TASK(0x7f2de3180700) INFO: module stop tmr<0x1A> [TIMER SUBS] ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.307 SIP:  TASK(0x7f2de3180700) INFO: module start tmr<0x1A> [TIMER SUBS] <3660000ms> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.307 SIP:  TASK(0x7f2de3180700) INFO: dlg sub@80010005 report event.
+2026/09/22 03:43:17  26-09-22 03:43:17.307 SIP:  TASK(0x7f2de3180700) INFO: core report event [DAM CNF].
+2026/09/22 03:43:17  26-09-22 03:43:17.307 SIP:  TASK(0x7f2de3180700) INFO: core -->comp@19394404 evnt@11 method@7.
+2026/09/22 03:43:17  26-09-22 03:43:17.307 SIP:  TASK(0x7f2de3180700) INFO: core -->upper sess@10003 <----> sess user id@12.
+2026/09/22 03:43:17  26-09-22 03:43:17.307 SIP:  TASK(0x7f2de3180700) INFO: core -->upper dlg@80010005 <----> dlg user id@ffffffff.
+2026/09/22 03:43:17  26-09-22 03:43:17.307 SIP:  TASK(0x7f2de3180700) INFO: core -->upper trans@10008 <----> trans user id@0.
+2026/09/22 03:43:17  26-09-22 03:43:17.307 SIP:  TASK(0x7f2de3180700) INFO: core sess@10003 UaReportDamCnf report.
+2026/09/22 03:43:17  26-09-22 03:43:17.307 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_SUBS) subs@[2147549189] state <SUBS_OUT> run [RECV_SUBS_RSP] event ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.307 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_SUBS) subs@[2147549189] state <SUBS_OUT> to <CONFIRMED>.
+2026/09/22 03:43:17  26-09-22 03:43:17.307 SIP:  TASK(0x7f2de3180700) INFO: core event queue process the last event.
+2026/09/22 03:43:17  26-09-22 03:43:17.307 SIP:  TASK(0x7f2de3180700) INFO: module MsgDelete msg 0x7f2dc002d740.
+2026/09/22 03:43:17  26-09-22 03:43:17.307 SIP:  TASK(0x7f2de3180700) INFO: module MsgDelete msg 0x7f2dc002d740.
+2026/09/22 03:43:17  26-09-22 03:43:17.307 SIP:  TASK(0x7f2de3180700) INFO: module TptMsgProc check tpt alive.
+2026/09/22 03:43:17  26-09-22 03:43:17.307 SIP:  TASK(0x7f2de3180700) INFO: module Sip_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.307 SIP:  TASK(0x7f2de3180700) INFO: module Sip_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.308 ZOS:  TASK(0x7f2de31c4700) INFO: SockTaskEpollEntry socket[30] iProtoType[1] iTerType[0] iTcpStatType[2] recv data.
+2026/09/22 03:43:17  26-09-22 03:43:17.308 ZOS:  TASK(0x7f2de31c4700) INFO: SockTaskEpollEntry socket[30] iProtoType[1] iTerType[0] iTcpStatType[2] send data.
+2026/09/22 03:43:17  26-09-22 03:43:17.308 MRF:  TASK(0x7f2de316f700) INFO: CompProcRsp recv subs rsp<200>
+2026/09/22 03:43:17  26-09-22 03:43:17.308 MRF:  TASK(0x7f2de316f700) INFO: subs process [DAM CNF].
+2026/09/22 03:43:17  26-09-22 03:43:17.308 ZOS:  TASK(0x7f2de316f700) INFO: fsm(MRF_SUBS) subs@[18] state <CONFIRMED> run [DAM CNF] event ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.308 MSF:  TASK(0x7f2de316f700) INFO: comp<MRF> proc evnt.
+2026/09/22 03:43:17  26-09-22 03:43:17.308 SIP:  TASK(0x7f2de316f700) INFO: module Sip_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.308 SIP:  TASK(0x7f2de316f700) INFO: module MsgDelete msg 0x7f2dc002d740.
+2026/09/22 03:43:17  26-09-22 03:43:17.308 SIP:  TASK(0x7f2de316f700) INFO: module Sip_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.308 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.308 UTPT:  TASK(0x7f2de31a2700) DEBUG: recv tcp data(len:2332) from [fd00:976a:2:550::5:65529].
+2026/09/22 03:43:17  26-09-22 03:43:17.308 UTPT:  TASK(0x7f2de31a2700) INFO: ConnProcTcpData conn[0x6] of user[65543].
+2026/09/22 03:43:17  26-09-22 03:43:17.308 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.308 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.308 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.308 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.308 UTPT:  TASK(0x7f2de31a2700) INFO: conn[0x6] on write data.
+2026/09/22 03:43:17  26-09-22 03:43:17.308 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.352 ZOS:  TASK(0x7f2de31c4700) INFO: SockTaskEpollEntry socket[30] iProtoType[1] iTerType[0] iTcpStatType[2] recv data.
+2026/09/22 03:43:17  26-09-22 03:43:17.352 ZOS:  TASK(0x7f2de31c4700) INFO: SockTaskEpollEntry socket[30] iProtoType[1] iTerType[0] iTcpStatType[2] send data.
+2026/09/22 03:43:17  26-09-22 03:43:17.352 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.352 UTPT:  TASK(0x7f2de31a2700) DEBUG: recv tcp data(len:1701) from [fd00:976a:2:550::5:65529].
+2026/09/22 03:43:17  26-09-22 03:43:17.352 UTPT:  TASK(0x7f2de31a2700) INFO: ConnProcTcpData conn[0x6] of user[65543].
+2026/09/22 03:43:17  26-09-22 03:43:17.352 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresUnlock.
+2026/09/22 03:43:17  parse_sip_method first line: NOTIFY sip:[2607:fc20:7e70:92d0:ac39:52c3:6658:b61]:5157;transport=tcp SIP/2.0
+2026/09/22 03:43:17  ims recv parse_sip_method 22:NOTIFY
+2026/09/22 03:43:17  ims recv extract_cseq_and_method 22:NOTIFY UNKNOWN cseq 10
+2026/09/22 03:43:17  ims recv process_ims_message 22:NOTIFY
+2026/09/22 03:43:17  process_ims_message: 22-0-0
+2026/09/22 03:43:17  IMS 忽略非呼叫消息: NOTIFY
+2026/09/22 03:43:17  26-09-22 03:43:17.353 SIP:  TASK(0x7f2de31a2700) INFO: tpt utpt[6] of conn<0x10007> report data message<0x7f2dc000d468> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.353 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.353 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.353 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.353 UTPT:  TASK(0x7f2de31a2700) INFO: conn[0x6] on write data.
+2026/09/22 03:43:17  26-09-22 03:43:17.353 UTPT:  TASK(0x7f2de31a2700) INFO: Utpt_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.353 SIP:  TASK(0x7f2de3180700) INFO: module process tpt event.
+2026/09/22 03:43:17  26-09-22 03:43:17.353 UTPT:  TASK(0x7f2de3180700) INFO: Utpt_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.353 UTPT:  TASK(0x7f2de3180700) INFO: Utpt_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.353 SIP:  TASK(0x7f2de3180700) INFO: tpt conn<0x10007> process data message<0x7f2dc000d468>.
+2026/09/22 03:43:17  26-09-22 03:43:17.353 SIP:  TASK(0x7f2de3180700) INFO: module Sip_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.353 SIP:  TASK(0x7f2de3180700) INFO: module Sip_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.353 SIP:  TASK(0x7f2de3180700) DEBUG: 
+data length: 4033
+data content[text]:
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+NOTIFY sip:[2607:fc20:7e70:92d0:ac39:52c3:6658:b61]:5157;transport=tcp SIP/2.0
+Via: SIP/2.0/TCP [fd00:976a:2:550::5]:65529;branch=z9hG4bKg3Zqkv7iqbsgc2h3324fzmizlwc5buykv;eric_th_id=1;be-route=MTkyLjE2OC4yMi44OjgwODA
+Max-Forwards: 69
+Contact: <sip:974EEBBEEBFA5C2E3609D4B18C0F5842AEB090F29B018E17D62C5DA1909C1B425F0C138A8FEA09C3274E00FE038B52370CA42B7C1D7E97A1012E703404765C43896FDC7F25DBC0A4AC00F655B41F458E9CB07118349D3626B960869B984A661F494FD0AE3E732C5F2546D6A984C71B78EA84BF5657C72636327A9C8889E8AD62D2702ADB8A86D596F192941063FFE0EF25C4C9541CADA69E6443EE741D7BCC68E4941131F9E08E347FCCC2E0D8109A385F3AD169FC2DAE983B17C0D505C73A392381137B50065AA89FD476F7E52122A38ECDDAB86CC3DE67BED7C7C487266D0B@th.bpatf403.sip.t-mobile.com;tokenized-by=th.bpatf403.sip.t-mobile.com;ivec=281B93866347B0E2A25554F2EFFC5C13>
+To: <sip:+14172278115@ims.mnc240.mcc310.3gppnetwork.org>;tag=1tPwH1HGxJ7.DO6VhiHrosC321
+From: <sip:+14172278115@ims.mnc240.mcc310.3gppnetwork.org>;tag=h7g4Esbg_mavodi-0-4d-1303-7-ffffffff-220004-ffffffffffffffff-e3f40000-6a2eb345-_49749da-6ab1d62c-600e5
+Call-ID: 9J311HGxJ7.DO6VhiHrosB321M@[2607:fc20:7e70:92d0:ac39:52c3:6658:b61]
+CSeq: 10 NOTIFY
+Allow: INVITE, BYE, CANCEL, ACK, SUBSCRIBE, NOTIFY, PUBLISH, MESSAGE, REFER, REGISTER, UPDATE
+Content-Type: application/reginfo+xml
+Subscription-State: active;expires=3660
+Event: reg
+Eric-Sbg-Thid: nfwkf;pch7l
+Content-Length: 2632
+
+<?xml version="1.0"?>
+<reginfo xmlns="urn:ietf:params:xml:ns:reginfo" xmlns:cp="urn:ietf:params:xml:ns:common-policy" xmlns:eri="urn:3gpp:ns:extRegInfo:1.0" version="8" state="full">
+        <registration aor="sip:14172278115@msg.pc.t-mobile.com" id="2" state="active">
+                <contact id="4" state="active" event="refreshed" expires="3600">
+                        <uri>sip:62161274720184@10.166.156.1:5060;transport=udp;EriBindingId=62161274720184;eribind-generated-at=10.166.156.1</uri>
+                        <unknown-param name="+sip.instance">&quot;&lt;urn:gsma:imei:35297335-835639-4&gt;&quot; </unknown-param>
+                        <unknown-param name="audio" />
+                        <unknown-param name="+g.3gpp.icsi-ref">&quot;urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel&quot; </unknown-param>
+                        <unknown-param name="+g.3gpp.smsip" />
+                </contact>
+        </registration>
+        <registration aor="sip:+14172278115@ims.mnc240.mcc310.3gppnetwork.org" id="3" state="active">
+                <contact id="4" state="active" event="refreshed" expires="3600">
+                        <uri>sip:62161274720184@10.166.156.1:5060;transport=udp;EriBindingId=62161274720184;eribind-generated-at=10.166.156.1</uri>
+                        <unknown-param name="+sip.instance">&quot;&lt;urn:gsma:imei:35297335-835639-4&gt;&quot; </unknown-param>
+                        <unknown-param name="audio" />
+                        <unknown-param name="+g.3gpp.icsi-ref">&quot;urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel&quot; </unknown-param>
+                        <unknown-param name="+g.3gpp.smsip" />
+                </contact>
+        </registration>
+        <registration aor="sip:310240389277421@ims.mnc240.mcc310.3gppnetwork.org" id="4" state="active">
+                <contact id="4" state="active" event="refreshed" expires="3600">
+                        <uri>sip:62161274720184@10.166.156.1:5060;transport=udp;EriBindingId=62161274720184;eribind-generated-at=10.166.156.1</uri>
+                        <unknown-param name="+sip.instance">&quot;&lt;urn:gsma:imei:35297335-835639-4&gt;&quot; </unknown-param>
+                        <unknown-param name="audio" />
+                        <unknown-param name="+g.3gpp.icsi-ref">&quot;urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel&quot; </unknown-param>
+                        <unknown-param name="+g.3gpp.smsip" />
+                </contact>
+        </registration>
+        <registration aor="sip:+14172278115@msg.pc.t-mobile.com" id="5" state="active">
+                <contact id="4" state="active" event="refreshed" expires="3600">
+                        <uri>sip:62161274720184@10.166.156.1:5060;transport=udp;EriBindingId=62161274720184;eribind-generated-at=10.166.156.1</uri>
+                        <unknown-param name="+sip.instance">&quot;&lt;urn:gsma:imei:35297335-835639-4&gt;&quot; </unknown-param>
+                        <unknown-param name="audio" />
+                        <unknown-param name="+g.3gpp.icsi-ref">&quot;urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel&quot; </unknown-param>
+                        <unknown-param name="+g.3gpp.smsip" />
+                </contact>
+        </registration>
+</reginfo>
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2026/09/22 03:43:17  26-09-22 03:43:17.353 ZOS:  TASK(0x7f2de3180700) DEBUG: UserInfo decode iRet=1, 0
+2026/09/22 03:43:17  26-09-22 03:43:17.353 ZOS:  TASK(0x7f2de3180700) DEBUG: UserInfo decode iRet=0, 448
+2026/09/22 03:43:17  26-09-22 03:43:17.354 ZOS:  TASK(0x7f2de3180700) DEBUG: UserInfo decode iRet=0, 12
+2026/09/22 03:43:17  26-09-22 03:43:17.354 ZOS:  TASK(0x7f2de3180700) DEBUG: UserInfo decode iRet=0, 12
+2026/09/22 03:43:17  26-09-22 03:43:17.354 SIP:  TASK(0x7f2de3180700) INFO: module TptMsgProc process incoming event.
+2026/09/22 03:43:17  26-09-22 03:43:17.354 SIP:  TASK(0x7f2de3180700) INFO: trans TransPreProcEvnt preprocess new trans event.
+2026/09/22 03:43:17  26-09-22 03:43:17.354 ZOS:  TASK(0x7f2de3180700) INFO: qtimer create task<0x6> timer<88> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.354 SIP:  TASK(0x7f2de3180700) INFO: module create tmr<0x58> [TIMER J] ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.354 ZOS:  TASK(0x7f2de3180700) INFO: qtimer create task<0x6> timer<89> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.354 SIP:  TASK(0x7f2de3180700) INFO: module create tmr<0x59> [TIMER C] ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.354 SIP:  TASK(0x7f2de3180700) INFO: trans @10006 created.
+2026/09/22 03:43:17  26-09-22 03:43:17.354 SIP:  TASK(0x7f2de3180700) INFO: trans TransNewPreProcEvnt trans create.
+2026/09/22 03:43:17  26-09-22 03:43:17.354 SIP:  TASK(0x7f2de3180700) INFO: trans @10006 process request <NOTIFY>.
+2026/09/22 03:43:17  26-09-22 03:43:17.354 SIP:  TASK(0x7f2de3180700) INFO: module start tmr<0x59> [TIMER C] <180000ms> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.354 SIP:  TASK(0x7f2de3180700) INFO: trans @10006 report event [RECV NONINVITE].
+2026/09/22 03:43:17  26-09-22 03:43:17.354 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_NIST) trans@[65542] state <IDLE> run [RECV_NONINVITE] event ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.354 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_NIST) trans@[65542] state <IDLE> to <TRYING>.
+2026/09/22 03:43:17  26-09-22 03:43:17.354 SIP:  TASK(0x7f2de3180700) INFO: module TptMsgProc process event queue.
+2026/09/22 03:43:17  26-09-22 03:43:17.354 SIP:  TASK(0x7f2de3180700) INFO: core event queue process the next event.
+2026/09/22 03:43:17  26-09-22 03:43:17.354 SIP:  TASK(0x7f2de3180700) INFO: dlg DlgProcEvnt preprocess subscription event.
+2026/09/22 03:43:17  26-09-22 03:43:17.354 SIP:  TASK(0x7f2de3180700) INFO: dlg sub@80010005 process event [RECV NTFY].
+2026/09/22 03:43:17  26-09-22 03:43:17.354 SIP:  TASK(0x7f2de3180700) INFO: dlg sub@80010005 process request <NOTIFY>.
+2026/09/22 03:43:17  26-09-22 03:43:17.354 SIP:  TASK(0x7f2de3180700) INFO: module stop tmr<0x1A> [TIMER SUBS] ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.354 SIP:  TASK(0x7f2de3180700) INFO: module start tmr<0x1A> [TIMER SUBS] <3660000ms> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.354 SIP:  TASK(0x7f2de3180700) INFO: dlg sub@80010005 report event.
+2026/09/22 03:43:17  26-09-22 03:43:17.354 SIP:  TASK(0x7f2de3180700) INFO: core report event [DAM IND].
+2026/09/22 03:43:17  26-09-22 03:43:17.354 SIP:  TASK(0x7f2de3180700) INFO: core -->comp@19394404 evnt@12 method@8.
+2026/09/22 03:43:17  26-09-22 03:43:17.354 SIP:  TASK(0x7f2de3180700) INFO: core -->upper sess@10003 <----> sess user id@12.
+2026/09/22 03:43:17  26-09-22 03:43:17.354 SIP:  TASK(0x7f2de3180700) INFO: core -->upper dlg@80010005 <----> dlg user id@ffffffff.
+2026/09/22 03:43:17  26-09-22 03:43:17.354 SIP:  TASK(0x7f2de3180700) INFO: core -->upper trans@10006 <----> trans user id@ffffffff.
+2026/09/22 03:43:17  26-09-22 03:43:17.354 SIP:  TASK(0x7f2de3180700) INFO: core sess@10003 UaReportDamInd report.
+2026/09/22 03:43:17  26-09-22 03:43:17.354 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_SUBS) subs@[2147549189] state <CONFIRMED> run [RECV_NTFY] event ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.354 SIP:  TASK(0x7f2de3180700) INFO: core event queue process the last event.
+2026/09/22 03:43:17  26-09-22 03:43:17.354 SIP:  TASK(0x7f2de3180700) INFO: module MsgDelete msg 0x7f2dc002cb40.
+2026/09/22 03:43:17  26-09-22 03:43:17.354 SIP:  TASK(0x7f2de3180700) INFO: module MsgDelete msg 0x7f2dc002cb40.
+2026/09/22 03:43:17  26-09-22 03:43:17.354 SIP:  TASK(0x7f2de3180700) INFO: module TptMsgProc check tpt alive.
+2026/09/22 03:43:17  26-09-22 03:43:17.354 SIP:  TASK(0x7f2de3180700) INFO: module Sip_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.354 SIP:  TASK(0x7f2de3180700) INFO: module Sip_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.355 MRF:  TASK(0x7f2de316f700) INFO: subs process [DAM IND].
+2026/09/22 03:43:17  26-09-22 03:43:17.355 SIP:  TASK(0x7f2de316f700) INFO: module MsgCreate dbuf 0x7f2dc000d420 msg 0x7f2dc0030ed0.
+2026/09/22 03:43:17  26-09-22 03:43:17.355 MRF:  TASK(0x7f2de316f700) INFO: endp notify [FSM SUBSCRIBE NOTIFY].
+2026/09/22 03:43:17  26-09-22 03:43:17.355 ZOS:  TASK(0x7f2de316f700) INFO: fsm(MRF_SUBS) subs@[18] state <CONFIRMED> run [DAM IND] event ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.355 MSF:  TASK(0x7f2de316f700) INFO: comp<MRF> proc evnt.
+2026/09/22 03:43:17  26-09-22 03:43:17.355 MSF:  TASK(0x7f2de316f700) INFO: event queue run event.
+2026/09/22 03:43:17  26-09-22 03:43:17.355 MRF:  TASK(0x7f2de316f700) INFO: register [17] process [FSM SUBSCRIBE NOTIFY] state [3].
+2026/09/22 03:43:17  26-09-22 03:43:17.355 ZOS:  TASK(0x7f2de316f700) INFO: fsm(MRF_REG) reg@[17] state <REGED> run [FSM SUBSCRIBE NOTIFY] event ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.355 SIP:  TASK(0x7f2de316f700) INFO: module Sip_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.355 SIP:  TASK(0x7f2de316f700) INFO: module MsgDelete msg 0x7f2dc002cb40.
+2026/09/22 03:43:17  26-09-22 03:43:17.355 SIP:  TASK(0x7f2de316f700) INFO: module Sip_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.355 SIP:  TASK(0x7f2de3180700) INFO: module process user event.
+2026/09/22 03:43:17  26-09-22 03:43:17.355 SIP:  TASK(0x7f2de3180700) INFO: core process event [DAM RSP].
+2026/09/22 03:43:17  26-09-22 03:43:17.355 SIP:  TASK(0x7f2de3180700) INFO: core -->me comp@19394404 evnt@30 method@8.
+2026/09/22 03:43:17  26-09-22 03:43:17.355 SIP:  TASK(0x7f2de3180700) INFO: core -->me sess@10003 <----> sess user id@12.
+2026/09/22 03:43:17  26-09-22 03:43:17.355 SIP:  TASK(0x7f2de3180700) INFO: core -->me dlg@80010005 <----> dlg user id@12.
+2026/09/22 03:43:17  26-09-22 03:43:17.355 SIP:  TASK(0x7f2de3180700) INFO: core -->me trans@10006 <----> trans user id@ffffffff.
+2026/09/22 03:43:17  26-09-22 03:43:17.355 SIP:  TASK(0x7f2de3180700) INFO: core UaSEvntToMEvnt exist sess.
+2026/09/22 03:43:17  26-09-22 03:43:17.355 SIP:  TASK(0x7f2de3180700) INFO: core UaSEvntToMEvnt exist sess@10003 dlg@10004 call@10002.
+2026/09/22 03:43:17  26-09-22 03:43:17.355 SIP:  TASK(0x7f2de3180700) INFO: core UaSEvntToMEvnt exist trans@10006.
+2026/09/22 03:43:17  26-09-22 03:43:17.355 SIP:  TASK(0x7f2de3180700) DEBUG: core UaSEvntToMEvnt tpt type<3> [2607:fc20:7e70:92d0:ac39:52c3:6658:b61]:38851 -> [fd00:976a:2:550::5]:65529.
+2026/09/22 03:43:17  26-09-22 03:43:17.355 SIP:  TASK(0x7f2de3180700) INFO: core sess@10003 UasProcDamRsp process.
+2026/09/22 03:43:17  26-09-22 03:43:17.355 SIP:  TASK(0x7f2de3180700) INFO: dlg DlgProcEvnt preprocess subscription event.
+2026/09/22 03:43:17  26-09-22 03:43:17.355 SIP:  TASK(0x7f2de3180700) INFO: dlg sub@80010005 process event [NTFY RSP].
+2026/09/22 03:43:17  26-09-22 03:43:17.355 SIP:  TASK(0x7f2de3180700) INFO: dlg sub@80010005 process response <NOTIFY:200>.
+2026/09/22 03:43:17  26-09-22 03:43:17.356 SIP:  TASK(0x7f2de3180700) INFO: dlg sub@80010005 SubsdCnfOnNtfyRsp notify event to trans.
+2026/09/22 03:43:17  26-09-22 03:43:17.356 SIP:  TASK(0x7f2de3180700) INFO: dlg @10004 notify event [SEND 2XX].
+2026/09/22 03:43:17  26-09-22 03:43:17.356 SIP:  TASK(0x7f2de3180700) DEBUG: dlg @10004 notify event [SEND 2XX] addr<[2607:fc20:7e70:92d0:ac39:52c3:6658:b61]:38851>.
+2026/09/22 03:43:17  26-09-22 03:43:17.356 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_SUBS) subs@[2147549189] state <CONFIRMED> run [NTFY_RSP] event ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.356 SIP:  TASK(0x7f2de3180700) INFO: module MsgDelete msg 0x7f2dc0030ed0.
+2026/09/22 03:43:17  26-09-22 03:43:17.356 SIP:  TASK(0x7f2de3180700) INFO: module CoreSessMsgProc process event queue.
+2026/09/22 03:43:17  26-09-22 03:43:17.356 SIP:  TASK(0x7f2de3180700) INFO: core event queue process the next event.
+2026/09/22 03:43:17  26-09-22 03:43:17.356 SIP:  TASK(0x7f2de3180700) INFO: trans @10006 process response <NOTIFY:200>.
+2026/09/22 03:43:17  26-09-22 03:43:17.356 SIP:  TASK(0x7f2de3180700) INFO: module Sip_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.356 SIP:  TASK(0x7f2de3180700) INFO: module Sip_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.356 SIP:  TASK(0x7f2de3180700) DEBUG: 
+data length: 614
+data content[text]:
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+SIP/2.0 200 OK
+From:<sip:+14172278115@ims.mnc240.mcc310.3gppnetwork.org>;tag=h7g4Esbg_mavodi-0-4d-1303-7-ffffffff-220004-ffffffffffffffff-e3f40000-6a2eb345-_49749da-6ab1d62c-600e5
+To:<sip:+14172278115@ims.mnc240.mcc310.3gppnetwork.org>;tag=1tPwH1HGxJ7.DO6VhiHrosC321
+Supported:100rel,path,replaces
+Call-ID:9J311HGxJ7.DO6VhiHrosB321M@[2607:fc20:7e70:92d0:ac39:52c3:6658:b61]
+CSeq:10 NOTIFY
+Max-Forwards:70
+Server:SIP/1.0
+Via:SIP/2.0/TCP [fd00:976a:2:550::5]:65529;branch=z9hG4bKg3Zqkv7iqbsgc2h3324fzmizlwc5buykv;eric_th_id=1;be-route=MTkyLjE2OC4yMi44OjgwODA;received=fd00:976a:2:550::5
+Content-Length:0
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2026/09/22 03:43:17  26-09-22 03:43:17.356 ZOS:  TASK(0x7f2de3180700) DEBUG: UserInfo decode iRet=0, 12
+2026/09/22 03:43:17  26-09-22 03:43:17.356 ZOS:  TASK(0x7f2de3180700) DEBUG: UserInfo decode iRet=0, 12
+2026/09/22 03:43:17  parse_sip_method first line: SIP/2.0 200 OK
+2026/09/22 03:43:17  parse_sip_method status_code: 200
+2026/09/22 03:43:17  ims send parse_sip_method 200 OK
+2026/09/22 03:43:17  ims send extract_cseq_and_method UNKNOWN cseq 10
+2026/09/22 03:43:17  process_ims_message: 7-1-0
+2026/09/22 03:43:17  IMS 忽略非呼叫事务的200 OK
+2026/09/22 03:43:17  26-09-22 03:43:17.356 UTPT:  TASK(0x7f2de3180700) INFO: Send Before Lock id[0x6].
+2026/09/22 03:43:17  26-09-22 03:43:17.356 UTPT:  TASK(0x7f2de3180700) INFO: Utpt_SresLock.
+2026/09/22 03:43:17  26-09-22 03:43:17.356 UTPT:  TASK(0x7f2de3180700) INFO: Send After Lock id[0x6].
+2026/09/22 03:43:17  26-09-22 03:43:17.356 UTPT:  TASK(0x7f2de3180700) INFO: Send Before Socket id[0x6].
+2026/09/22 03:43:17  26-09-22 03:43:17.356 UTPT:  TASK(0x7f2de3180700) INFO: Send After Socket id[0x6].
+2026/09/22 03:43:17  26-09-22 03:43:17.356 UTPT:  TASK(0x7f2de3180700) INFO: Utpt_SresUnlock.
+2026/09/22 03:43:17  26-09-22 03:43:17.356 UTPT:  TASK(0x7f2de3180700) DEBUG: conn[0x6] send data[614] to [fd00:976a:2:550::5:65529] ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.357 SIP:  TASK(0x7f2de3180700) INFO: tpt conn<0x10007> send message ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.357 SIP:  TASK(0x7f2de3180700) INFO: module MsgDelete msg 0x7f2dc002df50.
+2026/09/22 03:43:17  26-09-22 03:43:17.357 SIP:  TASK(0x7f2de3180700) INFO: module stop tmr<0x59> [TIMER C] ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.357 SIP:  TASK(0x7f2de3180700) INFO: module start tmr<0x58> [TIMER J] <500ms> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.357 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_NIST) trans@[65542] state <TRYING> run [SEND_2XX] event ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.357 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_NIST) trans@[65542] state <TRYING> to <COMPLETED>.
+2026/09/22 03:43:17  26-09-22 03:43:17.357 SIP:  TASK(0x7f2de3180700) INFO: core event queue process the last event.
+2026/09/22 03:43:17  26-09-22 03:43:17.357 SIP:  TASK(0x7f2de3180700) INFO: module MsgDelete msg 0x7f2dc0030ed0.
+2026/09/22 03:43:17  26-09-22 03:43:17.639 SIP:  TASK(0x7f2de3180700) INFO: module process timer event.
+2026/09/22 03:43:17  26-09-22 03:43:17.639 SIP:  TASK(0x7f2de3180700) INFO: core timer process trans event tmr<0x4E> [TIMER K].
+2026/09/22 03:43:17  26-09-22 03:43:17.639 SIP:  TASK(0x7f2de3180700) INFO: core timer process trans@10009 event.
+2026/09/22 03:43:17  26-09-22 03:43:17.639 SIP:  TASK(0x7f2de3180700) INFO: trans @10009 report event [TRANS TERMINATED].
+2026/09/22 03:43:17  26-09-22 03:43:17.640 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_NICT) trans@[65545] state <COMPLETED> run [TM_TK] event ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.640 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_NICT) trans@[65545] state <COMPLETED> to <TERMINATED>.
+2026/09/22 03:43:17  26-09-22 03:43:17.640 SIP:  TASK(0x7f2de3180700) INFO: module TmrMsgProc core process event queue.
+2026/09/22 03:43:17  26-09-22 03:43:17.640 SIP:  TASK(0x7f2de3180700) INFO: core event queue process the next event.
+2026/09/22 03:43:17  26-09-22 03:43:17.640 SIP:  TASK(0x7f2de3180700) INFO: core @10005 terminated trans@10009 delete.
+2026/09/22 03:43:17  26-09-22 03:43:17.640 SIP:  TASK(0x7f2de3180700) INFO: module delete tmr<0x4C> [TIMER E] ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.640 ZOS:  TASK(0x7f2de3180700) INFO: qtimer delete timer<76> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.640 SIP:  TASK(0x7f2de3180700) INFO: module delete tmr<0x4D> [TIMER F] ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.640 ZOS:  TASK(0x7f2de3180700) INFO: qtimer delete timer<77> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.640 SIP:  TASK(0x7f2de3180700) INFO: module delete tmr<0x4E> [TIMER K] ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.640 ZOS:  TASK(0x7f2de3180700) INFO: qtimer delete timer<78> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.640 SIP:  TASK(0x7f2de3180700) INFO: module delete tmr<0x4F> [TIMER WAIT_CONN] ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.640 ZOS:  TASK(0x7f2de3180700) INFO: qtimer delete timer<79> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.640 SIP:  TASK(0x7f2de3180700) INFO: module delete tmr<0x50> [TIMER C] ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.640 ZOS:  TASK(0x7f2de3180700) INFO: qtimer delete timer<80> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.640 SIP:  TASK(0x7f2de3180700) INFO: trans @10009 deleted.
+2026/09/22 03:43:17  26-09-22 03:43:17.640 SIP:  TASK(0x7f2de3180700) INFO: module MsgDelete msg 0x7f2db401d340.
+2026/09/22 03:43:17  26-09-22 03:43:17.640 SIP:  TASK(0x7f2de3180700) INFO: core dlg@10004 terminated delete.
+2026/09/22 03:43:17  26-09-22 03:43:17.640 SIP:  TASK(0x7f2de3180700) INFO: core dlg@10005 deleted.
+2026/09/22 03:43:17  26-09-22 03:43:17.640 SIP:  TASK(0x7f2de3180700) INFO: core sess@10004 terminated delete.
+2026/09/22 03:43:17  26-09-22 03:43:17.640 SIP:  TASK(0x7f2de3180700) INFO: core sess@10004 deleted.
+2026/09/22 03:43:17  26-09-22 03:43:17.640 SIP:  TASK(0x7f2de3180700) INFO: core call@10003 terminated delete.
+2026/09/22 03:43:17  26-09-22 03:43:17.640 SIP:  TASK(0x7f2de3180700) INFO: core call@10003 deleted.
+2026/09/22 03:43:17  26-09-22 03:43:17.640 SIP:  TASK(0x7f2de3180700) INFO: core event queue process the last event.
+2026/09/22 03:43:17  26-09-22 03:43:17.690 SIP:  TASK(0x7f2de3180700) INFO: module process timer event.
+2026/09/22 03:43:17  26-09-22 03:43:17.690 SIP:  TASK(0x7f2de3180700) INFO: core timer process trans event tmr<0x56> [TIMER J].
+2026/09/22 03:43:17  26-09-22 03:43:17.690 SIP:  TASK(0x7f2de3180700) INFO: core timer process trans@10007 event.
+2026/09/22 03:43:17  26-09-22 03:43:17.690 SIP:  TASK(0x7f2de3180700) INFO: trans @10007 report event [TRANS TERMINATED].
+2026/09/22 03:43:17  26-09-22 03:43:17.690 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_NIST) trans@[65543] state <COMPLETED> run [TM_TJ] event ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.690 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_NIST) trans@[65543] state <COMPLETED> to <TERMINATED>.
+2026/09/22 03:43:17  26-09-22 03:43:17.690 SIP:  TASK(0x7f2de3180700) INFO: module TmrMsgProc core process event queue.
+2026/09/22 03:43:17  26-09-22 03:43:17.690 SIP:  TASK(0x7f2de3180700) INFO: core event queue process the next event.
+2026/09/22 03:43:17  26-09-22 03:43:17.690 SIP:  TASK(0x7f2de3180700) INFO: dlg DlgProcEvnt preprocess subscription event.
+2026/09/22 03:43:17  26-09-22 03:43:17.690 SIP:  TASK(0x7f2de3180700) INFO: dlg sub@80010005 process event [TRANS TERMINATED].
+2026/09/22 03:43:17  26-09-22 03:43:17.690 SIP:  TASK(0x7f2de3180700) INFO: module delete tmr<0x56> [TIMER J] ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.690 ZOS:  TASK(0x7f2de3180700) INFO: qtimer delete timer<86> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.690 SIP:  TASK(0x7f2de3180700) INFO: module delete tmr<0x57> [TIMER C] ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.690 ZOS:  TASK(0x7f2de3180700) INFO: qtimer delete timer<87> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.691 SIP:  TASK(0x7f2de3180700) INFO: trans @10007 deleted.
+2026/09/22 03:43:17  26-09-22 03:43:17.691 SIP:  TASK(0x7f2de3180700) INFO: dlg @80010005 SubsdCnfOnTransTerm trans delete.
+2026/09/22 03:43:17  26-09-22 03:43:17.691 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_SUBS) subs@[2147549189] state <CONFIRMED> run [TXN_TERMINATED] event ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.691 SIP:  TASK(0x7f2de3180700) INFO: core event queue process the last event.
+2026/09/22 03:43:17  26-09-22 03:43:17.804 SIP:  TASK(0x7f2de3180700) INFO: module process timer event.
+2026/09/22 03:43:17  26-09-22 03:43:17.804 SIP:  TASK(0x7f2de3180700) INFO: core timer process trans event tmr<0x53> [TIMER K].
+2026/09/22 03:43:17  26-09-22 03:43:17.804 SIP:  TASK(0x7f2de3180700) INFO: core timer process trans@10008 event.
+2026/09/22 03:43:17  26-09-22 03:43:17.804 SIP:  TASK(0x7f2de3180700) INFO: trans @10008 report event [TRANS TERMINATED].
+2026/09/22 03:43:17  26-09-22 03:43:17.804 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_NICT) trans@[65544] state <COMPLETED> run [TM_TK] event ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.804 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_NICT) trans@[65544] state <COMPLETED> to <TERMINATED>.
+2026/09/22 03:43:17  26-09-22 03:43:17.804 SIP:  TASK(0x7f2de3180700) INFO: module TmrMsgProc core process event queue.
+2026/09/22 03:43:17  26-09-22 03:43:17.804 SIP:  TASK(0x7f2de3180700) INFO: core event queue process the next event.
+2026/09/22 03:43:17  26-09-22 03:43:17.804 SIP:  TASK(0x7f2de3180700) INFO: dlg DlgProcEvnt preprocess subscription event.
+2026/09/22 03:43:17  26-09-22 03:43:17.804 SIP:  TASK(0x7f2de3180700) INFO: dlg sub@80010005 process event [TRANS TERMINATED].
+2026/09/22 03:43:17  26-09-22 03:43:17.804 SIP:  TASK(0x7f2de3180700) INFO: module delete tmr<0x51> [TIMER E] ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.804 ZOS:  TASK(0x7f2de3180700) INFO: qtimer delete timer<81> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.804 SIP:  TASK(0x7f2de3180700) INFO: module delete tmr<0x52> [TIMER F] ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.804 ZOS:  TASK(0x7f2de3180700) INFO: qtimer delete timer<82> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.804 SIP:  TASK(0x7f2de3180700) INFO: module delete tmr<0x53> [TIMER K] ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.804 ZOS:  TASK(0x7f2de3180700) INFO: qtimer delete timer<83> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.804 SIP:  TASK(0x7f2de3180700) INFO: module delete tmr<0x54> [TIMER WAIT_CONN] ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.804 ZOS:  TASK(0x7f2de3180700) INFO: qtimer delete timer<84> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.805 SIP:  TASK(0x7f2de3180700) INFO: module delete tmr<0x55> [TIMER C] ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.805 ZOS:  TASK(0x7f2de3180700) INFO: qtimer delete timer<85> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.805 SIP:  TASK(0x7f2de3180700) INFO: trans @10008 deleted.
+2026/09/22 03:43:17  26-09-22 03:43:17.805 SIP:  TASK(0x7f2de3180700) INFO: module MsgDelete msg 0x7f2dc000b020.
+2026/09/22 03:43:17  26-09-22 03:43:17.805 SIP:  TASK(0x7f2de3180700) INFO: dlg @80010005 SubsdCnfOnTransTerm trans delete.
+2026/09/22 03:43:17  26-09-22 03:43:17.805 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_SUBS) subs@[2147549189] state <CONFIRMED> run [TXN_TERMINATED] event ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.805 SIP:  TASK(0x7f2de3180700) INFO: core event queue process the last event.
+2026/09/22 03:43:17  26-09-22 03:43:17.854 SIP:  TASK(0x7f2de3180700) INFO: module process timer event.
+2026/09/22 03:43:17  26-09-22 03:43:17.854 SIP:  TASK(0x7f2de3180700) INFO: core timer process trans event tmr<0x58> [TIMER J].
+2026/09/22 03:43:17  26-09-22 03:43:17.854 SIP:  TASK(0x7f2de3180700) INFO: core timer process trans@10006 event.
+2026/09/22 03:43:17  26-09-22 03:43:17.854 SIP:  TASK(0x7f2de3180700) INFO: trans @10006 report event [TRANS TERMINATED].
+2026/09/22 03:43:17  26-09-22 03:43:17.854 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_NIST) trans@[65542] state <COMPLETED> run [TM_TJ] event ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.854 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_NIST) trans@[65542] state <COMPLETED> to <TERMINATED>.
+2026/09/22 03:43:17  26-09-22 03:43:17.854 SIP:  TASK(0x7f2de3180700) INFO: module TmrMsgProc core process event queue.
+2026/09/22 03:43:17  26-09-22 03:43:17.854 SIP:  TASK(0x7f2de3180700) INFO: core event queue process the next event.
+2026/09/22 03:43:17  26-09-22 03:43:17.854 SIP:  TASK(0x7f2de3180700) INFO: dlg DlgProcEvnt preprocess subscription event.
+2026/09/22 03:43:17  26-09-22 03:43:17.855 SIP:  TASK(0x7f2de3180700) INFO: dlg sub@80010005 process event [TRANS TERMINATED].
+2026/09/22 03:43:17  26-09-22 03:43:17.855 SIP:  TASK(0x7f2de3180700) INFO: module delete tmr<0x58> [TIMER J] ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.855 ZOS:  TASK(0x7f2de3180700) INFO: qtimer delete timer<88> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.855 SIP:  TASK(0x7f2de3180700) INFO: module delete tmr<0x59> [TIMER C] ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.855 ZOS:  TASK(0x7f2de3180700) INFO: qtimer delete timer<89> ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.855 SIP:  TASK(0x7f2de3180700) INFO: trans @10006 deleted.
+2026/09/22 03:43:17  26-09-22 03:43:17.855 SIP:  TASK(0x7f2de3180700) INFO: dlg @80010005 SubsdCnfOnTransTerm trans delete.
+2026/09/22 03:43:17  26-09-22 03:43:17.855 ZOS:  TASK(0x7f2de3180700) INFO: fsm(SIP_SUBS) subs@[2147549189] state <CONFIRMED> run [TXN_TERMINATED] event ok.
+2026/09/22 03:43:17  26-09-22 03:43:17.855 SIP:  TASK(0x7f2de3180700) INFO: core event queue process the last event.

@@ -1,10 +1,27 @@
 #include "Room.h"
+#include "media/endpoint/MediaEndpoint.h"
 #include <utility>
 #include "TimeUtil.h"
 
 
 namespace room
 {
+
+std::shared_ptr<Room> RoomManager::GetOrCreateRoom(std::string room_id, std::string room_name)
+{
+    if (room_id.empty()) return nullptr;
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto& room = rooms_[room_id];
+    if (!room || room->IsClosed()) room = std::make_shared<Room>(RoomInfo{room_id, std::move(room_name)});
+    return room;
+}
+
+std::shared_ptr<Room> RoomManager::FindRoom(const std::string& room_id)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = rooms_.find(room_id);
+    return it == rooms_.end() ? nullptr : it->second;
+}
 
 Room::Room(RoomInfo info, RoomOptions options)
     : info_(std::move(info)),
@@ -139,6 +156,11 @@ bool Room::Leave(const std::string& participant_id)
 
         for (const auto& track_id : published_track_ids)
         {
+            const auto subs = track_subscribers_.find(track_id);
+            if (subs != track_subscribers_.end()) {
+                const std::vector<std::string> ids(subs->second.begin(), subs->second.end());
+                for (const auto& id : ids) UnsubscribeTrackLocked(id, track_id);
+            }
             published_tracks_.erase(track_id);
             track_subscribers_.erase(track_id);
 
@@ -207,6 +229,7 @@ bool Room::PublishTrack(const std::string& participant_id, const media::MediaTra
     }
 
     std::vector<std::string> auto_subscribers;
+    Participant::Ptr publisher;
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
@@ -222,10 +245,17 @@ bool Room::PublishTrack(const std::string& participant_id, const media::MediaTra
             return false;
         }
 
-        if (!participant_it->second->AddPublishedTrack(track))
+        if (auto endpoint = participant_it->second->GetEndpoint()) {
+            ::TrackInfo info;
+            if (!endpoint->IsRunning() || !endpoint->GetPublishedTrack(track_id, info) ||
+                info.payload_type != payload_type || (ssrc && !endpoint->BindSsrc(track_id, ssrc))) return false;
+        }
+
+        if (!participant_it->second->AddPublishedTrack(track, false))
         {
             return false;
         }
+        publisher = participant_it->second;
 
         PublishedTrackInfo info;
         info.publisher_id = participant_id;
@@ -250,7 +280,7 @@ bool Room::PublishTrack(const std::string& participant_id, const media::MediaTra
             SubscribeTrackLocked(subscriber_id, track_id);
         }
     }
-
+    publisher->NotifyTrackPublished(track);
     return true;
 }
 
@@ -294,6 +324,7 @@ bool Room::UnpublishTrack(const std::string& track_id)
 
     if (publisher)
     {
+        if (auto endpoint = publisher->GetEndpoint()) endpoint->RemovePublishedTrack(track_id);
         publisher->RemovePublishedTrack(track_id);
     }
 
@@ -412,6 +443,7 @@ media::MediaTrackPtr Room::ResolveTrackForSubscriber(const std::string& subscrib
 void Room::Close()
 {
     std::function<void(const std::string&)> cb;
+    std::vector<Participant::Ptr> participants;
 
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -421,6 +453,7 @@ void Room::Close()
         }
 
         info_.state = RoomState::Closed;
+        for (const auto& entry : participants_) participants.push_back(entry.second);
         participants_.clear();
         published_tracks_.clear();
         track_subscribers_.clear();
@@ -429,6 +462,7 @@ void Room::Close()
         cb = on_room_closed_;
     }
 
+    for (const auto& participant : participants) participant->Leave();
     if (cb)
     {
         cb(info_.room_id);
@@ -501,6 +535,16 @@ bool Room::SubscribeTrackLocked(const std::string& subscriber_id, const std::str
     }
 
     auto& track_subscribers = track_subscribers_[track_id];
+    if (track_subscribers.count(subscriber_id)) return false;
+    const auto publisher_it = participants_.find(track_it->second.publisher_id);
+    if (publisher_it == participants_.end()) return false;
+    auto destination = subscriber_it->second->GetEndpoint();
+    auto source = publisher_it->second->GetEndpoint();
+    // Preserve metadata-only rooms; media-backed subscriptions must establish
+    // a real route using previously negotiated downstream parameters.
+    if (source || destination) {
+        if (!source || !destination || !destination->Subscribe(track_id, source, track_id)) return false;
+    }
     auto inserted = track_subscribers.insert(subscriber_id);
     if (!inserted.second)
     {
@@ -537,6 +581,7 @@ void Room::UnsubscribeTrackLocked(const std::string& subscriber_id, const std::s
     auto subscriber_it = participants_.find(subscriber_id);
     if (subscriber_it != participants_.end())
     {
+        if (auto endpoint = subscriber_it->second->GetEndpoint()) endpoint->Unsubscribe(track_id);
         subscriber_it->second->UnsubscribeTrack(track_id);
     }
 }
@@ -616,7 +661,7 @@ void RoomCommandHandler::HandlePublish(std::shared_ptr<Room>& room, const RoomCo
 
 void RoomCommandHandler::HandleSubscribe(std::shared_ptr<Room>& room, const RoomCommand& cmd)
 {
-    if (!room || cmd.participant_id.empty() || !cmd.track) 
+    if (!room || cmd.participant_id.empty() || cmd.track_id.empty())
     {
         return;
     }
@@ -632,7 +677,7 @@ void RoomCommandHandler::HandleSubscribe(std::shared_ptr<Room>& room, const Room
         }
     }
 
-    room->PublishTrack(cmd.participant_id, cmd.track, cmd.ssrc, cmd.payload_type);
+    room->SubscribeTrack(cmd.participant_id, cmd.track_id);
 }
 
 }

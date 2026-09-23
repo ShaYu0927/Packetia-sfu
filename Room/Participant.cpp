@@ -1,4 +1,5 @@
 #include "Participant.h"
+#include "media/endpoint/MediaEndpoint.h"
 
 #include <utility>
 
@@ -12,6 +13,21 @@ Participant::Participant(std::string participant_id, std::string name)
 }
 
 Participant::~Participant() = default;
+
+bool Participant::BindEndpoint(std::shared_ptr<media::SfuEndpoint> endpoint)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!endpoint || !endpoint->IsRunning() || state_ == ParticipantState::Disconnected ||
+        (endpoint_ && endpoint_ != endpoint)) return false;
+    endpoint_ = std::move(endpoint);
+    return true;
+}
+
+std::shared_ptr<media::SfuEndpoint> Participant::GetEndpoint() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return endpoint_;
+}
 
 std::string Participant::Id() const
 {
@@ -85,7 +101,7 @@ bool Participant::IsActive() const
     return state_ == ParticipantState::Active;
 }
 
-bool Participant::AddPublishedTrack(const media::MediaTrackPtr& track)
+bool Participant::AddPublishedTrack(const media::MediaTrackPtr& track, bool notify)
 {
     if (!track) {
         return false;
@@ -111,12 +127,17 @@ bool Participant::AddPublishedTrack(const media::MediaTrackPtr& track)
         cb = on_track_published_;
     }
 
-    if (cb) 
+    if (cb && notify)
     {
         cb(shared_from_this(), track);
     }
 
     return true;
+}
+
+void Participant::NotifyTrackPublished(const media::MediaTrackPtr& track)
+{
+    if (auto callback = GetOnTrackPublished()) callback(shared_from_this(), track);
 }
 
 bool Participant::RemovePublishedTrack(const std::string& track_id)
@@ -187,40 +208,6 @@ bool Participant::SubscribeTrack(const std::string& track_id)
     return ret.second;
 }
 
-bool Participant::SubscribeTrack(Participant::Ptr subscriber, const std::string& track_id)
-{
-    if (!subscriber)
-    {
-        return false;
-    }
-
-    if (!subscriber->SubscribeTrack(track_id))
-    {
-        return false;
-    }
-/*
-    auto source_track = FindPublishedTrack(track_id);
-    if (!source_track)
-    {
-        return false;
-    }
-
-     // 3. 找订阅者自己的发送通道
-    auto session = subscriber->GetSession();
-    if (!session)
-    {
-        return false;
-    }
-
-    auto packet_sender = session->GetPacketSender();
-
-    // 4. 创建下游发送轨道
-    auto sender_track = RtpSenderTrackFactory::Create(source_track->getTrackInfo(), packet_sender);
-
-    sfu_endpoint_->AddSubscriber(source_track->ssrc(), sender_track);
-*/
-    return true;
-}
 
 bool Participant::UnsubscribeTrack(const std::string& track_id)
 {
@@ -252,6 +239,7 @@ std::vector<std::string> Participant::GetSubscribedTrackIds() const
 void Participant::Leave()
 {
     LeaveCallback cb;
+    std::shared_ptr<media::SfuEndpoint> endpoint;
 
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -262,9 +250,14 @@ void Participant::Leave()
         }
 
         state_ = ParticipantState::Disconnected;
+        endpoint = std::move(endpoint_);
+        published_tracks_.clear();
+        subscribed_track_ids_.clear();
+        session_.reset();
         cb = on_leave_;
     }
 
+    if (endpoint) endpoint->Stop();
     if (cb) 
     {
         cb(shared_from_this());

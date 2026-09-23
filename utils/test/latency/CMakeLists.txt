@@ -34,10 +34,9 @@ set_tests_properties(media_latency media_latency_worker PROPERTIES
     ENVIRONMENT "PACKETIA_MEDIA_LATENCY_SAMPLE_EVERY=1;PACKETIA_MEDIA_LATENCY_INTERVAL_MS=3600000"
     TIMEOUT 20)
 
-# The production socket layer is Linux-oriented; keep portable histogram and
-# worker tests runnable without libhv, FFmpeg, GTest or the network backend.
+# Keep these tests runnable without libhv, FFmpeg, GTest or the network backend.
 set(PACKETIA_LATENCY_NETWORK_DEFAULT OFF)
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE)
     set(PACKETIA_LATENCY_NETWORK_DEFAULT ON)
 endif()
 option(PACKETIA_LATENCY_NETWORK_TESTS "Test TCP completion against scripted send results"

@@ -43,11 +43,7 @@ try
     CHECK(CountOf(TakeSnapshot(), Counter::TcpSent) == 0); // Enqueue is not send.
     results = {2, -1};
     const auto partial = buffer.Send(-1);
-#if defined(__linux__) || defined(__linux)
     CHECK(partial == 0);
-#else
-    (void)partial; // Other production socket backends do not yet handle EAGAIN.
-#endif
     CHECK(buffer.QueuedBytes() == 2);
     CHECK(CountOf(TakeSnapshot(), Counter::TcpSent) == 0);
     results = {2};

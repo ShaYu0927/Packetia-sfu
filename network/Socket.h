@@ -1,23 +1,29 @@
 #ifndef XOP_SOCKET_H
 #define XOP_SOCKET_H
 
-#if defined(__linux) || defined(__linux__)
+#if defined(__linux) || defined(__linux__) || defined(__APPLE__)
 #include <arpa/inet.h>
+#include <cerrno>
 #include <fcntl.h>
 #include <net/ethernet.h>
 #include <net/if.h>
 #include <net/route.h>
 #include <netdb.h>
+#if defined(__linux) || defined(__linux__)
 #include <netinet/ether.h>
+#include <netpacket/packet.h>
+#endif
 #include <netinet/in.h>
 #include <netinet/ip.h>
-#include <netpacket/packet.h>
+#include <netinet/tcp.h>
 #include <sys/ioctl.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
+#ifndef SOCKET
 #define SOCKET int
+#endif
 #ifndef INVALID_SOCKET
 #define INVALID_SOCKET (-1)
 #endif

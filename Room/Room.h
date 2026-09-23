@@ -148,6 +148,10 @@ class RoomManager
 {
 public:
     std::shared_ptr<Room>  GetOrCreateRoom(std::string room_id, std::string room_name);
+    std::shared_ptr<Room> FindRoom(const std::string& room_id);
+private:
+    std::mutex mutex_;
+    std::unordered_map<std::string, std::shared_ptr<Room>> rooms_;
 };
 
 class RoomCommandHandler 
@@ -160,7 +164,10 @@ public:
 
     void Handle(const RoomCommand& cmd)
     {
-        auto room = room_manager_->GetOrCreateRoom(cmd.room_id, cmd.room_name);
+        if (!room_manager_) return;
+        auto room = (cmd.type == RoomCommandType::Join || cmd.type == RoomCommandType::Publish)
+            ? room_manager_->GetOrCreateRoom(cmd.room_id, cmd.room_name)
+            : room_manager_->FindRoom(cmd.room_id);
         if (!room) {
             return;
         }
@@ -174,6 +181,18 @@ public:
             break;
         case RoomCommandType::Subscribe:
             HandleSubscribe(room, cmd);
+            break;
+        case RoomCommandType::Leave:
+            room->Leave(cmd.participant_id);
+            break;
+        case RoomCommandType::Unpublish:
+            room->UnpublishTrack(cmd.track_id);
+            break;
+        case RoomCommandType::Unsubscribe:
+            room->UnsubscribeTrack(cmd.participant_id, cmd.track_id);
+            break;
+        case RoomCommandType::Close:
+            room->Close();
             break;
         default:
             break;

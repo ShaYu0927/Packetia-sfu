@@ -13,13 +13,14 @@
 class SocketUtil {
 public:
     static bool Bind(int sockfd, std::string ip, uint16_t port);
-    static void SetNonBlock(int fd);
-    static void SetBlock(int fd, int write_timeout=0);
+    static bool SetNonBlock(int fd);
+    static bool SetBlock(int fd, int write_timeout=0);
+    static bool SetCloseOnExec(int fd);
     static void SetReuseAddr(int fd);
     static void SetReusePort(int sockfd);
     static void SetNoDelay(int sockfd);
     static void SetKeepAlive(int sockfd);
-    static void SetNoSigpipe(int sockfd);
+    static bool SetNoSigpipe(int sockfd);
     static void SetSendBufSize(int sockfd, int size);
     static void SetRecvBufSize(int sockfd, int size);
     static std::string GetPeerIp(int sockfd);

@@ -67,6 +67,9 @@ target_link_libraries(ICE PUBLIC LOGGER OpenSSL::Crypto)
 add_library(WebRtc STATIC
     WebRtc/WebRtcSession.cpp
     WebRtc/WebRtcSession.h
+    WebRtc/WebRtcSdp.h
+    WebRtc/WebRtcCodec.cpp
+    WebRtc/WebRtcCodec.h
     WebRtc/DtlsTransport.cpp
     WebRtc/DtlsTransport.h
     WebRtc/SrtpTransport.cpp
@@ -87,7 +90,7 @@ target_include_directories(WebRtc
 )
 
 target_compile_features(WebRtc PUBLIC cxx_std_17)
-target_link_libraries(WebRtc PUBLIC network ICE)
+target_link_libraries(WebRtc PUBLIC network ICE Interleaved)
 
 add_library(Rtmp STATIC
     Rtmp/rtmp_message.cpp

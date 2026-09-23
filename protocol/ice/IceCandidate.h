@@ -471,7 +471,8 @@ private:
     {
         if (ns == 0)
             return std::nullopt;
-        return TimePoint(std::chrono::nanoseconds(ns));
+        return TimePoint(std::chrono::duration_cast<TimePoint::duration>(
+            std::chrono::nanoseconds(ns)));
     }
 
     static void SetFirstIfEmpty(std::atomic<int64_t>& field, int64_t value)

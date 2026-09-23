@@ -1,9 +1,18 @@
 #include "StreamContext.h"
 #include "logger.h"
+#include <algorithm>
 
 
 void StreamContextBuilder::FillRtpMap(const sdp::SdpMedia& media, uint8_t pt, PayloadTypeInfo& info)
 {
+    for (const auto& codec : media.codecs) {
+        if (codec.payloadType != pt) continue;
+        info.codec_name = codec.encodingName;
+        info.codec_type = ParseCodecType(codec.encodingName);
+        info.sample_rate = codec.clockRate;
+        info.channels = info.track_type == StreamTrackType::Audio ? std::max(1, codec.channels) : 0;
+        return;
+    }
     for (const auto& rtpmap : media.rtpmaps)
     {
         
@@ -55,6 +64,9 @@ void StreamContextBuilder::FillRtpMap(const sdp::SdpMedia& media, uint8_t pt, Pa
 
 void StreamContextBuilder::FillFmtp(const sdp::SdpMedia& media, uint8_t pt, PayloadTypeInfo& info)
 {
+    for (const auto& codec : media.codecs) {
+        if (codec.payloadType == pt) { info.fmtp = codec.fmtp; return; }
+    }
     for (const auto& fmtp : media.fmtps)
     {
         if (fmtp.payloadType != static_cast<int>(pt))
@@ -85,7 +97,12 @@ std::shared_ptr<StreamContext> StreamContextBuilder::BuildFromSdp(const sdp::Sdp
         track.track_type        = ParseTrackType(media.media);
         track.control           = media.GetAttribute("control");
 
-        for (const std::string& fmt : media.fmts)
+        auto formats = media.fmts;
+        if (!media.codecs.empty()) {
+            formats.clear();
+            for (const auto& codec : media.codecs) formats.push_back(std::to_string(codec.payloadType));
+        }
+        for (const std::string& fmt : formats)
         {
             int pt_int = 0;
             if (!ParsePayloadType(fmt, pt_int))

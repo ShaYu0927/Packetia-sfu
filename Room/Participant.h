@@ -12,6 +12,7 @@
 #include "TrackeInfo.h"
 
 class MediaSession;
+namespace media { class SfuEndpoint; }
 
 namespace room
 {
@@ -76,6 +77,8 @@ public:
      * @brief 获取当前绑定的 MediaSession。
      */
     std::shared_ptr<MediaSession> GetSession() const;
+    bool BindEndpoint(std::shared_ptr<media::SfuEndpoint> endpoint);
+    std::shared_ptr<media::SfuEndpoint> GetEndpoint() const;
 
     /**
      * @brief 设置参会人状态。
@@ -103,7 +106,7 @@ public:
      * 用户发布摄像头、麦克风、屏幕共享时，
      * 可以把对应的 MediaTrack 添加到 Participant 中
      */
-    bool AddPublishedTrack(const media::MediaTrackPtr& track);
+    bool AddPublishedTrack(const media::MediaTrackPtr& track, bool notify = true);
 
     /**
      * @brief 移除已发布 Track。
@@ -126,8 +129,6 @@ public:
      * 这里先只保存订阅关系，后面可以再接 RtpSenderTrack / DownTrack。
      */
     bool SubscribeTrack(const std::string& track_id);
-
-    bool SubscribeTrack(Participant::Ptr subscriber, const std::string& track_id);
 
     /**
      * @brief 取消订阅 Track。
@@ -170,6 +171,8 @@ public:
     void OnLeave(LeaveCallback cb);
 
 private:
+    friend class Room;
+    void NotifyTrackPublished(const media::MediaTrackPtr& track);
     TrackCallback GetOnTrackPublished() const;
     TrackCallback GetOnTrackUnpublished() const;
     StateCallback GetOnStateChanged() const;
@@ -184,6 +187,7 @@ private:
     ParticipantState state_ = ParticipantState::Joining;
 
     std::shared_ptr<MediaSession> session_;
+    std::shared_ptr<media::SfuEndpoint> endpoint_;
 
     std::unordered_map<std::string, media::MediaTrackPtr> published_tracks_;
     std::unordered_set<std::string> subscribed_track_ids_;

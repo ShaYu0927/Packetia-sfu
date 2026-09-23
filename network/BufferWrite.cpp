@@ -72,7 +72,7 @@ int  BufferWirte::Send(int socketfd,int timeOut)
 {
     if(timeOut > 0)
     {
-        SocketUtil::SetBlock(socketfd,timeOut);
+        if (!SocketUtil::SetBlock(socketfd,timeOut)) return -1;
     }
 
    while (!buffer_.empty()) 
@@ -83,7 +83,7 @@ int  BufferWirte::Send(int socketfd,int timeOut)
 #else
         constexpr int flags = 0;
 #endif
-        const int ret = send(socketfd, pkt.data.get() + pkt.writeIndex, pkt.size - pkt.writeIndex, flags);
+        const auto ret = send(socketfd, pkt.data.get() + pkt.writeIndex, pkt.size - pkt.writeIndex, flags);
         if (ret > 0) 
         {
             pkt.writeIndex += static_cast<uint32_t>(ret);
@@ -101,10 +101,8 @@ int  BufferWirte::Send(int socketfd,int timeOut)
         }
         else if (ret < 0) 
         {
-#if defined(__linux__) || defined(__linux__)
             if(errno == EINTR) continue;        
             if(errno == EAGAIN || errno == EWOULDBLOCK) break; 
-#endif
             return -1;
         }
     }

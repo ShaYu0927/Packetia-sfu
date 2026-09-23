@@ -4,6 +4,8 @@
 #include "IMediaPacketSink.h"
 
 #include <cstdint>
+#include <string>
+#include <utility>
 
 namespace media::transport
 {
@@ -11,8 +13,8 @@ namespace media::transport
 class MediaEndpointIngress final : public IMediaPacketSink
 {
 public:
-    explicit MediaEndpointIngress(uint64_t endpoint_id) noexcept
-        : endpoint_id_(endpoint_id)
+    explicit MediaEndpointIngress(uint64_t endpoint_id, std::string track_id = {})
+        : endpoint_id_(endpoint_id), track_id_(std::move(track_id))
     {
     }
 
@@ -22,6 +24,7 @@ public:
 
 private:
     const uint64_t endpoint_id_;
+    const std::string track_id_;
 };
 
 } // namespace media::transport

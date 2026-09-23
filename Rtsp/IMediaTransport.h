@@ -18,7 +18,8 @@ enum class SendResult
 enum class MediaTransportProtocol
 {
     RtspInterleaved = 0,
-    Udp
+    Udp,
+    WebRtc
 };
 
 enum class MediaTransportState

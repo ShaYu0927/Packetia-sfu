@@ -1,8 +1,11 @@
 #include "WebRtcSession.h"
+#include "WebRtcCodec.h"
+#include "Sdp.h"
 
 #include <algorithm>
 #include <atomic>
-#include <cctype>
+#include <charconv>
+#include <map>
 #include <set>
 #include <utility>
 
@@ -32,17 +35,6 @@ MediaDirection AnswerDirection(MediaDirection remote, MediaDirection local)
                 : (receive ? MediaDirection::RecvOnly : MediaDirection::Inactive);
 }
 
-const char* DirectionName(MediaDirection d)
-{
-    switch (d)
-    {
-    case MediaDirection::SendRecv: return "sendrecv";
-    case MediaDirection::SendOnly: return "sendonly";
-    case MediaDirection::RecvOnly: return "recvonly";
-    default: return "inactive";
-    }
-}
-
 bool HasMid(const BundleParameters& bundle, const std::string& mid)
 {
     return std::find(bundle.mids.begin(), bundle.mids.end(), mid) != bundle.mids.end();
@@ -50,7 +42,7 @@ bool HasMid(const BundleParameters& bundle, const std::string& mid)
 
 bool IsOffered(const WebRtcMediaDescription& media)
 {
-    return media.sdp.port != 0 || media.bundleOnly;
+    return media.port != 0 || media.bundleOnly;
 }
 
 bool ValidCredentials(const IceParameters& ice)
@@ -73,20 +65,24 @@ bool ValidDtls(const DtlsParameters& dtls)
 bool SameDtls(const DtlsParameters& a, const DtlsParameters& b)
 {
     return a.setup == b.setup && a.fingerprints.size() == b.fingerprints.size() &&
-        std::equal(a.fingerprints.begin(), a.fingerprints.end(), b.fingerprints.begin(),
+        std::is_permutation(a.fingerprints.begin(), a.fingerprints.end(), b.fingerprints.begin(),
             [](const auto& x, const auto& y) { return x.algorithm == y.algorithm && x.value == y.value; });
 }
 
-std::string Lower(std::string value)
+bool SameFeedback(const RtcpFeedback& a, const RtcpFeedback& b)
 {
-    for (auto& c : value) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    return value;
+    return a.type == b.type && a.parameter == b.parameter;
 }
 
-bool SameCodec(const RtpCodecParameters& a, const RtpCodecParameters& b)
+std::vector<RtcpFeedback> EffectiveFeedback(const std::vector<RtcpFeedback>& common,
+                                           const std::vector<RtcpFeedback>& codec)
 {
-    return Lower(a.encodingName) == Lower(b.encodingName) && a.clockRate == b.clockRate &&
-        (std::max)(1, a.channels) == (std::max)(1, b.channels) && a.fmtp == b.fmtp;
+    auto result = common;
+    for (const auto& item : codec)
+        if (std::none_of(result.begin(), result.end(),
+                [&](const auto& existing) { return SameFeedback(item, existing); }))
+            result.push_back(item);
+    return result;
 }
 
 std::vector<RtcpFeedback> FeedbackIntersection(const std::vector<RtcpFeedback>& remote,
@@ -95,66 +91,13 @@ std::vector<RtcpFeedback> FeedbackIntersection(const std::vector<RtcpFeedback>& 
     std::vector<RtcpFeedback> result;
     for (const auto& feedback : remote)
         if (std::any_of(local.begin(), local.end(), [&](const auto& supported)
-            { return feedback.type == supported.type && feedback.parameter == supported.parameter; }))
+                { return SameFeedback(feedback, supported); }) &&
+            std::none_of(result.begin(), result.end(), [&](const auto& existing)
+                { return SameFeedback(feedback, existing); }))
             result.push_back(feedback);
     return result;
 }
 
-void AddFeedback(sdp::SdpMedia& media, const std::string& pt, const std::vector<RtcpFeedback>& feedback)
-{
-    for (const auto& item : feedback)
-        media.attributes.push_back({"rtcp-fb", pt + " " + item.type +
-            (item.parameter.empty() ? "" : " " + item.parameter)});
-}
-
-// Construct raw SDP from negotiated values; do not copy remote transport,
-// SSRC or unknown attributes into the local answer.
-void BuildMediaSdp(WebRtcMediaDescription& media)
-{
-    auto& raw = media.sdp;
-    raw.attributes = {{"mid", media.mid}, {DirectionName(media.direction), ""}};
-    if (raw.port == 0) return;
-    raw.conn = {"IN", "IP4", "0.0.0.0"};
-    raw.fmts.clear();
-    raw.attributes.push_back({"rtcp-mux", ""});
-    if (media.rtcpRsize) raw.attributes.push_back({"rtcp-rsize", ""});
-    raw.attributes.push_back({"ice-ufrag", media.ice.ufrag});
-    raw.attributes.push_back({"ice-pwd", media.ice.pwd});
-    for (const auto& candidate : media.ice.candidates) raw.attributes.push_back({"candidate", candidate});
-    if (media.ice.endOfCandidates) raw.attributes.push_back({"end-of-candidates", ""});
-    raw.attributes.push_back({"setup", media.dtls.setup == DtlsSetup::Active ? "active" : "passive"});
-    for (const auto& fp : media.dtls.fingerprints) raw.attributes.push_back({"fingerprint", fp.algorithm + " " + fp.value});
-    for (const auto& codec : media.codecs)
-    {
-        const auto pt = std::to_string(codec.payloadType);
-        raw.fmts.push_back(pt);
-        raw.rtpmaps.push_back({codec.payloadType, codec.encodingName, codec.clockRate, codec.channels});
-        raw.attributes.push_back({"rtpmap", pt + " " + codec.encodingName + "/" +
-            std::to_string(codec.clockRate) + (codec.channels > 1 ? "/" + std::to_string(codec.channels) : "")});
-        if (!codec.fmtp.empty())
-        {
-            raw.fmtps.push_back({codec.payloadType, codec.fmtp});
-            raw.attributes.push_back({"fmtp", pt + " " + codec.fmtp});
-        }
-        AddFeedback(raw, pt, codec.rtcpFeedback);
-    }
-    AddFeedback(raw, "*", media.rtcpFeedback);
-    for (const auto& extension : media.headerExtensions)
-        raw.attributes.push_back({"extmap", std::to_string(extension.id) + "/" +
-            DirectionName(extension.direction) + " " + extension.uri +
-            (extension.attributes.empty() ? "" : " " + extension.attributes)});
-    for (const auto& msid : media.msids) raw.attributes.push_back({"msid", msid});
-    for (const auto& source : media.ssrcs)
-        for (const auto& attr : source.attributes)
-            raw.attributes.push_back({"ssrc", std::to_string(source.ssrc) + " " + attr.key +
-                (attr.value.empty() ? "" : ":" + attr.value)});
-    for (const auto& group : media.ssrcGroups)
-    {
-        std::string value = group.semantics;
-        for (auto ssrc : group.ssrcs) value += " " + std::to_string(ssrc);
-        raw.attributes.push_back({"ssrc-group", std::move(value)});
-    }
-}
 } // namespace
 
 WebRtcSession::WebRtcSession(std::shared_ptr<WebRtcTransport> transport,
@@ -183,6 +126,22 @@ bool WebRtcSession::Fail(const std::string& error)
     return false;
 }
 
+bool WebRtcSession::ApplyRemoteOffer(const std::string& offerSdp)
+{
+    WebRtcSessionDescription offer;
+    std::string error;
+    if (!sdp::Sdp::Parse(offerSdp, sdp::SdpProfile::WebRtc, SdpType::Offer, offer, error)) return Reject(error);
+    return ApplyRemoteOffer(offer);
+}
+
+bool WebRtcSession::CreateLocalAnswer(std::string& answerSdp)
+{
+    WebRtcSessionDescription answer;
+    if (!CreateLocalAnswer(answer)) return false;
+    answerSdp = sdp::Sdp::Serialize(answer);
+    return true;
+}
+
 bool WebRtcSession::ApplyRemoteOffer(const WebRtcSessionDescription& offer)
 {
     if (state_ != WebRtcSessionState::New && state_ != WebRtcSessionState::HaveOffer)
@@ -196,18 +155,19 @@ bool WebRtcSession::ApplyRemoteOffer(const WebRtcSessionDescription& offer)
     size_t active = 0;
     for (auto& media : normalized.medias)
     {
-        if (media.mid.empty() || !mids.insert(media.mid).second || media.sdp.fmts.empty() ||
-            media.sdp.port < 0 || media.sdp.port > 65535)
+        if (media.mid.empty() || !mids.insert(media.mid).second || media.fmts.empty() ||
+            media.port < 0 || media.port > 65535 || media.portCount != 1)
             return Reject("Invalid or duplicate mid, media port or formats");
-        if (media.bundleOnly && (!HasMid(offer.bundle, media.mid) || media.sdp.port != 0))
+        if (media.bundleOnly && (!HasMid(offer.bundle, media.mid) || media.port != 0))
             return Reject("Invalid bundle-only media");
         if (!IsOffered(media)) continue;
-        if (media.sdp.media != "audio" && media.sdp.media != "video") continue;
-        if (media.sdp.proto != "UDP/TLS/RTP/SAVPF" || !media.rtcpMux)
+        if (media.media != "audio" && media.media != "video") continue;
+        if (media.proto != "UDP/TLS/RTP/SAVPF" || !media.rtcpMux)
             return Reject("Only UDP DTLS-SRTP with rtcp-mux is supported");
         if (!offer.bundle.mids.empty() && !HasMid(offer.bundle, media.mid))
             return Reject("All active RTP media must share the BUNDLE transport");
-        if (media.ice.ufrag.empty() && media.ice.pwd.empty()) media.ice = offer.ice;
+        if (media.ice.ufrag.empty()) media.ice.ufrag = offer.ice.ufrag;
+        if (media.ice.pwd.empty()) media.ice.pwd = offer.ice.pwd;
         if (media.dtls.fingerprints.empty()) media.dtls.fingerprints = offer.dtls.fingerprints;
         if (media.dtls.setup == DtlsSetup::Unspecified) media.dtls.setup = offer.dtls.setup;
         if (offer.ice.iceLite || media.ice.iceLite || !ValidCredentials(media.ice))
@@ -220,13 +180,29 @@ bool WebRtcSession::ApplyRemoteOffer(const WebRtcSessionDescription& offer)
             return Reject("This answerer requires identical transport parameters across BUNDLE media");
         transportMedia = &media;
         ++active;
+        std::set<int> formats;
+        for (const auto& format : media.fmts)
+        {
+            int pt = -1;
+            const auto parsed = std::from_chars(format.data(), format.data() + format.size(), pt);
+            if (parsed.ec != std::errc{} || parsed.ptr != format.data() + format.size() ||
+                pt < 0 || pt > 127 || (pt >= 64 && pt <= 95) ||
+                format != std::to_string(pt) || !formats.insert(pt).second)
+                return Reject("Invalid or duplicate RTP format in m= line");
+        }
         std::set<int> pts;
         for (const auto& codec : media.codecs)
             if (codec.payloadType < 0 || codec.payloadType > 127 ||
                 (codec.payloadType >= 64 && codec.payloadType <= 95) || codec.encodingName.empty() ||
                 codec.clockRate <= 0 || codec.channels < 0 || !pts.insert(codec.payloadType).second ||
-                std::find(media.sdp.fmts.begin(), media.sdp.fmts.end(), std::to_string(codec.payloadType)) == media.sdp.fmts.end())
+                std::find(media.fmts.begin(), media.fmts.end(), std::to_string(codec.payloadType)) == media.fmts.end())
                 return Reject("Invalid RTP codec or payload type");
+        if (pts != formats) return Reject("Every offered RTP format needs a codec description");
+        std::set<int> extensionIds;
+        for (const auto& extension : media.headerExtensions)
+            if (extension.id < 1 || extension.id > 255 || extension.uri.empty() ||
+                !extensionIds.insert(extension.id).second)
+                return Reject("Invalid or duplicate RTP header extension");
     }
     std::set<std::string> bundleMids;
     for (const auto& mid : offer.bundle.mids)
@@ -242,63 +218,82 @@ bool WebRtcSession::ApplyRemoteOffer(const WebRtcSessionDescription& offer)
 
 bool WebRtcSession::CreateLocalAnswer(WebRtcSessionDescription& answer)
 {
-    if (state_ == WebRtcSessionState::HaveAnswer) { answer = local_answer_; return true; }
+    if (state_ == WebRtcSessionState::HaveAnswer)
+    {
+        answer = local_answer_;
+        last_error_.clear();
+        return true;
+    }
     if (state_ != WebRtcSessionState::HaveOffer) return Reject("Apply an offer before creating an answer");
     if (!dtls_ || !srtp_ || !ValidCredentials(options_.ice) || options_.ice.candidates.empty())
         return Reject("Configure crypto backends, local ICE credentials and candidates first");
+    std::set<std::string> capabilityKinds;
+    for (const auto& capability : options_.medias)
+        if (!capabilityKinds.insert(capability.media).second)
+            return Reject("Configure one local capability entry per media kind");
     const auto identity = dtls_->LocalParameters();
     if (!ValidDtls(identity)) return Reject("DTLS backend has no certificate fingerprint");
 
     WebRtcSessionDescription result;
     result.type = SdpType::Answer;
+    result.profile = sdp::SdpProfile::WebRtc;
     result.ice = options_.ice;
     result.ice.iceLite = true;
     result.ice.options.clear(); // This version does not implement trickle signaling.
-    result.sdp.origin = options_.origin;
-    if (result.sdp.origin.sess_id.empty())
+    result.ice.endOfCandidates = true;
+    result.origin = options_.origin;
+    if (result.origin.sess_id.empty())
     {
         static std::atomic<uint64_t> nextId{1};
-        result.sdp.origin.sess_id = std::to_string(nextId.fetch_add(1));
+        result.origin.sess_id = std::to_string(nextId.fetch_add(1));
     }
-    if (result.sdp.origin.username.empty()) result.sdp.origin.username = "-";
-    if (result.sdp.origin.sess_version.empty()) result.sdp.origin.sess_version = "0";
-    if (result.sdp.origin.net_type.empty()) result.sdp.origin.net_type = "IN";
-    if (result.sdp.origin.addr_type.empty()) result.sdp.origin.addr_type = "IP4";
-    if (result.sdp.origin.unicast_address.empty()) result.sdp.origin.unicast_address = "0.0.0.0";
-    result.sdp.session_name = "-";
-    result.sdp.timing = "0 0";
-    result.sdp.connection = "IN IP4 0.0.0.0";
-    result.sdp.conn = {"IN", "IP4", "0.0.0.0"};
-    result.sdp.attributes.push_back({"ice-lite", ""});
+    if (result.origin.username.empty()) result.origin.username = "-";
+    if (result.origin.sess_version.empty()) result.origin.sess_version = "0";
+    if (result.origin.net_type.empty()) result.origin.net_type = "IN";
+    if (result.origin.addr_type.empty()) result.origin.addr_type = "IP4";
+    if (result.origin.unicast_address.empty()) result.origin.unicast_address = "0.0.0.0";
+    result.session_name = "-";
+    result.timing = "0 0";
+    result.connection = "IN IP4 0.0.0.0";
+    result.conn = {"IN", "IP4", "0.0.0.0"};
     size_t accepted = 0;
     for (const auto& remote : remote_offer_.medias)
     {
         WebRtcMediaDescription local;
         local.mid = remote.mid;
-        local.sdp.media = remote.sdp.media;
-        local.sdp.proto = remote.sdp.proto;
-        local.sdp.fmts = remote.sdp.fmts;
+        local.media = remote.media;
+        local.proto = remote.proto;
+        local.fmts = remote.fmts;
         local.direction = MediaDirection::Inactive;
         const auto capability = std::find_if(options_.medias.begin(), options_.medias.end(),
-            [&](const auto& item) { return item.sdp.media == remote.sdp.media; });
-        if (IsOffered(remote) && (remote.sdp.media == "audio" || remote.sdp.media == "video") &&
+            [&](const auto& item) { return item.media == remote.media; });
+        if (IsOffered(remote) && (remote.media == "audio" || remote.media == "video") &&
             capability != options_.medias.end())
         {
-            for (const auto& codec : remote.codecs)
+            // m= order expresses the offerer's codec preference; the typed
+            // codec vector and a=rtpmap lines need not have that same order.
+            for (const auto& format : remote.fmts)
             {
-                // These codecs require dependency negotiation and PT remapping.
-                const auto name = Lower(codec.encodingName);
-                if (name == "rtx" || name == "red" || name == "ulpfec" || name == "flexfec-03") continue;
-                const auto supported = std::find_if(capability->codecs.begin(), capability->codecs.end(),
-                    [&](const auto& item) { return SameCodec(codec, item); });
-                if (supported == capability->codecs.end()) continue;
-                auto negotiated = codec;
-                negotiated.rtcpFeedback = FeedbackIntersection(codec.rtcpFeedback, supported->rtcpFeedback);
-                local.codecs.push_back(std::move(negotiated));
+                const auto offered = std::find_if(remote.codecs.begin(), remote.codecs.end(),
+                    [&](const auto& codec) { return std::to_string(codec.payloadType) == format; });
+                if (offered == remote.codecs.end()) continue;
+                for (const auto& supported : capability->codecs)
+                {
+                    RtpCodecParameters negotiated;
+                    if (!NegotiateRtpCodec(*offered, supported, negotiated)) continue;
+                    negotiated.rtcpFeedback = FeedbackIntersection(
+                        EffectiveFeedback(remote.rtcpFeedback, offered->rtcpFeedback),
+                        EffectiveFeedback(capability->rtcpFeedback, supported.rtcpFeedback));
+                    local.codecs.push_back(std::move(negotiated));
+                    break;
+                }
             }
             if (!local.codecs.empty())
             {
-                local.sdp.port = 9;
+                local.port = 9;
+                local.conn = {"IN", "IP4", "0.0.0.0"};
+                local.fmts.clear();
+                for (const auto& codec : local.codecs) local.fmts.push_back(std::to_string(codec.payloadType));
                 local.direction = AnswerDirection(remote.direction, capability->direction);
                 local.ice = result.ice;
                 local.dtls = identity;
@@ -306,7 +301,6 @@ bool WebRtcSession::CreateLocalAnswer(WebRtcSessionDescription& answer)
                 result.dtls = local.dtls;
                 local.rtcpMux = true;
                 local.rtcpRsize = remote.rtcpRsize && capability->rtcpRsize;
-                local.rtcpFeedback = FeedbackIntersection(remote.rtcpFeedback, capability->rtcpFeedback);
                 std::set<int> extensionIds;
                 for (const auto& extension : remote.headerExtensions)
                 {
@@ -316,8 +310,18 @@ bool WebRtcSession::CreateLocalAnswer(WebRtcSessionDescription& answer)
                     if (supported == capability->headerExtensions.end()) continue;
                     auto negotiated = extension;
                     negotiated.direction = AnswerDirection(extension.direction, supported->direction);
+                    const bool send = CanSend(negotiated.direction) && CanSend(local.direction);
+                    const bool receive = CanReceive(negotiated.direction) && CanReceive(local.direction);
+                    negotiated.direction = send ? (receive ? MediaDirection::SendRecv : MediaDirection::SendOnly)
+                                                : (receive ? MediaDirection::RecvOnly : MediaDirection::Inactive);
                     if (negotiated.direction != MediaDirection::Inactive) local.headerExtensions.push_back(std::move(negotiated));
                 }
+                const bool transportCc = std::any_of(local.headerExtensions.begin(), local.headerExtensions.end(),
+                    [](const auto& extension) { return extension.uri == RtpHeaderExtensionUri::TRANSPORT_CC; });
+                if (!transportCc)
+                    for (auto& codec : local.codecs)
+                        codec.rtcpFeedback.erase(std::remove_if(codec.rtcpFeedback.begin(), codec.rtcpFeedback.end(),
+                            [](const auto& item) { return item.type == RtcpFeedbackType::TRANSPORT_CC; }), codec.rtcpFeedback.end());
                 if (CanSend(local.direction))
                 {
                     local.ssrcs = capability->ssrcs;
@@ -327,27 +331,32 @@ bool WebRtcSession::CreateLocalAnswer(WebRtcSessionDescription& answer)
                 ++accepted;
             }
         }
-        BuildMediaSdp(local);
-        result.sdp.medias.push_back(local.sdp);
         result.medias.push_back(std::move(local));
     }
     if (accepted == 0) return Reject("No compatible RTP codecs in the offer");
     // Ambiguous PTs need MID/SSRC demultiplexing, not implemented here.
     std::set<int> bundledPts;
+    std::map<int, std::string> bundledExtensions;
+    std::set<uint32_t> bundledSsrcs;
     for (const auto& media : result.medias)
+    {
         for (const auto& codec : media.codecs)
             if (!bundledPts.insert(codec.payloadType).second)
                 return Reject("Ambiguous bundled payload types require MID demultiplexing");
+        for (const auto& extension : media.headerExtensions)
+        {
+            const auto found = bundledExtensions.emplace(extension.id, extension.uri);
+            if (!found.second && found.first->second != extension.uri)
+                return Reject("BUNDLE header extension IDs must identify the same URI");
+        }
+        for (const auto& source : media.ssrcs)
+            if (!bundledSsrcs.insert(source.ssrc).second)
+                return Reject("Local SSRCs must be unique across accepted BUNDLE media");
+    }
     for (const auto& mid : remote_offer_.bundle.mids)
         if (std::any_of(result.medias.begin(), result.medias.end(),
-            [&](const auto& media) { return media.mid == mid && media.sdp.port != 0; }))
+            [&](const auto& media) { return media.mid == mid && media.port != 0; }))
             result.bundle.mids.push_back(mid);
-    if (!result.bundle.mids.empty())
-    {
-        std::string group = "BUNDLE";
-        for (const auto& mid : result.bundle.mids) group += " " + mid;
-        result.sdp.attributes.push_back({"group", std::move(group)});
-    }
     local_answer_ = std::move(result);
     answer = local_answer_;
     state_ = WebRtcSessionState::HaveAnswer;
@@ -364,7 +373,7 @@ bool WebRtcSession::start()
     if (transport_->State() != WebRtcTransportState::Created)
         return Reject("Session requires a fresh, exclusively owned WebRTC transport");
     const auto selected = std::find_if(local_answer_.medias.begin(), local_answer_.medias.end(),
-        [](const auto& media) { return media.sdp.port != 0; });
+        [](const auto& media) { return media.port != 0; });
     const auto index = static_cast<size_t>(selected - local_answer_.medias.begin());
     const auto& remote = remote_offer_.medias[index];
     if (!dtls_->Configure(remote.dtls, selected->dtls.setup)) return Fail("DTLS configuration failed");
@@ -477,7 +486,7 @@ bool WebRtcSession::AllowsRtp(const std::vector<uint8_t>& packet, bool sending) 
     if (!Classifier::IsRtp(packet.data(), packet.size())) return false;
     const int pt = packet[1] & 0x7f;
     for (const auto& media : local_answer_.medias)
-        if (media.sdp.port != 0 && (sending ? CanSend(media.direction) : CanReceive(media.direction)) &&
+        if (media.port != 0 && (sending ? CanSend(media.direction) : CanReceive(media.direction)) &&
             std::any_of(media.codecs.begin(), media.codecs.end(),
                 [pt](const auto& codec) { return codec.payloadType == pt; })) return true;
     return false;
@@ -488,8 +497,7 @@ void WebRtcSession::HandleEncryptedRtp(network::transport::ReceivedDatagram data
     if (!srtp_ready_) return;
     auto plaintext = datagram.payload.ToVector();
     if (!srtp_->UnprotectRtp(plaintext) || !AllowsRtp(plaintext, false)) return;
-    endpoint_->OnMediaPacket(ReceivedMediaPacket(MediaPacketType::Rtp, datagram.transport_id,
-        datagram.receive_time_ms, std::move(plaintext)));
+    endpoint_->OnMediaPacket(ReceivedMediaPacket(MediaPacketType::Rtp, transport_->Id(), datagram.receive_time_ms, std::move(plaintext)));
 }
 
 void WebRtcSession::HandleEncryptedRtcp(network::transport::ReceivedDatagram datagram)
@@ -498,7 +506,7 @@ void WebRtcSession::HandleEncryptedRtcp(network::transport::ReceivedDatagram dat
     auto plaintext = datagram.payload.ToVector();
     if (!srtp_->UnprotectRtcp(plaintext) ||
         !Classifier::IsRtcp(plaintext.data(), plaintext.size())) return;
-    endpoint_->OnMediaPacket(ReceivedMediaPacket(MediaPacketType::Rtcp, datagram.transport_id,
+    endpoint_->OnMediaPacket(ReceivedMediaPacket(MediaPacketType::Rtcp, transport_->Id(),
         datagram.receive_time_ms, std::move(plaintext)));
 }
 

@@ -75,7 +75,7 @@ be connected by the application.
 
 ## Build and validation
 
-On Linux, install a C++17 compiler, CMake, pkg-config, and libwebsockets development
+On Linux or macOS, install a C++17 compiler, CMake, pkg-config, and libwebsockets development
 headers/libraries. If libwebsockets was built with TLS enabled, its public headers
 also require the OpenSSL development headers, even for a plain `ws://` listener.
 Build this module independently of FFmpeg and libhv:
@@ -87,7 +87,9 @@ ctest --test-dir build/websocket --output-on-failure
 ```
 
 Discovery prefers `PACKETIA_LIBWEBSOCKETS_ROOT` (or `LIBWEBSOCKETS_ROOT`), then
-pkg-config/system libraries, then the bundled Linux library. A custom static
+pkg-config/system libraries, then the bundled Linux library on Linux. macOS uses
+native libraries (for example, `brew install libwebsockets`) and the kqueue
+scheduler; Linux uses epoll. A custom static
 build can set `PACKETIA_LIBWEBSOCKETS_EXTRA_LIBRARIES` for its dependencies.
 Headers and binaries must match the host architecture and C library.
 

@@ -1,4 +1,5 @@
 #include "MediaEndpoint.h"
+#include "RtspMediaSession.h"
 #include "logger.h"
 #include "RtcpContext.h"
 #include "RtcpReciver.h"
@@ -15,6 +16,16 @@
 
 namespace media 
 {
+
+MediaEndpoint::MediaEndpoint(uint64_t id, std::shared_ptr<RtpTrackDescription>,
+                             std::shared_ptr<MediaSession> session)
+    : utils::EndpointBase(id, "MediaEndpoint")
+{
+    if (session) {
+        session_id_ = std::to_string(session->GetId());
+        stream_id_ = session->GetRtspSuffix();
+    }
+}
 
 namespace
 {
@@ -99,6 +110,8 @@ rtsp::RtpReceiverTrack::Ptr SfuEndpoint::FindReceiverTrackBySsrc(uint32_t ssrc)
 
 void SfuEndpoint::HandleRtpPacket(common::BufferView packet)
 {
+    std::lock_guard<std::recursive_mutex> guard(runtime_mutex_);
+    if (!IsRunning() || !ResolveRtpTrack(packet, {})) return;
     if (packet.Size() < 12)
     {
         return;
@@ -124,37 +137,6 @@ void SfuEndpoint::HandleRtpPacket(common::BufferView packet)
     uint32_t ssrc = (uint32_t(data[8]) << 24) | (uint32_t(data[9]) << 16) | (uint32_t(data[10]) << 8) | data[11];
 
     media_affinity::TryGetRtpSsrc(packet.Data(), packet.Size(), ssrc);
-
-    auto source_track = SourceTrack();
-    auto source_session = SourceSession();
-    if (source_track)
-    {
-        const auto& info = source_track->getTrackInfo();
-        if (info.payload_type != 0xFF && payload_type != info.payload_type)
-        {
-            return;
-        }
-
-        if (source_session)
-        {
-            PayloadTypeInfo pt_info;
-            if (source_session->FindPayloadType(info.track_index, payload_type, &pt_info))
-            {
-                const bool track_type_mismatch =
-                    (info.type == TrackVideo && pt_info.track_type != StreamTrackType::Video) ||
-                    (info.type == TrackAudio && pt_info.track_type != StreamTrackType::Audio);
-                if (track_type_mismatch)
-                {
-                    LOG_ERROR("[RTP] SDP payload type track mismatch",
-                              " pt=", static_cast<int>(payload_type),
-                              " endpoint_track=", TrackTypeToString(info.type),
-                              " sdp_codec=", pt_info.codec_name,
-                              " ssrc=", ssrc);
-                    return;
-                }
-            }
-        }
-    }
 
     auto track = GetOrCreateReceiverTrack(ssrc);
     if (!track)
@@ -193,14 +175,16 @@ std::shared_ptr<rtsp::RtpReceiverTrack> SfuEndpoint::GetOrCreateReceiverTrack(ui
     }
 
     std::shared_ptr<rtsp::RtpReceiverTrack> new_track;
-    auto source_track = SourceTrack();
-    if (!source_track)
+    const auto binding = ssrc_bindings_.find(ssrc);
+    if (binding == ssrc_bindings_.end()) return nullptr;
+    const auto source = published_tracks_.find(binding->second);
+    if (source == published_tracks_.end())
     {
         LOG_ERROR("[TRACK] source track not found, ssrc=", ssrc);
         return nullptr;
     }
 
-    TrackInfo info = source_track->getTrackInfo();
+    ::TrackInfo info = source->second.description->getTrackInfo();
     info.ssrc = ssrc;
 
     new_track = rtsp::RtpReceiverTrack::Create(info);
@@ -254,7 +238,7 @@ std::shared_ptr<rtsp::RtpReceiverTrack> SfuEndpoint::GetOrCreateReceiverTrack(ui
         [Weak_self](const rtsp::RtpReceiverTrack::EncodedFramePtr& frame) {
             if (auto self = Weak_self.lock())
             {
-                self->DispatchEncodedFrame(frame);
+                self->pending_frames_.push_back(frame);
             }
         });
 
@@ -277,6 +261,9 @@ std::shared_ptr<rtsp::RtpReceiverTrack> SfuEndpoint::GetOrCreateReceiverTrack(ui
 
 void SfuEndpoint::HandleRtcpPacket(common::BufferView packet)
 {
+    std::lock_guard<std::recursive_mutex> guard(runtime_mutex_);
+    if (!IsRunning()) return;
+    PruneSubscriptions();
     if (packet.Size() < 4)
     {
         LOG_ERROR("invalid rtcp packet");
@@ -312,6 +299,8 @@ void SfuEndpoint::HandleRtcpPacket(common::BufferView packet)
 
 bool SfuEndpoint::Start()
 {
+    std::lock_guard<std::recursive_mutex> guard(runtime_mutex_);
+    if (GetState() == State::kStopped || GetState() == State::kStopping) return false;
     if (!rtcp_dispatcher_)
     {
         rtcp_dispatcher_ = std::make_unique<rtsp::RtcpDispatcher>();
@@ -391,11 +380,8 @@ void SfuEndpoint::DispatchEncodedFrame(const media::EncodedFrame::Ptr& frame)
         event.source.endpoint_id = Id();
         event.source.track_id = frame->info.track_id;
         event.source.ssrc = frame->rtp.ssrc;
-        if (const auto session = SourceSession())
-        {
-            event.source.session_id = std::to_string(session->GetId());
-            event.source.stream_id = session->GetRtspSuffix();
-        }
+        event.source.session_id = session_id_;
+        event.source.stream_id = stream_id_;
         event.frame = immutable_frame;
         const size_t accepted = frame_publisher_->Publish(event);
         const uint64_t count = published_frame_count_.fetch_add(1) + 1;
@@ -429,16 +415,14 @@ void SfuEndpoint::DispatchEncodedFrame(const media::EncodedFrame::Ptr& frame)
 
 void SfuEndpoint::OnTrackNack(uint32_t media_ssrc, const std::vector<uint16_t>& lost_seqs)
 {
+    std::lock_guard<std::recursive_mutex> guard(runtime_mutex_);
+    if (!IsRunning()) return;
     if (lost_seqs.empty())
     {
         return;
     }
 
-    SendRtcpCallback send;
-    {
-        std::lock_guard<std::mutex> lock(rtcp_send_mutex_);
-        send = send_rtcp_cb_;
-    }
+    auto send = RtcpSenderFor(media_ssrc);
     if (!send)
     {
         return;
@@ -453,11 +437,9 @@ void SfuEndpoint::OnTrackNack(uint32_t media_ssrc, const std::vector<uint16_t>& 
 
 void SfuEndpoint::OnTrackPli(uint32_t media_ssrc)
 {
-    SendRtcpCallback send;
-    {
-        std::lock_guard<std::mutex> lock(rtcp_send_mutex_);
-        send = send_rtcp_cb_;
-    }
+    std::lock_guard<std::recursive_mutex> guard(runtime_mutex_);
+    if (!IsRunning()) return;
+    auto send = RtcpSenderFor(media_ssrc);
     if (!send)
     {
         return;
@@ -472,143 +454,20 @@ void SfuEndpoint::OnTrackPli(uint32_t media_ssrc)
 
 void SfuEndpoint::Stop()
 {
+    std::lock_guard<std::recursive_mutex> guard(runtime_mutex_);
     SetState(State::kStopping);
     if (rtcp_dispatcher_)
     {
         rtcp_dispatcher_->SetSenderReportCallback({});
     }
 
-    std::vector<uint32_t> streams;
-    {
-        std::lock_guard<std::mutex> lock(track_mtx_);
-        streams.reserve(ssrc_to_track_.size());
-        for (const auto& item : ssrc_to_track_)
-        {
-            streams.push_back(item.first);
-        }
-    }
-
-    if (streams.empty())
-    {
-        SetState(State::kStopped);
-        return;
-    }
-
-    auto remaining = std::make_shared<std::atomic<size_t>>(streams.size());
-    std::weak_ptr<SfuEndpoint> weak_self = weak_from_this();
-    for (uint32_t ssrc : streams)
-    {
-        const int ret = media_affinity::PostToMediaStream(
-            Id(), ssrc, [weak_self, remaining, ssrc] {
-                if (auto self = weak_self.lock())
-                {
-                    self->RemoveMediaStreamOnOwner(ssrc);
-                    if (remaining->fetch_sub(1) == 1)
-                    {
-                        self->SetState(State::kStopped);
-                    }
-                }
-            });
-        if (ret != 0 && remaining->fetch_sub(1) == 1)
-        {
-            SetState(State::kStopped);
-        }
-    }
+    while (!subscriptions_.empty()) Unsubscribe(subscriptions_.begin()->first);
+    subscription_parameters_.clear();
+    while (!published_tracks_.empty()) RemovePublishedTrack(published_tracks_.begin()->first);
+    SetRtcpSendCallback({});
+    SetState(State::kStopped);
 }
 
-void SfuRouter::AddSubscriber(uint32_t source_ssrc, std::shared_ptr<rtsp::RtpSenderTrack> sender)
-{
-    std::lock_guard<std::mutex> lock(mutex_);
-    subscribers_[source_ssrc].push_back(sender);
-}
-
-void SfuRouter::RemoveSubscriber(uint32_t source_ssrc, const rtsp::RtpSenderTrack* sender)
-{
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = subscribers_.find(source_ssrc);
-    if (it == subscribers_.end())
-    {
-        return;
-    }
-    auto& tracks = it->second;
-    tracks.erase(std::remove_if(tracks.begin(), tracks.end(),
-                                [sender](const auto& item) {
-                                    return !item || item.get() == sender;
-                                }),
-                 tracks.end());
-    if (tracks.empty())
-    {
-        subscribers_.erase(it);
-    }
-}
-
-void SfuRouter::RemoveStream(uint32_t source_ssrc)
-{
-    std::lock_guard<std::mutex> lock(mutex_);
-    subscribers_.erase(source_ssrc);
-}
-
-std::vector<std::shared_ptr<rtsp::RtpSenderTrack>> SfuRouter::GetSenderTracks(uint32_t source_ssrc)
-{
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = subscribers_.find(source_ssrc);
-    if (it == subscribers_.end())
-    {
-        return {};
-    }
-
-    return it->second;
-}
-
-int SfuEndpoint::AddSubscriber(uint32_t source_ssrc, std::shared_ptr<rtsp::RtpSenderTrack> sender)
-{
-    if (!sender)
-    {
-        return -1;
-    }
-    std::weak_ptr<SfuEndpoint> weak_self = weak_from_this();
-    return media_affinity::PostToMediaStream(
-        Id(), source_ssrc,
-        [weak_self, source_ssrc, sender = std::move(sender)] {
-            if (auto self = weak_self.lock())
-            {
-                std::weak_ptr<SfuEndpoint> sender_weak_self = self;
-                sender->SetKeyFrameRequestCallback([sender_weak_self, source_ssrc] {
-                    if (auto endpoint = sender_weak_self.lock())
-                    {
-                        endpoint->OnTrackPli(source_ssrc);
-                    }
-                });
-                if (self->rtcp_dispatcher_)
-                {
-                    self->rtcp_dispatcher_->AddSenderTrack(sender->GetSsrc(), sender);
-                }
-                self->router_.AddSubscriber(source_ssrc, sender);
-            }
-        });
-}
-
-int SfuEndpoint::RemoveSubscriber(uint32_t source_ssrc, const std::shared_ptr<rtsp::RtpSenderTrack>& sender)
-{
-    if (!sender)
-    {
-        return -1;
-    }
-    std::weak_ptr<SfuEndpoint> weak_self = weak_from_this();
-    const auto* sender_ptr = sender.get();
-    const uint32_t sender_ssrc = sender->GetSsrc();
-    return media_affinity::PostToMediaStream(
-        Id(), source_ssrc, [weak_self, source_ssrc, sender_ptr, sender_ssrc] {
-            if (auto self = weak_self.lock())
-            {
-                self->router_.RemoveSubscriber(source_ssrc, sender_ptr);
-                if (self->rtcp_dispatcher_)
-                {
-                    self->rtcp_dispatcher_->RemoveSenderTrack(sender_ssrc);
-                }
-            }
-        });
-}
 
 int SfuEndpoint::RemoveMediaStream(uint32_t source_ssrc)
 {
@@ -624,6 +483,7 @@ int SfuEndpoint::RemoveMediaStream(uint32_t source_ssrc)
 
 void SfuEndpoint::RemoveMediaStreamOnOwner(uint32_t source_ssrc)
 {
+    std::lock_guard<std::recursive_mutex> guard(runtime_mutex_);
     {
         std::lock_guard<std::mutex> lock(track_mtx_);
         ssrc_to_track_.erase(source_ssrc);
@@ -631,15 +491,7 @@ void SfuEndpoint::RemoveMediaStreamOnOwner(uint32_t source_ssrc)
     if (rtcp_dispatcher_)
     {
         rtcp_dispatcher_->RemoveReceiverTrack(source_ssrc);
-        for (const auto& sender : router_.GetSenderTracks(source_ssrc))
-        {
-            if (sender)
-            {
-                rtcp_dispatcher_->RemoveSenderTrack(sender->GetSsrc());
-            }
-        }
     }
-    router_.RemoveStream(source_ssrc);
     {
         std::lock_guard<std::mutex> lock(quality_mutex_);
         receive_quality_.erase(source_ssrc);
@@ -662,11 +514,7 @@ void SfuEndpoint::EvaluateReceiveQuality(uint32_t source_ssrc)
     }
     const auto report = track->BuildReceiverReport(now_ms);
 
-    SendRtcpCallback send;
-    {
-        std::lock_guard<std::mutex> lock(rtcp_send_mutex_);
-        send = send_rtcp_cb_;
-    }
+    auto send = RtcpSenderFor(source_ssrc);
     if (send)
     {
         rtcpx::RrBlock block;
@@ -762,40 +610,36 @@ void SfuEndpoint::ForwardRtpToSubscribers(uint32_t source_ssrc, const uint8_t* d
 {
     const auto trace = media_latency::CurrentPacket();
     const auto start = trace ? media_latency::NowNs() : 0;
-    auto senders = router_.GetSenderTracks(source_ssrc);
-
-    if (trace)
+    const auto binding = ssrc_bindings_.find(source_ssrc);
+    if (binding != ssrc_bindings_.end()) 
     {
-        media_latency::Count(senders.empty() ? media_latency::Counter::NoSubscribers
-                                         : media_latency::Counter::ForwardInputs);
-        media_latency::Observe(media_latency::Stage::BeforeForward, trace.worker_ns, start);
-    }
-
-    if (!senders.empty())
-    {
-        auto source = FindReceiverTrackBySsrc(source_ssrc);
-        if (source && source->getTrackType() == TrackAudio)
-        {
-            LOG_DEBUG("[AUDIO][RTP] forwarding",
-                      " ssrc=", source_ssrc,
-                      " subscribers=", senders.size(),
-                      " bytes=", len);
+        auto& routes = published_tracks_.at(binding->second).subscribers;
+        routes.erase(std::remove_if(routes.begin(), routes.end(), [](const auto& weak) {
+            const auto route = weak.lock();
+            return !route || !route->active.load();
+        }), routes.end());
+        if (trace) {
+            media_latency::Count(routes.empty() ? media_latency::Counter::NoSubscribers : media_latency::Counter::ForwardInputs);
+            media_latency::Observe(media_latency::Stage::BeforeForward, trace.worker_ns, start);
         }
-    }
-
-    for (auto& sender : senders)
-    {
-        if (!sender)
+        const auto packet = routes.empty() ? common::SharedBuffer{} : common::SharedBuffer::TryCopy(data, len);
+        if (!packet.Empty()) for (const auto& weak : routes) 
         {
-            continue;
+            const auto route = weak.lock();
+            if (!route || !route->active.load()) continue;
+            if (!route->source_ssrc) route->source_ssrc = source_ssrc;
+            if (*route->source_ssrc != source_ssrc) continue;
+            if (auto destination = route->destination.lock()) 
+            {
+                media_affinity::PostToMediaStream(destination->Id(), route->sender->GetSsrc(),
+                    [route, packet, trace] {
+                        media_latency::PacketScope scope(trace);
+                        if (auto target = route->destination.lock()) target->Deliver(route, packet);
+                    });
+            }
         }
-
-        if (trace) media_latency::Count(media_latency::Counter::SenderAttempts);
-        const bool accepted = sender->InputRtpPacket(data, len);
-        if (trace && !accepted) media_latency::Count(media_latency::Counter::SenderRejected);
+        if (trace && !routes.empty()) media_latency::Observe(media_latency::Stage::Fanout, start, media_latency::NowNs());
     }
-    if (trace && !senders.empty())
-        media_latency::Observe(media_latency::Stage::Fanout, start, media_latency::NowNs());
 }
 
 }

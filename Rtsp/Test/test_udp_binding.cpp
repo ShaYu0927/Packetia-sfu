@@ -4,6 +4,8 @@
 #include "RtspUtil.h"
 #include "WorkerRegistry.h"
 #include "EndpointBase.h"
+#include "MediaEndpoint.h"
+#include <unordered_set>
 #include "core/EncodedFrameRouter.h"
 
 #include <array>
@@ -315,6 +317,52 @@ TEST_F(RtspUdpIntegration, InvalidSetupDoesNotConsumeTrackAndTcpStillWorks) {
     EXPECT_NE(Request("SETUP", "/trackID=0", "Transport: RTP/AVP;unicast\r\n").find("461"), std::string::npos);
     EXPECT_NE(Request("SETUP", "/trackID=0", "Transport: RTP/AVP;client_port=5000-5001;rtcp-mux\r\n").find("461"), std::string::npos);
     EXPECT_NE(Request("SETUP", "/trackID=0", "Transport: RTP/AVP/TCP;unicast;interleaved=4-5\r\n").find("interleaved=4-5"), std::string::npos);
+}
+
+TEST_F(RtspUdpIntegration, TwoTracksShareEndpointAndFailedSetupPreservesFirstTrack) {
+    auto response = Request("ANNOUNCE", "", "Content-Type: application/sdp\r\n",
+        "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=test\r\nt=0 0\r\n"
+        "m=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\na=control:trackID=0\r\n"
+        "m=audio 0 RTP/AVP 96\r\na=rtpmap:96 opus/48000/2\r\na=control:trackID=1\r\n");
+    ASSERT_NE(response.find("200 OK"), std::string::npos);
+    auto session = MediaSessionManager::Instance().GetSessionBySuffix("live/udp_binding");
+    ASSERT_NE(session, nullptr);
+    ASSERT_NE(Request("SETUP", "/trackID=0", "Transport: RTP/AVP/TCP;unicast;interleaved=4-5\r\n")
+        .find("200 OK"), std::string::npos);
+    const auto id = session->FindEndpointByTrack(0);
+    auto endpoint = std::dynamic_pointer_cast<media::SfuEndpoint>(utils::EndpointManager::Instance().Find(id));
+    ASSERT_NE(endpoint, nullptr);
+    EXPECT_NE(Request("SETUP", "/trackID=1", "Transport: RTP/AVP/TCP;unicast;interleaved=4-5\r\n")
+        .find("461"), std::string::npos);
+    EXPECT_TRUE(endpoint->IsRunning());
+    EXPECT_EQ(endpoint->PublishedTrackCount(), 1U);
+    EXPECT_EQ(session->FindEndpointByTrack(1), 0U);
+    ASSERT_NE(Request("SETUP", "/trackID=1", "Transport: RTP/AVP/TCP;unicast;interleaved=6-7\r\n")
+        .find("200 OK"), std::string::npos);
+    EXPECT_EQ(session->FindEndpointByTrack(1), id);
+    EXPECT_EQ(endpoint->PublishedTrackCount(), 2U);
+    std::promise<void> received;
+    auto done = received.get_future();
+    std::mutex mutex;
+    std::unordered_set<media::TrackId> tracks;
+    endpoint->AddEncodedFrameCallback([&](const auto& frame) {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (tracks.insert(frame->info.track_id).second && tracks.size() == 2) received.set_value();
+    });
+    for (uint8_t channel : {4, 6}) {
+        auto packet = kRtp;
+        packet[11] = channel; // Distinct RTP sources, identical PT.
+        std::vector<uint8_t> framed{'$', channel, 0, static_cast<uint8_t>(packet.size())};
+        framed.insert(framed.end(), packet.begin(), packet.end());
+        ASSERT_EQ(::send(client, framed.data(), framed.size(), MSG_NOSIGNAL), framed.size());
+    }
+    ASSERT_EQ(done.wait_for(2s), std::future_status::ready);
+    EXPECT_NE(Request("TEARDOWN", "", "Session: " + std::to_string(session->GetId()) + "\r\n")
+        .find("200 OK"), std::string::npos);
+    EXPECT_EQ(session->FindEndpointByTrack(0), 0U);
+    EXPECT_EQ(session->FindEndpointByTrack(1), 0U);
+    EXPECT_FALSE(endpoint->IsRunning());
+    EXPECT_FALSE(utils::EndpointManager::Instance().Exists(id));
 }
 
 TEST_F(RtspUdpIntegration, FailedAllocationDoesNotRegisterEndpoint) {

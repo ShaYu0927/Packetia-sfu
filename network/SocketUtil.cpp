@@ -6,6 +6,16 @@
 #include <fcntl.h>
 #include "Socket.h"
 
+namespace {
+int Fcntl(int fd, int command, int argument = 0)
+{
+    int result;
+    do { result = ::fcntl(fd, command, argument); }
+    while (result < 0 && errno == EINTR);
+    return result;
+}
+}
+
 bool SocketUtil::Bind(int sockfd, std::string ip, uint16_t port)
 {
     struct sockaddr_in addr = {0};
@@ -18,23 +28,29 @@ bool SocketUtil::Bind(int sockfd, std::string ip, uint16_t port)
     }
     return true;
 }
-void SocketUtil::SetNonBlock(int fd)
+bool SocketUtil::SetNonBlock(int fd)
 {
-    int flags = fcntl(fd, F_GETFL, 0);
-    if (flags == -1)
-        flags = 0;
-    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    const int flags = Fcntl(fd, F_GETFL);
+    return flags >= 0 && Fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
 }
-void SocketUtil::SetBlock(int fd, int write_timeout)
+bool SocketUtil::SetBlock(int fd, int write_timeout)
 {
-    int flags = fcntl(fd, F_GETFL, 0);
-    fcntl(fd, F_SETFL, flags&(~O_NONBLOCK));
+    const int flags = Fcntl(fd, F_GETFL);
+    if (flags < 0 || Fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) < 0)
+        return false;
 
     if(write_timeout > 0)
     {
         struct timeval tv = {write_timeout/1000, (write_timeout%1000)*1000};
-        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, (char *)&tv, sizeof(unsigned long));
+        return setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, (char *)&tv, sizeof(tv)) == 0;
     }
+    return true;
+}
+
+bool SocketUtil::SetCloseOnExec(int fd)
+{
+    const int flags = Fcntl(fd, F_GETFD);
+    return flags >= 0 && Fcntl(fd, F_SETFD, flags | FD_CLOEXEC) == 0;
 }
 void SocketUtil::SetReuseAddr(int fd)
 {
@@ -63,11 +79,17 @@ void SocketUtil::SetKeepAlive(int sockfd)
     setsockopt(sockfd, SOL_SOCKET, SO_KEEPALIVE, (char *)&on, sizeof(on));
 }
 
-void SocketUtil::SetNoSigpipe(int sockfd)
+bool SocketUtil::SetNoSigpipe(int sockfd)
 {
 #ifdef SO_NOSIGPIPE
     int on = 1;
-    setsockopt(sockfd, SOL_SOCKET, SO_NOSIGPIPE, (char *)&on, sizeof(on)); //setsockopt可以控制套接字的行为
+    int result;
+    do { result = setsockopt(sockfd, SOL_SOCKET, SO_NOSIGPIPE, (char *)&on, sizeof(on)); }
+    while (result < 0 && errno == EINTR);
+    return result == 0;
+#else
+    (void)sockfd;
+    return true;
 #endif
 }
 void SocketUtil::SetSendBufSize(int sockfd, int size)

@@ -26,6 +26,7 @@ MediaPacketIngressResult MediaEndpointIngress::OnMediaPacket(ReceivedMediaPacket
 
     WorkJob job{};
     job.target_id = endpoint_id_;
+    job.media_track_id = track_id_;
     job.key = has_media_ssrc ? media_affinity::MakeStreamHandle(endpoint_id_, media_ssrc).affinity_key : endpoint_id_;
     job.type = packet.type == MediaPacketType::Rtcp ? WorkType::Rtcp : WorkType::Rtp;
     job.enqueue_ts = packet.receive_time_ms;

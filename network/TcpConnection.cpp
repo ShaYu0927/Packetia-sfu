@@ -14,6 +14,7 @@ TcpConnection::TcpConnection(TaskScheduler *task_scheduler, SOCKET sockfd)
     is_closed_ = false;
 
     SocketUtil::SetNonBlock(sockfd);
+    SocketUtil::SetNoSigpipe(sockfd);
 	SocketUtil::SetSendBufSize(sockfd, 100 * 1024);
 	SocketUtil::SetKeepAlive(sockfd);
 }

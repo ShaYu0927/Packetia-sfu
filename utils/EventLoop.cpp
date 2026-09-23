@@ -1,5 +1,9 @@
 #include "EventLoop.h"
+#if defined(__APPLE__)
+#include "KqueueTaskScheduler.h"
+#else
 #include "EpollTaskScheduler.h"
+#endif
 
 
 EventLoop::EventLoop(uint32_t num_threads)
@@ -83,7 +87,11 @@ bool EventLoop::Start()
     for (uint32_t i = 0; i < num_threads_; ++i) 
     {
         std::shared_ptr<TaskScheduler> task_scheduler =
+#if defined(__APPLE__)
+            std::make_shared<KqueueTaskScheduler>(scheduler_id_seed_++);
+#else
             std::make_shared<EpollTaskScheduler>(scheduler_id_seed_++);
+#endif
         task_schedulers_.push_back(task_scheduler);
 
         std::shared_ptr<std::thread> thread =

@@ -31,6 +31,7 @@ private:
     bool Fail(const std::string& operation, int error);
     bool FailFile(const std::string& operation);
     static int WritePacket(void* opaque, uint8_t* data, int bytes);
+    static int WritePacket(void* opaque, const uint8_t* data, int bytes);
     static int64_t Seek(void* opaque, int64_t offset, int whence);
     struct Track 
     {

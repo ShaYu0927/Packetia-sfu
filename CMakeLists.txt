@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.16)
 project(Packetia)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -8,6 +8,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS ON)
 
 set(LIBHV_DIR ${CMAKE_SOURCE_DIR}/third/libhv)
+if(NOT EXISTS "${LIBHV_DIR}/CMakeLists.txt")
+  message(FATAL_ERROR "libhv is missing. Run: git submodule update --init --recursive")
+endif()
 
 set(BUILD_SHARED OFF CACHE BOOL "" FORCE)
 set(BUILD_STATIC ON CACHE BOOL "" FORCE)
@@ -151,11 +154,17 @@ add_library(COMMON STATIC
     Common/Depacketizer/AudioRtpDepacketizerFactory.cpp
 )
 
+if(APPLE)
+  set(PACKETIA_SCHEDULER_SOURCE utils/KqueueTaskScheduler.cpp)
+else()
+  set(PACKETIA_SCHEDULER_SOURCE utils/EpollTaskScheduler.cpp)
+endif()
+
 add_library(utils STATIC
     utils/TimeUtil.cpp
     utils/TaskScheduler.cpp
     utils/SelectTaskScheduler.cpp
-    utils/EpollTaskScheduler.cpp
+    ${PACKETIA_SCHEDULER_SOURCE}
     utils/ShardedWorkerPool.cpp
     utils/MediaLatency.cpp
     utils/ShardedWorkerPool.h
@@ -271,9 +280,9 @@ add_executable(Packetia
 
 target_link_libraries(Packetia
     PRIVATE
-    -Wl,--start-group
+    "$<$<PLATFORM_ID:Linux>:-Wl,--start-group>"
     server media rtsp rtp sip Rtmp network utils Rtcp LOGGER ROOM_LIB COMMON ICE WebRtc Interleaved service hv_static
-    -Wl,--end-group
+    "$<$<PLATFORM_ID:Linux>:-Wl,--end-group>"
     ${FFMPEG_LIBRARIES}
     pthread
     c

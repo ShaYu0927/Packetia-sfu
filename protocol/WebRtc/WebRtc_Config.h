@@ -56,18 +56,8 @@ namespace RtcpFeedbackParameter
     static const std::string FIR = "fir";
 }
 
-struct RtcpFeedback
-{
-    std::string type;
-    std::string parameter;
-
-    RtcpFeedback() = default;
-
-    RtcpFeedback(const std::string& type_, const std::string& parameter_ = "")
-        : type(type_), parameter(parameter_)
-    {
-    }
-};
+// SDP parameter types are shared with RTSP and other SDP consumers.
+using sdp::RtcpFeedback;
 
 struct ReceiverConfig
 {
@@ -167,124 +157,19 @@ private:
     std::shared_ptr<BufferFactory> bufferFactory_;
 };
 
-enum class SdpType
-{
-    Offer,
-    Answer,
-    Pranswer,
-    Rollback
-};
-
-struct IceParameters
-{
-    std::string ufrag;
-    std::string pwd;
-    bool iceLite = false;
-    std::vector<std::string> options;
-    std::vector<std::string> candidates;
-    bool endOfCandidates = false;
-};
-
-enum class DtlsSetup
-{
-    Unspecified,
-    ActPass,
-    Active,
-    Passive,
-    HoldConn
-};
-
-struct DtlsFingerprint
-{
-    std::string algorithm;
-    std::string value;
-};
-
-struct DtlsParameters
-{
-    DtlsSetup setup = DtlsSetup::Unspecified;
-    std::vector<DtlsFingerprint> fingerprints;
-};
-
-struct BundleParameters
-{
-    std::vector<std::string> mids;
-};
-
-enum class MediaDirection
-{
-    SendRecv,
-    SendOnly,
-    RecvOnly,
-    Inactive
-};
-
-struct RtpCodecParameters
-{
-    int payloadType = -1;
-    std::string encodingName;
-    int clockRate = 0;
-    int channels = 0;
-    std::string fmtp;
-    std::vector<RtcpFeedback> rtcpFeedback;
-};
-
-struct RtpHeaderExtensionParameters
-{
-    int id = 0;
-    std::string uri;
-    MediaDirection direction = MediaDirection::SendRecv;
-    std::string attributes;
-};
-
-struct RtpSsrcParameters
-{
-    uint32_t ssrc = 0;
-    std::vector<sdp::SdpAttribute> attributes;
-};
-
-struct RtpSsrcGroup
-{
-    std::string semantics;
-    std::vector<uint32_t> ssrcs;
-};
-
-struct WebRtcMediaDescription
-{
-    // Original m= section, including media kind, port, protocol and attributes.
-    sdp::SdpMedia sdp;
-    std::string mid;
-    MediaDirection direction = MediaDirection::SendRecv;
-    bool rtcpMux = false;
-    bool rtcpRsize = false;
-    bool bundleOnly = false;
-
-    // Effective transport parameters after applying session-level defaults.
-    IceParameters ice;
-    DtlsParameters dtls;
-
-    std::vector<RtpCodecParameters> codecs;
-    std::vector<RtpHeaderExtensionParameters> headerExtensions;
-    // Feedback with a wildcard payload type (a=rtcp-fb:*).
-    std::vector<RtcpFeedback> rtcpFeedback;
-    std::vector<RtpSsrcParameters> ssrcs;
-    std::vector<RtpSsrcGroup> ssrcGroups;
-    std::vector<std::string> msids;
-};
-
-// Value model only: the raw SDP and extracted parameters are populated together
-// by the caller; changing one representation does not update the other.
-struct WebRtcSessionDescription
-{
-    SdpType type = SdpType::Offer;
-
-    sdp::SdpSession sdp;
-
-    IceParameters ice;
-    DtlsParameters dtls;
-    BundleParameters bundle;
-    std::vector<WebRtcMediaDescription> medias;
-};
+using sdp::SdpType;
+using sdp::IceParameters;
+using sdp::DtlsSetup;
+using sdp::DtlsFingerprint;
+using sdp::DtlsParameters;
+using sdp::BundleParameters;
+using sdp::MediaDirection;
+using sdp::RtpCodecParameters;
+using sdp::RtpHeaderExtensionParameters;
+using sdp::RtpSsrcParameters;
+using sdp::RtpSsrcGroup;
+using WebRtcMediaDescription = sdp::SdpMedia;
+using WebRtcSessionDescription = sdp::SdpSession;
 
 std::unique_ptr<WebRTCConfig> NewWebRTCConfig(Config conf);
 DirectionConfig GetPublisherConfig(bool consolidated);

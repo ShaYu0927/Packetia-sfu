@@ -47,3 +47,6 @@ add_test(
 )
 
 add_subdirectory(workers)
+if(APPLE)
+    add_subdirectory(scheduler)
+endif()
