@@ -27,6 +27,8 @@ struct WebRtcSessionOptions
     // fmtp negotiation. Repair codecs (RTX/RED/FEC) are not advertised.
     std::vector<WebRtcMediaDescription> medias;
     sdp::SdpOrigin origin;
+    uint64_t iceTimeoutMs = 30000;
+    ice::IceAgent::Clock iceClock; // Optional injected monotonic clock for tests.
 };
 
 // ICE-lite answerer, one transport, RTP/RTCP mux, optional single BUNDLE group.
@@ -50,6 +52,8 @@ public:
 
     bool start();
     bool stop();
+    // Owner must call periodically (e.g. every second), even without traffic.
+    // nowMs goes to DTLS; ICE uses options.iceClock or steady_clock.
     bool Tick(uint64_t nowMs);
     bool SendRtp(std::vector<uint8_t> packet);
     bool SendRtcp(std::vector<uint8_t> packet);
@@ -72,6 +76,7 @@ private:
     bool Reject(const std::string& error);
     void Shutdown();
     bool AllowsRtp(const std::vector<uint8_t>& packet, bool sending) const;
+    bool CheckIceLiveness();
 
     ice::IceAgent ice_;
     std::unique_ptr<DtlsTransport> dtls_;

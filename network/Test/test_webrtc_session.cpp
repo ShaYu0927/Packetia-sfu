@@ -358,9 +358,42 @@ void Failures()
     CHECK(failedStart.session->State() == WebRtcSessionState::Failed);
 }
 
+void IceTimeout()
+{
+    for (int action = 0; action < 4; ++action)
+    {
+        uint64_t now = 0;
+        auto options = Options();
+        options.iceTimeoutMs = 100;
+        options.iceClock = [&] { return now; };
+        Fixture f(options);
+        f.Start();
+        if (action != 0) f.Handshake();
+        now = 99;
+        CHECK(f.session->Tick(99));
+        now = 100;
+        if (action == 0) CHECK(!f.session->Tick(100));
+        if (action == 1) CHECK(!f.session->SendRtp(Rtp()));
+        if (action == 2) CHECK(!f.session->SendRtcp(Rtcp()));
+        if (action == 3) f.Deliver(Rtp(), f.peer);
+        CHECK(f.session->State() == WebRtcSessionState::Failed);
+        CHECK(f.session->LastError() == "ICE connectivity check timeout");
+        CHECK(f.transport->State() == WebRtcTransportState::Closed);
+        CHECK(f.udp->sink.expired());
+        CHECK(f.dtls->closes > 0 && f.srtp->closes > 0);
+        CHECK(f.sink->packets.empty());
+        CHECK(!f.session->SendRtp(Rtp()) && !f.session->SendRtcp(Rtcp()));
+        CHECK(!f.session->Tick(101));
+    }
+}
+
 void StunNomination()
 {
-    Fixture f;
+    uint64_t now = 0;
+    auto options = Options();
+    options.iceTimeoutMs = 100;
+    options.iceClock = [&] { return now; };
+    Fixture f(options);
     f.Start();
     // Even before peer selection, malformed/unauthenticated STUN is routed to
     // ICE and cannot open the DTLS/media path.
@@ -390,6 +423,21 @@ void StunNomination()
     CHECK(protocol::StunCodec::Parse(f.udp->last.data(), f.udp->last.size(), response));
     CHECK(response.IsBindingResponse());
     CHECK(protocol::StunCodec::VerifyMessageIntegrity(response, request.password));
+    f.Handshake();
+    now = 90;
+    request.use_candidate = false;
+    bytes.resize(1500);
+    CHECK(protocol::StunCodec::BuildIceBindingRequest(request, bytes.data(), bytes.size(), size));
+    bytes.resize(size);
+    f.Deliver(bytes, f.peer);
+    now = 100;
+    CHECK(f.session->Tick(100));
+    CHECK(f.session->SendRtp(Rtp()));
+    now = 190;
+    CHECK(!f.session->Tick(190));
+    CHECK(f.session->State() == WebRtcSessionState::Failed);
+    f.Deliver(bytes, f.peer);
+    CHECK(f.session->State() == WebRtcSessionState::Failed);
 #else
     std::cout << "Authenticated STUN nomination skipped: OpenSSL headers unavailable\n";
 #endif
@@ -400,7 +448,7 @@ int main()
 {
     try
     {
-        Negotiation(); Validation(); BundleAndDirections(); MediaFlow(); Failures(); StunNomination();
+        Negotiation(); Validation(); BundleAndDirections(); MediaFlow(); Failures(); StunNomination(); IceTimeout();
         std::cout << "WebRtcSession negotiation, validation, media and failure tests passed\n";
         return 0;
     }

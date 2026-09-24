@@ -239,7 +239,7 @@ int RtspRequest::BuildRecordRes(const RtspRequestInfo& req,std::shared_ptr<char>
 
     memset(data.get(), 0, size);
     std::string cseq = std::to_string(req.cseq);
-    std::string session = req.GetHeader("Session");
+    std::string session = req.GetHeader("session");
     std::string timestamp = std::to_string(Timestamp::NowMs());
 
     int ret = snprintf(
@@ -769,16 +769,9 @@ std::string RtspRequest::HandleCmdRecord(RtspRequestInfo& req)
     std::string cseq = req.GetHeader("CSeq");
     std::string session_id = req.GetHeader("session");
 
-    if (session_id.empty())
-    {
-        return "";
-    }
-
-    auto session = MediaSessionManager::Instance().GetSessionById(std::stoi(session_id));
-    if (!session)
-    {
-        return "";
-    }
+    session_id = session_id.substr(0, session_id.find(';'));
+    if (!media_session || session_id != std::to_string(media_session->GetId()))
+        return BuildStatusResponse(req.cseq, "454 Session Not Found");
 
     std::shared_ptr<char> res(new char[2048], std::default_delete<char[]>());
     int size = BuildRecordRes(req, res, 1024);

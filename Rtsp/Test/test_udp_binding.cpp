@@ -12,6 +12,7 @@
 #include <condition_variable>
 #include <future>
 #include <poll.h>
+#include <thread>
 
 namespace {
 using namespace std::chrono_literals;
@@ -317,6 +318,58 @@ TEST_F(RtspUdpIntegration, InvalidSetupDoesNotConsumeTrackAndTcpStillWorks) {
     EXPECT_NE(Request("SETUP", "/trackID=0", "Transport: RTP/AVP;unicast\r\n").find("461"), std::string::npos);
     EXPECT_NE(Request("SETUP", "/trackID=0", "Transport: RTP/AVP;client_port=5000-5001;rtcp-mux\r\n").find("461"), std::string::npos);
     EXPECT_NE(Request("SETUP", "/trackID=0", "Transport: RTP/AVP/TCP;unicast;interleaved=4-5\r\n").find("interleaved=4-5"), std::string::npos);
+}
+
+TEST_F(RtspUdpIntegration, StateMachineRejectsWrongOrderAndAllowsSessionReuse) {
+    EXPECT_NE(Request("RECORD", "", "Session: 999\r\n").find("455"), std::string::npos);
+    EXPECT_NE(Request("ANNOUNCE", "", "Content-Type: application/sdp\r\n", "invalid")
+        .find("400"), std::string::npos);
+    Announce();
+    EXPECT_NE(Request("RECORD", "").find("455"), std::string::npos);
+    EXPECT_NE(Request("SETUP", "/trackID=0", "Transport: invalid\r\n").find("461"), std::string::npos);
+    EXPECT_NE(Request("RECORD", "").find("455"), std::string::npos);
+    ASSERT_NE(Request("SETUP", "/trackID=0", "Transport: RTP/AVP/TCP;unicast;interleaved=4-5\r\n")
+        .find("200 OK"), std::string::npos);
+    auto session = MediaSessionManager::Instance().GetSessionBySuffix("live/udp_binding");
+    ASSERT_NE(session, nullptr);
+    const auto endpoint_id = session->FindEndpointByTrack(0);
+    const auto header = "Session: " + std::to_string(session->GetId()) + "\r\n";
+    EXPECT_NE(Request("RECORD", "", "Session: not-a-number\r\n").find("454"), std::string::npos);
+    EXPECT_NE(Request("TEARDOWN", "", "Session: 999999999999999999999\r\n").find("454"), std::string::npos);
+    EXPECT_NE(Request("ANNOUNCE", "", {}, "invalid").find("455"), std::string::npos);
+    EXPECT_NE(Request("RECORD", "", header).find("200 OK"), std::string::npos);
+    EXPECT_NE(Request("RECORD", "", header).find("200 OK"), std::string::npos);
+    EXPECT_NE(Request("SETUP", "/trackID=0", "Transport: RTP/AVP/TCP;unicast;interleaved=6-7\r\n")
+        .find("455"), std::string::npos);
+    EXPECT_EQ(session->FindEndpointByTrack(0), endpoint_id);
+    EXPECT_NE(Request("PAUSE", "", header).find("501"), std::string::npos);
+    EXPECT_NE(Request("TEARDOWN", "", header).find("200 OK"), std::string::npos);
+    EXPECT_EQ(session->FindEndpointByTrack(0), 0U);
+    EXPECT_EQ(utils::EndpointManager::Instance().Find(endpoint_id), nullptr);
+    EXPECT_NE(Request("TEARDOWN", "", header).find("454"), std::string::npos);
+    EXPECT_NE(Request("RECORD", "", header).find("455"), std::string::npos);
+    Announce();
+    EXPECT_NE(Request("SETUP", "/trackID=0", "Transport: RTP/AVP/TCP;unicast;interleaved=4-5\r\n")
+        .find("200 OK"), std::string::npos);
+    EXPECT_NE(Request("TEARDOWN", "", header).find("200 OK"), std::string::npos);
+}
+
+TEST_F(RtspUdpIntegration, DisconnectReleasesActiveEndpoint) {
+    Announce();
+    ASSERT_NE(Request("SETUP", "/trackID=0", "Transport: RTP/AVP/TCP;unicast;interleaved=4-5\r\n")
+        .find("200 OK"), std::string::npos);
+    auto session = MediaSessionManager::Instance().GetSessionBySuffix("live/udp_binding");
+    ASSERT_NE(session, nullptr);
+    const auto id = session->FindEndpointByTrack(0);
+    ASSERT_NE(id, 0U);
+    ::shutdown(client, SHUT_RDWR);
+    ::close(client);
+    client = -1;
+    const auto deadline = std::chrono::steady_clock::now() + 2s;
+    while (session->FindEndpointByTrack(0) != 0 && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(5ms);
+    EXPECT_EQ(session->FindEndpointByTrack(0), 0U);
+    EXPECT_EQ(utils::EndpointManager::Instance().Find(id), nullptr);
 }
 
 TEST_F(RtspUdpIntegration, TwoTracksShareEndpointAndFailedSetupPreservesFirstTrack) {

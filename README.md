@@ -717,3 +717,28 @@ RTCP SR
 - WebRTC 应用层信令组装及实际 DTLS/SRTP 后端仍待接入，尚未完成真实浏览器链路验证。
 - 暂不支持 RTX 和 simulcast 层选择；每条订阅固定转发一个源编码的 SSRC。
 - 房间接入仍需应用层绑定参与者端点，并根据下游协商结果配置订阅参数。
+
+## 2026-09-24 — 引入公共状态机并接入 ICE 与 RTSP 会话
+
+### 本次完成
+
+- 新增 `StateMachine` 和 `StateController`，支持强类型转换表、条件判断、动作回调和绑定业务上下文。
+- 明确非法事件、重复规则、递归派发和异常处理语义。
+- 将 ICE 生命周期改为显式状态，接通存活超时与 WebRTC 会话关闭，阻止关闭后的连接被迟到包激活。
+- 修复 STUN MESSAGE-INTEGRITY 计算范围错误，防止认证失败的请求污染远端凭据及未认证属性触发提名。
+- 将 RTSP 推流流程接入状态机，保留多轨 SETUP 和失败回滚，成功处理请求后才提交状态转换。
+- 校验 RECORD/TEARDOWN 的会话归属，支持重复 RECORD、TEARDOWN 后复用 TCP 连接及断线清理。
+- 未实现的 DESCRIBE、PLAY、PAUSE 明确返回 501。
+- 补充公共状态机、ICE 和 RTSP 生命周期测试；新增 [ICE 接入说明](protocol/ice/README.md)及 [RTSP 状态机说明](Rtsp/StateMachine.md)。
+
+### 验证情况
+
+- 主程序编译通过，公共状态机、ICE、WebRTC 会话、传输及媒体适配相关测试通过。
+- RTSP TCP/UDP、多轨 SETUP、失败回滚、错误请求顺序、会话重建和断线清理测试通过。
+- 上一条记录中的 STUN 提名失败已修复；超大 RTP 包计数问题不在本次修改范围内。
+
+### 当前限制
+
+- 应用需在会话事件循环周期调用 `WebRtcSession::Tick`，确保无流量时也能及时检测 ICE 超时。
+- ICE 建立与存活超时仍共用配置；会话级 ICE restart、完整主动检查及真实浏览器互通仍待完善。
+- RTMP、AI 和公共服务生命周期尚未迁移至状态机组件。

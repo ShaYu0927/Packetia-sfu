@@ -99,6 +99,10 @@ struct StunMessageInfo
         for (const auto& a : attrs)
         {
             if (a.type == t) return &a;
+            // Attributes following MI are unauthenticated and must not affect
+            // ICE decisions. FINGERPRINT is the sole supported exception.
+            if (a.type == static_cast<uint16_t>(AttrType::MESSAGE_INTEGRITY) &&
+                t != static_cast<uint16_t>(AttrType::FINGERPRINT)) break;
         }
         return nullptr;
     }
@@ -153,6 +157,7 @@ struct StunErrorCode
 {
     uint16_t code = 0;              // e.g. 400 / 401 / 487
     std::string reason;
+    std::vector<uint16_t> unknown_attributes;
 };
 
 class StunCodec

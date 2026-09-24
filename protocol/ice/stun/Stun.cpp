@@ -6,6 +6,7 @@
 #define STUN_USE_OPENSSL 1
 #include <openssl/hmac.h>
 #include <openssl/evp.h>
+#include <openssl/crypto.h>
 #else
 #define STUN_USE_OPENSSL 0
 #endif
@@ -287,7 +288,7 @@ bool StunCodec::VerifyFingerprint(const StunMessageInfo& msg)
         return false;
 
     const size_t attr_start = static_cast<size_t>(a->value_offset) - kAttrHeaderSize;
-    if (attr_start + kAttrHeaderSize + 4 > msg.raw_len)
+    if (attr_start + kAttrHeaderSize + 4 != msg.raw_len)
         return false;
 
     const uint32_t actual = ReadBE32(msg.raw + a->value_offset);
@@ -325,7 +326,7 @@ bool StunCodec::ComputeMessageIntegrity(const uint8_t* data,
 bool StunCodec::VerifyMessageIntegrity(const StunMessageInfo& msg,
                                        std::string_view key)
 {
-    const AttrView* a = FindLastAttr(msg, static_cast<uint16_t>(AttrType::MESSAGE_INTEGRITY));
+    const AttrView* a = msg.FindAttr(static_cast<uint16_t>(AttrType::MESSAGE_INTEGRITY));
     if (!a || !IsAttrInBounds(msg, *a) || a->len != 20)
         return false;
 
@@ -335,15 +336,20 @@ bool StunCodec::VerifyMessageIntegrity(const StunMessageInfo& msg,
 
     // Need a temporary copy because STUN HMAC covers a message whose header
     // length stops at MESSAGE-INTEGRITY value end.
-    std::vector<uint8_t> tmp(msg.raw, msg.raw + mi_attr_start + kAttrHeaderSize + 20);
-    const uint16_t new_len = static_cast<uint16_t>(tmp.size() - kHeaderSize);
+    // RFC 8489 section 14.5: length includes MI, HMAC input excludes MI.
+    std::vector<uint8_t> tmp(msg.raw, msg.raw + mi_attr_start);
+    const uint16_t new_len = static_cast<uint16_t>(mi_attr_start + 24 - kHeaderSize);
     WriteBE16(tmp.data() + 2, new_len);
 
     uint8_t digest[20] = {0};
     if (!ComputeMessageIntegrity(tmp.data(), tmp.size(), key, digest))
         return false;
 
-    return std::memcmp(digest, msg.raw + a->value_offset, 20) == 0;
+#if STUN_USE_OPENSSL
+    return CRYPTO_memcmp(digest, msg.raw + a->value_offset, 20) == 0;
+#else
+    return false;
+#endif
 }
 
 bool StunCodec::AppendAttr(std::vector<uint8_t>& out,
@@ -455,8 +461,7 @@ bool StunCodec::AppendXorMappedAddressAttr(std::vector<uint8_t>& out,
 bool StunCodec::AppendMessageIntegrityAttr(std::vector<uint8_t>& out,
                                            std::string_view key)
 {
-    // MESSAGE-INTEGRITY must be computed over the message up to and including
-    // the MI attribute value, with the header length adjusted accordingly.
+    // Length includes MI; the HMAC covers only bytes preceding its header.
     const size_t mi_attr_start = out.size();
 
     WriteBE16(out, static_cast<uint16_t>(AttrType::MESSAGE_INTEGRITY));
@@ -468,7 +473,7 @@ bool StunCodec::AppendMessageIntegrityAttr(std::vector<uint8_t>& out,
         return false;
 
     uint8_t digest[20] = {0};
-    if (!ComputeMessageIntegrity(out.data(), out.size(), key, digest))
+    if (!ComputeMessageIntegrity(out.data(), mi_attr_start, key, digest))
         return false;
 
     std::memcpy(out.data() + mi_attr_start + kAttrHeaderSize, digest, 20);
@@ -652,6 +657,14 @@ bool StunCodec::BuildBindingError(const StunMessageInfo& req,
                     val.data(),
                     static_cast<uint16_t>(val.size())))
         return false;
+
+    if (!err.unknown_attributes.empty())
+    {
+        std::vector<uint8_t> unknown;
+        for (auto type : err.unknown_attributes) WriteBE16(unknown, type);
+        if (!AppendAttr(buf, static_cast<uint16_t>(AttrType::UNKNOWN_ATTRIBUTES),
+                        unknown.data(), static_cast<uint16_t>(unknown.size()))) return false;
+    }
 
     if (!password.empty())
     {

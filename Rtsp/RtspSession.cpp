@@ -135,7 +135,9 @@ void RtspSession::Start()
 void RtspSession::OnClosed(int reason)
 {
     (void)reason;
+    (void)lifecycle_.Dispatch(SessionEvent::Close);
     CloseMediaTransports();
+    media_session_.reset();
 }
 
 void RtspSession::SendRaw(std::string_view s,size_t size)
@@ -169,6 +171,7 @@ void RtspSession::OnInterleaved(int channel,const uint8_t*p, int len)
 
 void RtspSession::Dispatch(const char* p, size_t total)
 {
+    if (CurrentState() == SessionState::Closed) return;
     RtspRequest::RtspRequestInfo req;
     if (!rtsp_request_->ParseRequest(p, total, req)) 
     {
@@ -328,15 +331,43 @@ void RtspSession::HandleCmdOptions(RtspRequest::RtspRequestInfo& req)
 
 void RtspSession::HandleCmdDescribe(RtspRequest::RtspRequestInfo& req)
 {
+    const auto response = RtspRequest::BuildStatusResponse(req.cseq, "501 Not Implemented");
+    SendRaw(response, response.size());
 }
+
+bool RtspSession::RequireState(const RtspRequest::RtspRequestInfo& req,
+                               std::initializer_list<SessionState> allowed)
+{
+    if (std::find(allowed.begin(), allowed.end(), CurrentState()) != allowed.end()) return true;
+    const auto response = RtspRequest::BuildStatusResponse(req.cseq, "455 Method Not Valid in This State");
+    SendRaw(response, response.size());
+    return false;
+}
+
+bool RtspSession::HasMatchingSession(const RtspRequest::RtspRequestInfo& req) const
+{
+    auto id = req.GetHeader("session");
+    id = id.substr(0, id.find(';'));
+    return media_session_ && id == std::to_string(media_session_->GetId());
+}
+
 void RtspSession::HandleCmdANNOUNCE(RtspRequest::RtspRequestInfo& req)
 {
+    if (!RequireState(req, {SessionState::Initial, SessionState::Announced})) return;
     std::string res  = rtsp_request_->HandleCmdANNOUNCE(req);
+    if (res.empty()) res = RtspRequest::BuildStatusResponse(req.cseq, "400 Bad Request");
+    if (res.rfind("RTSP/1.0 200 ", 0) == 0) (void)lifecycle_.Dispatch(SessionEvent::AnnounceOk);
     this->SendRaw(res,(size_t)res.size());
 }
 
 void RtspSession::HandleCmdSetup(RtspRequest::RtspRequestInfo& req)
 {
+    if (!RequireState(req, {SessionState::Initial, SessionState::Announced, SessionState::Ready})) return;
+    if (CurrentState() == SessionState::Ready && !req.GetHeader("session").empty() && !HasMatchingSession(req)) {
+        const auto response = RtspRequest::BuildStatusResponse(req.cseq, "454 Session Not Found");
+        SendRaw(response, response.size());
+        return;
+    }
     std::shared_ptr<TransportBinding> pending;
     RtspTransport negotiated;
     const auto response = rtsp_request_->HandleCmdSetup(req,
@@ -390,31 +421,45 @@ void RtspSession::HandleCmdSetup(RtspRequest::RtspRequestInfo& req)
                 return transport && transport->SendRtcp(data, size) == SendResult::Ok;
             });
         }
+        (void)lifecycle_.Dispatch(SessionEvent::SetupOk);
     }
     SendRaw(response, response.size());
 }
 void RtspSession::HandleCmdRecord(RtspRequest::RtspRequestInfo& req)
 {
-    std::string res  = rtsp_request_->HandleCmdRecord(req);
-    this->SendRaw(res,(size_t)res.size());
-}
-void RtspSession::HandleCmdPlay(RtspRequest::RtspRequestInfo& req)
-{
-
-}
-void RtspSession::HandleCmdPause(RtspRequest::RtspRequestInfo& req)
-{
-}
-void RtspSession::HandleCmdTeardown(RtspRequest::RtspRequestInfo& req)
-{
-    auto id = req.GetHeader("session");
-    id = id.substr(0, id.find(';'));
-    if (!media_session_ || id != std::to_string(media_session_->GetId())) {
+    if (!RequireState(req, {SessionState::Ready, SessionState::Recording})) return;
+    if (!HasMatchingSession(req)) {
         const auto response = RtspRequest::BuildStatusResponse(req.cseq, "454 Session Not Found");
         SendRaw(response, response.size());
         return;
     }
+    std::string res  = rtsp_request_->HandleCmdRecord(req);
+    if (res.empty()) res = RtspRequest::BuildStatusResponse(req.cseq, "454 Session Not Found");
+    if (res.rfind("RTSP/1.0 200 ", 0) == 0) (void)lifecycle_.Dispatch(SessionEvent::RecordOk);
+    this->SendRaw(res,(size_t)res.size());
+}
+void RtspSession::HandleCmdPlay(RtspRequest::RtspRequestInfo& req)
+{
+    const auto response = RtspRequest::BuildStatusResponse(req.cseq, "501 Not Implemented");
+    SendRaw(response, response.size());
+}
+void RtspSession::HandleCmdPause(RtspRequest::RtspRequestInfo& req)
+{
+    const auto response = RtspRequest::BuildStatusResponse(req.cseq, "501 Not Implemented");
+    SendRaw(response, response.size());
+}
+void RtspSession::HandleCmdTeardown(RtspRequest::RtspRequestInfo& req)
+{
+    if (!HasMatchingSession(req)) {
+        const auto response = RtspRequest::BuildStatusResponse(req.cseq, "454 Session Not Found");
+        SendRaw(response, response.size());
+        return;
+    }
+    if (!RequireState(req, {SessionState::Ready, SessionState::Recording})) return;
     CloseMediaTransports();
+    media_session_.reset();
+    rtsp_request_ = std::make_unique<RtspRequest>();
+    (void)lifecycle_.Dispatch(SessionEvent::Teardown);
     const auto response = RtspRequest::BuildStatusResponse(req.cseq, "200 OK");
     SendRaw(response, response.size());
 }

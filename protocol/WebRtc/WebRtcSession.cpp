@@ -105,7 +105,7 @@ WebRtcSession::WebRtcSession(std::shared_ptr<WebRtcTransport> transport,
                              std::unique_ptr<SrtpTransport> srtp,
                              std::shared_ptr<IMediaPacketSink> endpoint,
                              WebRtcSessionOptions options)
-    : dtls_(std::move(dtls)), srtp_(std::move(srtp)), transport_(std::move(transport)),
+    : ice_(options.iceClock), dtls_(std::move(dtls)), srtp_(std::move(srtp)), transport_(std::move(transport)),
       endpoint_(std::move(endpoint)), options_(std::move(options))
 {
 }
@@ -380,6 +380,7 @@ bool WebRtcSession::start()
     ice_.SetRole(IceContext::Role::Controlled);
     ice_.SetLocalCredentials(local_answer_.ice.ufrag, local_answer_.ice.pwd);
     ice_.SetRemoteCredentials(remote.ice.ufrag, remote.ice.pwd);
+    if (!ice_.StartLiveness(options_.iceTimeoutMs)) return Fail("ICE timeout must be positive");
     state_ = WebRtcSessionState::Connecting;
     transport_->SetSink(weak_from_this());
     if (!transport_->Start()) return Fail("Datagram transport failed to start");
@@ -391,6 +392,7 @@ void WebRtcSession::Shutdown()
 {
     if (transport_) { transport_->SetSink({}); transport_->Close(); }
     ice_.SetOnSelectedPeer({});
+    ice_.Close();
     ice_.SetLocalCredentials({}, {});
     ice_.SetRemoteCredentials({}, {});
     if (dtls_) dtls_->Close();
@@ -438,9 +440,15 @@ bool WebRtcSession::CompleteDtls()
 bool WebRtcSession::Tick(uint64_t nowMs)
 {
     if (state_ != WebRtcSessionState::Connecting && state_ != WebRtcSessionState::Connected) return false;
+    if (!CheckIceLiveness()) return false;
     if (!dtls_started_) return true;
     if (!dtls_->Tick(nowMs)) return Fail("DTLS timeout or transport failure");
     return CompleteDtls();
+}
+
+bool WebRtcSession::CheckIceLiveness()
+{
+    return ice_.CheckLiveness() || Fail("ICE connectivity check timeout");
 }
 
 void WebRtcSession::OnWebRtcDatagram(Protocol protocol, network::transport::ReceivedDatagram datagram)
@@ -448,6 +456,7 @@ try
 {
     if ((state_ != WebRtcSessionState::Connecting && state_ != WebRtcSessionState::Connected) ||
         !datagram.IsValid() || Classifier::Classify(datagram.Data(), datagram.Size()) != protocol) return;
+    if (!CheckIceLiveness()) return;
     if (protocol != Protocol::Stun && !transport_->IsSelectedPeer(datagram.remote)) return;
     switch (protocol)
     {
@@ -512,13 +521,13 @@ void WebRtcSession::HandleEncryptedRtcp(network::transport::ReceivedDatagram dat
 
 bool WebRtcSession::SendRtp(std::vector<uint8_t> packet)
 {
-    return state_ == WebRtcSessionState::Connected && srtp_ready_ && AllowsRtp(packet, true) &&
+    return state_ == WebRtcSessionState::Connected && CheckIceLiveness() && srtp_ready_ && AllowsRtp(packet, true) &&
         srtp_->ProtectRtp(packet) && transport_->Send(Protocol::Rtp, packet.data(), packet.size()) == SendResult::Ok;
 }
 
 bool WebRtcSession::SendRtcp(std::vector<uint8_t> packet)
 {
-    return state_ == WebRtcSessionState::Connected && srtp_ready_ &&
+    return state_ == WebRtcSessionState::Connected && CheckIceLiveness() && srtp_ready_ &&
         Classifier::IsRtcp(packet.data(), packet.size()) && srtp_->ProtectRtcp(packet) &&
         transport_->Send(Protocol::Rtcp, packet.data(), packet.size()) == SendResult::Ok;
 }

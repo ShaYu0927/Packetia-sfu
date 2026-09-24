@@ -10,6 +10,7 @@
 #include "UdpMediaTransport.h"
 #include <cstddef>
 #include "Sdp.h"
+#include "StateController.h"
 #include <unordered_map>
 
 namespace rtsp 
@@ -34,15 +35,8 @@ public:
 		RTSP_PUSHER,
     };
 
-    enum SessionState
-    {
-        INIT,
-        CONNECTING,
-        CONNECTED,
-        DISCONNECTED,
-        START_PLAY,
-		START_PUSH
-    };
+    enum class SessionState { Initial, Announced, Ready, Recording, Closed };
+    SessionState CurrentState() const noexcept { return lifecycle_.CurrentState(); }
 
     explicit RtspSession(RtspConnection::Ptr conn)
         : conn_(std::move(conn))
@@ -53,6 +47,7 @@ public:
 
     ~RtspSession()
     {
+        (void)lifecycle_.Dispatch(SessionEvent::Close);
         CloseMediaTransports();
         LOG_INFO("RtspSession destroyed, fd=" + std::to_string(conn_ ? conn_->GetSocket() : -1));
     }
@@ -88,6 +83,11 @@ public:
     void Start() override;
 
 private:
+    enum class SessionEvent { AnnounceOk, SetupOk, RecordOk, Teardown, Close };
+    using Lifecycle = utils::StateController<SessionState, SessionEvent, RtspSession>;
+    bool RequireState(const RtspRequest::RtspRequestInfo& req,
+                      std::initializer_list<SessionState> allowed);
+    bool HasMatchingSession(const RtspRequest::RtspRequestInfo& req) const;
     struct TransportBinding
     {
         ~TransportBinding() { if (transport) transport->Close(); }
@@ -109,7 +109,23 @@ private:
     int session_id_{0};
 
     SessionMode mode_ = RTSP_SERVER;
-    SessionState state_ = INIT;
+    Lifecycle lifecycle_{*this, SessionState::Initial, {
+        Lifecycle::On(SessionState::Initial, SessionEvent::AnnounceOk, SessionState::Announced),
+        Lifecycle::Stay(SessionState::Announced, SessionEvent::AnnounceOk),
+        // SETUP may also use a media description registered before this connection.
+        Lifecycle::On(SessionState::Initial, SessionEvent::SetupOk, SessionState::Ready),
+        Lifecycle::On(SessionState::Announced, SessionEvent::SetupOk, SessionState::Ready),
+        Lifecycle::Stay(SessionState::Ready, SessionEvent::SetupOk),
+        Lifecycle::On(SessionState::Ready, SessionEvent::RecordOk, SessionState::Recording),
+        Lifecycle::Stay(SessionState::Recording, SessionEvent::RecordOk),
+        Lifecycle::On(SessionState::Ready, SessionEvent::Teardown, SessionState::Initial),
+        Lifecycle::On(SessionState::Recording, SessionEvent::Teardown, SessionState::Initial),
+        Lifecycle::On(SessionState::Initial, SessionEvent::Close, SessionState::Closed),
+        Lifecycle::On(SessionState::Announced, SessionEvent::Close, SessionState::Closed),
+        Lifecycle::On(SessionState::Ready, SessionEvent::Close, SessionState::Closed),
+        Lifecycle::On(SessionState::Recording, SessionEvent::Close, SessionState::Closed),
+        Lifecycle::Stay(SessionState::Closed, SessionEvent::Close)
+    }};
     MediaSession::Ptr media_session_;
     std::unordered_map<uint8_t, std::shared_ptr<TransportBinding>>
         media_transports_;

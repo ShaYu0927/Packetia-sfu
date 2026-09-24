@@ -59,6 +59,7 @@ target_include_directories(ICE
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/ice
         ${CMAKE_CURRENT_SOURCE_DIR}/ice/stun
+        ${CMAKE_SOURCE_DIR}/utils
 )
 
 target_compile_features(ICE PUBLIC cxx_std_17)
