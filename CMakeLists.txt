@@ -7,28 +7,6 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS ON)
 
-set(LIBHV_DIR ${CMAKE_SOURCE_DIR}/third/libhv)
-if(NOT EXISTS "${LIBHV_DIR}/CMakeLists.txt")
-  message(FATAL_ERROR "libhv is missing. Run: git submodule update --init --recursive")
-endif()
-
-set(BUILD_SHARED OFF CACHE BOOL "" FORCE)
-set(BUILD_STATIC ON CACHE BOOL "" FORCE)
-
-set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(BUILD_UNITTEST OFF CACHE BOOL "" FORCE)
-
-set(WITH_EVPP ON CACHE BOOL "" FORCE)
-set(WITH_HTTP ON CACHE BOOL "" FORCE)
-set(WITH_HTTP_SERVER ON CACHE BOOL "" FORCE)
-set(WITH_HTTP_CLIENT OFF CACHE BOOL "" FORCE)
-
-set(WITH_MQTT OFF CACHE BOOL "" FORCE)
-set(WITH_CURL OFF CACHE BOOL "" FORCE)
-set(WITH_OPENSSL OFF CACHE BOOL "" FORCE)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/third/libhv)
-
-
 find_package(GTest REQUIRED)
 find_package(OpenSSL REQUIRED)
 set(THREADS_PREFER_PTHREAD_FLAG TRUE)
@@ -84,14 +62,6 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/media/MediaFrame
     ${CMAKE_SOURCE_DIR}/media/transport
     ${CMAKE_SOURCE_DIR}/server/Moudle
-    ${LIBHV_DIR}
-    ${LIBHV_DIR}/base
-    ${LIBHV_DIR}/cpputil
-    ${LIBHV_DIR}/event
-    ${LIBHV_DIR}/evpp
-    ${LIBHV_DIR}/ssl
-    ${LIBHV_DIR}/include
-    ${LIBHV_DIR}/http
     ${CMAKE_SOURCE_DIR}/third
 )
 
@@ -281,7 +251,7 @@ add_executable(Packetia
 target_link_libraries(Packetia
     PRIVATE
     "$<$<PLATFORM_ID:Linux>:-Wl,--start-group>"
-    server media rtsp rtp sip Rtmp network utils Rtcp LOGGER ROOM_LIB COMMON ICE WebRtc Interleaved service hv_static
+    server media rtsp rtp sip Rtmp network utils Rtcp LOGGER ROOM_LIB COMMON ICE WebRtc Interleaved service
     "$<$<PLATFORM_ID:Linux>:-Wl,--end-group>"
     ${FFMPEG_LIBRARIES}
     pthread

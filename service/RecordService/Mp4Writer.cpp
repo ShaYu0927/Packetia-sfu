@@ -150,7 +150,7 @@ bool Mp4Writer::Open(std::unique_ptr<ISeekableFile> file,
         if (!parameters->extradata) return Fail("allocate codec parameters", AVERROR(ENOMEM));
         std::memcpy(parameters->extradata, config.data(), config.size());
         parameters->extradata_size = static_cast<int>(config.size());
-        tracks_[event.source.endpoint_id].index = stream->index;
+        tracks_[{event.source.endpoint_id, event.source.track_id}].index = stream->index;
     }
     constexpr int io_buffer_size = 64 * 1024;
     auto* io_buffer = static_cast<unsigned char*>(av_malloc(io_buffer_size));
@@ -179,7 +179,7 @@ bool Mp4Writer::Open(std::unique_ptr<ISeekableFile> file,
 
 bool Mp4Writer::Write(const media::EncodedFrameEvent& event, int64_t timestamp_us) 
 {
-    auto it = tracks_.find(event.source.endpoint_id);
+    auto it = tracks_.find({event.source.endpoint_id, event.source.track_id});
     if (!header_written_ || it == tracks_.end() || timestamp_us < 0)
         return Fail("unknown track or invalid timestamp", AVERROR(EINVAL));
     auto& track = it->second;

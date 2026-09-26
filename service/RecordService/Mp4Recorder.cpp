@@ -102,7 +102,8 @@ void Mp4Recorder::Fail(const std::string& message)
 {
     auto& recording = segment_;
     ++context_.errors;
-    LOG_ERROR("[RECORD] stream stopped, path=", recording.path, " error=", message);
+    LOG_ERROR("[RECORD] stream stopped, session=", recording.session_id,
+              " stream=", recording.stream_id, " path=", recording.path, " error=", message);
     if (!recording.terminal_event_sent)
     {
         recording.terminal_event_sent = true;
@@ -115,7 +116,7 @@ void Mp4Recorder::Fail(const std::string& message)
 
 void Mp4Recorder::Write(const media::EncodedFrameEvent& event) {
     auto& recording = segment_;
-    auto& clock = recording.tracks.at(event.source.endpoint_id);
+    auto& clock = recording.tracks.at({event.source.endpoint_id, event.source.track_id});
     const auto& frame = *event.frame;
     const auto& first = *clock.first.frame;
     if (frame.info.codec != first.info.codec || frame.rtp.ssrc != first.rtp.ssrc ||
@@ -217,10 +218,11 @@ void Mp4Recorder::InputFrame(const media::EncodedFrameEvent& event, uint64_t now
         recording.stream_id = event.source.stream_id;
     }
     recording.last_ms = now;
+    const RecordingTrackKey track_key{event.source.endpoint_id, event.source.track_id};
     const bool video = event.frame->info.media_type == media::MediaType::Video;
     recording.video_seen |= video;
     if (!recording.failed_ && recording.writer_ &&
-        (!recording.tracks.count(event.source.endpoint_id) ||
+        (!recording.tracks.count(track_key) ||
          (context_.options.segment_ms && now - recording.first_ms >= context_.options.segment_ms &&
           (video ? event.frame->IsKeyFrame() : !recording.video_seen)))) 
     {
@@ -241,17 +243,18 @@ void Mp4Recorder::InputFrame(const media::EncodedFrameEvent& event, uint64_t now
     } 
     else 
     {
-        auto track = recording.tracks.find(event.source.endpoint_id);
+        auto track = recording.tracks.find(track_key);
         if (track == recording.tracks.end() && Mp4Writer::Ready(*event.frame)) 
         {
             RecordingSegment::Clock clock;
             clock.first = event;
             clock.previous = static_cast<uint32_t>(event.frame->info.timestamp.dts);
-            recording.tracks.emplace(event.source.endpoint_id, std::move(clock));
-            track = recording.tracks.find(event.source.endpoint_id);
+            recording.tracks.emplace(track_key, std::move(clock));
+            track = recording.tracks.find(track_key);
             LOG_INFO("[RECORD] track ready, session=", recording.session_id,
                      " stream=", recording.stream_id,
                      " endpoint=", event.source.endpoint_id,
+                     " track=", event.source.track_id,
                      " type=", event.frame->info.media_type == media::MediaType::Video ? "video" : "audio");
         }
         if (track != recording.tracks.end() && !event.frame->IsConfigFrame()) 

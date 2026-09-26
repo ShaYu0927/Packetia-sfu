@@ -58,7 +58,7 @@ private:
         int64_t anchor_us = 0;            /* 当前轨道在统一录像时间轴上的锚点，单位为微秒 */
     };
 
-    std::map<uint64_t, Clock> tracks;                
+    std::map<RecordingTrackKey, Clock> tracks;
     std::vector<media::EncodedFrameEvent> pending;   /* 暂时不能写入 MP4 的编码帧 */
     std::unique_ptr<Mp4Writer> writer_;              /* MP4 文件写入器，由当前录像分段独占 */
     std::string path;

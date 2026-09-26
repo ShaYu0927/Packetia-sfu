@@ -78,7 +78,7 @@ be connected by the application.
 On Linux or macOS, install a C++17 compiler, CMake, pkg-config, and libwebsockets development
 headers/libraries. If libwebsockets was built with TLS enabled, its public headers
 also require the OpenSSL development headers, even for a plain `ws://` listener.
-Build this module independently of FFmpeg and libhv:
+Build this module independently of FFmpeg:
 
 ```sh
 cmake -S network/websocket/Test -B build/websocket -DCMAKE_BUILD_TYPE=RelWithDebInfo

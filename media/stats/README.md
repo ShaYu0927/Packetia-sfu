@@ -98,7 +98,7 @@ TLS 上下文只覆盖当前同步调用栈；所有已有异步边界都复制�
 新增 Transport 如果引入自己的异步发送队列，需要同样携带 `SendTrace` 并在真实发送
 完成时调用 `SocketSent`，不能依赖另一个线程的 TLS。
 
-可独立构建基础测试，无需 libhv / FFmpeg / GTest：
+可独立构建基础测试，无需 FFmpeg / GTest：
 
 ```sh
 cmake -S utils/test/latency -B build-latency -DCMAKE_BUILD_TYPE=Debug

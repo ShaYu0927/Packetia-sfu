@@ -3,6 +3,7 @@
 
 #include "ISeekableFile.h"
 #include "EncodedFrameRouter.h"
+#include "RecordingTypes.h"
 #include <map>
 #include <memory>
 #include <string>
@@ -43,7 +44,7 @@ private:
     AVIOContext* io_context_ = nullptr;
     std::unique_ptr<ISeekableFile> file_;
     bool header_written_ = false;
-    std::map<uint64_t, Track> tracks_;
+    std::map<RecordingTrackKey, Track> tracks_;
     std::string error_;
 };
 }

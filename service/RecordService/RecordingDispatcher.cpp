@@ -225,7 +225,8 @@ bool RecordingDispatcher::Post(const media::EncodedFrameEvent& event)
         const Key key{event.source.session_id, event.source.stream_id};
         auto found = streams_.find(key);
         const bool new_stream = found == streams_.end();
-        if (new_stream && streams_.size() >= options_.max_streams) {
+        if (new_stream && streams_.size() >= options_.max_streams) 
+        {
             ++dropped_;
             return false;
         }
@@ -236,7 +237,8 @@ bool RecordingDispatcher::Post(const media::EncodedFrameEvent& event)
             bytes > options_.max_queue_bytes - queued_.bytes ||
             stream->frames >= options_.max_stream_queue_frames ||
             bytes > options_.max_stream_queue_bytes - stream->bytes;
-        if (full) {
+        if (full) 
+        {
             ++stream->epoch;
             stream->restart = true;
             ++dropped_;

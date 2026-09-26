@@ -1,5 +1,5 @@
 # Keep libwebsockets discovery independent of the media stack so the signaling
-# server can be built and tested without FFmpeg, libhv or the network target.
+# server can be built and tested without FFmpeg or the network target.
 if(TARGET packetia_libwebsockets)
     return()
 endif()

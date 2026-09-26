@@ -34,16 +34,6 @@ void RecordingSession::InputFrame(const media::EncodedFrameEvent& event, uint64_
         return;
     }
 
-    const size_t frame_size = event.frame ? event.frame->Size() : 0;
-    const void* frame_id = event.frame ? static_cast<const void*>(event.frame.get()) : nullptr;
-
-    LOG_INFO("[RECORD_FLOW] Session::InputFrame enter"
-              ", session=", static_cast<const void*>(this),
-              ", instance=", static_cast<const void*>(instance_.get()),
-              ", frame=", frame_id,
-              ", bytes=", frame_size,
-              ", state=", static_cast<int>(state_));
-
     instance_->InputFrame(event, now_ms);
     RefreshState(now_ms);
 }

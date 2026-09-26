@@ -34,7 +34,7 @@ set_tests_properties(media_latency media_latency_worker PROPERTIES
     ENVIRONMENT "PACKETIA_MEDIA_LATENCY_SAMPLE_EVERY=1;PACKETIA_MEDIA_LATENCY_INTERVAL_MS=3600000"
     TIMEOUT 20)
 
-# Keep these tests runnable without libhv, FFmpeg, GTest or the network backend.
+# Keep these tests runnable without FFmpeg, GTest or the network backend.
 set(PACKETIA_LATENCY_NETWORK_DEFAULT OFF)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE)
     set(PACKETIA_LATENCY_NETWORK_DEFAULT ON)

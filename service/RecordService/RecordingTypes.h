@@ -12,6 +12,9 @@
 namespace service 
 {
 
+// One publishing endpoint can contain multiple audio/video tracks.
+using RecordingTrackKey = std::pair<uint64_t, uint32_t>; // endpoint_id, track_id
+
 struct RecordingSessionKey
 {
     std::string session_id;
