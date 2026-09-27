@@ -464,11 +464,91 @@ void ReentrantLifecycleCallsDoNotRepeatCallbacks()
     RequireEvents(events, {"first.start", "second.start", "second.stop", "first.stop"});
 }
 
+void RuntimeFeatureSwitches()
+{
+    Events events;
+    server::ServerLauncher launcher;
+    auto record = std::make_shared<ManagedService>(events, "record");
+    launcher.AddService("record", record, false);
+    AddCustom(launcher, events, "listener");
+    Require(!launcher.IsEnabled("record"), "Disabled configuration lost");
+    Require(!launcher.SetEnabled("unknown", true), "Unknown feature accepted");
+    Require(launcher.StartAll(), "Disabled service prevented startup");
+    RequireEvents(events, {"listener.start"});
+    Require(launcher.SetEnabled("record", true), "Runtime enable failed");
+    Require(launcher.SetEnabled("record", true), "Repeated enable failed");
+    RequireEvents(events, {"listener.start", "record.init", "record.start"});
+    Require(launcher.SetEnabled("record", false), "Runtime disable failed");
+    Require(launcher.SetEnabled("record", false), "Repeated disable failed");
+    RequireEvents(events, {"listener.start", "record.init", "record.start", "record.stop", "record.shutdown"});
+    events.clear();
+    Require(launcher.SetEnabled("record", true), "Runtime reenable failed");
+    launcher.StopAll();
+    RequireEvents(events, {"record.init", "record.start", "listener.stop", "record.stop", "record.shutdown"});
+    events.clear();
+    Require(launcher.SetEnabled("record", false), "Stopped configuration update failed");
+    Require(events.empty(), "Stopped configuration update must not run callbacks");
+    Require(launcher.StartAll(), "Restart with disabled service failed");
+    launcher.StopAll();
+    RequireEvents(events, {"listener.start", "listener.stop"});
+}
+
+void RuntimeSwitchFailureIsIsolated()
+{
+    Events events;
+    server::ServerLauncher launcher;
+    auto feature = std::make_shared<ManagedService>(events, "feature");
+    launcher.AddService("feature", feature, false);
+    AddCustom(launcher, events, "listener");
+    Require(launcher.StartAll(), "Initial startup failed");
+    events.clear();
+    feature->start_result = Outcome::Exception;
+    Require(!launcher.SetEnabled("feature", true), "Failed runtime start reported success");
+    Require(!launcher.IsEnabled("feature"), "Failed runtime start changed configuration");
+    RequireEvents(events, {"feature.init", "feature.start", "feature.stop", "feature.shutdown"});
+    feature->start_result = Outcome::Success;
+    Require(launcher.SetEnabled("feature", true), "Retry failed");
+    events.clear();
+    feature->stop_result = Outcome::Exception;
+    Require(!launcher.SetEnabled("feature", false), "Failed runtime cleanup reported success");
+    Require(launcher.IsEnabled("feature"), "Failed cleanup changed configuration");
+    RequireEvents(events, {"feature.stop", "feature.shutdown"});
+    feature->stop_result = Outcome::Success;
+    Require(launcher.SetEnabled("feature", false), "Cleanup retry failed");
+    events.clear();
+    launcher.StopAll();
+    RequireEvents(events, {"listener.stop"});
+}
+
+void RuntimeCallbacksCannotReenterLifecycle()
+{
+    server::ServerLauncher launcher;
+    int starts = 0, stops = 0;
+    launcher.AddCustomService("feature", [&] {
+        ++starts;
+        Require(!launcher.SetEnabled("feature", false), "Nested disable accepted");
+        Require(!launcher.StartAll(), "Nested start accepted");
+        launcher.StopAll();
+        return true;
+    }, [&] {
+        ++stops;
+        Require(!launcher.SetEnabled("feature", true), "Nested enable accepted");
+        launcher.StopAll();
+    }, false);
+    Require(launcher.StartAll(), "Empty startup failed");
+    Require(launcher.SetEnabled("feature", true), "Runtime enable failed");
+    Require(launcher.SetEnabled("feature", false), "Runtime disable failed");
+    Require(starts == 1 && stops == 1, "Reentrant callbacks changed lifecycle");
+}
+
 } // namespace
 
 int main()
 {
     const std::pair<const char*, void (*)()> tests[] = {
+        {"runtime feature switches", RuntimeFeatureSwitches},
+        {"runtime switch failure isolation", RuntimeSwitchFailureIsIsolated},
+        {"runtime lifecycle reentry", RuntimeCallbacksCannotReenterLifecycle},
         {"ordered lifecycle and restart", OrderedLifecycleAndRestart},
         {"startup rollback", StartupFailureRollsBackAttemptedService},
         {"cleanup exception isolation", CleanupExceptionsDoNotInterruptRollbackOrStop},

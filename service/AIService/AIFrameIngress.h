@@ -2,6 +2,7 @@
 #define _AI_FRAME_INGRESS_H_
 
 #include "EncodedFrameRouter.h"
+#include "config/ConfigStore.h"
 
 #include <atomic>
 #include <condition_variable>
@@ -38,7 +39,8 @@ class AIFrameIngress final : public media::IEncodedFrameSink,
 public:
     explicit AIFrameIngress(std::shared_ptr<media::EncodedFrameRouter> router,
                             std::shared_ptr<IAIFrameProcessor> processor,
-                            size_t max_queue_size = 128);
+                            size_t max_queue_size = 128,
+                            std::shared_ptr<const config::ConfigStore> config = {});
     ~AIFrameIngress();
 
     bool Start();
@@ -52,6 +54,7 @@ private:
     const size_t max_queue_size_;
     std::shared_ptr<media::EncodedFrameRouter> router_;
     std::shared_ptr<IAIFrameProcessor> processor_;
+    std::shared_ptr<const config::ConfigStore> config_;
     mutable std::mutex mutex_;
     std::condition_variable ready_;
     std::deque<media::EncodedFrameEvent> queue_;

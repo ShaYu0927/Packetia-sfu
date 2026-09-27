@@ -11,10 +11,11 @@ namespace ai
 AIService::AIService(std::shared_ptr<IModelProvider> provider,
                      std::shared_ptr<media::EncodedFrameRouter> frame_router,
                      std::shared_ptr<IAIFrameProcessor> frame_processor,
-                     size_t frame_queue_size)
+                     size_t frame_queue_size,
+                     std::shared_ptr<const config::ConfigStore> config)
     : orchestrator_(std::move(provider)),
       frame_ingress_(std::make_shared<AIFrameIngress>(
-          std::move(frame_router), std::move(frame_processor), frame_queue_size))
+          std::move(frame_router), std::move(frame_processor), frame_queue_size, std::move(config)))
 {
 }
 

@@ -5,6 +5,7 @@
 #include "RecordingOptions.h"
 #include "RecordingTypes.h"
 #include "core/EncodedFrameRouter.h"
+#include "config/ConfigStore.h"
 #include <atomic>
 #include <mutex>
 
@@ -21,7 +22,8 @@ class RecordingService final : public IService, public media::IEncodedFrameSink,
 public:
     explicit RecordingService(std::shared_ptr<media::EncodedFrameRouter> router,
                               RecordingOptions options = {},
-                              std::shared_ptr<IRecordingEventSink> event_sink = nullptr);
+                              std::shared_ptr<IRecordingEventSink> event_sink = nullptr,
+                              std::shared_ptr<config::ConfigStore> config = {});
     ~RecordingService() override;
     bool Init() override;
     bool Start() override;
@@ -32,13 +34,23 @@ public:
     ServiceHealth Health() const override;
     RecordingStats Stats() const;
     bool SubmitFrame(const media::EncodedFrameEvent& event) override;
+    void RefreshStreamPolicies();
+    // Control-thread operations. Start enables admission (media/keyframe may
+    // arrive later). Stop waits for admitted frames and file finalization.
+    // Never call from a recording event/worker callback.
+    bool StartRecording(const config::StreamKey& stream);
+    bool StopRecording(const config::StreamKey& stream);
+    std::vector<SegmentInfo> QuerySegments(const SegmentQuery& query) const;
+    std::vector<RecordedStream> ListRecordedStreams(const std::string& session_id) const;
 private:
     std::shared_ptr<media::EncodedFrameRouter> router_;
     RecordingOptions options_;
     std::shared_ptr<IRecordingEventSink> event_sink_;
+    std::shared_ptr<config::ConfigStore> config_;
     std::mutex lifecycle_mutex_;
     mutable std::mutex mutex_;
     std::shared_ptr<RecordingDispatcher> dispatcher_;
+    std::shared_ptr<RecordingCatalog> catalog_;
     media::EncodedFrameRouter::SubscriptionId subscription_ = 0;
     std::atomic<ServiceState> state_{ServiceState::Created};
     std::atomic<uint64_t> accepted_{0}, written_{0}, dropped_{0}, completed_{0}, errors_{0};

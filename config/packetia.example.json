@@ -1,0 +1,36 @@
+{
+  "server": {
+    "listen_ip": "0.0.0.0",
+    "rtsp_port": 554,
+    "io_threads": 1
+  },
+  "services": {
+    "recording": true,
+    "ai": true,
+    "conference_mix": false
+  },
+  "recording": {
+    "directory": "recordings",
+    "segment_ms": 60000,
+    "worker_count": 2
+  },
+  "stream_defaults": {
+    "recording": false,
+    "ai": false,
+    "conference_mix": true
+  },
+  "streams": [
+    {
+      "session_id": "publish-zhangsan",
+      "stream_id": "camera",
+      "recording": true,
+      "ai": false
+    },
+    {
+      "session_id": "publish-lisi",
+      "stream_id": "camera",
+      "recording": false,
+      "ai": true
+    }
+  ]
+}

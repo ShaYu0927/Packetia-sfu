@@ -3,11 +3,14 @@
 
 #include "RecordingSession.h"
 #include "WorkerRegistry.h"
+#include "config/ConfigStore.h"
 #include <atomic>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <vector>
+#include <condition_variable>
+#include <functional>
 
 namespace service 
 {
@@ -38,7 +41,8 @@ public:
         std::shared_ptr<RecordingContext> context,
         std::atomic<uint64_t>& accepted,
         std::atomic<uint64_t>& dropped,
-        std::atomic<uint64_t>& errors);
+        std::atomic<uint64_t>& errors,
+        std::shared_ptr<const config::ConfigStore> config = {});
     ~RecordingDispatcher();
     RecordingDispatcher(const RecordingDispatcher&) = delete;
     RecordingDispatcher& operator=(const RecordingDispatcher&) = delete;
@@ -76,6 +80,10 @@ public:
      * @return 当前未完成的帧数量和总字节数。
      */
     QueueStats Stats() const;
+    void RefreshStreamPolicies();
+    // The caller serializes with service Start/Stop. The callback publishes
+    // the admission setting atomically with Post; it must not reenter us.
+    bool DrainStream(const config::StreamKey& key, const std::function<void()>& disable);
 
 private:
     /**
@@ -139,11 +147,13 @@ private:
     void Retire(const Key& key, const std::shared_ptr<StreamEntry>& entry);
 
     const RecordingOptions options_;
+    std::shared_ptr<const config::ConfigStore> config_;
     std::shared_ptr<RecordingContext> context_;
     std::atomic<uint64_t>& accepted_;
     std::atomic<uint64_t>& dropped_;
     std::atomic<uint64_t>& errors_;
     mutable std::mutex mutex_;
+    std::condition_variable drained_;
     bool accepting_ = false;
     QueueStats queued_;
     std::map<Key, std::shared_ptr<StreamEntry>> streams_;

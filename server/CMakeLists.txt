@@ -13,4 +13,4 @@ target_include_directories(server
 )
 
 target_compile_features(server PUBLIC cxx_std_17)
-target_link_libraries(server PUBLIC LOGGER)
+target_link_libraries(server PUBLIC LOGGER packetia_config)

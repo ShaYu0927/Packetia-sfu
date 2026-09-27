@@ -16,6 +16,10 @@ struct RecordingOptions {
     uint64_t discovery_ms = 1000;
     uint64_t idle_timeout_ms = 3000;
     uint64_t segment_ms = 60000;
+    // Cross-track ordering window; late packets beyond this window are dropped.
+    uint64_t reorder_ms = 100;
+    // Empty uses <directory>/.index/recordings.sqlite. Keep the DB on local disk.
+    std::string index_path;
     // Dedicated shards provided by the project's ShardedWorkerPool.
     size_t worker_count = 2;
     size_t max_stream_queue_frames = 512;

@@ -7,10 +7,14 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS ON)
 
-find_package(GTest REQUIRED)
+include(CTest)
+if(BUILD_TESTING)
+  find_package(GTest REQUIRED)
+endif()
 find_package(OpenSSL REQUIRED)
 set(THREADS_PREFER_PTHREAD_FLAG TRUE)
 find_package(Threads REQUIRED)
+add_subdirectory(config)
 add_subdirectory(Common/memory)
 
 option(PACKETIA_WITH_LIBWEBSOCKETS "Build the libwebsockets signaling server" ON)
@@ -25,10 +29,9 @@ endif()
 
 add_compile_definitions(RTP_DEBUG=0)
 
-if (NOT WIN32)
-  find_package(PkgConfig REQUIRED)
-  pkg_check_modules(FFMPEG REQUIRED libavcodec libavformat libavutil libswscale libavfilter libavdevice)
+add_subdirectory(cmake/ffmpeg)
 
+if (NOT WIN32)
   add_compile_options(-fno-omit-frame-pointer)
   add_compile_options(-fno-optimize-sibling-calls)
 else()
@@ -63,10 +66,6 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/media/transport
     ${CMAKE_SOURCE_DIR}/server/Moudle
     ${CMAKE_SOURCE_DIR}/third
-)
-
-link_directories(
-    ${FFMPEG_LIBRARY_DIRS}
 )
 
 add_library(network STATIC
@@ -219,28 +218,35 @@ add_subdirectory(media)
 add_subdirectory(service)
 add_subdirectory(server)
 
-enable_testing()
-add_subdirectory(Common/memory/Test)
-add_subdirectory(Common/CallbackEmitter/Test)
 option(PACKETIA_BUILD_RECORDING_TESTS "Build FFmpeg recording integration tests" OFF)
-if(PACKETIA_BUILD_RECORDING_TESTS)
-    add_subdirectory(service/RecordService/Test)
+if(BUILD_TESTING)
+    add_subdirectory(Common/memory/Test)
+    add_subdirectory(service/ConferenceMixService/Test)
+    add_subdirectory(Common/CallbackEmitter/Test)
+    if(PACKETIA_BUILD_RECORDING_TESTS)
+        add_subdirectory(service/RecordService/Test)
+    endif()
+    add_subdirectory(network/Test)
+    add_subdirectory(Common/Depacketizer/Test)
+    add_subdirectory(media/quality/Test)
+    add_subdirectory(Rtsp/Test)
+    add_subdirectory(utils/test)
+    add_subdirectory(utils/test/latency)
+    add_subdirectory(server/Test)
+
+    add_executable(ice_unit_tests
+        protocol/ice/test/test_IceChecklist.cpp
+        protocol/ice/test/test_IceAgent.cpp
+    )
+    target_link_libraries(ice_unit_tests PRIVATE
+        ICE LOGGER GTest::gtest GTest::gtest_main pthread Interleaved OpenSSL::Crypto
+    )
+    target_include_directories(ice_unit_tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/protocol/ice
+        ${CMAKE_SOURCE_DIR}/protocol/ice/stun
+    )
+    add_test(NAME IceChecklistUnitTest COMMAND ice_unit_tests)
 endif()
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/network/Test)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/Common/Depacketizer/Test)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/media/quality/Test)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/Rtsp/Test)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/utils/test)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/utils/test/latency)
-add_subdirectory(server/Test)
-
-
-# test
-
-add_executable(ice_unit_tests
-    protocol/ice/test/test_IceChecklist.cpp
-    protocol/ice/test/test_IceAgent.cpp
-)
 add_executable(Packetia
     server/main.cpp
     server/ServerApp.cpp
@@ -259,22 +265,6 @@ target_link_libraries(Packetia
     OpenSSL::Crypto
 )
 
-target_link_libraries(ice_unit_tests
-    PRIVATE
-    ICE
-    LOGGER
-    GTest::gtest
-    GTest::gtest_main
-    pthread
-    Interleaved
-    OpenSSL::Crypto
-)
-
-target_include_directories(ice_unit_tests PRIVATE
-    ${CMAKE_SOURCE_DIR}/protocol/ice
-    ${CMAKE_SOURCE_DIR}/protocol/ice/stun
-)
-add_test(NAME IceChecklistUnitTest COMMAND ice_unit_tests)
 target_compile_options(Packetia PRIVATE -H)
 target_compile_definitions(Packetia PRIVATE RTP_DEBUG=1)
 

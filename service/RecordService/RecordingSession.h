@@ -25,6 +25,7 @@ public:
     // Returns true when the session reached a terminal state and can retire.
     bool Tick(uint64_t now_ms, bool stopping);
     void Close(RecordingStopReason reason, uint64_t now_ms);
+    void Finish(RecordingStopReason reason, uint64_t now_ms);
 
     const RecordingInstanceId& Id() const noexcept { return id_; }
     RecordingSessionState State() const noexcept { return state_; }

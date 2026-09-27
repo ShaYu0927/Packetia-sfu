@@ -23,10 +23,14 @@
 
 namespace server
 {
-ServerApp::ServerApp(ServerConfig config)
+ServerApp::ServerApp(ServerConfig config, std::shared_ptr<service::IRecordingEventSink> recording_events)
     : config_(std::move(config)),
+      settings_(std::make_shared<config::ConfigStore>(config_)),
+      recording_events_(std::move(recording_events)),
       event_loop_(std::make_shared<EventLoop>(config_.io_threads)),
-      frame_router_(std::make_shared<media::EncodedFrameRouter>())
+      frame_router_(std::make_shared<media::EncodedFrameRouter>()),
+      mix_output_router_(std::make_shared<media::EncodedFrameRouter>()),
+      mix_service_(std::make_shared<service::mix::ConferenceMixService>(frame_router_, mix_output_router_, settings_))
 {
     ConfigureServices();
 }
@@ -38,6 +42,7 @@ ServerApp::~ServerApp()
 
 bool ServerApp::Start()
 {
+    std::lock_guard<std::mutex> lock(lifecycle_mutex_);
     return launcher_.StartAll();
 }
 
@@ -48,6 +53,7 @@ void ServerApp::Run()
 
 void ServerApp::Stop() noexcept
 {
+    std::lock_guard<std::mutex> lock(lifecycle_mutex_);
     launcher_.StopAll();
 }
 
@@ -73,14 +79,114 @@ void ServerApp::ConfigureServices()
 
 void ServerApp::AddMediaServices()
 {
-    if (config_.recording_enabled)
-    {
-        launcher_.AddService(SERVICE_RECORD,
-            std::make_shared<service::RecordingService>(frame_router_, config_.recording));
-    }
+    // Register disabled services too, so they can be enabled without restarting.
+    recording_service_ = std::make_shared<service::RecordingService>(frame_router_, config_.recording, recording_events_, settings_);
+    launcher_.AddService(SERVICE_RECORD, recording_service_, config_.recording_enabled);
     launcher_.AddService(SERVICE_AI,
         std::make_shared<service::ai::AIService>(
-            std::make_shared<service::ai::UnavailableModelProvider>(), frame_router_));
+            std::make_shared<service::ai::UnavailableModelProvider>(), frame_router_, nullptr, 128, settings_), config_.ai_enabled);
+    launcher_.AddService(SERVICE_CONFERENCE_MIX, mix_service_, config_.conference_mix_enabled);
+}
+
+bool ServerApp::SetServiceEnabled(service::ServiceType type, bool enabled)
+{
+    std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+    const char* name = nullptr;
+    config::Feature feature;
+    switch (type) {
+    case service::ServiceType::Record: name = SERVICE_RECORD; feature = config::Feature::Recording; break;
+    case service::ServiceType::Ai: name = SERVICE_AI; feature = config::Feature::AI; break;
+    case service::ServiceType::ConferenceMix:
+        name = SERVICE_CONFERENCE_MIX; feature = config::Feature::ConferenceMix; break;
+    default: return false;
+    }
+    if (!launcher_.SetEnabled(name, enabled)) return false;
+    settings_->SetServiceEnabled(feature, enabled);
+    return true;
+}
+
+bool ServerApp::ServiceEnabled(service::ServiceType type) const
+{
+    std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+    const auto settings = settings_->Snapshot();
+    switch (type) {
+    case service::ServiceType::Record: return settings->recording_enabled;
+    case service::ServiceType::Ai: return settings->ai_enabled;
+    case service::ServiceType::ConferenceMix: return settings->conference_mix_enabled;
+    default: return false;
+    }
+}
+
+void ServerApp::RefreshStreamPolicies()
+{
+    if (recording_service_) recording_service_->RefreshStreamPolicies();
+    mix_service_->RefreshStreamPolicies();
+}
+
+bool ServerApp::StartRecording(const config::StreamKey& stream)
+{
+    std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+    return recording_service_->StartRecording(stream);
+}
+
+bool ServerApp::StopRecording(const config::StreamKey& stream)
+{
+    std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+    return recording_service_->StopRecording(stream);
+}
+
+std::vector<service::SegmentInfo> ServerApp::QueryRecordingSegments(const service::SegmentQuery& query) const
+{
+    return recording_service_->QuerySegments(query);
+}
+
+std::vector<service::RecordedStream> ServerApp::ListRecordedStreams(const std::string& session_id) const
+{
+    return recording_service_->ListRecordedStreams(session_id);
+}
+
+void ServerApp::SetStreamConfig(config::StreamKey stream, config::StreamOverrides overrides)
+{
+    std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+    settings_->SetStreamConfig(std::move(stream), overrides);
+    RefreshStreamPolicies();
+}
+
+void ServerApp::RemoveStreamConfig(const config::StreamKey& stream)
+{
+    std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+    settings_->RemoveStreamConfig(stream);
+    RefreshStreamPolicies();
+}
+
+void ServerApp::SetStreamDefaults(config::StreamFeatures defaults)
+{
+    std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+    settings_->SetStreamDefaults(defaults);
+    RefreshStreamPolicies();
+}
+
+config::StreamFeatures ServerApp::EffectiveStreamConfig(const config::StreamKey& stream) const
+{
+    return settings_->Resolve(stream);
+}
+
+std::shared_ptr<const config::AppConfig> ServerApp::ConfigSnapshot() const
+{
+    return settings_->Snapshot();
+}
+
+bool ServerApp::StartConference(service::mix::MixConfig config,
+                                std::unique_ptr<service::mix::IMixBackend> backend)
+{
+    std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+    return mix_service_->StartConference(std::move(config), std::move(backend));
+}
+
+bool ServerApp::StopConference(const std::string& room_id)
+{
+    std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+    return mix_service_->StopConference(room_id);
 }
 
 void ServerApp::AddNetworkServices()

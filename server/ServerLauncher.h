@@ -41,12 +41,19 @@ public:
     }
 
     // Owns the service through Init/Start and Stop/Shutdown, including rollback.
-    void AddService(std::string name, std::shared_ptr<service::IService> instance);
+    void AddService(std::string name, std::shared_ptr<service::IService> instance,
+                    bool enabled = true);
 
     // Names must be nonempty and unique, and both callbacks must be supplied.
     // Stop must tolerate a partially completed or failed start attempt.
     void AddCustomService(const std::string& name,
-        std::function<bool()> start, std::function<void()> stop);
+        std::function<bool()> start, std::function<void()> stop, bool enabled = true);
+
+    // Before startup, changes the desired configuration only. While running,
+    // starts/stops just this service. Caller must preserve service dependencies.
+    // Failed changes return false and retain the previous enabled setting.
+    bool SetEnabled(const std::string& name, bool enabled);
+    bool IsEnabled(const std::string& name) const;
 
     // Starts in registration order; failure rolls back in reverse order.
     // Repeated calls while running succeed without starting services again.
@@ -54,19 +61,21 @@ public:
     void StopAll() noexcept;
 
 private:
-    enum class State { Stopped, Starting, Running, Stopping };
+    enum class State { Stopped, Starting, Running, Switching, Stopping };
 
     struct ServiceItem
     {
         std::string name;
         std::function<bool()> start;
         std::function<void()> stop;
+        bool enabled = true;
+        bool active = false;
     };
 
     void StopServices() noexcept;
+    bool StartService(ServiceItem& item);
 
     std::vector<ServiceItem> services_;
-    std::size_t active_count_{0};
     State state_{State::Stopped};
 };
 

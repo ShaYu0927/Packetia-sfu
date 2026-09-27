@@ -19,7 +19,8 @@ public:
     explicit AIService(std::shared_ptr<IModelProvider> provider,
                        std::shared_ptr<media::EncodedFrameRouter> frame_router,
                        std::shared_ptr<IAIFrameProcessor> frame_processor = nullptr,
-                       size_t frame_queue_size = 128);
+                       size_t frame_queue_size = 128,
+                       std::shared_ptr<const config::ConfigStore> config = {});
 
     bool Init() override;
     bool Start() override;

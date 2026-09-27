@@ -75,6 +75,14 @@ void RecordingSession::Close(RecordingStopReason reason, uint64_t now_ms)
     instance_.reset();
 }
 
+void RecordingSession::Finish(RecordingStopReason reason, uint64_t now_ms)
+{
+    // A short recording may still be collecting track metadata. Force-open
+    // and flush valid buffered media before reporting the terminal event.
+    if (instance_) instance_->Tick(now_ms, true);
+    Close(reason, now_ms);
+}
+
 void RecordingSession::RefreshState(uint64_t now_ms)
 {
     if (!instance_) return;

@@ -25,6 +25,7 @@ enum class ServiceType : uint16_t
     Vision  = 402,
 
     Record  = 500,
+    ConferenceMix = 501,
     Monitor = 600
 };
 

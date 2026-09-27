@@ -2,6 +2,8 @@
 #define PACKETIA_SERVICE_RECORDSERVICE_RECORDINGTYPES_H_
 
 #include "RecordingOptions.h"
+#include "RecordingRecords.h"
+#include <optional>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -67,7 +69,9 @@ enum class RecordingStopReason
     QueueOverflow,
     SourceGone,
     ServiceStopping,
-    InternalError
+    InternalError,
+    ConfigurationChanged,
+    UserRequested
 };
 
 enum class RecordingEventType
@@ -90,6 +94,7 @@ struct RecordingEvent
     uint64_t timestamp_ms = 0;
     std::string path;
     std::string error;
+    std::optional<SegmentInfo> segment;
 };
 
 class IRecordingEventSink
@@ -101,6 +106,7 @@ public:
 
 // Shared across recording workers; immutable configuration and atomics are the
 // only cross-shard state. The event sink is invoked on the owning worker.
+class RecordingCatalog;
 struct RecordingContext
 {
     const RecordingOptions& options;
@@ -113,6 +119,7 @@ struct RecordingContext
     std::atomic<uint64_t>& completed;
     std::atomic<uint64_t>& errors;
     std::shared_ptr<IRecordingEventSink> event_sink;
+    std::shared_ptr<RecordingCatalog> catalog;
 
     RecordingContext(const RecordingOptions& opts, int64_t id,
         std::atomic<uint64_t>& w, std::atomic<uint64_t>& d,

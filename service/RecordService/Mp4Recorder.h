@@ -4,12 +4,14 @@
 #include "IRecorder.h"
 #include "RecordingTypes.h"
 #include "RecordingSegment.h"
+#include <map>
+#include <limits>
 
 namespace service 
 {
 
-// Existing MP4 recording instance. RecordingSession supervises its lifecycle;
-// a later extraction can move the nested file state into RecordingSegment.
+// One stream's segment lifecycle. The dispatcher exclusively owns this object
+// on one worker; Mp4Writer handles only muxing, RecordingCatalog only indexing.
 class Mp4Recorder final : public IRecorder
 {
 public:
@@ -26,16 +28,26 @@ public:
     bool IsOpen() const noexcept override { return segment_.IsOpen(); }
     bool HasFailed() const noexcept override { return segment_.HasFailed(); }
 private:
+    struct PendingFrame { media::EncodedFrameEvent event; int64_t time_us; uint64_t received_ms; };
     void DiscardPending();
     void Fail(const std::string& message);
-    void Write(const media::EncodedFrameEvent& event);
-    
+    void Write(const PendingFrame& frame);
+    void Drain(uint64_t now, bool force);
+    bool OpenSegment(int64_t origin_us);
+    bool FinalizeSegment();
+    void Store();
     void EmitEvent(RecordingEventType type, RecordingSessionState state, const std::string& error = {});
-    
-
-    bool CanOpen(uint64_t now, bool force) const;
-    bool HasReadyVideoTrack() const;
     void Open();
+    std::multimap<std::pair<int64_t, int>, PendingFrame> pending_;
+    int64_t latest_us_ = std::numeric_limits<int64_t>::min();
+    std::pair<int64_t, int> drained_key_{std::numeric_limits<int64_t>::min(), -1};
+    int64_t recording_origin_us_ = 0;
+    int64_t wall_anchor_ms_ = 0, media_anchor_us_ = 0;
+    bool clock_anchored_ = false, discovered_ = false, closed_ = false;
+    uint64_t segment_sequence_ = 0;
+    SegmentInfo info_;
+    struct WrittenTrack { int64_t last_us = 0, duration_us = 0; };
+    std::map<RecordingTrackKey, WrittenTrack> written_tracks_;
     RecordingSegment segment_;
     RecordingContext& context_;
     RecordingInstanceId instance_;

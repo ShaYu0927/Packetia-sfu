@@ -1,6 +1,7 @@
 #include "RecordingService.h"
 #include "RecordingTypes.h"
 #include "RecordingDispatcher.h"
+#include "RecordingCatalog.h"
 #include "logger.h"
 #include <chrono>
 #include <filesystem>
@@ -10,9 +11,10 @@
 namespace service {
 RecordingService::RecordingService(std::shared_ptr<media::EncodedFrameRouter> router,
                                    RecordingOptions options,
-                                   std::shared_ptr<IRecordingEventSink> event_sink)
+                                   std::shared_ptr<IRecordingEventSink> event_sink,
+                                   std::shared_ptr<config::ConfigStore> config)
     : router_(std::move(router)), options_(std::move(options)),
-      event_sink_(std::move(event_sink)) {}
+      event_sink_(std::move(event_sink)), config_(std::move(config)) {}
 RecordingService::~RecordingService() { Stop(); }
 
 bool RecordingService::Init()
@@ -24,9 +26,22 @@ bool RecordingService::Init()
     if (!router_ || error || !options_.max_queue_frames || !options_.max_queue_bytes ||
         !options_.max_streams || !options_.max_pending_bytes || !options_.idle_timeout_ms ||
         !options_.worker_count ||
-        !options_.max_stream_queue_frames || !options_.max_stream_queue_bytes)
+        !options_.max_stream_queue_frames || !options_.max_stream_queue_bytes ||
+        options_.reorder_ms > 5000 || options_.segment_ms > static_cast<uint64_t>(INT64_MAX / 1000))
     {
         LOG_ERROR("[RECORD] init failed, directory=", options_.directory, " error=", error.message());
+        state_ = ServiceState::Failed;
+        return false;
+    }
+    try {
+        const auto path = options_.index_path.empty()
+            ? (std::filesystem::path(options_.directory) / ".index" / "recordings.sqlite").string()
+            : options_.index_path;
+        auto catalog = std::make_shared<RecordingCatalog>(path);
+        std::lock_guard<std::mutex> lock(mutex_);
+        catalog_ = std::move(catalog);
+    } catch (const std::exception& e) {
+        LOG_ERROR("[RECORD] index initialization failed: ", e.what());
         state_ = ServiceState::Failed;
         return false;
     }
@@ -44,7 +59,8 @@ bool RecordingService::Start()
         auto context = std::make_shared<RecordingContext>(options_,
             std::chrono::system_clock::now().time_since_epoch().count(),
             written_, dropped_, completed_, errors_, event_sink_);
-        dispatcher = std::make_shared<RecordingDispatcher>(options_, context, accepted_, dropped_, errors_);
+        context->catalog = catalog_;
+        dispatcher = std::make_shared<RecordingDispatcher>(options_, context, accepted_, dropped_, errors_, config_);
         dispatcher->Start();
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -109,6 +125,9 @@ RecordingStats RecordingService::Stats() const
 
 bool RecordingService::SubmitFrame(const media::EncodedFrameEvent& event)
 {
+    if (event.source.session_id.empty() || event.source.stream_id.empty()) return false;
+    if (config_ && !config_->Allows(config::Feature::Recording,
+        {event.source.session_id, event.source.stream_id})) return false;
     if (!event.Valid() || !event.frame->IsComplete() ||
         (event.frame->info.codec != media::CodecType::H264 && event.frame->info.codec != media::CodecType::AAC)) {
         ++dropped_;
@@ -120,5 +139,55 @@ bool RecordingService::SubmitFrame(const media::EncodedFrameEvent& event)
         dispatcher = dispatcher_;
     }
     return dispatcher && dispatcher->Post(event);
+}
+
+void RecordingService::RefreshStreamPolicies()
+{
+    std::lock_guard<std::mutex> lifecycle(lifecycle_mutex_);
+    std::shared_ptr<RecordingDispatcher> dispatcher;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        dispatcher = dispatcher_;
+    }
+    if (dispatcher) dispatcher->RefreshStreamPolicies();
+}
+
+bool RecordingService::StartRecording(const config::StreamKey& stream)
+{
+    std::lock_guard<std::mutex> lifecycle(lifecycle_mutex_);
+    if (!config_ || stream.session_id.empty() || stream.stream_id.empty() ||
+        State() != ServiceState::Running || !config_->Snapshot()->recording_enabled) return false;
+    config_->SetStreamRecording(stream, true);
+    return true;
+}
+
+bool RecordingService::StopRecording(const config::StreamKey& stream)
+{
+    std::lock_guard<std::mutex> lifecycle(lifecycle_mutex_);
+    if (!config_ || stream.session_id.empty() || stream.stream_id.empty()) return false;
+    std::shared_ptr<RecordingDispatcher> dispatcher;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        dispatcher = dispatcher_;
+    }
+    auto disable = [&] { config_->SetStreamRecording(stream, false); };
+    if (!dispatcher) { disable(); return true; }
+    return dispatcher->DrainStream(stream, disable);
+}
+
+std::vector<SegmentInfo> RecordingService::QuerySegments(const SegmentQuery& query) const
+{
+    std::shared_ptr<RecordingCatalog> catalog;
+    { std::lock_guard<std::mutex> lock(mutex_); catalog = catalog_; }
+    if (!catalog) throw std::logic_error("recording index is not initialized");
+    return catalog->Query(query);
+}
+
+std::vector<RecordedStream> RecordingService::ListRecordedStreams(const std::string& session_id) const
+{
+    std::shared_ptr<RecordingCatalog> catalog;
+    { std::lock_guard<std::mutex> lock(mutex_); catalog = catalog_; }
+    if (!catalog) throw std::logic_error("recording index is not initialized");
+    return catalog->Streams(session_id);
 }
 }

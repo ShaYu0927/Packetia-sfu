@@ -1,11 +1,67 @@
+## FFmpeg 与测试依赖
+
+主程序和录像测试通过 `pkg-config` 查找系统安装的 libavformat、libavcodec 和 libavutil
+开发包。无需编译 `third/ffmpeg` 下的源码，原有 `PACKETIA_FFMPEG_ROOT` 配置不再使用。
+仅安装 `ffmpeg` 命令行程序不够，构建还需要对应的开发头文件和库。
+
+Ubuntu 上安装依赖并构建主程序：
+
+```sh
+sudo apt update
+sudo apt install build-essential cmake pkg-config libssl-dev \
+  libavformat-dev libavcodec-dev libavutil-dev libsqlite3-dev
+
+cmake -S . -B build -DBUILD_TESTING=OFF
+cmake --build build --target Packetia -j"$(nproc)"
+```
+
+库必须与目标操作系统和 CPU 架构一致。可通过
+`pkg-config --modversion libavformat libavcodec libavutil` 检查检测到的版本。
+
+默认 `BUILD_TESTING=ON`，只有开启时才查找 GoogleTest 并生成测试目标。
+Ubuntu 上运行完整默认测试：
+
+```sh
+sudo apt install libgtest-dev
+cmake -S . -B build -DBUILD_TESTING=ON
+cmake --build build -j"$(nproc)"
+ctest --test-dir build --output-on-failure
+```
+
+录像集成测试额外需要 `-DPACKETIA_BUILD_RECORDING_TESTS=ON`，通过 PATH 查找 `ffmpeg`。
+生成测试素材需要 libx264 和 AAC 编码支持，测试解码验证需要 Python 3，Ubuntu 可用 `sudo apt install ffmpeg python3` 安装。
+录像测试也支持独立配置：
+
+```sh
+cmake -S service/RecordService/Test -B build/recording-tests
+cmake --build build/recording-tests --parallel
+ctest --test-dir build/recording-tests --output-on-failure
+```
+
+## 各路独立录像切片
+
+各路独立 fMP4 切片、SQLite 索引及查询接口见[录制切片说明](service/RecordService/README.md)。
+按 `(session_id, stream_id)` 分别录制，在关键帧处按媒体时间切段；支持逐流停止、重启，以及按会话、流和时间范围查询完成片段。构建需要 SQLite 3.24 以上开发库。
+
+## 录像画面合成实验
+
+可通过[双人合成示例](service/RecordService/examples/README.md)体验两路视频左右拼接和音频混音，
+支持生成测试画面或输入两份已完成的录像，输出单路 H264/AAC MP4。
+
+## 会议合成框架
+
+新增 [ConferenceMixService](service/ConferenceMixService/README.md)，提供会议输入配置、独立工作线程、任务启停与编码输出接口。
+当前尚未实现实际拼画面、混音和编解码。服务已注册到统一启停管理，默认关闭。
+
+录制、AI、会议合成支持全局开关、流默认值与逐流覆盖配置，见[全局配置模块](config/README.md)和[服务配置与启停](service/README.md)。
+
 ## macOS 编译
 
 需要 Xcode Command Line Tools（`xcode-select --install`）及 Homebrew。
 在项目根目录执行：
 
 ```sh
-brew install cmake ninja pkgconf googletest openssl@3 ffmpeg libwebsockets
-git submodule update --init --recursive
+brew install cmake ninja pkgconf googletest openssl@3 ffmpeg sqlite libwebsockets
 
 cmake -S . -B build/macos -G Ninja \
   -DCMAKE_BUILD_TYPE=Debug \

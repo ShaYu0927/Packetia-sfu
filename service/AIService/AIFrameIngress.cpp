@@ -10,10 +10,11 @@ namespace ai
 
 AIFrameIngress::AIFrameIngress(std::shared_ptr<media::EncodedFrameRouter> router,
                                std::shared_ptr<IAIFrameProcessor> processor,
-                               size_t max_queue_size)
+                               size_t max_queue_size,
+                               std::shared_ptr<const config::ConfigStore> config)
     : max_queue_size_(max_queue_size == 0 ? 1 : max_queue_size),
       router_(std::move(router)),
-      processor_(std::move(processor))
+      processor_(std::move(processor)), config_(std::move(config))
 {
 }
 
@@ -107,7 +108,8 @@ AIFrameIngressStats AIFrameIngress::Stats() const
 bool AIFrameIngress::SubmitFrame(const media::EncodedFrameEvent& event)
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!running_ || !event.Valid())
+    if (!running_ || !event.Valid() || (config_ && !config_->Allows(config::Feature::AI,
+        {event.source.session_id, event.source.stream_id})))
     {
         return false;
     }
@@ -147,6 +149,11 @@ void AIFrameIngress::Run()
             queue_.pop_front();
         }
 
+        if (config_ && !config_->Allows(config::Feature::AI,
+            {event.source.session_id, event.source.stream_id})) {
+            ++dropped_;
+            continue;
+        }
         if (processor_)
         {
             try

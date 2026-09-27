@@ -22,6 +22,9 @@ struct RecordingDispatcher::StreamEntry
     size_t bytes = 0;
     uint64_t epoch = 0;
     bool restart = false;
+    bool policy_stop = false;
+    bool draining = false;
+    bool close_ok = true;
     bool active = false;
 };
 
@@ -55,13 +58,18 @@ public:
 
         bool stale = false;
         bool restart = false;
+        auto reason = RecordingStopReason::QueueOverflow;
         {
             std::lock_guard<std::mutex> lock(owner_.mutex_);
             stale = frame->epoch != frame->stream->epoch;
+            if (!frame->stream->draining && owner_.config_ && !owner_.config_->Allows(config::Feature::Recording,
+                {frame->stream->key.first, frame->stream->key.second})) stale = true;
             if (!stale && frame->stream->restart) 
             {
                 restart = true;
                 frame->stream->restart = false;
+                if (frame->stream->policy_stop) reason = RecordingStopReason::ConfigurationChanged;
+                frame->stream->policy_stop = false;
             }
         }
 
@@ -78,7 +86,7 @@ public:
             const auto now = NowMs();
             if (restart && found != shard.end()) 
             {
-                found->second.session->Close(RecordingStopReason::QueueOverflow, now);
+                found->second.session->Close(reason, now);
                 shard.erase(found);
                 found = shard.end();
             }
@@ -96,8 +104,9 @@ public:
             found->second.session->InputFrame(frame->event, now);
             if (found->second.session->Tick(now, false))
             {
+                const bool ok = found->second.session->State() != RecordingSessionState::Failed;
                 shard.erase(found);
-                MarkInactive(frame->stream);
+                MarkInactive(frame->stream, ok);
             }
         } catch (const std::exception& error) 
         {
@@ -105,14 +114,14 @@ public:
                       " stream=", frame->stream->key.second, " error=", error.what());
             ++owner_.errors_;
             if (found != shard.end()) shard.erase(found);
-            MarkInactive(frame->stream);
+            MarkInactive(frame->stream, false);
         } catch (...) 
         {
             LOG_ERROR("[RECORD] worker task failed, session=", frame->stream->key.first,
                       " stream=", frame->stream->key.second, " error=unknown");
             ++owner_.errors_;
             if (found != shard.end()) shard.erase(found);
-            MarkInactive(frame->stream);
+            MarkInactive(frame->stream, false);
         }
         owner_.Complete(frame->stream, frame->event.frame->StorageSize());
     }
@@ -123,18 +132,36 @@ public:
         auto& shard = sessions_[worker];
         const auto now = NowMs();
         for (auto it = shard.begin(); it != shard.end();) {
+            bool ok = true;
             try {
-                if (!it->second.session->Tick(now, false)) { ++it; continue; }
+                bool policy_stop, draining, queued;
+                {
+                    std::lock_guard<std::mutex> lock(owner_.mutex_);
+                    draining = it->second.stream->draining;
+                    queued = it->second.stream->frames != 0;
+                    policy_stop = it->second.stream->policy_stop;
+                    if (policy_stop) {
+                        it->second.stream->policy_stop = false;
+                        it->second.stream->restart = false;
+                    }
+                }
+                if (draining && queued) { ++it; continue; }
+                if (draining) it->second.session->Finish(RecordingStopReason::UserRequested, now);
+                else if (policy_stop) it->second.session->Close(RecordingStopReason::ConfigurationChanged, now);
+                else if (!it->second.session->Tick(now, false)) { ++it; continue; }
+                ok = it->second.session->State() != RecordingSessionState::Failed;
             } catch (const std::exception& error) {
                 LOG_ERROR("[RECORD] tick failed, session=", it->first.first,
                           " stream=", it->first.second, " error=", error.what());
                 ++owner_.errors_;
+                ok = false;
             } catch (...) {
                 ++owner_.errors_;
+                ok = false;
             }
             auto stream = it->second.stream;
             it = shard.erase(it);
-            MarkInactive(stream);
+            MarkInactive(stream, ok);
         }
     }
 
@@ -155,11 +182,13 @@ public:
     }
 
 private:
-    void MarkInactive(const std::shared_ptr<StreamEntry>& stream)
+    void MarkInactive(const std::shared_ptr<StreamEntry>& stream, bool ok = true)
     {
         {
             std::lock_guard<std::mutex> lock(owner_.mutex_);
             stream->active = false;
+            stream->close_ok &= ok;
+            owner_.drained_.notify_all();
         }
         owner_.Retire(stream->key, stream);
     }
@@ -171,8 +200,8 @@ private:
 RecordingDispatcher::RecordingDispatcher(const RecordingOptions& options,
     std::shared_ptr<RecordingContext> context,
     std::atomic<uint64_t>& accepted, std::atomic<uint64_t>& dropped,
-    std::atomic<uint64_t>& errors)
-    : options_(options), context_(std::move(context)), accepted_(accepted),
+    std::atomic<uint64_t>& errors, std::shared_ptr<const config::ConfigStore> config)
+    : options_(options), config_(std::move(config)), context_(std::move(context)), accepted_(accepted),
       dropped_(dropped), errors_(errors) {}
 
 RecordingDispatcher::~RecordingDispatcher() { Stop(); }
@@ -222,6 +251,8 @@ bool RecordingDispatcher::Post(const media::EncodedFrameEvent& event)
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!accepting_ || !started_) return false;
+        if (config_ && !config_->Allows(config::Feature::Recording,
+            {event.source.session_id, event.source.stream_id})) return false;
         const Key key{event.source.session_id, event.source.stream_id};
         auto found = streams_.find(key);
         const bool new_stream = found == streams_.end();
@@ -232,6 +263,7 @@ bool RecordingDispatcher::Post(const media::EncodedFrameEvent& event)
         }
         if (new_stream) found = streams_.emplace(key, std::make_shared<StreamEntry>(key)).first;
         stream = found->second;
+        if (stream->draining) return false;
         const size_t bytes = event.frame->StorageSize();
         const bool full = queued_.frames >= options_.max_queue_frames ||
             bytes > options_.max_queue_bytes - queued_.bytes ||
@@ -271,6 +303,38 @@ RecordingDispatcher::QueueStats RecordingDispatcher::Stats() const
     return queued_;
 }
 
+void RecordingDispatcher::RefreshStreamPolicies()
+{
+    if (!config_) return;
+    const auto snapshot = config_->Snapshot();
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto& item : streams_) {
+        if (snapshot->Resolve({item.first.first, item.first.second}).recording) continue;
+        // Preserve the boundary even if the stream is enabled again before
+        // the next worker tick. Old queued frames cannot enter the new file.
+        ++item.second->epoch;
+        item.second->restart = true;
+        item.second->policy_stop = true;
+    }
+}
+
+bool RecordingDispatcher::DrainStream(const config::StreamKey& key, const std::function<void()>& disable)
+{
+    std::unique_lock<std::mutex> lock(mutex_);
+    const auto it = streams_.find({key.session_id, key.stream_id});
+    // Post and worker admission use the same mutex, so no frame can slip
+    // between publishing the disabled policy and marking admitted work to drain.
+    disable();
+    if (it == streams_.end()) return true;
+    auto stream = it->second;
+    stream->draining = true;
+    stream->policy_stop = false;
+    drained_.wait(lock, [&] { return stream->frames == 0 && !stream->active; });
+    const auto retired = streams_.find({key.session_id, key.stream_id});
+    if (retired != streams_.end() && retired->second == stream) streams_.erase(retired);
+    return stream->close_ok;
+}
+
 void RecordingDispatcher::Complete(const std::shared_ptr<StreamEntry>& stream, size_t bytes)
 {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -278,6 +342,7 @@ void RecordingDispatcher::Complete(const std::shared_ptr<StreamEntry>& stream, s
     stream->bytes -= bytes;
     --queued_.frames;
     queued_.bytes -= bytes;
+    drained_.notify_all();
     if (!stream->frames && !stream->active) streams_.erase(stream->key);
 }
 

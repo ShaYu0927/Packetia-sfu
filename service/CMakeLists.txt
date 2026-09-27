@@ -1,10 +1,17 @@
 cmake_minimum_required(VERSION 3.16)
+add_subdirectory(RecordService/Index)
 
 add_library(service STATIC
     core/IService.h
     core/ServiceBase.h
     core/ServiceManager.h
     core/ServiceManager.cpp
+    ConferenceMixService/MixTypes.h
+    ConferenceMixService/IMixBackend.h
+    ConferenceMixService/ConferenceMixer.h
+    ConferenceMixService/ConferenceMixer.cpp
+    ConferenceMixService/ConferenceMixService.h
+    ConferenceMixService/ConferenceMixService.cpp
     AIService/AITypes.h
     AIService/IModelProvider.h
     AIService/UnavailableModelProvider.h
@@ -45,7 +52,7 @@ target_include_directories(service
 
 target_compile_features(service PUBLIC cxx_std_17)
 
-target_link_libraries(service PUBLIC media LOGGER ${FFMPEG_LIBRARIES})
+target_link_libraries(service PUBLIC media LOGGER packetia_config packetia_recording_index ${FFMPEG_LIBRARIES})
 
 if(MSVC)
     target_compile_options(service PRIVATE /utf-8)
