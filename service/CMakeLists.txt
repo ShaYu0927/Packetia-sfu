@@ -35,6 +35,9 @@ add_library(service STATIC
     RecordService/Mp4Recorder.h
     RecordService/Mp4Recorder.cpp
     RecordService/Mp4Writer.cpp
+    RecordService/IMediaReader.h
+    RecordService/Mp4Reader.h
+    RecordService/Mp4Reader.cpp
     RecordService/ISeekableFile.h
     RecordService/LocalFileIO.h
     RecordService/LocalFileIO.cpp

@@ -1,5 +1,6 @@
 #include "TaskScheduler.h"
 #include "MediaLatency.h"
+#include <future>
 #include <signal.h>
 
 TaskScheduler::TaskScheduler(int id)
@@ -65,8 +66,7 @@ void TaskScheduler::Run()
     for (;;)
     {
         const auto timer_wait = timer_queue_.GetTimeRemain();
-        const int timeout = timer_wait < 0 || timer_wait > 100
-            ? 100 : static_cast<int>(timer_wait);
+        const int timeout = timer_wait < 0 || timer_wait > 100 ? 100 : static_cast<int>(timer_wait);
         HandleEvent(timeout);
         HandlePendingTasks();
         if (!shutdown_) timer_queue_.HandleTimerEvent();

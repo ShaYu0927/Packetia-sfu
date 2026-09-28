@@ -34,7 +34,8 @@ void Mp4Recorder::Store() {
     if (context_.catalog) context_.catalog->Store(info_);
 }
 
-bool Mp4Recorder::OpenSegment(int64_t origin_us) {
+bool Mp4Recorder::OpenSegment(int64_t origin_us) 
+{
     if (segment_.failed_) return false;
     info_ = {};
     info_.recording_id = std::to_string(instance_.run_id) + "-" + std::to_string(instance_.generation);
@@ -53,7 +54,8 @@ bool Mp4Recorder::OpenSegment(int64_t origin_us) {
     segment_.path = (std::filesystem::path(context_.options.directory) / info_.relative_path).string();
     segment_.tmp_path = (std::filesystem::path(context_.options.directory) / ("." + info_.relative_path)).string();
     std::vector<media::EncodedFrameEvent> formats;
-    for (const auto& entry : segment_.tracks) {
+    for (const auto& entry : segment_.tracks) 
+    {
         const auto& event = entry.second.first;
         const auto& f = *event.frame;
         formats.push_back(event);
@@ -80,21 +82,24 @@ bool Mp4Recorder::OpenSegment(int64_t origin_us) {
     }
 }
 
-bool Mp4Recorder::FinalizeSegment() {
+bool Mp4Recorder::FinalizeSegment() 
+{
     if (!segment_.writer_) return !segment_.failed_;
     info_.media_end_us = info_.media_start_us;
     for (const auto& track : written_tracks_)
         info_.media_end_us = std::max(info_.media_end_us,
             track.second.last_us - recording_origin_us_ + track.second.duration_us);
     segment_.state_ = RecordingSegmentState::Finalizing;
-    if (!segment_.writer_->Close()) {
+    if (!segment_.writer_->Close()) 
+    {
         const auto error = segment_.writer_->Error();
         segment_.writer_.reset();
         Fail("finalize segment: " + error);
         return false;
     }
     segment_.writer_.reset();
-    try {
+    try 
+    {
         std::filesystem::rename(segment_.tmp_path, segment_.path);
         info_.size_bytes = std::filesystem::file_size(segment_.path);
         info_.ended_at_ms = info_.started_at_ms + (info_.media_end_us - info_.media_start_us + 999) / 1000;
@@ -111,7 +116,8 @@ bool Mp4Recorder::FinalizeSegment() {
     }
 }
 
-void Mp4Recorder::Fail(const std::string& message) {
+void Mp4Recorder::Fail(const std::string& message) 
+{
     if (segment_.failed_) return;
     segment_.failed_ = true;
     segment_.state_ = RecordingSegmentState::Failed;
@@ -119,7 +125,8 @@ void Mp4Recorder::Fail(const std::string& message) {
     LOG_ERROR("[RECORD] stream failed, session=", instance_.session.session_id,
               " stream=", instance_.session.stream_id, " error=", message);
     if (segment_.writer_) { segment_.writer_->Close(); segment_.writer_.reset(); }
-    if (info_.segment_id.empty()) {
+    if (info_.segment_id.empty()) 
+    {
         info_.recording_id = std::to_string(instance_.run_id) + "-" + std::to_string(instance_.generation);
         info_.sequence = ++segment_sequence_;
         info_.segment_id = info_.recording_id + "-" + std::to_string(info_.sequence);
@@ -128,7 +135,8 @@ void Mp4Recorder::Fail(const std::string& message) {
         info_.started_at_ms = static_cast<int64_t>(Timestamp::WallNowMs());
     }
     // Retain failed temporary files for diagnosis; never publish as Completed.
-    if (!info_.segment_id.empty()) {
+    if (!info_.segment_id.empty()) 
+    {
         info_.status = SegmentStatus::Failed;
         info_.error = message;
         info_.ended_at_ms = std::max(info_.started_at_ms + 1, static_cast<int64_t>(Timestamp::WallNowMs()));
@@ -136,18 +144,21 @@ void Mp4Recorder::Fail(const std::string& message) {
             LOG_ERROR("[RECORD] failed to persist segment failure: ", error.what());
         }
     }
-    if (!segment_.terminal_event_sent) {
+    if (!segment_.terminal_event_sent) 
+    {
         segment_.terminal_event_sent = true;
         EmitEvent(RecordingEventType::SegmentFailed, RecordingSessionState::Failed, message);
     }
     DiscardPending();
 }
 
-void Mp4Recorder::Open() {
+void Mp4Recorder::Open() 
+{
     if (discovered_ || segment_.failed_ || pending_.empty()) return;
     bool video_ready = false;
     bool use_capture = true;
-    for (const auto& entry : segment_.tracks) {
+    for (const auto& entry : segment_.tracks) 
+    {
         const bool video = entry.second.first.frame->info.media_type == media::MediaType::Video;
         video_ready |= video;
         use_capture &= entry.second.first.frame->info.timestamp.capture_time_valid;
@@ -156,9 +167,11 @@ void Mp4Recorder::Open() {
     // Choose one clock domain for ALL tracks after discovery. Mixing an RTCP
     // capture clock on video with a monotonic receive clock on audio corrupts
     // both interleaving and segment boundaries.
-    if (use_capture) {
+    if (use_capture) 
+    {
         decltype(pending_) aligned;
-        for (auto& entry : pending_) {
+        for (auto& entry : pending_) 
+        {
             auto packet = entry.second;
             const auto& clock = segment_.tracks.at({packet.event.source.endpoint_id, packet.event.source.track_id});
             packet.time_us += clock.first.frame->info.timestamp.capture_time_ms * 1000 - clock.anchor_us;
@@ -171,7 +184,8 @@ void Mp4Recorder::Open() {
     }
     int64_t origin = INT64_MAX;
     media_anchor_us_ = INT64_MAX;
-    for (const auto& entry : segment_.tracks) {
+    for (const auto& entry : segment_.tracks) 
+    {
         media_anchor_us_ = std::min(media_anchor_us_, entry.second.anchor_us);
         if (entry.second.first.frame->info.media_type == media::MediaType::Video || !segment_.video_seen)
             origin = std::min(origin, entry.second.anchor_us);
@@ -180,9 +194,11 @@ void Mp4Recorder::Open() {
     discovered_ = OpenSegment(origin);
 }
 
-void Mp4Recorder::Write(const PendingFrame& packet) {
+void Mp4Recorder::Write(const PendingFrame& packet) 
+{
     if (packet.time_us < segment_.origin_us) { ++context_.dropped; return; }
-    if (!segment_.writer_->Write(packet.event, packet.time_us - segment_.origin_us)) {
+    if (!segment_.writer_->Write(packet.event, packet.time_us - segment_.origin_us)) 
+    {
         Fail(segment_.writer_->Error());
         return;
     }
@@ -197,9 +213,11 @@ void Mp4Recorder::Write(const PendingFrame& packet) {
     ++context_.written;
 }
 
-void Mp4Recorder::Drain(uint64_t now, bool force) {
+void Mp4Recorder::Drain(uint64_t now, bool force) 
+{
     if (!discovered_ || segment_.failed_) return;
-    while (!pending_.empty()) {
+    while (!pending_.empty()) 
+    {
         const auto it = pending_.begin();
         const auto& first = it->second;
         const auto window_us = static_cast<int64_t>(context_.options.reorder_ms) * 1000;
@@ -218,7 +236,8 @@ void Mp4Recorder::Drain(uint64_t now, bool force) {
             ? frame.info.media_type == media::MediaType::Video && frame.IsKeyFrame()
             : frame.info.media_type == media::MediaType::Audio;
         if (segment_.frames && context_.options.segment_ms && cut_point &&
-            packet.time_us - segment_.origin_us >= static_cast<int64_t>(context_.options.segment_ms) * 1000) {
+            packet.time_us - segment_.origin_us >= static_cast<int64_t>(context_.options.segment_ms) * 1000) 
+        {
             // Audio packets are indivisible. Their start timestamp selects the
             // segment; their duration may overlap the boundary by one packet.
             if (!FinalizeSegment() || !OpenSegment(packet.time_us)) return;

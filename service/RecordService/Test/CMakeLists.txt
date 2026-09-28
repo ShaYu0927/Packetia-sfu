@@ -20,6 +20,23 @@ if(RECORDING_FFMPEG)
         -t 2 -c:v libx264 -preset ultrafast -bf 0 -g 25 -pix_fmt yuv420p -c:a aac -ac 2
         ${RECORDING_FIXTURE})
     set_tests_properties(recording_fixture PROPERTIES FIXTURES_SETUP recording_media TIMEOUT 30)
+    add_executable(test_mp4_reader test_mp4_reader.cpp ../Mp4Reader.cpp ../LocalFileIO.cpp)
+    target_compile_features(test_mp4_reader PRIVATE cxx_std_17)
+    target_include_directories(test_mp4_reader PRIVATE .. ${FFMPEG_INCLUDE_DIRS})
+    target_link_libraries(test_mp4_reader PRIVATE ${FFMPEG_LIBRARIES})
+    if(MSVC)
+        target_compile_options(test_mp4_reader PRIVATE /utf-8)
+    endif()
+    add_test(NAME mp4_reader COMMAND test_mp4_reader "${RECORDING_FIXTURE}")
+    set_tests_properties(mp4_reader PROPERTIES FIXTURES_REQUIRED recording_media TIMEOUT 30)
+    set(RECORDING_FRAGMENTED_FIXTURE "${CMAKE_CURRENT_BINARY_DIR}/reader-fragmented.mp4")
+    add_test(NAME mp4_reader_fragmented_fixture COMMAND ${RECORDING_FFMPEG}
+        -hide_banner -loglevel error -y -i ${RECORDING_FIXTURE} -map 0 -c copy
+        -movflags frag_keyframe+delay_moov+default_base_moof ${RECORDING_FRAGMENTED_FIXTURE})
+    set_tests_properties(mp4_reader_fragmented_fixture PROPERTIES
+        FIXTURES_REQUIRED recording_media FIXTURES_SETUP reader_fragmented TIMEOUT 30)
+    add_test(NAME mp4_reader_fragmented COMMAND test_mp4_reader "${RECORDING_FRAGMENTED_FIXTURE}")
+    set_tests_properties(mp4_reader_fragmented PROPERTIES FIXTURES_REQUIRED reader_fragmented TIMEOUT 30)
     # Exercise the actual recorder and muxer without the unrelated network stack.
     add_executable(test_recording test_recording.cpp
         ../Mp4Recorder.cpp ../Mp4Writer.cpp ../LocalFileIO.cpp)
