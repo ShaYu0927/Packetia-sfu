@@ -33,11 +33,9 @@ struct SdpParseResult
 class Sdp
 {
 public:
-    // Generic keeps raw attributes for RTSP. WebRtc additionally extracts and
-    // validates ICE/DTLS/RTP attributes in the same session/media model.
     static SdpParseResult Parse(const std::string& text, SdpProfile profile = SdpProfile::Generic);
-    // Transactional overload for signaling callers; failure preserves output.
     static bool Parse(const std::string& text, SdpProfile profile, SdpType type, SdpSession& output, std::string& error);
+    static void SetCodecs(SdpMedia& media, std::vector<RtpCodecParameters> codecs);
     static std::string Serialize(const SdpSession& session);
 };
 

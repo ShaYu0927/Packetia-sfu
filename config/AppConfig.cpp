@@ -78,6 +78,8 @@ void AppConfig::Validate() const {
         throw std::invalid_argument("invalid segment duration or reorder window (0..5000 ms)");
     if (listen_ip.empty() || !rtsp_port || !sip_port || !rtmp_port || !udp_port || !websocket_port || !io_threads)
         throw std::invalid_argument("invalid server address, port or thread count");
+    if (!webrtc.max_sessions)
+        throw std::invalid_argument("webrtc.max_sessions must be positive");
     if (recording.directory.empty() || !recording.max_queue_frames || !recording.max_queue_bytes ||
         !recording.max_streams || !recording.max_pending_bytes || !recording.idle_timeout_ms ||
         !recording.worker_count || !recording.max_stream_queue_frames || !recording.max_stream_queue_bytes)
@@ -88,7 +90,7 @@ void AppConfig::Validate() const {
 }
 AppConfig AppConfig::FromJson(const std::string& text) {
     const auto root = Json::parse(text);
-    Keys(root, {"server", "services", "recording", "stream_defaults", "streams"});
+    Keys(root, {"server", "webrtc", "services", "recording", "stream_defaults", "streams"});
     AppConfig config;
     if (root.contains("server")) {
         const auto& server = root.at("server");
@@ -100,6 +102,14 @@ AppConfig AppConfig::FromJson(const std::string& text) {
         Number(server, "udp_port", config.udp_port);
         Number(server, "websocket_port", config.websocket_port);
         Number(server, "io_threads", config.io_threads);
+    }
+    if (root.contains("webrtc")) {
+        const auto& rtc = root.at("webrtc");
+        Keys(rtc, {"enabled", "public_ip", "token", "max_sessions"});
+        if (rtc.contains("enabled")) config.webrtc.enabled = Flag(rtc.at("enabled"));
+        if (rtc.contains("public_ip")) config.webrtc.public_ip = rtc.at("public_ip").get<std::string>();
+        if (rtc.contains("token")) config.webrtc.token = rtc.at("token").get<std::string>();
+        Number(rtc, "max_sessions", config.webrtc.max_sessions);
     }
     if (root.contains("services")) {
         const auto& services = root.at("services");
@@ -151,12 +161,16 @@ AppConfig AppConfig::FromFile(const std::string& path) {
     if (file.bad()) throw std::invalid_argument("cannot read configuration file: " + path);
     return FromJson(text.str());
 }
-AppConfig AppConfig::FromEnvironment() {
+AppConfig AppConfig::FromEnvironment() 
+{
     AppConfig config;
     if (const char* path = std::getenv("PACKETIA_CONFIG")) config = FromFile(path);
     config.recording_enabled = EnvironmentFlag("PACKETIA_RECORDING", config.recording_enabled);
     config.ai_enabled = EnvironmentFlag("PACKETIA_AI", config.ai_enabled);
     config.conference_mix_enabled = EnvironmentFlag("PACKETIA_CONFERENCE_MIX", config.conference_mix_enabled);
+    config.webrtc.enabled = EnvironmentFlag("PACKETIA_WEBRTC", config.webrtc.enabled);
+    if (const char* ip = std::getenv("PACKETIA_WEBRTC_PUBLIC_IP")) config.webrtc.public_ip = ip;
+    if (const char* token = std::getenv("PACKETIA_WEBRTC_TOKEN")) config.webrtc.token = token;
     if (const char* directory = std::getenv("PACKETIA_RECORD_DIR")) config.recording.directory = directory;
     config.Validate();
     return config;

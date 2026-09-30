@@ -4,9 +4,7 @@
 
 #include <algorithm>
 #include <atomic>
-#include <charconv>
-#include <map>
-#include <set>
+#include <exception>
 #include <utility>
 
 namespace protocol::webrtc
@@ -27,75 +25,11 @@ bool CanReceive(MediaDirection d)
     return d == MediaDirection::SendRecv || d == MediaDirection::RecvOnly;
 }
 
-MediaDirection AnswerDirection(MediaDirection remote, MediaDirection local)
+bool SameFingerprints(const DtlsParameters& a, const DtlsParameters& b)
 {
-    const bool send = CanSend(local) && CanReceive(remote);
-    const bool receive = CanReceive(local) && CanSend(remote);
-    return send ? (receive ? MediaDirection::SendRecv : MediaDirection::SendOnly)
-                : (receive ? MediaDirection::RecvOnly : MediaDirection::Inactive);
-}
-
-bool HasMid(const BundleParameters& bundle, const std::string& mid)
-{
-    return std::find(bundle.mids.begin(), bundle.mids.end(), mid) != bundle.mids.end();
-}
-
-bool IsOffered(const WebRtcMediaDescription& media)
-{
-    return media.port != 0 || media.bundleOnly;
-}
-
-bool ValidCredentials(const IceParameters& ice)
-{
-    auto valid = [](const std::string& value, size_t minimum)
-    {
-        return value.size() >= minimum && value.size() <= 256 &&
-            value.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+/") == std::string::npos;
-    };
-    return valid(ice.ufrag, 4) && valid(ice.pwd, 22);
-}
-
-bool ValidDtls(const DtlsParameters& dtls)
-{
-    return !dtls.fingerprints.empty() &&
-        std::all_of(dtls.fingerprints.begin(), dtls.fingerprints.end(), [](const auto& fp)
-        { return !fp.algorithm.empty() && !fp.value.empty(); });
-}
-
-bool SameDtls(const DtlsParameters& a, const DtlsParameters& b)
-{
-    return a.setup == b.setup && a.fingerprints.size() == b.fingerprints.size() &&
+    return a.fingerprints.size() == b.fingerprints.size() &&
         std::is_permutation(a.fingerprints.begin(), a.fingerprints.end(), b.fingerprints.begin(),
             [](const auto& x, const auto& y) { return x.algorithm == y.algorithm && x.value == y.value; });
-}
-
-bool SameFeedback(const RtcpFeedback& a, const RtcpFeedback& b)
-{
-    return a.type == b.type && a.parameter == b.parameter;
-}
-
-std::vector<RtcpFeedback> EffectiveFeedback(const std::vector<RtcpFeedback>& common,
-                                           const std::vector<RtcpFeedback>& codec)
-{
-    auto result = common;
-    for (const auto& item : codec)
-        if (std::none_of(result.begin(), result.end(),
-                [&](const auto& existing) { return SameFeedback(item, existing); }))
-            result.push_back(item);
-    return result;
-}
-
-std::vector<RtcpFeedback> FeedbackIntersection(const std::vector<RtcpFeedback>& remote,
-                                               const std::vector<RtcpFeedback>& local)
-{
-    std::vector<RtcpFeedback> result;
-    for (const auto& feedback : remote)
-        if (std::any_of(local.begin(), local.end(), [&](const auto& supported)
-                { return SameFeedback(feedback, supported); }) &&
-            std::none_of(result.begin(), result.end(), [&](const auto& existing)
-                { return SameFeedback(feedback, existing); }))
-            result.push_back(feedback);
-    return result;
 }
 
 } // namespace
@@ -126,12 +60,99 @@ bool WebRtcSession::Fail(const std::string& error)
     return false;
 }
 
+WebRtcSessionDescription WebRtcSession::LocalTemplate(const std::vector<WebRtcMediaDescription>& medias) const
+{
+    WebRtcSessionDescription local;
+    local.profile = sdp::SdpProfile::WebRtc;
+    local.ice = options_.ice;
+    local.ice.iceLite = true;
+    local.ice.options.clear();
+    local.ice.endOfCandidates = true;
+    local.dtls = dtls_->LocalParameters();
+    local.dtls.setup = local_dtls_role_ == DtlsSetup::Unspecified ? DtlsSetup::ActPass : local_dtls_role_;
+    local.origin = options_.origin;
+    local.medias = medias;
+    for (auto& media : local.medias)
+    {
+        media.ice = local.ice;
+        media.dtls = local.dtls;
+    }
+    return local;
+}
+
+bool WebRtcSession::CheckTransport(const WebRtcSessionDescription& remote)
+{
+    if (remote.ice.iceLite || std::any_of(remote.medias.begin(), remote.medias.end(),
+        [](const auto& media) { return (media.port || media.bundleOnly) && media.ice.iceLite; }))
+        return Reject("ICE-lite requires a full ICE peer");
+    if (local_dtls_role_ == DtlsSetup::Unspecified) return true;
+    for (const auto& media : remote.medias)
+    {
+        if ((!media.port && !media.bundleOnly) || (media.media != "audio" && media.media != "video")) continue;
+        const auto& ufrag = media.ice.ufrag.empty() ? remote.ice.ufrag : media.ice.ufrag;
+        const auto& pwd = media.ice.pwd.empty() ? remote.ice.pwd : media.ice.pwd;
+        const auto& dtls = media.dtls.fingerprints.empty() ? remote.dtls : media.dtls;
+        const auto setup = media.dtls.setup == DtlsSetup::Unspecified ? remote.dtls.setup : media.dtls.setup;
+        if (ufrag != remote_ice_.ufrag || pwd != remote_ice_.pwd)
+            return Reject("ICE restart requires a new session");
+        if (!SameFingerprints(dtls, remote_dtls_))
+            return Reject("Changing DTLS identity requires a new session");
+        const auto peerRole = local_dtls_role_ == DtlsSetup::Active ? DtlsSetup::Passive : DtlsSetup::Active;
+        if (setup != peerRole && !(remote.type == SdpType::Offer && setup == DtlsSetup::ActPass))
+            return Reject("Renegotiation must preserve the DTLS role");
+    }
+    return true;
+}
+
+void WebRtcSession::UpdateSignalingState()
+{
+    if (state_ == WebRtcSessionState::Connecting || state_ == WebRtcSessionState::Connected ||
+        state_ == WebRtcSessionState::Closed || state_ == WebRtcSessionState::Failed) return;
+    if (negotiation_.State() == sdp::SdpNegotiationState::HaveLocalOffer)
+        state_ = WebRtcSessionState::HaveLocalOffer;
+    else if (negotiation_.State() == sdp::SdpNegotiationState::HaveRemoteOffer)
+        state_ = WebRtcSessionState::HaveOffer;
+    else state_ = negotiation_.HasCurrent() ? WebRtcSessionState::HaveAnswer : WebRtcSessionState::New;
+}
+
 bool WebRtcSession::ApplyRemoteOffer(const std::string& offerSdp)
 {
     WebRtcSessionDescription offer;
     std::string error;
     if (!sdp::Sdp::Parse(offerSdp, sdp::SdpProfile::WebRtc, SdpType::Offer, offer, error)) return Reject(error);
     return ApplyRemoteOffer(offer);
+}
+
+bool WebRtcSession::ApplyRemoteOffer(const WebRtcSessionDescription& offer)
+{
+    if (state_ == WebRtcSessionState::Closed || state_ == WebRtcSessionState::Failed)
+        return Reject("Cannot negotiate a closed session");
+    if (!CheckTransport(offer)) return false;
+    if (!negotiation_.ApplyOffer(offer)) return Reject(negotiation_.LastError());
+    UpdateSignalingState();
+    last_error_.clear();
+    return true;
+}
+
+bool WebRtcSession::CreateLocalAnswer(WebRtcSessionDescription& answer)
+{
+    if (state_ == WebRtcSessionState::Closed || state_ == WebRtcSessionState::Failed)
+        return Reject("Cannot negotiate a closed session");
+    if (negotiation_.State() == sdp::SdpNegotiationState::Stable && negotiation_.HasCurrent() &&
+        negotiation_.CurrentLocal().type == SdpType::Answer)
+    {
+        answer = negotiation_.CurrentLocal();
+        last_error_.clear();
+        return true;
+    }
+    if (!dtls_ || !srtp_ || options_.ice.candidates.empty())
+        return Reject("Configure crypto backends and local ICE candidates first");
+    WebRtcSessionDescription result;
+    if (!negotiation_.CreateAnswer(LocalTemplate(options_.medias), result))
+        return Reject(negotiation_.LastError());
+    if (!CommitNegotiation()) return false;
+    answer = std::move(result);
+    return true;
 }
 
 bool WebRtcSession::CreateLocalAnswer(std::string& answerSdp)
@@ -142,224 +163,122 @@ bool WebRtcSession::CreateLocalAnswer(std::string& answerSdp)
     return true;
 }
 
-bool WebRtcSession::ApplyRemoteOffer(const WebRtcSessionDescription& offer)
+bool WebRtcSession::CreateLocalOffer(const std::vector<WebRtcMediaDescription>& medias,
+                                     WebRtcSessionDescription& offer)
 {
-    if (state_ != WebRtcSessionState::New && state_ != WebRtcSessionState::HaveOffer)
-        return Reject("Renegotiation is not supported; create a new session");
-    if (offer.type != SdpType::Offer || offer.medias.empty())
-        return Reject("Expected an offer with normalized media descriptions");
-
-    auto normalized = offer;
-    std::set<std::string> mids;
-    const WebRtcMediaDescription* transportMedia = nullptr;
-    size_t active = 0;
-    for (auto& media : normalized.medias)
-    {
-        if (media.mid.empty() || !mids.insert(media.mid).second || media.fmts.empty() ||
-            media.port < 0 || media.port > 65535 || media.portCount != 1)
-            return Reject("Invalid or duplicate mid, media port or formats");
-        if (media.bundleOnly && (!HasMid(offer.bundle, media.mid) || media.port != 0))
-            return Reject("Invalid bundle-only media");
-        if (!IsOffered(media)) continue;
-        if (media.media != "audio" && media.media != "video") continue;
-        if (media.proto != "UDP/TLS/RTP/SAVPF" || !media.rtcpMux)
-            return Reject("Only UDP DTLS-SRTP with rtcp-mux is supported");
-        if (!offer.bundle.mids.empty() && !HasMid(offer.bundle, media.mid))
-            return Reject("All active RTP media must share the BUNDLE transport");
-        if (media.ice.ufrag.empty()) media.ice.ufrag = offer.ice.ufrag;
-        if (media.ice.pwd.empty()) media.ice.pwd = offer.ice.pwd;
-        if (media.dtls.fingerprints.empty()) media.dtls.fingerprints = offer.dtls.fingerprints;
-        if (media.dtls.setup == DtlsSetup::Unspecified) media.dtls.setup = offer.dtls.setup;
-        if (offer.ice.iceLite || media.ice.iceLite || !ValidCredentials(media.ice))
-            return Reject("ICE-lite requires a full ICE peer with valid credentials");
-        if (!ValidDtls(media.dtls) || (media.dtls.setup != DtlsSetup::ActPass &&
-            media.dtls.setup != DtlsSetup::Active && media.dtls.setup != DtlsSetup::Passive))
-            return Reject("Missing fingerprint or unsupported DTLS setup role");
-        if (transportMedia && (media.ice.ufrag != transportMedia->ice.ufrag ||
-            media.ice.pwd != transportMedia->ice.pwd || !SameDtls(media.dtls, transportMedia->dtls)))
-            return Reject("This answerer requires identical transport parameters across BUNDLE media");
-        transportMedia = &media;
-        ++active;
-        std::set<int> formats;
-        for (const auto& format : media.fmts)
-        {
-            int pt = -1;
-            const auto parsed = std::from_chars(format.data(), format.data() + format.size(), pt);
-            if (parsed.ec != std::errc{} || parsed.ptr != format.data() + format.size() ||
-                pt < 0 || pt > 127 || (pt >= 64 && pt <= 95) ||
-                format != std::to_string(pt) || !formats.insert(pt).second)
-                return Reject("Invalid or duplicate RTP format in m= line");
-        }
-        std::set<int> pts;
-        for (const auto& codec : media.codecs)
-            if (codec.payloadType < 0 || codec.payloadType > 127 ||
-                (codec.payloadType >= 64 && codec.payloadType <= 95) || codec.encodingName.empty() ||
-                codec.clockRate <= 0 || codec.channels < 0 || !pts.insert(codec.payloadType).second ||
-                std::find(media.fmts.begin(), media.fmts.end(), std::to_string(codec.payloadType)) == media.fmts.end())
-                return Reject("Invalid RTP codec or payload type");
-        if (pts != formats) return Reject("Every offered RTP format needs a codec description");
-        std::set<int> extensionIds;
-        for (const auto& extension : media.headerExtensions)
-            if (extension.id < 1 || extension.id > 255 || extension.uri.empty() ||
-                !extensionIds.insert(extension.id).second)
-                return Reject("Invalid or duplicate RTP header extension");
-    }
-    std::set<std::string> bundleMids;
-    for (const auto& mid : offer.bundle.mids)
-        if (!mids.count(mid) || !bundleMids.insert(mid).second)
-            return Reject("BUNDLE references an unknown or duplicate mid");
-    if (active == 0 || (active > 1 && offer.bundle.mids.empty()))
-        return Reject("Expected one RTP transport (use BUNDLE for multiple media)");
-    remote_offer_ = std::move(normalized);
-    state_ = WebRtcSessionState::HaveOffer;
+    if (state_ == WebRtcSessionState::Closed || state_ == WebRtcSessionState::Failed)
+        return Reject("Cannot negotiate a closed session");
+    if (!dtls_ || !srtp_ || options_.ice.candidates.empty())
+        return Reject("Configure crypto backends and local ICE candidates first");
+    if (!negotiation_.CreateOffer(LocalTemplate(medias), offer)) return Reject(negotiation_.LastError());
+    UpdateSignalingState();
     last_error_.clear();
     return true;
 }
 
-bool WebRtcSession::CreateLocalAnswer(WebRtcSessionDescription& answer)
+bool WebRtcSession::CreateLocalOffer(const std::vector<WebRtcMediaDescription>& medias, std::string& offerSdp)
 {
-    if (state_ == WebRtcSessionState::HaveAnswer)
-    {
-        answer = local_answer_;
-        last_error_.clear();
-        return true;
-    }
-    if (state_ != WebRtcSessionState::HaveOffer) return Reject("Apply an offer before creating an answer");
-    if (!dtls_ || !srtp_ || !ValidCredentials(options_.ice) || options_.ice.candidates.empty())
-        return Reject("Configure crypto backends, local ICE credentials and candidates first");
-    std::set<std::string> capabilityKinds;
-    for (const auto& capability : options_.medias)
-        if (!capabilityKinds.insert(capability.media).second)
-            return Reject("Configure one local capability entry per media kind");
-    const auto identity = dtls_->LocalParameters();
-    if (!ValidDtls(identity)) return Reject("DTLS backend has no certificate fingerprint");
+    WebRtcSessionDescription offer;
+    if (!CreateLocalOffer(medias, offer)) return false;
+    offerSdp = sdp::Sdp::Serialize(offer);
+    return true;
+}
 
-    WebRtcSessionDescription result;
-    result.type = SdpType::Answer;
-    result.profile = sdp::SdpProfile::WebRtc;
-    result.ice = options_.ice;
-    result.ice.iceLite = true;
-    result.ice.options.clear(); // This version does not implement trickle signaling.
-    result.ice.endOfCandidates = true;
-    result.origin = options_.origin;
-    if (result.origin.sess_id.empty())
+bool WebRtcSession::ApplyRemoteAnswer(const std::string& answerSdp)
+{
+    WebRtcSessionDescription answer;
+    std::string error;
+    if (!sdp::Sdp::Parse(answerSdp, sdp::SdpProfile::WebRtc, SdpType::Answer, answer, error)) return Reject(error);
+    return ApplyRemoteAnswer(answer);
+}
+
+bool WebRtcSession::ApplyRemoteAnswer(const WebRtcSessionDescription& answer)
+{
+    if (state_ == WebRtcSessionState::Closed || state_ == WebRtcSessionState::Failed)
+        return Reject("Cannot negotiate a closed session");
+    if (!CheckTransport(answer)) return false;
+    if (!negotiation_.ApplyAnswer(answer)) return Reject(negotiation_.LastError());
+    return CommitNegotiation();
+}
+
+void WebRtcSession::RollbackNegotiation()
+{
+    negotiation_.Rollback();
+    UpdateSignalingState();
+    last_error_.clear();
+}
+
+bool WebRtcSession::CommitNegotiation()
+{
+    const auto& local = negotiation_.PendingLocal();
+    const auto& remote = negotiation_.PendingRemote();
+    auto bindings = payload_bindings_;
+    auto capabilities = options_.medias;
+    const auto reject = [&](const std::string& error)
     {
-        static std::atomic<uint64_t> nextId{1};
-        result.origin.sess_id = std::to_string(nextId.fetch_add(1));
+        RollbackNegotiation();
+        return Reject(error);
+    };
+    if (!negotiation_.PendingReady()) return Reject("No completed negotiation to commit");
+    if (!CheckTransport(remote))
+    {
+        const auto error = last_error_;
+        return reject(error);
     }
-    if (result.origin.username.empty()) result.origin.username = "-";
-    if (result.origin.sess_version.empty()) result.origin.sess_version = "0";
-    if (result.origin.net_type.empty()) result.origin.net_type = "IN";
-    if (result.origin.addr_type.empty()) result.origin.addr_type = "IP4";
-    if (result.origin.unicast_address.empty()) result.origin.unicast_address = "0.0.0.0";
-    result.session_name = "-";
-    result.timing = "0 0";
-    result.connection = "IN IP4 0.0.0.0";
-    result.conn = {"IN", "IP4", "0.0.0.0"};
-    size_t accepted = 0;
-    for (const auto& remote : remote_offer_.medias)
+    for (const auto& media : local.medias)
     {
-        WebRtcMediaDescription local;
-        local.mid = remote.mid;
-        local.media = remote.media;
-        local.proto = remote.proto;
-        local.fmts = remote.fmts;
-        local.direction = MediaDirection::Inactive;
-        const auto capability = std::find_if(options_.medias.begin(), options_.medias.end(),
-            [&](const auto& item) { return item.media == remote.media; });
-        if (IsOffered(remote) && (remote.media == "audio" || remote.media == "video") &&
-            capability != options_.medias.end())
+        // Keep explicit per-MID policy from a successful business offer, while
+        // retaining kind-level defaults for newly offered tracks.
+        if (local.type == SdpType::Offer)
         {
-            // m= order expresses the offerer's codec preference; the typed
-            // codec vector and a=rtpmap lines need not have that same order.
-            for (const auto& format : remote.fmts)
-            {
-                const auto offered = std::find_if(remote.codecs.begin(), remote.codecs.end(),
-                    [&](const auto& codec) { return std::to_string(codec.payloadType) == format; });
-                if (offered == remote.codecs.end()) continue;
-                for (const auto& supported : capability->codecs)
-                {
-                    RtpCodecParameters negotiated;
-                    if (!NegotiateRtpCodec(*offered, supported, negotiated)) continue;
-                    negotiated.rtcpFeedback = FeedbackIntersection(
-                        EffectiveFeedback(remote.rtcpFeedback, offered->rtcpFeedback),
-                        EffectiveFeedback(capability->rtcpFeedback, supported.rtcpFeedback));
-                    local.codecs.push_back(std::move(negotiated));
-                    break;
-                }
-            }
-            if (!local.codecs.empty())
-            {
-                local.port = 9;
-                local.conn = {"IN", "IP4", "0.0.0.0"};
-                local.fmts.clear();
-                for (const auto& codec : local.codecs) local.fmts.push_back(std::to_string(codec.payloadType));
-                local.direction = AnswerDirection(remote.direction, capability->direction);
-                local.ice = result.ice;
-                local.dtls = identity;
-                local.dtls.setup = remote.dtls.setup == DtlsSetup::Active ? DtlsSetup::Passive : DtlsSetup::Active;
-                result.dtls = local.dtls;
-                local.rtcpMux = true;
-                local.rtcpRsize = remote.rtcpRsize && capability->rtcpRsize;
-                std::set<int> extensionIds;
-                for (const auto& extension : remote.headerExtensions)
-                {
-                    if (extension.id < 1 || extension.id > 14 || !extensionIds.insert(extension.id).second) continue;
-                    const auto supported = std::find_if(capability->headerExtensions.begin(), capability->headerExtensions.end(),
-                        [&](const auto& item) { return item.uri == extension.uri && item.attributes == extension.attributes; });
-                    if (supported == capability->headerExtensions.end()) continue;
-                    auto negotiated = extension;
-                    negotiated.direction = AnswerDirection(extension.direction, supported->direction);
-                    const bool send = CanSend(negotiated.direction) && CanSend(local.direction);
-                    const bool receive = CanReceive(negotiated.direction) && CanReceive(local.direction);
-                    negotiated.direction = send ? (receive ? MediaDirection::SendRecv : MediaDirection::SendOnly)
-                                                : (receive ? MediaDirection::RecvOnly : MediaDirection::Inactive);
-                    if (negotiated.direction != MediaDirection::Inactive) local.headerExtensions.push_back(std::move(negotiated));
-                }
-                const bool transportCc = std::any_of(local.headerExtensions.begin(), local.headerExtensions.end(),
-                    [](const auto& extension) { return extension.uri == RtpHeaderExtensionUri::TRANSPORT_CC; });
-                if (!transportCc)
-                    for (auto& codec : local.codecs)
-                        codec.rtcpFeedback.erase(std::remove_if(codec.rtcpFeedback.begin(), codec.rtcpFeedback.end(),
-                            [](const auto& item) { return item.type == RtcpFeedbackType::TRANSPORT_CC; }), codec.rtcpFeedback.end());
-                if (CanSend(local.direction))
-                {
-                    local.ssrcs = capability->ssrcs;
-                    local.ssrcGroups = capability->ssrcGroups;
-                    local.msids = capability->msids;
-                }
-                ++accepted;
-            }
+            const auto previous = std::find_if(capabilities.begin(), capabilities.end(),
+                [&](const auto& item) { return !item.mid.empty() && item.mid == media.mid; });
+            if (previous == capabilities.end()) capabilities.push_back(media);
+            else *previous = media;
         }
-        result.medias.push_back(std::move(local));
-    }
-    if (accepted == 0) return Reject("No compatible RTP codecs in the offer");
-    // Ambiguous PTs need MID/SSRC demultiplexing, not implemented here.
-    std::set<int> bundledPts;
-    std::map<int, std::string> bundledExtensions;
-    std::set<uint32_t> bundledSsrcs;
-    for (const auto& media : result.medias)
-    {
+        if (!media.port) continue;
+        if (local_dtls_role_ != DtlsSetup::Unspecified && media.dtls.setup != local_dtls_role_)
+            return reject("Renegotiation must preserve the local DTLS role");
         for (const auto& codec : media.codecs)
-            if (!bundledPts.insert(codec.payloadType).second)
-                return Reject("Ambiguous bundled payload types require MID demultiplexing");
-        for (const auto& extension : media.headerExtensions)
         {
-            const auto found = bundledExtensions.emplace(extension.id, extension.uri);
-            if (!found.second && found.first->second != extension.uri)
-                return Reject("BUNDLE header extension IDs must identify the same URI");
+            const auto old = bindings.find(codec.payloadType);
+            RtpCodecParameters compatible;
+            if (old != bindings.end() && (old->second.first != media.mid ||
+                !NegotiateRtpCodec(old->second.second, codec, compatible)))
+                return reject("A negotiated payload type cannot change its track or RTP format");
+            bindings.emplace(codec.payloadType, std::make_pair(media.mid, codec));
         }
-        for (const auto& source : media.ssrcs)
-            if (!bundledSsrcs.insert(source.ssrc).second)
-                return Reject("Local SSRCs must be unique across accepted BUNDLE media");
     }
-    for (const auto& mid : remote_offer_.bundle.mids)
-        if (std::any_of(result.medias.begin(), result.medias.end(),
-            [&](const auto& media) { return media.mid == mid && media.port != 0; }))
-            result.bundle.mids.push_back(mid);
-    local_answer_ = std::move(result);
-    answer = local_answer_;
-    state_ = WebRtcSessionState::HaveAnswer;
+    IceParameters remoteIce = remote_ice_;
+    DtlsParameters remoteDtls = remote_dtls_;
+    auto localRole = local_dtls_role_;
+    if (localRole == DtlsSetup::Unspecified)
+    {
+        const auto active = std::find_if(local.medias.begin(), local.medias.end(),
+            [](const auto& media) { return media.port != 0; });
+        if (active == local.medias.end()) return reject("Initial negotiation requires an active RTP transport");
+        const auto index = static_cast<size_t>(active - local.medias.begin());
+        remoteIce = remote.medias[index].ice;
+        remoteDtls = remote.medias[index].dtls;
+        localRole = active->dtls.setup;
+    }
+    try
+    {
+        if (options_.onNegotiated && !options_.onNegotiated(local, remote))
+            return reject("Application rejected negotiated media; previous media retained");
+    }
+    catch (const std::exception&)
+    {
+        return reject("Application could not apply negotiated media");
+    }
+    // All potentially failing preparation precedes the media commit hook.
+    negotiation_.Commit();
+    payload_bindings_.swap(bindings);
+    options_.medias.swap(capabilities);
+    remote_ice_ = std::move(remoteIce);
+    remote_dtls_ = std::move(remoteDtls);
+    local_dtls_role_ = localRole;
+    UpdateSignalingState();
     last_error_.clear();
     return true;
 }
@@ -367,19 +286,16 @@ bool WebRtcSession::CreateLocalAnswer(WebRtcSessionDescription& answer)
 bool WebRtcSession::start()
 {
     if (state_ == WebRtcSessionState::Connecting || state_ == WebRtcSessionState::Connected) return true;
-    if (state_ != WebRtcSessionState::HaveAnswer) return Reject("Create the local answer before starting");
+    if (state_ != WebRtcSessionState::HaveAnswer) return Reject("Complete offer/answer negotiation before starting");
     if (!transport_ || !endpoint_ || weak_from_this().expired())
         return Reject("Session requires a transport, media sink and shared_ptr ownership");
     if (transport_->State() != WebRtcTransportState::Created)
         return Reject("Session requires a fresh, exclusively owned WebRTC transport");
-    const auto selected = std::find_if(local_answer_.medias.begin(), local_answer_.medias.end(),
-        [](const auto& media) { return media.port != 0; });
-    const auto index = static_cast<size_t>(selected - local_answer_.medias.begin());
-    const auto& remote = remote_offer_.medias[index];
-    if (!dtls_->Configure(remote.dtls, selected->dtls.setup)) return Fail("DTLS configuration failed");
+    if (local_dtls_role_ == DtlsSetup::Unspecified) return Reject("No negotiated RTP transport");
+    if (!dtls_->Configure(remote_dtls_, local_dtls_role_)) return Fail("DTLS configuration failed");
     ice_.SetRole(IceContext::Role::Controlled);
-    ice_.SetLocalCredentials(local_answer_.ice.ufrag, local_answer_.ice.pwd);
-    ice_.SetRemoteCredentials(remote.ice.ufrag, remote.ice.pwd);
+    ice_.SetLocalCredentials(options_.ice.ufrag, options_.ice.pwd);
+    ice_.SetRemoteCredentials(remote_ice_.ufrag, remote_ice_.pwd);
     if (!ice_.StartLiveness(options_.iceTimeoutMs)) return Fail("ICE timeout must be positive");
     state_ = WebRtcSessionState::Connecting;
     transport_->SetSink(weak_from_this());
@@ -478,7 +394,13 @@ void WebRtcSession::HandleStun(network::transport::ReceivedDatagram datagram)
         return; // The peer can retransmit its connectivity check.
     if (result == ice::IceAgent::HandleResult::SuccessResponse && ice_.HasSelectedPeer())
     {
+        const bool peerChanged = !transport_->IsSelectedPeer(ice_.SelectedPeer());
         if (!transport_->SelectPeer(ice_.SelectedPeer())) { Fail("ICE peer selection failed"); return; }
+        if (peerChanged && options_.onSelectedPeer && !options_.onSelectedPeer(ice_.SelectedPeer()))
+        {
+            Fail("ICE peer address is already in use");
+            return;
+        }
         BeginDtls();
     }
 }
@@ -494,7 +416,7 @@ bool WebRtcSession::AllowsRtp(const std::vector<uint8_t>& packet, bool sending) 
 {
     if (!Classifier::IsRtp(packet.data(), packet.size())) return false;
     const int pt = packet[1] & 0x7f;
-    for (const auto& media : local_answer_.medias)
+    for (const auto& media : negotiation_.CurrentLocal().medias)
         if (media.port != 0 && (sending ? CanSend(media.direction) : CanReceive(media.direction)) &&
             std::any_of(media.codecs.begin(), media.codecs.end(),
                 [pt](const auto& codec) { return codec.payloadType == pt; })) return true;
@@ -515,8 +437,7 @@ void WebRtcSession::HandleEncryptedRtcp(network::transport::ReceivedDatagram dat
     auto plaintext = datagram.payload.ToVector();
     if (!srtp_->UnprotectRtcp(plaintext) ||
         !Classifier::IsRtcp(plaintext.data(), plaintext.size())) return;
-    endpoint_->OnMediaPacket(ReceivedMediaPacket(MediaPacketType::Rtcp, transport_->Id(),
-        datagram.receive_time_ms, std::move(plaintext)));
+    endpoint_->OnMediaPacket(ReceivedMediaPacket(MediaPacketType::Rtcp, transport_->Id(),datagram.receive_time_ms, std::move(plaintext)));
 }
 
 bool WebRtcSession::SendRtp(std::vector<uint8_t> packet)

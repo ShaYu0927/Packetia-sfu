@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <functional>
+#include <memory>
 
 namespace protocol::webrtc
 {
@@ -37,6 +38,9 @@ public:
     // Idempotent; releases keys/certificate state and detaches send callbacks.
     virtual void Close() noexcept = 0;
 };
+
+// Returns null when the local DTLS identity cannot be initialized.
+std::unique_ptr<DtlsTransport> CreateDtlsTransport();
 
 } // namespace protocol::webrtc
 

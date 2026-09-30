@@ -17,8 +17,10 @@
 
 #ifdef PACKETIA_WITH_LIBWEBSOCKETS
 #include "websocket/WsServer.h"
+#include "WebRtcService.h"
 #endif
 
+#include <stdexcept>
 #include <utility>
 
 namespace server
@@ -93,7 +95,8 @@ bool ServerApp::SetServiceEnabled(service::ServiceType type, bool enabled)
     std::lock_guard<std::mutex> lock(lifecycle_mutex_);
     const char* name = nullptr;
     config::Feature feature;
-    switch (type) {
+    switch (type) 
+    {
     case service::ServiceType::Record: name = SERVICE_RECORD; feature = config::Feature::Recording; break;
     case service::ServiceType::Ai: name = SERVICE_AI; feature = config::Feature::AI; break;
     case service::ServiceType::ConferenceMix:
@@ -109,7 +112,8 @@ bool ServerApp::ServiceEnabled(service::ServiceType type) const
 {
     std::lock_guard<std::mutex> lock(lifecycle_mutex_);
     const auto settings = settings_->Snapshot();
-    switch (type) {
+    switch (type) 
+    {
     case service::ServiceType::Record: return settings->recording_enabled;
     case service::ServiceType::Ai: return settings->ai_enabled;
     case service::ServiceType::ConferenceMix: return settings->conference_mix_enabled;
@@ -189,17 +193,38 @@ bool ServerApp::StopConference(const std::string& room_id)
     return mix_service_->StopConference(room_id);
 }
 
+bool ServerApp::RenegotiateWebRtc(uint64_t session_id, const std::vector<sdp::SdpMedia>& medias, std::string& error)
+{
+    std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+#ifdef PACKETIA_WITH_LIBWEBSOCKETS
+    if (webrtc_service_) return webrtc_service_->Renegotiate(session_id, medias, error);
+#endif
+    error = "WebRTC service is not enabled";
+    return false;
+}
+
 void ServerApp::AddNetworkServices()
 {
     const auto& ip = config_.listen_ip;
     auto* loop = event_loop_.get();
     launcher_.AddIpPortService<RtspServer>(SERVICE_RTSP, ip, config_.rtsp_port, loop);
     launcher_.AddIpPortService<SipServer>(SERVICE_SIP, ip, config_.sip_port, loop);
-    launcher_.AddIpPortService<protocol::rtmp::RtmpServer>(
-        SERVICE_RTMP, ip, config_.rtmp_port, loop);
+    launcher_.AddIpPortService<protocol::rtmp::RtmpServer>(SERVICE_RTMP, ip, config_.rtmp_port, loop);
 
-    auto udp = launcher_.AddIpPortService<network::UdpServer>(
-        SERVICE_UDP, ip, config_.udp_port, loop);
+    if (config_.webrtc.enabled)
+    {
+#ifdef PACKETIA_WITH_LIBWEBSOCKETS
+        webrtc_service_ = std::make_shared<WebRtcService>(loop, config_, frame_router_);
+        const auto rtc = webrtc_service_;
+        launcher_.AddCustomService(SERVICE_WEBRTC,
+            [rtc] { return rtc->Start(); }, [rtc] { rtc->Stop(); });
+        return;
+#else
+        throw std::invalid_argument("WebRTC requires PACKETIA_WITH_LIBWEBSOCKETS");
+#endif
+    }
+
+    auto udp = launcher_.AddIpPortService<network::UdpServer>(SERVICE_UDP, ip, config_.udp_port, loop);
     udp->SetHandler(std::make_shared<network::UdpMuxHandler>(udp.get()));
 
 #ifdef PACKETIA_WITH_LIBWEBSOCKETS

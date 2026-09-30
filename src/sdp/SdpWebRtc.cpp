@@ -1,4 +1,5 @@
 #include "SdpWebRtc.h"
+#include "../../utils/StringUtil.h"
 
 #include <algorithm>
 #include <charconv>
@@ -26,12 +27,6 @@ std::vector<std::string> Words(const std::string& text)
     std::istringstream input(text);
     for (std::string token; input >> token;) result.push_back(std::move(token));
     return result;
-}
-
-std::string Lower(std::string text)
-{
-    for (auto& ch : text) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-    return text;
 }
 
 uint64_t Number(const std::string& text, uint64_t maximum, const std::string& field)
@@ -95,7 +90,7 @@ DtlsFingerprint Fingerprint(const std::string& value)
 {
     const auto fields = Words(value);
     Require(fields.size() == 2, "Invalid DTLS fingerprint fields");
-    const auto algorithm = Lower(fields[0]);
+    const auto algorithm = utils::ToLowerAscii(fields[0]);
     const std::map<std::string, std::size_t> sizes = {
         {"sha-1", 20}, {"sha-224", 28}, {"sha-256", 32}, {"sha-384", 48}, {"sha-512", 64}};
     const auto size = sizes.find(algorithm);

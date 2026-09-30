@@ -11,6 +11,7 @@
 #include <mutex>
 #include <unordered_set>
 #include <optional>
+#include <vector>
 
 class MediaSession;
 namespace sdp { struct SdpMedia; }
@@ -79,6 +80,13 @@ public:
     bool AddPublishedTrack(const std::string& id, std::shared_ptr<RtpTrackDescription> description,
                            std::string mid = {}, uint8_t mid_extension_id = 0);
     bool AddPublishedTrack(const std::string& id, const sdp::SdpMedia& media, int track_index);
+    // Replace the complete receive set atomically, using stable nonempty MIDs
+    // and one supported primary codec per media. Empty pauses every track.
+    // Unchanged receivers, track indices and compatible subscriptions survive;
+    // changing codec/rate/channels/fmtp with live subscribers is rejected.
+    // Paused tracks detach subscribers but retain MID/index/RTCP metadata for
+    // resume. Old SSRCs cannot move to another MID in this endpoint.
+    bool ReplacePublishedTracks(const std::vector<sdp::SdpMedia>& medias);
     // retire_identity=false is only for rolling back an unpublished SETUP.
     bool RemovePublishedTrack(const std::string& id, bool retire_identity = true);
     bool BindSsrc(const std::string& id, uint32_t ssrc);
@@ -141,6 +149,11 @@ private:
         std::shared_ptr<IMediaTransport> transport;
         CodecId codec = CodecId::Unknown;
     };
+    struct PausedPublishedTrack
+    {
+        PublishedTrack track;
+        std::vector<uint32_t> ssrcs;
+    };
     bool ResolveRtpTrack(common::BufferView packet, const std::string& hint);
     SendRtcpCallback RtcpSenderFor(uint32_t ssrc);
     void Deliver(const std::shared_ptr<Subscription>& subscription, common::SharedBuffer packet);
@@ -148,6 +161,7 @@ private:
     void PruneSubscriptions();
     mutable std::recursive_mutex runtime_mutex_;
     std::unordered_map<std::string, PublishedTrack> published_tracks_;
+    std::unordered_map<std::string, PausedPublishedTrack> paused_published_tracks_;
     std::unordered_map<uint32_t, std::string> ssrc_bindings_;
     // Removed identities cannot be learned again from late queued packets.
     std::unordered_set<uint32_t> retired_ssrcs_;

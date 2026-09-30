@@ -16,8 +16,10 @@ std::vector<uint8_t> ParameterSets(const media::EncodedFrame& frame)
 {
     std::vector<uint8_t> result;
     const auto* data = frame.Data();
-    auto prefix = [&](size_t pos) -> size_t {
-        if (pos + 3 <= frame.Size() && !data[pos] && !data[pos+1]) {
+    auto prefix = [&](size_t pos) -> size_t 
+    {
+        if (pos + 3 <= frame.Size() && !data[pos] && !data[pos+1]) 
+        {
             if (data[pos+2] == 1) return 3;
             if (pos + 4 <= frame.Size() && !data[pos+2] && data[pos+3] == 1) return 4;
         }
@@ -31,9 +33,11 @@ std::vector<uint8_t> ParameterSets(const media::EncodedFrame& frame)
         const auto start = pos + size;
         auto end = start;
         while (end < frame.Size() && !prefix(end)) ++end;
-        if (start < end) {
+        if (start < end) 
+        {
             const auto type = data[start] & 31;
-            if (type == 7 || type == 8) {
+            if (type == 7 || type == 8) 
+            {
                 result.insert(result.end(), {0, 0, 0, 1});
                 result.insert(result.end(), data + start, data + end);
                 sps |= type == 7;
@@ -212,11 +216,14 @@ bool Mp4Writer::Write(const media::EncodedFrameEvent& event, int64_t timestamp_u
     return true;
 }
 
-bool Mp4Writer::Close() {
+bool Mp4Writer::Close() 
+{
     bool ok = true;
-    for (auto& entry : tracks_) {
+    for (auto& entry : tracks_) 
+    {
         auto& track = entry.second;
-        if (header_written_ && track.pending) {
+        if (header_written_ && track.pending) 
+        {
             if (!track.pending->duration)
                 track.pending->duration = track.last_duration > 0 ? track.last_duration :
                     av_rescale_q(40, AVRational{1, 1000}, context_->streams[track.index]->time_base);
@@ -225,13 +232,15 @@ bool Mp4Writer::Close() {
         }
         av_packet_free(&track.pending);
     }
-    if (header_written_) {
+    if (header_written_) 
+    {
         const int result = av_write_trailer(context_);
         if (result < 0) ok = Fail("write trailer", result);
     }
     if (io_context_) avio_flush(io_context_);
     if (file_ && file_->Flush() < 0) ok = FailFile("flush file");
-    if (context_) {
+    if (context_) 
+    {
         context_->pb = nullptr; // custom IO is owned below
         avformat_free_context(context_);
         context_ = nullptr;

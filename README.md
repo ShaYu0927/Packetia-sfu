@@ -82,6 +82,15 @@ Apple Silicon 建议使用原生 arm64 Homebrew，避免混用 Rosetta 的 x86_6
 服务默认监听 RTSP 554、SIP 5060、RTMP 1935、UDP 9000 和 WebSocket 8080，
 启动前请确认这些端口可用。默认配置见 `server/ServerConfig.h`。
 
+## WebRTC SDP 协商
+
+- 新增 SDP codec 构建、参数校验和协商逻辑。
+- 实现 Offer/Answer 状态管理、提交与回滚机制。
+- 支持媒体方向、RTCP feedback 和 RTP header extension 能力协商。
+- 完善 BUNDLE、ICE、DTLS、SSRC 与 m-line 校验。
+- 抽取通用 ASCII 字符串处理工具。
+- 补充 SDP codec 和 negotiator 边界测试。
+
 ## Version 0.2.0 – 2025-12-19
 
 ### Highlights

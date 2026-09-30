@@ -10,10 +10,35 @@ target_include_directories(test_sdp_parser PRIVATE
 add_test(NAME test_sdp_parser COMMAND test_sdp_parser)
 set_tests_properties(test_sdp_parser PROPERTIES TIMEOUT 20)
 
+add_executable(test_sdp_codec test_sdp_codec.cpp
+    "${PACKETIA_SDP_TEST_ROOT}/src/sdp/Sdp.cpp"
+    "${PACKETIA_SDP_TEST_ROOT}/src/sdp/SdpMode.cpp"
+    "${PACKETIA_SDP_TEST_ROOT}/src/sdp/SdpUtil.cpp"
+    "${PACKETIA_SDP_TEST_ROOT}/src/sdp/SdpWebRtc.cpp"
+    "${PACKETIA_SDP_TEST_ROOT}/src/sdp/SdpCodec.cpp")
+target_compile_features(test_sdp_codec PRIVATE cxx_std_17)
+target_include_directories(test_sdp_codec PRIVATE
+    "${PACKETIA_SDP_TEST_ROOT}/src/sdp")
+add_test(NAME test_sdp_codec COMMAND test_sdp_codec)
+set_tests_properties(test_sdp_codec PROPERTIES TIMEOUT 20)
+
+add_executable(test_sdp_negotiator test_sdp_negotiator.cpp
+    "${PACKETIA_SDP_TEST_ROOT}/src/sdp/Sdp.cpp"
+    "${PACKETIA_SDP_TEST_ROOT}/src/sdp/SdpMode.cpp"
+    "${PACKETIA_SDP_TEST_ROOT}/src/sdp/SdpUtil.cpp"
+    "${PACKETIA_SDP_TEST_ROOT}/src/sdp/SdpWebRtc.cpp"
+    "${PACKETIA_SDP_TEST_ROOT}/src/sdp/SdpCodec.cpp"
+    "${PACKETIA_SDP_TEST_ROOT}/src/sdp/SdpNegotiator.cpp")
+target_compile_features(test_sdp_negotiator PRIVATE cxx_std_17)
+target_include_directories(test_sdp_negotiator PRIVATE "${PACKETIA_SDP_TEST_ROOT}/src/sdp")
+add_test(NAME test_sdp_negotiator COMMAND test_sdp_negotiator)
+set_tests_properties(test_sdp_negotiator PROPERTIES TIMEOUT 20)
+
 add_executable(test_datagram_transport
     test_datagram_protocol_classifier.cpp
     test_rtmp_transport.cpp
     test_webrtc_transport.cpp
+    test_webrtc_udp_mux.cpp
     test_network_lifecycle.cpp
 )
 
@@ -42,13 +67,21 @@ target_link_libraries(test_webrtc_session PRIVATE WebRtc Interleaved)
 add_test(NAME test_webrtc_session COMMAND test_webrtc_session)
 set_tests_properties(test_webrtc_session PROPERTIES TIMEOUT 30)
 
+if(PACKETIA_SRTP_AVAILABLE)
+    add_executable(test_webrtc_crypto test_webrtc_crypto.cpp)
+    target_link_libraries(test_webrtc_crypto PRIVATE WebRtc)
+    add_test(NAME test_webrtc_crypto COMMAND test_webrtc_crypto)
+    set_tests_properties(test_webrtc_crypto PROPERTIES TIMEOUT 30)
+endif()
+
 add_executable(test_webrtc_sdp test_webrtc_sdp.cpp)
 target_link_libraries(test_webrtc_sdp PRIVATE WebRtc)
 add_test(NAME test_webrtc_sdp COMMAND test_webrtc_sdp)
 set_tests_properties(test_webrtc_sdp PROPERTIES TIMEOUT 30)
 
 add_executable(test_webrtc_codec test_webrtc_codec.cpp
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../protocol/WebRtc/WebRtcCodec.cpp")
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../protocol/WebRtc/WebRtcCodec.cpp"
+    "${PACKETIA_SDP_TEST_ROOT}/src/sdp/SdpCodec.cpp")
 target_compile_features(test_webrtc_codec PRIVATE cxx_std_17)
 target_include_directories(test_webrtc_codec PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../../protocol/WebRtc"

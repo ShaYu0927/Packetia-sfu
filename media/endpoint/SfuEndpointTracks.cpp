@@ -3,6 +3,7 @@
 #include "SdpTrackBinding.h"
 
 #include <algorithm>
+#include <limits>
 
 namespace media
 {
@@ -47,6 +48,18 @@ bool ReadExtensions(common::BufferView packet, std::unordered_map<uint8_t, std::
         if (!padding || padding > packet.Size() - offset) return false;
     }
     return true;
+}
+
+bool SameEncoding(const ::TrackInfo& a, const ::TrackInfo& b)
+{
+    return a.type == b.type && a.codec_id == b.codec_id && a.clock_rate == b.clock_rate &&
+        std::max(1, a.channels) == std::max(1, b.channels) && a.fmtp == b.fmtp;
+}
+
+bool SameReceiver(const ::TrackInfo& a, const ::TrackInfo& b)
+{
+    return SameEncoding(a, b) && a.payload_type == b.payload_type &&
+        a.transport_cc_extension_id == b.transport_cc_extension_id;
 }
 }
 
@@ -98,6 +111,180 @@ bool SfuEndpoint::AddPublishedTrack(const std::string& id, const sdp::SdpMedia& 
     for (const auto& ssrc : media.ssrcs) BindSsrc(id, ssrc.ssrc);
     return true;
 }
+
+bool SfuEndpoint::ReplacePublishedTracks(const std::vector<sdp::SdpMedia>& medias)
+try
+{
+    struct Candidate
+    {
+        ::TrackInfo info;
+        std::string mid;
+        uint8_t mid_extension = 0;
+        std::vector<uint32_t> ssrcs;
+    };
+    std::vector<Candidate> candidates;
+    std::unordered_set<std::string> mids;
+    std::unordered_set<uint32_t> offeredSsrcs;
+    for (const auto& media : medias)
+    {
+        if (media.mid.empty() || !mids.insert(media.mid).second || media.codecs.size() != 1) return false;
+        const auto& codec = media.codecs.front();
+        if (codec.payloadType < 0 || codec.payloadType > 127 || codec.clockRate <= 0 || codec.channels < 0)
+            return false;
+        for (const auto& group : media.ssrcGroups)
+            if (group.semantics == "FID" || group.semantics == "FEC" || group.semantics == "FEC-FR") return false;
+        Candidate candidate;
+        if (!BuildRtpTrackInfo(media, 0, candidate.info)) return false;
+        candidate.mid = media.mid;
+        candidate.mid_extension = FindRtpExtensionId(media, "urn:ietf:params:rtp-hdrext:sdes:mid");
+        for (const auto& source : media.ssrcs)
+        {
+            if (!source.ssrc || !offeredSsrcs.insert(source.ssrc).second) return false;
+            candidate.ssrcs.push_back(source.ssrc);
+        }
+        candidates.push_back(std::move(candidate));
+    }
+
+    std::vector<std::weak_ptr<SfuEndpoint>> prune;
+    {
+        std::lock_guard<std::recursive_mutex> guard(runtime_mutex_);
+        if (GetState() == State::kStopped || GetState() == State::kStopping) return false;
+        std::unordered_map<std::string, PublishedTrack> tracks;
+        std::unordered_map<uint32_t, std::string> bindings;
+        auto paused = paused_published_tracks_;
+        auto retired = retired_ssrcs_;
+        std::unordered_set<std::string> reset;
+        std::vector<std::shared_ptr<Subscription>> deactivate;
+        int nextIndex = 0;
+        const auto reserveIndex = [&](const PublishedTrack& track)
+        {
+            const int index = track.description->getTrackIndex();
+            if (index == std::numeric_limits<int>::max()) return false;
+            nextIndex = std::max(nextIndex, index + 1);
+            return true;
+        };
+        for (const auto& entry : published_tracks_) if (!reserveIndex(entry.second)) return false;
+        for (const auto& entry : paused) if (!reserveIndex(entry.second.track)) return false;
+
+        for (auto& candidate : candidates)
+        {
+            std::string id = candidate.mid;
+            const PublishedTrack* previous = nullptr;
+            const PausedPublishedTrack* suspended = nullptr;
+            for (const auto& entry : published_tracks_)
+                if (entry.second.mid == candidate.mid || (entry.second.mid.empty() && entry.first == candidate.mid))
+                {
+                    id = entry.first;
+                    previous = &entry.second;
+                    break;
+                }
+            if (!previous)
+                for (const auto& entry : paused)
+                    if (entry.second.track.mid == candidate.mid)
+                    {
+                        id = entry.first;
+                        previous = &entry.second.track;
+                        suspended = &entry.second;
+                        break;
+                    }
+            if (tracks.count(id) || (!previous && (published_tracks_.count(id) || paused.count(id) ||
+                retired_track_ids_.count(id)))) return false;
+            if (!previous && nextIndex == std::numeric_limits<int>::max()) return false;
+            candidate.info.track_index = previous ? previous->description->getTrackIndex() : nextIndex++;
+            PublishedTrack track;
+            if (previous)
+            {
+                track = *previous;
+                const auto& oldInfo = previous->description->getTrackInfo();
+                if (!SameEncoding(oldInfo, candidate.info))
+                    for (const auto& weak : previous->subscribers)
+                        if (const auto route = weak.lock(); route && route->active.load()) return false;
+                if (!SameReceiver(oldInfo, candidate.info)) reset.insert(id);
+            }
+            track.description = std::make_shared<RtpTrackDescription>(candidate.info);
+            track.mid = candidate.mid;
+            track.mid_extension_id = candidate.mid_extension;
+            if (candidate.ssrcs.empty())
+            {
+                if (suspended) candidate.ssrcs = suspended->ssrcs;
+                else
+                    for (const auto& binding : ssrc_bindings_)
+                        if (binding.second == id) candidate.ssrcs.push_back(binding.first);
+            }
+            for (const auto ssrc : candidate.ssrcs)
+            {
+                const auto old = ssrc_bindings_.find(ssrc);
+                if (old != ssrc_bindings_.end() && old->second != id) return false;
+                if (retired_ssrcs_.count(ssrc) && (!suspended ||
+                    std::find(suspended->ssrcs.begin(), suspended->ssrcs.end(), ssrc) == suspended->ssrcs.end()))
+                    return false;
+                for (const auto& entry : paused)
+                    if (entry.first != id && std::find(entry.second.ssrcs.begin(), entry.second.ssrcs.end(), ssrc)
+                        != entry.second.ssrcs.end()) return false;
+                if (!bindings.emplace(ssrc, id).second) return false;
+                retired.erase(ssrc);
+            }
+            for (const auto& weak : track.subscribers)
+                if (const auto route = weak.lock(); route && route->active.load() && route->source_ssrc &&
+                    std::find(candidate.ssrcs.begin(), candidate.ssrcs.end(), *route->source_ssrc) == candidate.ssrcs.end())
+                    // The current sender cannot translate a new source's
+                    // sequence/timestamp base into the existing output SSRC.
+                    return false;
+            tracks.emplace(id, std::move(track));
+            paused.erase(id);
+        }
+
+        for (const auto& entry : published_tracks_)
+        {
+            if (tracks.count(entry.first)) continue;
+            PausedPublishedTrack saved;
+            saved.track = entry.second;
+            for (const auto& binding : ssrc_bindings_)
+                if (binding.second == entry.first) saved.ssrcs.push_back(binding.first);
+            for (const auto& weak : entry.second.subscribers)
+                if (const auto route = weak.lock(); route && route->active.load())
+                {
+                    deactivate.push_back(route);
+                    prune.push_back(route->destination);
+                }
+            saved.track.subscribers.clear();
+            paused.insert_or_assign(entry.first, std::move(saved));
+        }
+        std::vector<uint32_t> removeReceivers;
+        for (const auto& binding : ssrc_bindings_)
+        {
+            if (!bindings.count(binding.first)) retired.insert(binding.first);
+            if (!bindings.count(binding.first) || reset.count(binding.second)) removeReceivers.push_back(binding.first);
+        }
+
+        // All validation and allocations precede this commit. Receiver state
+        // and route flags change while packets remain excluded by this lock.
+        for (const auto ssrc : removeReceivers) RemoveMediaStreamOnOwner(ssrc);
+        for (const auto& route : deactivate) route->active.store(false);
+        published_tracks_.swap(tracks);
+        paused_published_tracks_.swap(paused);
+        ssrc_bindings_.swap(bindings);
+        retired_ssrcs_.swap(retired);
+    }
+    // Route flags already prevent delivery. Reclaim destination senders on
+    // their owners; their next RTCP/control operation also prunes them.
+    for (const auto& target : prune)
+        try
+        {
+            if (const auto endpoint = target.lock())
+                WorkerService::post_fn(POOL_MEDIA, endpoint->Id(), [target]
+                {
+                    if (const auto endpoint = target.lock())
+                    {
+                        std::lock_guard<std::recursive_mutex> guard(endpoint->runtime_mutex_);
+                        endpoint->PruneSubscriptions();
+                    }
+                });
+        }
+        catch (const std::bad_alloc&) {}
+    return true;
+}
+catch (const std::bad_alloc&) { return false; }
 
 bool SfuEndpoint::GetPublishedTrack(const std::string& id, ::TrackInfo& info) const
 {

@@ -8,13 +8,16 @@
 
 #include <memory>
 #include <mutex>
+#include <vector>
 
 class EventLoop;
 namespace media { class EncodedFrameRouter; }
 namespace service { class RecordingService; class IRecordingEventSink; }
+namespace sdp { struct SdpMedia; }
 
 namespace server
 {
+class WebRtcService;
 // Owns shared resources and assembles services in dependency order.
 class ServerApp final
 {
@@ -47,6 +50,9 @@ public:
     bool StartConference(service::mix::MixConfig config,
                          std::unique_ptr<service::mix::IMixBackend> backend);
     bool StopConference(const std::string& room_id);
+    // Session ID is returned by WebRTC signaling; call from a control thread.
+    // Queues an offer. Media changes only after the peer's answer is accepted.
+    bool RenegotiateWebRtc(uint64_t session_id, const std::vector<sdp::SdpMedia>& medias, std::string& error);
     // Output subscribers (such as recording) can be attached by the application.
     std::shared_ptr<media::EncodedFrameRouter> MixedFrameRouter() const { return mix_output_router_; }
 
@@ -65,6 +71,7 @@ private:
     std::shared_ptr<media::EncodedFrameRouter> mix_output_router_;
     std::shared_ptr<service::mix::ConferenceMixService> mix_service_;
     std::shared_ptr<service::RecordingService> recording_service_;
+    std::shared_ptr<WebRtcService> webrtc_service_;
     // Destroy services before the resources referenced by their callbacks.
     ServerLauncher launcher_;
 };

@@ -2,6 +2,7 @@
 #define _SRTP_TRANSPORT_H_
 
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 namespace protocol::webrtc
@@ -40,6 +41,9 @@ public:
     // Idempotent; destroys both SRTP contexts and their key material.
     virtual void Close() noexcept = 0;
 };
+
+// Returns null when libsrtp2 is unavailable or its initialization fails.
+std::unique_ptr<SrtpTransport> CreateSrtpTransport();
 
 } // namespace protocol::webrtc
 

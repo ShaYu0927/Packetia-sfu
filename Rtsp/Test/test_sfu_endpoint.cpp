@@ -42,6 +42,22 @@ std::shared_ptr<RtpTrackDescription> Description(int index, bool audio, uint8_t 
     return std::make_shared<RtpTrackDescription>(info);
 }
 
+sdp::SdpMedia Negotiated(const std::string& mid, bool audio, uint8_t pt, uint32_t ssrc = 0)
+{
+    sdp::SdpMedia result;
+    result.mid = mid;
+    result.media = audio ? "audio" : "video";
+    result.port = 9;
+    result.proto = "UDP/TLS/RTP/SAVPF";
+    result.direction = sdp::MediaDirection::RecvOnly;
+    result.rtcpMux = true;
+    result.codecs.push_back({pt, audio ? "opus" : "H264", audio ? 48000 : 90000,
+        audio ? 2 : 0, "", {}});
+    result.headerExtensions.push_back({1, "urn:ietf:params:rtp-hdrext:sdes:mid"});
+    if (ssrc) result.ssrcs.push_back({ssrc, {}});
+    return result;
+}
+
 std::vector<uint8_t> Packet(uint32_t ssrc, uint8_t pt, uint16_t seq = 1, const std::string& mid = {})
 {
     std::vector<uint8_t> p{0x80, static_cast<uint8_t>(0x80 | pt), static_cast<uint8_t>(seq >> 8),
@@ -118,6 +134,218 @@ TEST_F(SfuConference, SharedPayloadNeedsMidOrExplicitBindingAndCannotChangeTrack
     endpoint->Stop();
     Input(endpoint, Packet(22, 96, 3), "audio");
     EXPECT_EQ(frames.size(), 3U);
+}
+
+TEST_F(SfuConference, ReplacePublishedTracksPausesAndResumesMidWithOriginalIndexAndRtcpCallback)
+{
+    auto endpoint = std::make_shared<media::SfuEndpoint>(1101);
+    ASSERT_TRUE(endpoint->AddPublishedTrack("camera", Description(7, false, 102), "v", 1));
+    ASSERT_TRUE(endpoint->Start());
+    std::vector<media::TrackId> frames;
+    endpoint->AddEncodedFrameCallback([&](const auto& frame) { frames.push_back(frame->info.track_id); });
+    size_t feedback = 0;
+    endpoint->SetTrackRtcpSendCallback("camera", [&](const uint8_t*, size_t) { ++feedback; return true; });
+    Input(endpoint, Packet(11, 102, 1, "v"));
+    ASSERT_EQ(frames.size(), 1U);
+    EXPECT_EQ(frames.back(), 7U);
+    ASSERT_TRUE(endpoint->ReplacePublishedTracks({}));
+    EXPECT_EQ(endpoint->PublishedTrackCount(), 0U);
+    Input(endpoint, Packet(11, 102, 2, "v"));
+    Input(endpoint, Packet(11, 102, 2));
+    EXPECT_EQ(frames.size(), 1U);
+
+    // No a=ssrc is required to resume a previously learned source on this MID.
+    ASSERT_TRUE(endpoint->ReplacePublishedTracks({Negotiated("v", false, 102)}));
+    ::TrackInfo info;
+    ASSERT_TRUE(endpoint->GetPublishedTrack("camera", info));
+    EXPECT_EQ(info.track_index, 7);
+    Input(endpoint, Packet(11, 102, 1, "v")); // Recreated receiver accepts a reset sequence.
+    ASSERT_EQ(frames.size(), 2U);
+    EXPECT_EQ(frames.back(), 7U);
+    endpoint->OnTrackPli(11);
+    EXPECT_EQ(feedback, 1U);
+}
+
+TEST_F(SfuConference, ReplacePublishedTracksChangesPayloadAndAddsTrackWithoutResettingOtherReceiversOrRoutes)
+{
+    auto source = std::make_shared<media::SfuEndpoint>(1102);
+    auto destination = std::make_shared<media::SfuEndpoint>(1103);
+    auto audio = Negotiated("a", true, 111, 22);
+    auto video = Negotiated("v", false, 102, 11);
+    ASSERT_TRUE(source->ReplacePublishedTracks({audio, video}));
+    ASSERT_TRUE(source->Start());
+    ASSERT_TRUE(destination->Start());
+    ::TrackInfo oldAudio, oldVideo;
+    ASSERT_TRUE(source->GetPublishedTrack("a", oldAudio));
+    ASSERT_TRUE(source->GetPublishedTrack("v", oldVideo));
+    auto transport = std::make_shared<CaptureTransport>();
+    Configure(destination, "audio", transport, true, 778, 109);
+    Configure(destination, "video", transport, false, 777, 96);
+    ASSERT_TRUE(destination->Subscribe("audio", source, "a"));
+    ASSERT_TRUE(destination->Subscribe("video", source, "v"));
+    size_t audioFrames = 0, videoFrames = 0;
+    source->AddEncodedFrameCallback([&](const auto& frame)
+    {
+        if (frame->info.track_id == static_cast<media::TrackId>(oldAudio.track_index)) ++audioFrames;
+        if (frame->info.track_id == static_cast<media::TrackId>(oldVideo.track_index)) ++videoFrames;
+    });
+    Input(source, Packet(22, 111));
+    Input(source, Packet(11, 102));
+    Drain(media_affinity::MakeStreamKey(destination->Id(), 777));
+    Drain(media_affinity::MakeStreamKey(destination->Id(), 778));
+    ASSERT_EQ(transport->Count(), 2U);
+    ASSERT_EQ(audioFrames, 1U);
+    ASSERT_EQ(videoFrames, 1U);
+
+    video.codecs.front().payloadType = 103;
+    ASSERT_TRUE(source->ReplacePublishedTracks({video, audio, Negotiated("screen", false, 104, 33)}));
+    ::TrackInfo current;
+    ASSERT_TRUE(source->GetPublishedTrack("a", current));
+    EXPECT_EQ(current.track_index, oldAudio.track_index);
+    ASSERT_TRUE(source->GetPublishedTrack("v", current));
+    EXPECT_EQ(current.track_index, oldVideo.track_index);
+    ASSERT_TRUE(source->GetPublishedTrack("screen", current));
+    EXPECT_NE(current.track_index, oldVideo.track_index);
+    EXPECT_NE(current.track_index, oldAudio.track_index);
+    EXPECT_EQ(destination->SubscriptionCount(), 2U);
+    Input(source, Packet(22, 111)); // Duplicate: unchanged audio receiver must retain sequence history.
+    EXPECT_EQ(audioFrames, 1U);
+    Input(source, Packet(11, 102, 2));
+    EXPECT_EQ(videoFrames, 1U); // Old video PT cannot reach the replaced receiver.
+    Input(source, Packet(11, 103, 2));
+    EXPECT_EQ(videoFrames, 2U); // The new PT really reaches the updated receiver.
+    Input(source, Packet(22, 111, 2));
+    EXPECT_EQ(audioFrames, 2U);
+    Drain(media_affinity::MakeStreamKey(destination->Id(), 777));
+    Drain(media_affinity::MakeStreamKey(destination->Id(), 778));
+    EXPECT_GE(transport->Count(), 4U);
+}
+
+TEST_F(SfuConference, ReplacePublishedTracksRejectsInvalidSetsWithoutChangingOldBindings)
+{
+    auto source = std::make_shared<media::SfuEndpoint>(1104);
+    auto audio = Negotiated("a", true, 111, 22);
+    auto video = Negotiated("v", false, 102, 11);
+    ASSERT_TRUE(source->ReplacePublishedTracks({audio, video}));
+    ASSERT_TRUE(source->Start());
+    size_t frames = 0;
+    source->AddEncodedFrameCallback([&](const auto&) { ++frames; });
+    Input(source, Packet(22, 111));
+    ASSERT_EQ(frames, 1U);
+    auto changedAudio = audio;
+    changedAudio.codecs.front().payloadType = 112;
+    auto invalid = video;
+    invalid.mid = "a";
+    EXPECT_FALSE(source->ReplacePublishedTracks({changedAudio, invalid}));
+    invalid = video;
+    invalid.ssrcs.front().ssrc = 22;
+    EXPECT_FALSE(source->ReplacePublishedTracks({changedAudio, invalid}));
+    invalid = video;
+    invalid.codecs.front().encodingName = "H265";
+    EXPECT_FALSE(source->ReplacePublishedTracks({changedAudio, invalid}));
+    invalid = video;
+    invalid.codecs.front().payloadType = 128;
+    EXPECT_FALSE(source->ReplacePublishedTracks({changedAudio, invalid}));
+    invalid = video;
+    invalid.ssrcGroups.push_back({"FID", {11, 12}});
+    EXPECT_FALSE(source->ReplacePublishedTracks({changedAudio, invalid}));
+    ::TrackInfo current;
+    ASSERT_TRUE(source->GetPublishedTrack("a", current));
+    EXPECT_EQ(current.payload_type, 111);
+    EXPECT_EQ(source->PublishedTrackCount(), 2U);
+    Input(source, Packet(22, 112, 2));
+    EXPECT_EQ(frames, 1U);
+    Input(source, Packet(22, 111, 2));
+    EXPECT_EQ(frames, 2U);
+}
+
+TEST_F(SfuConference, ReplacePublishedTracksRejectsSubscribedEncodingChangesAndOnlyDetachesPausedTrack)
+{
+    auto source = std::make_shared<media::SfuEndpoint>(1105);
+    auto destination = std::make_shared<media::SfuEndpoint>(1106);
+    auto audio = Negotiated("a", true, 111, 22);
+    auto video = Negotiated("v", false, 102, 11);
+    ASSERT_TRUE(source->ReplacePublishedTracks({audio, video}));
+    ASSERT_TRUE(source->Start());
+    ASSERT_TRUE(destination->Start());
+    auto videoTransport = std::make_shared<CaptureTransport>();
+    auto audioTransport = std::make_shared<CaptureTransport>();
+    Configure(destination, "video", videoTransport, false, 777, 96);
+    Configure(destination, "audio", audioTransport, true, 778, 109);
+    ASSERT_TRUE(destination->Subscribe("video", source, "v"));
+    ASSERT_TRUE(destination->Subscribe("audio", source, "a"));
+    Input(source, Packet(11, 102));
+    Input(source, Packet(22, 111));
+    Drain(media_affinity::MakeStreamKey(destination->Id(), 777));
+    Drain(media_affinity::MakeStreamKey(destination->Id(), 778));
+    ASSERT_EQ(videoTransport->Count(), 1U);
+    ASSERT_EQ(audioTransport->Count(), 1U);
+
+    video.codecs.front().fmtp = "packetization-mode=1;profile-level-id=42e01e";
+    EXPECT_FALSE(source->ReplacePublishedTracks({audio, video}));
+    ::TrackInfo previous;
+    ASSERT_TRUE(source->GetPublishedTrack("v", previous));
+    EXPECT_TRUE(previous.fmtp.empty());
+    EXPECT_EQ(destination->SubscriptionCount(), 2U);
+    ASSERT_TRUE(destination->Unsubscribe("video"));
+    ASSERT_TRUE(source->ReplacePublishedTracks({audio, video}));
+    size_t changedVideoFrames = 0;
+    source->AddEncodedFrameCallback([&](const auto& frame)
+    {
+        if (frame->info.track_id == static_cast<media::TrackId>(previous.track_index)) ++changedVideoFrames;
+    });
+    Input(source, Packet(11, 102, 1));
+    EXPECT_EQ(changedVideoFrames, 1U);
+    ASSERT_TRUE(destination->Subscribe("video", source, "v"));
+    ASSERT_TRUE(source->ReplacePublishedTracks({audio}));
+    EXPECT_EQ(destination->SubscriptionCount(), 1U);
+    Input(source, Packet(11, 102, 2));
+    Input(source, Packet(11, 111, 2)); // Retired camera SSRC cannot be learned as audio.
+    Input(source, Packet(22, 111, 2));
+    Drain(media_affinity::MakeStreamKey(destination->Id(), 777));
+    Drain(media_affinity::MakeStreamKey(destination->Id(), 778));
+    EXPECT_EQ(videoTransport->Count(), 1U);
+    EXPECT_EQ(audioTransport->Count(), 2U);
+}
+
+TEST_F(SfuConference, ReplacePublishedTracksRejectsSubscribedSourceSwitchAtomically)
+{
+    auto source = std::make_shared<media::SfuEndpoint>(1107);
+    auto destination = std::make_shared<media::SfuEndpoint>(1108);
+    const auto audio = Negotiated("a", true, 111, 22);
+    const auto video = Negotiated("v", false, 102, 11);
+    ASSERT_TRUE(source->ReplacePublishedTracks({audio, video}));
+    ASSERT_TRUE(source->Start());
+    ASSERT_TRUE(destination->Start());
+    auto transport = std::make_shared<CaptureTransport>();
+    Configure(destination, "video", transport, false, 777, 96);
+    ASSERT_TRUE(destination->Subscribe("video", source, "v"));
+    Input(source, Packet(11, 102, 1000));
+    Drain(media_affinity::MakeStreamKey(destination->Id(), 777));
+    ASSERT_EQ(transport->Count(), 1U);
+
+    auto changedAudio = audio;
+    changedAudio.codecs.front().payloadType = 112;
+    auto changedVideo = video;
+    changedVideo.ssrcs = {{33, {}}};
+    EXPECT_FALSE(source->ReplacePublishedTracks({changedAudio, changedVideo}));
+    ::TrackInfo current;
+    ASSERT_TRUE(source->GetPublishedTrack("a", current));
+    EXPECT_EQ(current.payload_type, 111);
+    EXPECT_EQ(source->PublishedTrackCount(), 2U);
+    EXPECT_EQ(destination->SubscriptionCount(), 1U);
+    Input(source, Packet(33, 102, 1));
+    Input(source, Packet(11, 102, 1001));
+    Drain(media_affinity::MakeStreamKey(destination->Id(), 777));
+    ASSERT_EQ(transport->Count(), 2U);
+    const auto last = transport->Last();
+    EXPECT_EQ((static_cast<uint16_t>(last[2]) << 8) | last[3], 1001);
+    EXPECT_EQ(media_affinity::ReadUint32BE(last.data() + 8), 777U);
+
+    ASSERT_TRUE(destination->Unsubscribe("video"));
+    EXPECT_TRUE(source->ReplacePublishedTracks({changedAudio, changedVideo}));
+    ASSERT_TRUE(source->GetPublishedTrack("a", current));
+    EXPECT_EQ(current.payload_type, 112);
 }
 
 TEST_F(SfuConference, SubscriberOwnsSenderAndFeedbackReturnsToPublisher)

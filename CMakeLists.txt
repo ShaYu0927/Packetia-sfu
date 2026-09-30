@@ -253,6 +253,9 @@ add_executable(Packetia
     server/WorkerSetup.cpp
 )
 
+if(PACKETIA_WITH_LIBWEBSOCKETS)
+    target_sources(Packetia PRIVATE server/WebRtcService.cpp)
+endif()
 
 target_link_libraries(Packetia
     PRIVATE

@@ -73,7 +73,9 @@ void StreamConfiguration() {
         R"({"streams":[{"session_id":"","stream_id":"b"}]})",
         R"({"server":{"rtsp_port":65536}})", R"({"server":{"io_threads":-1}})",
         R"({"recording":{"worker_count":0}})", R"({"recording":{"reorder_ms":5001}})",
-        R"({"recording":{"segment_ms":18446744073709551615}})", R"({"stream_default":{}})"}) {
+        R"({"recording":{"segment_ms":18446744073709551615}})", R"({"stream_default":{}})",
+        R"({"webrtc":{"enabled":"true"}})", R"({"webrtc":{"max_sessions":0}})",
+        R"({"webrtc":{"public_ip":42}})", R"({"webrtc":{"unknown":true}})"}) {
         rejected = false;
         try { config::AppConfig::FromJson(invalid); } catch (const std::exception&) { rejected = true; }
         Check(rejected, "invalid JSON configuration accepted");
@@ -85,6 +87,10 @@ void StreamConfiguration() {
     auto sliced = config::AppConfig::FromJson(R"({"recording":{"segment_ms":1000,"reorder_ms":50,"index_path":"index/recordings.sqlite"}})");
     Check(sliced.recording.segment_ms == 1000 && sliced.recording.reorder_ms == 50 &&
           sliced.recording.index_path == "index/recordings.sqlite", "segment/index configuration was not applied");
+    auto rtc = config::AppConfig::FromJson(R"({"webrtc":{"enabled":true,"public_ip":"192.0.2.1","token":"test-only","max_sessions":12}})");
+    Check(rtc.webrtc.enabled && rtc.webrtc.public_ip == "192.0.2.1" &&
+          rtc.webrtc.token == "test-only" && rtc.webrtc.max_sessions == 12,
+          "WebRTC configuration was not applied");
 
     config::ConfigStore concurrent;
     std::atomic<bool> done{false}, coherent{true};
@@ -104,9 +110,17 @@ void StreamConfiguration() {
 int main() {
     try {
         SavedEnvironment recording("PACKETIA_RECORDING"), ai("PACKETIA_AI"),
-                         mix("PACKETIA_CONFERENCE_MIX"), directory("PACKETIA_RECORD_DIR"), path("PACKETIA_CONFIG");
+                         mix("PACKETIA_CONFERENCE_MIX"), directory("PACKETIA_RECORD_DIR"), path("PACKETIA_CONFIG"),
+                         rtc("PACKETIA_WEBRTC"), rtc_ip("PACKETIA_WEBRTC_PUBLIC_IP"), rtc_token("PACKETIA_WEBRTC_TOKEN");
         auto config = server::ServerConfig::FromEnvironment();
         Check(config.recording_enabled && config.ai_enabled && !config.conference_mix_enabled, "defaults changed");
+        Check(!config.webrtc.enabled, "WebRTC must be opt-in");
+        Set("PACKETIA_WEBRTC", "true");
+        Set("PACKETIA_WEBRTC_PUBLIC_IP", "192.0.2.2");
+        Set("PACKETIA_WEBRTC_TOKEN", "environment-test-only");
+        config = server::ServerConfig::FromEnvironment();
+        Check(config.webrtc.enabled && config.webrtc.public_ip == "192.0.2.2" &&
+              config.webrtc.token == "environment-test-only", "WebRTC environment overrides ignored");
         for (const char* disabled : {"0", "false", "OFF", "No"}) {
             Set("PACKETIA_RECORDING", disabled);
             Set("PACKETIA_AI", disabled);

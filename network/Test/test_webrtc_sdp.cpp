@@ -1,4 +1,5 @@
 #include "Sdp.h"
+#include "SdpCodec.h"
 #include "WebRtcSession.h"
 
 #include <algorithm>
@@ -455,6 +456,42 @@ void OpusAnswerAdvertisesLocalReceiveParameters()
     CHECK(audio.ssrcs.empty() && audio.msids.empty());
 }
 
+void ConfiguredCodecsGenerateNegotiatedAnswer()
+{
+    auto options = Options();
+    sdp::H264CodecConfig video;
+    video.profileLevelId = 0x42e01e;
+    sdp::OpusCodecConfig audio;
+    audio.maxAverageBitrate = 32000;
+    audio.stereo = false;
+    audio.useInbandFec = true;
+    sdp::Sdp::SetCodecs(options.medias[0], {sdp::SdpCodec::H264(110, video)});
+    sdp::Sdp::SetCodecs(options.medias[1], {sdp::SdpCodec::Opus(112, audio)});
+
+    const auto first = Answer(Header("video audio") + Video() + Audio(), options);
+    CHECK(first.medias[0].port != 0 && first.medias[1].port != 0);
+    const auto& h264 = first.medias[0].codecs.front();
+    const auto& opus = first.medias[1].codecs.front();
+    CHECK(h264.payloadType == 102 && opus.payloadType == 111);
+    CHECK(FmtpParameter(h264.fmtp, "profile-level-id") == "42e01e");
+    CHECK(FmtpParameter(opus.fmtp, "maxaveragebitrate") == "32000");
+    CHECK(FmtpParameter(opus.fmtp, "stereo") == "0");
+    CHECK(FmtpParameter(opus.fmtp, "useinbandfec") == "1");
+
+    video.profileLevelId = 0x64001f;
+    audio.maxAverageBitrate = 64000;
+    audio.stereo = true;
+    sdp::Sdp::SetCodecs(options.medias[0], {sdp::SdpCodec::H264(110, video)});
+    sdp::Sdp::SetCodecs(options.medias[1], {sdp::SdpCodec::Opus(112, audio)});
+    const auto second = Answer(Header("video audio") +
+        Video("video", "profile-level-id=64001f;packetization-mode=1;level-asymmetry-allowed=1") + Audio(), options);
+    CHECK(second.medias[0].port != 0 && second.medias[1].port != 0);
+    CHECK(FmtpParameter(second.medias[0].codecs.front().fmtp, "profile-level-id") == "64001f");
+    CHECK(FmtpParameter(second.medias[1].codecs.front().fmtp, "maxaveragebitrate") == "64000");
+    CHECK(FmtpParameter(second.medias[1].codecs.front().fmtp, "stereo") == "1");
+    CHECK(FmtpParameter(first.medias[1].codecs.front().fmtp, "maxaveragebitrate") == "32000");
+}
+
 void RejectedMediaKeepTheirPositionAndLeaveTheBundle()
 {
     const auto offer = Header("unused audio data video") +
@@ -654,6 +691,7 @@ int main()
         {"H264 profile and mode rejection", IncompatibleH264ProfilesAndPacketizationAreRejected},
         {"H264 level negotiation", H264LevelRespectsBothPeersWithoutAsymmetry},
         {"Opus local receive parameters", OpusAnswerAdvertisesLocalReceiveParameters},
+        {"configured codecs generate negotiated answers", ConfiguredCodecsGenerateNegotiatedAnswer},
         {"rejected m-line order and BUNDLE", RejectedMediaKeepTheirPositionAndLeaveTheBundle},
         {"session defaults and media overrides", SessionDefaultsAreInheritedAndMediaOverridesWin},
         {"complementary DTLS role", DtlsAnswerUsesTheComplementaryRole},

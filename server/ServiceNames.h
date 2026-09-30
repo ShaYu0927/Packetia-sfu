@@ -13,5 +13,6 @@
 #define SERVICE_RTMP      "RtmpServer"
 #define SERVICE_UDP       "UdpServer"
 #define SERVICE_WS        "WsServer"
+#define SERVICE_WEBRTC    "WebRtcService"
 
 #endif // PACKETIA_SERVER_SERVICENAMES_H_

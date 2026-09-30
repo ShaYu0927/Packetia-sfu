@@ -221,8 +221,7 @@ void Mp4Recorder::Drain(uint64_t now, bool force)
         const auto it = pending_.begin();
         const auto& first = it->second;
         const auto window_us = static_cast<int64_t>(context_.options.reorder_ms) * 1000;
-        if (!force && first.time_us > latest_us_ - window_us &&
-            now - first.received_ms < context_.options.reorder_ms) break;
+        if (!force && first.time_us > latest_us_ - window_us && now - first.received_ms < context_.options.reorder_ms) break;
         auto packet = std::move(it->second);
         const auto order = it->first;
         const auto bytes = packet.event.frame->StorageSize();
@@ -247,20 +246,24 @@ void Mp4Recorder::Drain(uint64_t now, bool force)
     }
 }
 
-void Mp4Recorder::InputFrame(const media::EncodedFrameEvent& event, uint64_t now) {
+void Mp4Recorder::InputFrame(const media::EncodedFrameEvent& event, uint64_t now) 
+{
     if (closed_ || segment_.failed_) { ++context_.dropped; return; }
     if (!segment_.first_ms) segment_.first_ms = now;
-    segment_.last_ms = now;
-    const auto& frame = *event.frame;
+    segment_.last_ms      = now;
+    const auto& frame     = *event.frame;
     const auto& timestamp = frame.info.timestamp;
-    const bool video = frame.info.media_type == media::MediaType::Video;
-    segment_.video_seen |= video;
+    const bool video      = frame.info.media_type == media::MediaType::Video;
+    segment_.video_seen  |= video;
     const RecordingTrackKey key{event.source.endpoint_id, event.source.track_id};
     auto found = segment_.tracks.find(key);
-    if (found == segment_.tracks.end()) {
+    if (found == segment_.tracks.end()) 
+    {
         if (discovered_) { Fail("track added after discovery; start a new recording instance"); return; }
-        for (const auto& existing : segment_.tracks) {
-            if (existing.second.first.frame->info.media_type == frame.info.media_type) {
+        for (const auto& existing : segment_.tracks) 
+        {
+            if (existing.second.first.frame->info.media_type == frame.info.media_type) 
+            {
                 Fail("multiple tracks of the same type: each publisher needs a unique stream_id"); return;
             }
         }
@@ -270,23 +273,27 @@ void Mp4Recorder::InputFrame(const media::EncodedFrameEvent& event, uint64_t now
         clock.previous = static_cast<uint32_t>(timestamp.dts);
         clock.anchor_us = (timestamp.receive_time_ms > 0 ? timestamp.receive_time_ms : static_cast<int64_t>(now)) * 1000;
         found = segment_.tracks.emplace(key, std::move(clock)).first;
-    } else if (!SameFormat(frame, *found->second.first.frame)) {
+    } 
+    else if (!SameFormat(frame, *found->second.first.frame)) 
+    {
         Fail("track parameters changed; start a new recording instance"); return;
     }
     if (frame.IsConfigFrame()) return;
     auto& clock = found->second;
     const uint32_t current = static_cast<uint32_t>(timestamp.dts);
     const int32_t delta = static_cast<int32_t>(current - clock.previous);
-    if (delta < 0 || timestamp.time_base_num <= 0 || timestamp.time_base_den <= 0) {
+    if (delta < 0 || timestamp.time_base_num <= 0 || timestamp.time_base_den <= 0) 
+    {
         Fail("invalid/backwards RTP clock (B frames are unsupported)"); return;
     }
     clock.ticks += delta;
     clock.previous = current;
     const int64_t time_us = clock.anchor_us + clock.ticks * 1000000LL * timestamp.time_base_num / timestamp.time_base_den;
-    if (!clock_anchored_) {
-        clock_anchored_ = true;
+    if (!clock_anchored_) 
+    {
+        clock_anchored_  = true;
         media_anchor_us_ = time_us;
-        wall_anchor_ms_ = static_cast<int64_t>(Timestamp::WallNowMs());
+        wall_anchor_ms_  = static_cast<int64_t>(Timestamp::WallNowMs());
     }
     if (std::make_pair(time_us, video ? 0 : 1) < drained_key_) { ++context_.dropped; return; }
     const auto bytes = frame.StorageSize();
@@ -299,11 +306,10 @@ void Mp4Recorder::InputFrame(const media::EncodedFrameEvent& event, uint64_t now
     Drain(now, false);
 }
 
-bool Mp4Recorder::Tick(uint64_t now, bool stopping) {
+bool Mp4Recorder::Tick(uint64_t now, bool stopping) 
+{
     if (closed_) return true;
     const bool idle = now - segment_.last_ms >= context_.options.idle_timeout_ms;
-    // Keep a failed generation until stop/idle instead of recreating one for
-    // every queued delta frame and flooding the index with failed segments.
     if (segment_.failed_) return stopping || idle;
     if (stopping || idle || now - segment_.first_ms >= context_.options.discovery_ms) Open();
     Drain(now, stopping || idle);
@@ -311,9 +317,11 @@ bool Mp4Recorder::Tick(uint64_t now, bool stopping) {
     return false;
 }
 
-void Mp4Recorder::Close() {
+void Mp4Recorder::Close() 
+{
     if (closed_) return;
-    if (!segment_.failed_) {
+    if (!segment_.failed_) 
+    {
         Open();
         Drain(segment_.last_ms, true);
         if (!discovered_ && !segment_.failed_) Fail("no playable segment: missing keyframe/SPS/PPS or AAC config");
@@ -323,13 +331,13 @@ void Mp4Recorder::Close() {
     closed_ = true;
 }
 
-Mp4Recorder::~Mp4Recorder() {
-    // Normal close is explicit on the owning worker. Unexpected destruction
-    // leaves a non-playable Writing index and temporary file for reconciliation.
+Mp4Recorder::~Mp4Recorder() 
+{
     DiscardPending();
 }
 
-void Mp4Recorder::EmitEvent(RecordingEventType type, RecordingSessionState state, const std::string& error) {
+void Mp4Recorder::EmitEvent(RecordingEventType type, RecordingSessionState state, const std::string& error) 
+{
     if (!context_.event_sink) return;
     try {
         RecordingEvent event{type, instance_, state, RecordingStopReason::None,

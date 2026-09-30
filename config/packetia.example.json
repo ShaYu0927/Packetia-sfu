@@ -9,6 +9,11 @@
     "ai": true,
     "conference_mix": false
   },
+  "webrtc": {
+    "enabled": false,
+    "public_ip": "",
+    "max_sessions": 128
+  },
   "recording": {
     "directory": "recordings",
     "segment_ms": 60000,

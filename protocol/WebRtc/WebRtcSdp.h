@@ -8,8 +8,7 @@ namespace protocol::webrtc
 {
 // Compatibility entry points; parsing, validation and serialization live in
 // src/sdp. New code should use Sdp::Parse with SdpProfile::WebRtc directly.
-inline bool ParseWebRtcSdp(const std::string& text, SdpType type,
-    WebRtcSessionDescription& output, std::string& error)
+inline bool ParseWebRtcSdp(const std::string& text, SdpType type, WebRtcSessionDescription& output, std::string& error)
 {
     return sdp::Sdp::Parse(text, sdp::SdpProfile::WebRtc, type, output, error);
 }

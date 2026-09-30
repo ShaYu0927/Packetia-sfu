@@ -112,6 +112,8 @@ WebRtcMediaDescription Audio()
 WebRtcSessionDescription Offer()
 {
     WebRtcSessionDescription offer;
+    offer.origin.sess_id = "1234";
+    offer.origin.sess_version = "1";
     offer.ice.ufrag = "remote";
     offer.ice.pwd = std::string(24, 'r');
     offer.dtls.setup = DtlsSetup::ActPass;
@@ -328,6 +330,133 @@ void MediaFlow()
     CHECK(f.sink->packets.size() == 2);
 }
 
+void MeetingRenegotiation()
+{
+    bool applyMedia = true;
+    size_t commits = 0;
+    auto options = Options();
+    options.onNegotiated = [&](const auto&, const auto&) { ++commits; return applyMedia; };
+    Fixture f(options);
+    f.Start();
+    f.Handshake();
+    auto offer = Offer();
+    offer.origin.sess_version = "2";
+    offer.medias[0].direction = MediaDirection::Inactive;
+    CHECK(f.session->ApplyRemoteOffer(offer));
+    CHECK(f.session->State() == WebRtcSessionState::Connected);
+    CHECK(f.session->SignalingState() == sdp::SdpNegotiationState::HaveRemoteOffer);
+    CHECK(f.session->SendRtp(Rtp()));
+    f.Deliver(Rtp(), f.peer);
+    CHECK(f.sink->packets.size() == 1);
+    WebRtcSessionDescription answer;
+    CHECK(f.session->CreateLocalAnswer(answer));
+    CHECK(!f.session->SendRtp(Rtp()));
+    f.Deliver(Rtp(), f.peer);
+    CHECK(f.sink->packets.size() == 1);
+    CHECK(f.session->SendRtcp(Rtcp()));
+
+    // A new payload mapping becomes live only after both sides have agreed.
+    offer.origin.sess_version = "3";
+    offer.medias[0].direction = MediaDirection::SendRecv;
+    offer.medias[0].fmts = {"112"};
+    offer.medias[0].codecs[0].payloadType = 112;
+    CHECK(f.session->ApplyRemoteOffer(offer));
+    CHECK(f.session->CreateLocalAnswer(answer));
+    auto updated = Rtp(); updated[1] = 112;
+    f.Deliver(Rtp(), f.peer);
+    f.Deliver(updated, f.peer);
+    CHECK(f.sink->packets.size() == 2);
+    CHECK(!f.session->SendRtp(Rtp()) && f.session->SendRtp(updated));
+    CHECK(commits == 3 && f.dtls->starts == 1 && f.srtp->installs == 1);
+
+    for (int change = 0; change < 3; ++change)
+    {
+        auto invalid = offer;
+        invalid.origin.sess_version = "4";
+        if (change == 0) invalid.ice.ufrag = "restart";
+        if (change == 1) invalid.dtls.fingerprints[0].value = "OTHER-CERTIFICATE";
+        if (change == 2) invalid.dtls.setup = DtlsSetup::Active;
+        CHECK(!f.session->ApplyRemoteOffer(invalid));
+        CHECK(f.session->SignalingState() == sdp::SdpNegotiationState::Stable);
+        CHECK(f.session->SendRtp(updated));
+    }
+    offer.origin.sess_version = "4";
+    offer.medias[0].direction = MediaDirection::Inactive;
+    CHECK(f.session->ApplyRemoteOffer(offer));
+    applyMedia = false;
+    CHECK(!f.session->CreateLocalAnswer(answer));
+    CHECK(f.session->SignalingState() == sdp::SdpNegotiationState::Stable);
+    CHECK(f.session->RemoteDescription().origin.sess_version == "3");
+    CHECK(f.session->SendRtp(updated));
+    applyMedia = true;
+    CHECK(f.session->ApplyRemoteOffer(offer));
+    f.session->RollbackNegotiation();
+    CHECK(f.session->SendRtp(updated));
+    CHECK(f.dtls->starts == 1 && f.srtp->installs == 1 && f.dtls->closes == 0);
+}
+
+void BusinessOffers()
+{
+    Fixture f;
+    sdp::SdpNegotiator peer;
+    auto remote = Offer();
+    remote.medias[0].ice = remote.ice;
+    remote.medias[0].dtls = remote.dtls;
+    WebRtcSessionDescription offer, answer;
+    // Even a media template copied from a peer uses our own transport identity.
+    CHECK(f.session->CreateLocalOffer(remote.medias, offer));
+    CHECK(offer.medias[0].ice.ufrag == "local");
+    CHECK(offer.medias[0].dtls.fingerprints[0].value == "LOCAL-FINGERPRINT");
+    CHECK(f.session->State() == WebRtcSessionState::HaveLocalOffer);
+    remote.ice.candidates = {"1 1 udp 2130706431 192.0.2.2 6000 typ host"};
+    remote.medias[0].ice = remote.ice;
+    remote.dtls.setup = DtlsSetup::Passive;
+    remote.medias[0].dtls = remote.dtls;
+    CHECK(peer.ApplyOffer(offer));
+    CHECK(peer.CreateAnswer(remote, answer));
+    CHECK(f.session->ApplyRemoteAnswer(answer));
+    CHECK(peer.Commit());
+    CHECK(f.session->start());
+    f.Handshake();
+    CHECK(f.session->SendRtp(Rtp()));
+    CHECK(f.dtls->configuredRole == DtlsSetup::Active);
+    const auto origin = f.session->LocalDescription().origin;
+    auto paused = f.session->LocalDescription().medias;
+    paused[0].direction = MediaDirection::Inactive;
+    CHECK(f.session->CreateLocalOffer(paused, offer));
+    CHECK(offer.origin.sess_id == origin.sess_id && offer.origin.sess_version != origin.sess_version);
+    CHECK(f.session->State() == WebRtcSessionState::Connected);
+    CHECK(f.session->SendRtp(Rtp()));
+    CHECK(!f.session->ApplyRemoteOffer(Offer())); // glare
+    CHECK(peer.ApplyOffer(offer));
+    CHECK(peer.CreateAnswer(remote, answer));
+    auto invalid = answer;
+    invalid.medias[0].codecs[0].payloadType = 113;
+    invalid.medias[0].fmts = {"113"};
+    CHECK(!f.session->ApplyRemoteAnswer(invalid));
+    CHECK(f.session->SignalingState() == sdp::SdpNegotiationState::HaveLocalOffer);
+    CHECK(f.session->SendRtp(Rtp()));
+    CHECK(f.session->ApplyRemoteAnswer(answer));
+    CHECK(peer.Commit());
+    CHECK(!f.session->SendRtp(Rtp()));
+    CHECK(!f.session->ApplyRemoteAnswer(answer)); // delayed duplicate
+
+    auto resumed = f.session->LocalDescription().medias;
+    resumed[0].direction = MediaDirection::SendRecv;
+    CHECK(f.session->CreateLocalOffer(resumed, offer));
+    f.session->RollbackNegotiation();
+    CHECK(!f.session->SendRtp(Rtp()));
+    CHECK(f.session->CreateLocalOffer(resumed, offer));
+    CHECK(peer.ApplyOffer(offer));
+    CHECK(peer.CreateAnswer(remote, answer));
+    CHECK(f.session->ApplyRemoteAnswer(answer));
+    CHECK(peer.Commit());
+    CHECK(f.session->SendRtp(Rtp()));
+    f.Deliver(Rtp(), f.peer);
+    CHECK(f.sink->packets.size() == 1);
+    CHECK(f.dtls->starts == 1 && f.srtp->installs == 1 && f.dtls->closes == 0);
+}
+
 void Failures()
 {
     for (int kind = 0; kind < 5; ++kind)
@@ -442,6 +571,69 @@ void StunNomination()
     std::cout << "Authenticated STUN nomination skipped: OpenSSL headers unavailable\n";
 #endif
 }
+
+void SelectedPeerRegistration()
+{
+#if __has_include(<openssl/hmac.h>)
+    for (bool reserveAddress : {false, true})
+    {
+        size_t selections = 0;
+        WebRtcTransport* transport = nullptr;
+        Dtls* dtls = nullptr;
+        auto options = Options();
+        options.onSelectedPeer = [&](const network::SocketAddr& peer) {
+            ++selections;
+            CHECK(transport->IsSelectedPeer(peer));
+            if (selections == 1) CHECK(dtls->starts == 0);
+            return reserveAddress;
+        };
+        Fixture f(options);
+        transport = f.transport.get();
+        dtls = f.dtls;
+        f.Start();
+        protocol::IceRequestParams request;
+        request.username = "local:remote";
+        request.password = std::string(24, 'l');
+        request.controlling = true;
+        request.tie_breaker = 42;
+        request.priority = 1234;
+        auto deliver = [&](const network::SocketAddr& peer) {
+            std::vector<uint8_t> bytes(1500);
+            size_t size = 0;
+            CHECK(protocol::StunCodec::BuildIceBindingRequest(request, bytes.data(), bytes.size(), size));
+            bytes.resize(size);
+            f.Deliver(std::move(bytes), peer);
+        };
+
+        deliver(f.peer); // Authenticated check without nomination.
+        CHECK(selections == 0 && f.dtls->starts == 0);
+        request.use_candidate = true;
+        request.password = "wrong-password";
+        deliver(f.peer);
+        CHECK(selections == 0 && f.dtls->starts == 0);
+        request.password = std::string(24, 'l');
+        deliver(f.peer);
+        CHECK(selections == 1);
+        if (!reserveAddress)
+        {
+            CHECK(f.session->State() == WebRtcSessionState::Failed);
+            CHECK(f.transport->State() == WebRtcTransportState::Closed);
+            CHECK(f.dtls->starts == 0);
+            CHECK(f.session->LastError() == "ICE peer address is already in use");
+            continue;
+        }
+
+        CHECK(f.session->State() == WebRtcSessionState::Connecting);
+        CHECK(f.dtls->starts == 1);
+        deliver(f.peer); // Retransmission does not re-register an unchanged peer.
+        CHECK(selections == 1 && f.dtls->starts == 1);
+        const auto migrated = network::SocketAddr::FromIPPort("192.0.2.2", 6001);
+        deliver(migrated);
+        CHECK(selections == 2 && f.dtls->starts == 1);
+        CHECK(f.transport->IsSelectedPeer(migrated));
+    }
+#endif
+}
 } // namespace
 
 int main()
@@ -449,6 +641,7 @@ int main()
     try
     {
         Negotiation(); Validation(); BundleAndDirections(); MediaFlow(); Failures(); StunNomination(); IceTimeout();
+        SelectedPeerRegistration(); MeetingRenegotiation(); BusinessOffers();
         std::cout << "WebRtcSession negotiation, validation, media and failure tests passed\n";
         return 0;
     }
