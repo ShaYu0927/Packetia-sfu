@@ -22,8 +22,7 @@ class WebRtcService;
 class ServerApp final
 {
 public:
-    explicit ServerApp(ServerConfig config,
-                       std::shared_ptr<service::IRecordingEventSink> recording_events = {});
+    explicit ServerApp(ServerConfig config, std::shared_ptr<service::IRecordingEventSink> recording_events = {});
     ~ServerApp();
     ServerApp(const ServerApp&) = delete;
     ServerApp& operator=(const ServerApp&) = delete;
@@ -32,12 +31,8 @@ public:
     void Run();
     void Stop() noexcept;
 
-    // Runtime feature switches for Record, Ai and ConferenceMix only.
-    // Call on a control thread, never from a media/backend callback.
     bool SetServiceEnabled(service::ServiceType type, bool enabled);
     bool ServiceEnabled(service::ServiceType type) const;
-    // Start arms one stream; Stop drains admitted frames and finalizes its files.
-    // Use recording events for completed paths and historical failures.
     bool StartRecording(const config::StreamKey& stream);
     bool StopRecording(const config::StreamKey& stream);
     std::vector<service::SegmentInfo> QueryRecordingSegments(const service::SegmentQuery& query) const;
@@ -47,11 +42,8 @@ public:
     void SetStreamDefaults(config::StreamFeatures defaults);
     config::StreamFeatures EffectiveStreamConfig(const config::StreamKey& stream) const;
     std::shared_ptr<const config::AppConfig> ConfigSnapshot() const;
-    bool StartConference(service::mix::MixConfig config,
-                         std::unique_ptr<service::mix::IMixBackend> backend);
+    bool StartConference(service::mix::MixConfig config, std::unique_ptr<service::mix::IMixBackend> backend);
     bool StopConference(const std::string& room_id);
-    // Session ID is returned by WebRTC signaling; call from a control thread.
-    // Queues an offer. Media changes only after the peer's answer is accepted.
     bool RenegotiateWebRtc(uint64_t session_id, const std::vector<sdp::SdpMedia>& medias, std::string& error);
     // Output subscribers (such as recording) can be attached by the application.
     std::shared_ptr<media::EncodedFrameRouter> MixedFrameRouter() const { return mix_output_router_; }

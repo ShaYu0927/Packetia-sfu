@@ -421,7 +421,8 @@ void RunRenegotiation()
 
     const auto rollbackOffer = queueOffer({offered.medias[0]});
     const auto rejected = checkDescription(rollbackOffer, sdp::SdpType::Offer);
-    Require(rejected.medias[1].port == 0, "omitted MID was not preserved as a rejected m-line");
+    Require(rejected.medias[1].port != 0 && rejected.medias[1].direction == sdp::MediaDirection::Inactive,
+        "omitted MID must pause without stopping its transceiver");
     checkEndpoint(2, 106);
     Json rollback = {{"type", "rollback"}, {"token", config.webrtc.token},
         {"negotiation_id", "stale"}};
@@ -438,6 +439,9 @@ void RunRenegotiation()
 
     const auto pauseOffer = queueOffer({});
     const auto paused = checkDescription(pauseOffer, sdp::SdpType::Offer);
+    for (const auto& media : paused.medias)
+        Require(media.port != 0 && media.direction == sdp::MediaDirection::Inactive,
+            "pause must retain live m-lines for browser resume");
     checkEndpoint(2, 106);
     answerRequest["negotiation_id"] = pauseOffer.at("negotiation_id");
     answerRequest["sdp"] = sdp::Sdp::Serialize(BrowserAnswer(paused, browser, ++browserVersion));
@@ -454,6 +458,89 @@ void RunRenegotiation()
     WaitForEndpoints(baseline);
     service->Stop();
     loop.Stop();
+}
+
+void RunRoom()
+{
+    const auto baseline = utils::EndpointManager::Instance().Size();
+    EventLoop loop(2);
+    Require(loop.Start(), "room event loop did not start");
+    config::AppConfig config;
+    config.listen_ip = config.webrtc.public_ip = "127.0.0.1";
+    config.udp_port = AvailablePort(SOCK_DGRAM);
+    config.websocket_port = AvailablePort(SOCK_STREAM);
+    config.webrtc.enabled = true;
+    config.webrtc.token = "room-secret";
+    config.webrtc.max_sessions = 6;
+    auto service = std::make_shared<server::WebRtcService>(&loop, config, nullptr);
+    Require(service->Start(), "room service did not start");
+    Client a(config.websocket_port), b(config.websocket_port), outsider(config.websocket_port), secondPublisher(config.websocket_port);
+    const auto join = [&](Client& client, const std::string& room) {
+        const auto reply = client.Request({{"type", "join"}, {"room_id", room}, {"token", config.webrtc.token}});
+        Require(reply.value("type", "") == "joined", reply.dump().c_str());
+        return reply.at("participant_id").get<std::string>();
+    };
+    Require(a.Request({{"type", "join"}, {"room_id", "demo"}, {"token", "wrong"}}).value("type", "") == "error",
+        "unauthorized room join accepted");
+    const auto publisherId = join(a, "demo");
+    join(b, "demo"); join(outsider, "other"); join(secondPublisher, "demo");
+    const auto publication = a.Request({{"type", "publish"}, {"token", config.webrtc.token}, {"sdp", Offer()}});
+    CheckAnswer(publication, config.udp_port);
+    const auto source = std::dynamic_pointer_cast<media::SfuEndpoint>(utils::EndpointManager::Instance().Find(
+        publication.at("session_id").get<uint64_t>()));
+    Require(source && source->PublishedTrackCount() == 2, "room source endpoint missing");
+    const auto list = [&](Client& client) {
+        return client.Request({{"type", "tracks"}, {"token", config.webrtc.token}}).at("tracks");
+    };
+    const auto tracks = list(b);
+    Require(tracks.size() == 2 && list(outsider).empty(), "room track visibility incorrect");
+    auto browser = ParseDescription({{"sdp", Offer()}}, sdp::SdpType::Offer);
+    browser.bundle.mids = {"down-a", "down-v"};
+    Json bindings = Json::array();
+    for (auto& media : browser.medias)
+    {
+        const auto sourceMid = media.mid;
+        media.mid = "down-" + sourceMid;
+        media.direction = sdp::MediaDirection::RecvOnly;
+        media.ssrcs.clear(); media.ssrcGroups.clear();
+        auto codec = media.codecs.front();
+        codec.payloadType = media.media == "video" ? 120 : 112;
+        sdp::Sdp::SetCodecs(media, {codec});
+        bindings.push_back({{"track_id", publisherId + ":" + sourceMid}, {"mid", media.mid}});
+    }
+    Json subscription = {{"type", "subscribe"}, {"token", config.webrtc.token},
+        {"sdp", sdp::Sdp::Serialize(browser)}, {"tracks", bindings}};
+    Require(outsider.Request(subscription).value("type", "") == "error", "cross-room subscription accepted");
+    auto duplicate = subscription;
+    duplicate["tracks"].push_back(bindings.front());
+    Require(b.Request(duplicate).value("type", "") == "error", "duplicate binding accepted");
+    const auto reply = b.Request(subscription);
+    Require(reply.value("type", "") == "answer", reply.dump().c_str());
+    const auto answer = ParseDescription(reply, sdp::SdpType::Answer);
+    Require(answer.medias.size() == 2, "downstream media missing");
+    for (const auto& media : answer.medias)
+        Require(media.direction == sdp::MediaDirection::SendOnly && media.codecs.size() == 1 && media.ssrcs.size() == 1 &&
+            media.codecs.front().payloadType == (media.media == "video" ? 120 : 112), "downstream negotiation reused upstream identifiers");
+    const auto destination = std::dynamic_pointer_cast<media::SfuEndpoint>(utils::EndpointManager::Instance().Find(
+        reply.at("session_id").get<uint64_t>()));
+    Require(destination && destination->SubscriptionCount() == 2, "room did not create real forwarding routes");
+    const auto second = secondPublisher.Request({{"type", "publish"}, {"token", config.webrtc.token}, {"sdp", Offer()}});
+    CheckAnswer(second, config.udp_port);
+    Require(list(b).size() == 4, "same MIDs from another publisher collided in room");
+    Require(b.Request(subscription).value("type", "") == "error", "duplicate room media session accepted");
+    Require(a.Request({{"type", "offer"}, {"token", config.webrtc.token}, {"sdp", Offer()}}).value("type", "") == "error",
+        "legacy reoffer changed room routes");
+    a.Close();
+    const auto deadline = std::chrono::steady_clock::now() + 5s;
+    while (list(b).size() != 2)
+    {
+        Require(std::chrono::steady_clock::now() < deadline, "publisher disconnect left stale room tracks");
+        std::this_thread::sleep_for(5ms);
+    }
+    Require(destination->SubscriptionCount() == 0, "publisher disconnect retained downstream routes");
+    secondPublisher.Close(); b.Close(); outsider.Close();
+    WaitForEndpoints(baseline);
+    service->Stop(); loop.Stop();
 }
 
 void Run()
@@ -514,13 +601,36 @@ void Run()
     Require(utils::EndpointManager::Instance().Size() == baseline, "rejected request allocated endpoint");
     CheckAnswer(first.Request(offer), config.udp_port);
     Require(utils::EndpointManager::Instance().Size() == baseline + 1, "accepted offer did not register endpoint");
-    Require(first.Request(offer).value("type", "") == "error", "duplicate offer accepted");
+    Require(first.Request(offer).value("type", "") == "answer", "unchanged offer should retain its SDP version");
+    auto changedOffer = ParseDescription(offer, sdp::SdpType::Offer);
+    changedOffer.medias[1].codecs.back().fmtp = "apt=103";
+    bad = offer;
+    bad["sdp"] = sdp::Sdp::Serialize(changedOffer);
+    Require(first.Request(bad).value("type", "") == "error", "same-version offer changed an unselected codec");
     Require(second.Request(offer).value("type", "") == "error", "session limit exceeded");
     Require(first.RequestText("{").value("type", "") == "error", "invalid JSON accepted on active session");
     Require(utils::EndpointManager::Instance().Size() == baseline + 1, "invalid message removed active session");
     Require(first.Request({{"type", "close"}}).value("type", "") == "closed", "close response missing");
     WaitForEndpoints(baseline);
     CheckAnswer(second.Request(offer), config.udp_port);
+    auto shared = ParseDescription(offer, sdp::SdpType::Offer);
+    shared.origin.sess_version = "2";
+    auto screen = shared.medias[1];
+    screen.mid = "screen";
+    screen.ssrcs = {{3001, {{"cname", "screen"}}}};
+    screen.ssrcGroups.clear();
+    shared.medias.push_back(screen);
+    shared.bundle.mids.push_back(screen.mid);
+    const auto sharedReply = second.Request({{"type", "offer"}, {"token", config.webrtc.token},
+        {"sdp", sdp::Sdp::Serialize(shared)}});
+    Require(sharedReply.value("type", "") == "answer", sharedReply.dump().c_str());
+    const auto sharedAnswer = ParseDescription(sharedReply, sdp::SdpType::Answer);
+    Require(sharedAnswer.medias.size() == 3 && sharedAnswer.medias[1].port != 0 && sharedAnswer.medias[2].port != 0 &&
+        sharedAnswer.medias[1].codecs.front().payloadType == sharedAnswer.medias[2].codecs.front().payloadType,
+        "camera and screen must negotiate the same primary PT on separate MIDs");
+    const auto endpoint = std::dynamic_pointer_cast<media::SfuEndpoint>(
+        utils::EndpointManager::Instance().Find(sharedReply.at("session_id").get<uint64_t>()));
+    Require(endpoint && endpoint->PublishedTrackCount() == 3, "shared payload publication lost a track");
     second.Close();
     WaitForEndpoints(baseline);
     service->Stop();
@@ -548,7 +658,8 @@ int main()
     {
         Run();
         RunRenegotiation();
-        std::cout << "PASS WebRTC service signaling, renegotiation, admission, cleanup and restart\n";
+        RunRoom();
+        std::cout << "PASS WebRTC service signaling, rooms, subscriptions, renegotiation, admission, cleanup and restart\n";
         return 0;
     }
     catch (const std::exception& error)

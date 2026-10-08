@@ -7,6 +7,13 @@
 namespace utils
 {
 
+inline bool IsPrintableAscii(std::string_view value)
+{
+    for (unsigned char c : value)
+        if (c < 0x20 || c > 0x7E) return false;
+    return true;
+}
+
 inline std::string ToLowerAscii(std::string value)
 {
     for (char& c : value)

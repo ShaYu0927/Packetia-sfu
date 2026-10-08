@@ -29,6 +29,8 @@ struct WebRtcSessionOptions
     // Capabilities match an explicit MID, then a media-kind entry with no MID.
     // H264 and Opus use codec-specific fmtp negotiation; repair codecs are excluded.
     std::vector<WebRtcMediaDescription> medias;
+    // Publication endpoints accept one primary codec per media section.
+    bool singleCodecPerMedia = false;
     sdp::SdpOrigin origin;
     uint64_t iceTimeoutMs = 30000;
     ice::IceAgent::Clock iceClock; // Optional injected monotonic clock for tests.
@@ -58,7 +60,8 @@ public:
     bool ApplyRemoteOffer(const std::string& offerSdp);
     bool CreateLocalAnswer(WebRtcSessionDescription& answer);
     bool CreateLocalAnswer(std::string& answerSdp);
-    // Explicit stable MIDs; removed media are rejected and new MIDs appended.
+    // Explicit stable MIDs; omitted media pause and new MIDs are appended.
+    // Use port=0 explicitly to stop a media section.
     bool CreateLocalOffer(const std::vector<WebRtcMediaDescription>& medias, WebRtcSessionDescription& offer);
     bool CreateLocalOffer(const std::vector<WebRtcMediaDescription>& medias, std::string& offerSdp);
     bool ApplyRemoteAnswer(const WebRtcSessionDescription& answer);
@@ -94,7 +97,7 @@ private:
     bool Fail(const std::string& error);
     bool Reject(const std::string& error);
     void Shutdown();
-    bool AllowsRtp(const std::vector<uint8_t>& packet, bool sending) const;
+    bool AllowsRtp(const std::vector<uint8_t>& packet, bool sending);
     bool CheckIceLiveness();
     WebRtcSessionDescription LocalTemplate(const std::vector<WebRtcMediaDescription>& medias) const;
     bool CheckTransport(const WebRtcSessionDescription& remote);
@@ -114,8 +117,9 @@ private:
     IceParameters remote_ice_;
     DtlsParameters remote_dtls_;
     DtlsSetup local_dtls_role_ = DtlsSetup::Unspecified;
-    // A PT cannot be reassigned to another MID or RTP format during a session.
-    std::map<int, std::pair<std::string, RtpCodecParameters>> payload_bindings_;
+    // PT meaning stays stable within each MID; shared PTs use MID/SSRC routing.
+    std::map<std::pair<std::string, int>, RtpCodecParameters> payload_bindings_;
+    std::map<uint32_t, std::string> send_ssrc_bindings_, receive_ssrc_bindings_;
     std::atomic<WebRtcSessionState> state_{WebRtcSessionState::New};
     std::string last_error_;
     bool dtls_started_ = false;

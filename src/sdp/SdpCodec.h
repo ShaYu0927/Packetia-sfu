@@ -85,6 +85,8 @@ public:
     // Checks an answer against an offered codec, including format identity and
     // H264 level/asymmetry. Opus receive preferences may legitimately differ.
     static bool IsAnswer(const RtpCodecParameters& offer, const RtpCodecParameters& answer);
+    // Compare RTP format identity independent of PT, fmtp ordering and feedback.
+    static bool SameFormat(const RtpCodecParameters& a, const RtpCodecParameters& b);
     static RtpCodecParameters H264(int payloadType, const H264CodecConfig& config = {});
     static RtpCodecParameters H265(int payloadType, const H265CodecConfig& config = {});
     static RtpCodecParameters Opus(int payloadType, const OpusCodecConfig& config = {});

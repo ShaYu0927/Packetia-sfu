@@ -117,7 +117,8 @@ bool UdpServer::SendTo(const network::SocketAddr &dst, const uint8_t *data, size
 UdpServer::SendResult UdpServer::TrySendTo(const network::SocketAddr& dst,
                                           const uint8_t* data, size_t len)
 {
-    if (!data || len == 0 || len > 65507 || dst.len == 0 || dst.len > sizeof(dst.ss))
+    // Empty UDP datagrams are valid TURN relay payloads.
+    if ((!data && len != 0) || len > 65507 || dst.len == 0 || dst.len > sizeof(dst.ss))
         return SendResult::Failed;
     if (!scheduler_ || !started_) return SendResult::Closed;
     SendResult result = SendResult::Closed;

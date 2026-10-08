@@ -12,11 +12,41 @@
 
 
 
-/*
-    https://www.rfc-editor.org/rfc/rfc3550.pdf
-*/
 class Sdp;
 
+/**
+ * RTP fixed wire header: RFC 3550 section 5.1 (network byte order).
+ *
+ *  0                   1                   2                   3
+ *  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+ * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ * |V=2|P|X|  CC   |M|     PT      |       sequence number         |
+ * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ * |                           timestamp                           |
+ * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ * |           synchronization source (SSRC) identifier            |
+ * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ * |               CSRC identifiers (CC * 4 bytes)                 |
+ * |                              ...                              |
+ * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ * |        optional extension envelope and data (when X=1)        |
+ * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ * |                 payload, then padding (when P=1)              |
+ * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ *
+ * V: 2-bit version, must be 2. CC: 4-bit CSRC count, 0..15.
+ * P: last packet byte counts trailing padding bytes, including itself.
+ * X: one extension envelope after CSRCs; see Rtp/RtpHeaderExtensions.h.
+ * M: payload-specific marker, not a universal keyframe or frame-end flag.
+ * PT: 7-bit payload format from the profile/SDP, not a track identifier.
+ * seq: increments per original packet, modulo 2^16; initial value random.
+ * ts: sampling time in payload clock units, modulo 2^32; initial value random.
+ * SSRC: 32-bit source identifier; CSRCs identify mixer contributors.
+ *
+ * This struct covers only the first 12 bytes, not the variable header/payload.
+ * Packed layout does not convert byte order or make unaligned access portable.
+ * Detailed protocol rules and implementation limits: ../README.md (RTP).
+ */
 #pragma pack(push,1)
 struct RtpWireHeader 
 {
@@ -33,19 +63,6 @@ static_assert(sizeof(RtpWireHeader) == 12);
 class Frame;
 using FramePtr = std::shared_ptr<Frame>;
 
-
-/*
-
-      0                   1                   2                   3
-    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    |V=2|P|X|  CC   |M|     PT      |       sequence number         |
-    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    |                           timestamp                           |
-    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    |           synchronization source (SSRC) identifier            |
-    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-*/
 
 /**
  * Per-SSRC receive-side RTP/RTCP statistics.

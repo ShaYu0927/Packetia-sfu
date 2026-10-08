@@ -221,7 +221,8 @@ size_t Room::ParticipantCount() const
     return participants_.size();
 }
 
-bool Room::PublishTrack(const std::string& participant_id, const media::MediaTrackPtr& track, uint32_t ssrc, uint8_t payload_type)
+bool Room::PublishTrack(const std::string& participant_id, const media::MediaTrackPtr& track, uint32_t ssrc,
+                        uint8_t payload_type, const std::string& source_track_id)
 {
     if (!track || track->id().empty())
     {
@@ -240,6 +241,7 @@ bool Room::PublishTrack(const std::string& participant_id, const media::MediaTra
         }
 
         const std::string track_id = track->id();
+        const std::string endpoint_track_id = source_track_id.empty() ? track_id : source_track_id;
         if (published_tracks_.find(track_id) != published_tracks_.end())
         {
             return false;
@@ -247,8 +249,8 @@ bool Room::PublishTrack(const std::string& participant_id, const media::MediaTra
 
         if (auto endpoint = participant_it->second->GetEndpoint()) {
             ::TrackInfo info;
-            if (!endpoint->IsRunning() || !endpoint->GetPublishedTrack(track_id, info) ||
-                info.payload_type != payload_type || (ssrc && !endpoint->BindSsrc(track_id, ssrc))) return false;
+            if (!endpoint->IsRunning() || !endpoint->GetPublishedTrack(endpoint_track_id, info) ||
+                info.payload_type != payload_type || (ssrc && !endpoint->BindSsrc(endpoint_track_id, ssrc))) return false;
         }
 
         if (!participant_it->second->AddPublishedTrack(track, false))
@@ -259,6 +261,7 @@ bool Room::PublishTrack(const std::string& participant_id, const media::MediaTra
 
         PublishedTrackInfo info;
         info.publisher_id = participant_id;
+        info.source_track_id = endpoint_track_id;
         info.track = track;
         info.ssrc = ssrc;
         info.payload_type = payload_type;
@@ -292,6 +295,7 @@ bool Room::UnpublishTrack(const std::string& track_id)
     }
 
     Participant::Ptr publisher;
+    std::string source_track_id;
 
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -303,6 +307,7 @@ bool Room::UnpublishTrack(const std::string& track_id)
         }
 
         auto publisher_it = participants_.find(track_it->second.publisher_id);
+        source_track_id = track_it->second.source_track_id;
         if (publisher_it != participants_.end())
         {
             publisher = publisher_it->second;
@@ -324,7 +329,7 @@ bool Room::UnpublishTrack(const std::string& track_id)
 
     if (publisher)
     {
-        if (auto endpoint = publisher->GetEndpoint()) endpoint->RemovePublishedTrack(track_id);
+        if (auto endpoint = publisher->GetEndpoint()) endpoint->RemovePublishedTrack(source_track_id);
         publisher->RemovePublishedTrack(track_id);
     }
 
@@ -543,7 +548,7 @@ bool Room::SubscribeTrackLocked(const std::string& subscriber_id, const std::str
     // Preserve metadata-only rooms; media-backed subscriptions must establish
     // a real route using previously negotiated downstream parameters.
     if (source || destination) {
-        if (!source || !destination || !destination->Subscribe(track_id, source, track_id)) return false;
+        if (!source || !destination || !destination->Subscribe(track_id, source, track_it->second.source_track_id)) return false;
     }
     auto inserted = track_subscribers.insert(subscriber_id);
     if (!inserted.second)

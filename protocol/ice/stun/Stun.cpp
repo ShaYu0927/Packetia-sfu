@@ -1,6 +1,7 @@
 #include "Stun.h"
 
 #include <cstring>
+#include <limits>
 
 #if __has_include(<openssl/hmac.h>)
 #define STUN_USE_OPENSSL 1
@@ -196,9 +197,16 @@ bool StunCodec::DecodeIceControlled(const StunMessageInfo& msg, uint64_t& out)
 
 bool StunCodec::DecodeXorMappedAddress(const StunMessageInfo& msg, XorMappedAddress& out)
 {
-    out = {};
+    return DecodeXorAddress(msg, AttrType::XOR_MAPPED_ADDRESS, out);
+}
 
-    const AttrView* a = msg.FindAttr(static_cast<uint16_t>(AttrType::XOR_MAPPED_ADDRESS));
+bool StunCodec::DecodeXorAddress(const StunMessageInfo& msg, AttrType type, XorMappedAddress& out)
+{
+    out = {};
+    if (type != AttrType::XOR_MAPPED_ADDRESS && type != AttrType::XOR_PEER_ADDRESS &&
+        type != AttrType::XOR_RELAYED_ADDRESS) return false;
+
+    const AttrView* a = msg.FindAttr(static_cast<uint16_t>(type));
     if (!a || !IsAttrInBounds(msg, *a))
         return false;
 
@@ -413,6 +421,18 @@ bool StunCodec::AppendXorMappedAddressAttr(std::vector<uint8_t>& out,
                                            const IpEndpoint& ep,
                                            const std::array<uint8_t, 12>& txid)
 {
+    std::vector<uint8_t> value;
+    if (!EncodeXorAddress(ep, txid, value)) return false;
+    return AppendAttr(out, static_cast<uint16_t>(AttrType::XOR_MAPPED_ADDRESS),
+                      value.data(), static_cast<uint16_t>(value.size()));
+}
+
+bool StunCodec::EncodeXorAddress(const IpEndpoint& ep,
+                                const std::array<uint8_t, 12>& txid,
+                                std::vector<uint8_t>& out)
+{
+    out.clear();
+    if (ep.family != IpFamily::IPv4 && ep.family != IpFamily::IPv6) return false;
     uint8_t buf[20] = {0};
     size_t len = 0;
 
@@ -452,10 +472,8 @@ bool StunCodec::AppendXorMappedAddressAttr(std::vector<uint8_t>& out,
         len = 20;
     }
 
-    return AppendAttr(out,
-                      static_cast<uint16_t>(AttrType::XOR_MAPPED_ADDRESS),
-                      buf,
-                      static_cast<uint16_t>(len));
+    out.assign(buf, buf + len);
+    return true;
 }
 
 bool StunCodec::AppendMessageIntegrityAttr(std::vector<uint8_t>& out,
@@ -519,6 +537,43 @@ std::vector<uint8_t> StunCodec::BuildBindingRequest(const std::array<uint8_t, 12
     WriteBE32(out, kMagicCookie);
     out.insert(out.end(), txid.begin(), txid.end());
     return out;
+}
+
+bool StunCodec::BuildMessage(StunMethod method, StunClass klass,
+                             const std::array<uint8_t, 12>& txid,
+                             const std::vector<StunAttribute>& attributes,
+                             std::vector<uint8_t>& out,
+                             std::string_view integrity_key,
+                             bool add_fingerprint)
+{
+    out.clear();
+    if (static_cast<uint16_t>(method) > 0x0FFF || static_cast<uint8_t>(klass) > 3 ||
+        integrity_key.size() > static_cast<size_t>(std::numeric_limits<int>::max())) return false;
+
+    size_t body_size = (integrity_key.empty() ? 0 : 24) + (add_fingerprint ? 8 : 0);
+    for (const auto& attr : attributes)
+    {
+        if (attr.type == static_cast<uint16_t>(AttrType::MESSAGE_INTEGRITY) ||
+            attr.type == static_cast<uint16_t>(AttrType::MESSAGE_INTEGRITY_SHA256) ||
+            attr.type == static_cast<uint16_t>(AttrType::FINGERPRINT) ||
+            attr.value.size() > 0xFFFF) return false;
+        body_size += 4 + Pad4(attr.value.size());
+        if (body_size > 0xFFFF) return false;
+    }
+
+    std::vector<uint8_t> buf = BuildBindingRequest(txid);
+    buf.reserve(kHeaderSize + body_size);
+    WriteBE16(buf.data(), EncodeType(method, klass));
+    for (const auto& attr : attributes)
+    {
+        if (!AppendAttr(buf, attr.type, attr.value.data(),
+                        static_cast<uint16_t>(attr.value.size()))) return false;
+    }
+    if (!integrity_key.empty() && !AppendMessageIntegrityAttr(buf, integrity_key)) return false;
+    if (add_fingerprint && !AppendFingerprintAttr(buf)) return false;
+    if (!UpdateMessageLength(buf)) return false;
+    out.swap(buf);
+    return true;
 }
 
 bool StunCodec::BuildIceBindingRequest(const IceRequestParams& in,

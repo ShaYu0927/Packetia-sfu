@@ -433,6 +433,35 @@ TEST_F(SfuConference, RoomRoutesMultipleTracksAndLeaveCleansOtherParticipants)
     EXPECT_FALSE(destination->IsRunning());
 }
 
+TEST_F(SfuConference, RoomTrackIdentityCanDifferFromPublisherMid)
+{
+    room::RoomOptions options;
+    options.auto_subscribe = false;
+    room::Room conference({"identity", "identity"}, options);
+    auto a = std::make_shared<room::Participant>("a", "A");
+    auto b = std::make_shared<room::Participant>("b", "B");
+    auto source = std::make_shared<media::SfuEndpoint>(1204);
+    auto destination = std::make_shared<media::SfuEndpoint>(1205);
+    ASSERT_TRUE(source->AddPublishedTrack("0", Description(0, false, 102)));
+    ASSERT_TRUE(source->Start()); ASSERT_TRUE(destination->Start());
+    ASSERT_TRUE(a->BindEndpoint(source)); ASSERT_TRUE(b->BindEndpoint(destination));
+    ASSERT_TRUE(conference.Join(a)); ASSERT_TRUE(conference.Join(b));
+    media::TrackInfo business;
+    business.sid = "a:0";
+    ASSERT_TRUE(conference.PublishTrack("a", std::make_shared<media::MediaTrack>(business), 11, 102, "0"));
+    auto transport = std::make_shared<CaptureTransport>();
+    Configure(destination, "a:0", transport, false, 777, 120);
+    ASSERT_TRUE(conference.SubscribeTrack("b", "a:0"));
+    Input(source, Packet(11, 102));
+    Drain(media_affinity::MakeStreamKey(destination->Id(), 777));
+    EXPECT_EQ(transport->Count(), 1U);
+    ASSERT_TRUE(conference.UnpublishTrack("a:0"));
+    EXPECT_EQ(source->PublishedTrackCount(), 0U);
+    EXPECT_EQ(destination->SubscriptionCount(), 0U);
+    EXPECT_FALSE(a->GetPublishedTrack("a:0"));
+    conference.Close();
+}
+
 TEST_F(SfuConference, QueuedPacketsDoNotOutliveSubscription)
 {
     auto source = std::make_shared<media::SfuEndpoint>(1007);

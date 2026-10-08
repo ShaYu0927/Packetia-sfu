@@ -1,5 +1,7 @@
 #include "WebRtcService.h"
 
+#include "CryptoUtil.h"
+#include "Room.h"
 #include "EventLoop.h"
 #include "EndpointBase.h"
 #include "Sdp.h"
@@ -15,7 +17,6 @@
 #include "third/nlohmann/json.hpp"
 
 #include <openssl/crypto.h>
-#include <openssl/rand.h>
 
 #include <algorithm>
 #include <set>
@@ -38,27 +39,11 @@ std::string Error(const std::string& error)
     return Json{{"type", "error"}, {"error", error}}.dump();
 }
 
-bool RandomCredential(size_t bytes, std::string& result)
-{
-    std::vector<unsigned char> random(bytes);
-    if (RAND_bytes(random.data(), static_cast<int>(random.size())) != 1) return false;
-    static constexpr char hex[] = "0123456789abcdef";
-    result.clear();
-    result.reserve(bytes * 2);
-    for (const auto byte : random)
-    {
-        result.push_back(hex[byte >> 4]);
-        result.push_back(hex[byte & 15]);
-    }
-    return true;
-}
-
 int AddressFamily(const std::string& ip)
 {
     in_addr v4{};
     if (inet_pton(AF_INET, ip.c_str(), &v4) == 1)
-        return v4.s_addr != htonl(INADDR_ANY) && v4.s_addr != htonl(INADDR_BROADCAST) &&
-            !IN_MULTICAST(ntohl(v4.s_addr)) ? AF_INET : AF_UNSPEC;
+        return v4.s_addr != htonl(INADDR_ANY) && v4.s_addr != htonl(INADDR_BROADCAST) && !IN_MULTICAST(ntohl(v4.s_addr)) ? AF_INET : AF_UNSPEC;
     in6_addr v6{};
     if (inet_pton(AF_INET6, ip.c_str(), &v6) == 1)
         return !IN6_IS_ADDR_UNSPECIFIED(&v6) && !IN6_IS_ADDR_MULTICAST(&v6) ? AF_INET6 : AF_UNSPEC;
@@ -74,38 +59,9 @@ std::vector<WebRtcMediaDescription> Capabilities()
     video.rtcpMux = audio.rtcpMux = true;
     sdp::Sdp::SetCodecs(video, {sdp::SdpCodec::H264(96)});
     sdp::Sdp::SetCodecs(audio, {sdp::SdpCodec::Opus(111)});
-    // Receive MID for bundled track lookup; no transport feedback is promised.
     video.headerExtensions.push_back({1, RtpHeaderExtensionUri::SDES_MID, MediaDirection::RecvOnly, {}});
     audio.headerExtensions = video.headerExtensions;
     return {std::move(video), std::move(audio)};
-}
-
-void SelectPrimaryCodecs(WebRtcSessionDescription& offer, const std::vector<WebRtcMediaDescription>& capabilities)
-{
-    for (auto& media : offer.medias)
-    {
-        auto capability = std::find_if(capabilities.begin(), capabilities.end(),
-            [&](const auto& item) { return !item.mid.empty() && item.mid == media.mid; });
-        if (capability == capabilities.end())
-            capability = std::find_if(capabilities.begin(), capabilities.end(),
-                [&](const auto& item) { return item.mid.empty() && item.media == media.media; });
-        if (capability == capabilities.end()) continue;
-        for (const auto& format : media.fmts)
-        {
-            const auto codec = std::find_if(media.codecs.begin(), media.codecs.end(),
-                [&](const auto& item) { return std::to_string(item.payloadType) == format; });
-            if (codec == media.codecs.end()) continue;
-            if (!std::any_of(capability->codecs.begin(), capability->codecs.end(), [&](const auto& supported)
-            {
-                RtpCodecParameters negotiated;
-                return NegotiateRtpCodec(*codec, supported, negotiated);
-            })) continue;
-            const auto selected = *codec;
-            media.fmts = {std::to_string(selected.payloadType)};
-            media.codecs = {selected};
-            break;
-        }
-    }
 }
 
 void CopyPrimarySources(const WebRtcMediaDescription& remote, WebRtcMediaDescription& track)
@@ -141,6 +97,20 @@ struct WebRtcService::Session
     std::shared_ptr<media::SfuEndpoint> endpoint;
     std::string pending_offer_id;
     uint64_t negotiation_deadline_ms = 0;
+    bool room_managed = false;
+    bool subscriber = false;
+};
+
+struct WebRtcService::Membership
+{
+    std::shared_ptr<room::Room> room;
+    std::shared_ptr<room::Participant> participant;
+};
+
+struct WebRtcService::Subscription
+{
+    std::string track_id;
+    WebRtcMediaDescription media;
 };
 
 WebRtcService::WebRtcService(EventLoop* loop, config::AppConfig config,
@@ -260,6 +230,8 @@ void WebRtcService::StopOnOwner()
         ws_->SetOnClose({});
     }
     while (!sessions_.empty()) RemoveSession(sessions_.begin()->first);
+    while (!memberships_.empty()) LeaveRoom(memberships_.begin()->first);
+    rooms_.clear();
     if (mux_) mux_->Close();
     if (udp_) udp_->SetHandler({});
     if (ws_) ws_->Stop();
@@ -276,7 +248,6 @@ std::string WebRtcService::OnMessage(const std::string& connection, const std::s
     const bool hadSession = sessions_.count(connection) != 0;
     try
     {
-        // Limit nesting before materializing untrusted JSON on the I/O thread.
         const auto request = Json::parse(message, [](int depth, Json::parse_event_t, Json&)
         {
             if (depth > 8) throw std::invalid_argument("JSON nesting limit exceeded");
@@ -285,20 +256,27 @@ std::string WebRtcService::OnMessage(const std::string& connection, const std::s
         if (!request.is_object() || !request.contains("type") || !request["type"].is_string())
             return Error("Expected a signaling message type");
         const auto type = request["type"].get<std::string>();
-        if (type == "close")
+        if (type == "close" || type == "leave")
         {
             RemoveSession(connection);
             return Json{{"type", "closed"}}.dump();
         }
-        if (type != "offer" && type != "answer" && type != "rollback")
+        if (type != "offer" && type != "answer" && type != "rollback" && type != "join" &&
+            type != "tracks" && type != "publish" && type != "subscribe")
             return Error("Unsupported signaling message type");
         if (!request.contains("token") || !request["token"].is_string()) return Error("Unauthorized");
         const auto token = request["token"].get<std::string>();
         if (token.size() != config_.webrtc.token.size() ||
             CRYPTO_memcmp(token.data(), config_.webrtc.token.data(), token.size()) != 0)
             return Error("Unauthorized");
+        if (type == "join")
+        {
+            if (!request.contains("room_id") || !request["room_id"].is_string()) return Error("Expected room_id");
+            return JoinRoom(connection, request["room_id"].get<std::string>());
+        }
+        if (type == "tracks") return ListTracks(connection);
         const auto found = sessions_.find(connection);
-        if (type != "offer")
+        if (type == "answer" || type == "rollback")
         {
             if (found == sessions_.end()) return Error("No session to negotiate");
             auto& session = *found->second;
@@ -331,6 +309,58 @@ std::string WebRtcService::OnMessage(const std::string& connection, const std::s
         if (!request.contains("sdp") || !request["sdp"].is_string()) return Error("Expected an SDP offer");
         const auto offer = request["sdp"].get<std::string>();
         if (offer.empty() || offer.size() > kMaxSdpBytes) return Error("SDP must be between 1 and 65536 bytes");
+        if (type == "publish" || type == "subscribe")
+        {
+            const auto member = memberships_.find(connection);
+            if (member == memberships_.end()) return Error("Join a room before publishing or subscribing");
+            if (found != sessions_.end()) return Error("Leave and rejoin before changing the room media session");
+            if (type == "publish") return CreateSession(connection, offer);
+            if (!request.contains("tracks") || !request["tracks"].is_array() || request["tracks"].empty() ||
+                request["tracks"].size() > 8) return Error("Expected 1-8 track/MID bindings");
+            std::vector<Subscription> subscriptions;
+            std::set<std::string> trackIds, mids;
+            for (const auto& binding : request["tracks"])
+            {
+                const auto trackId = binding.at("track_id").get<std::string>();
+                const auto mid = binding.at("mid").get<std::string>();
+                if (mid.empty() || mid.size() > 16 || !trackIds.insert(trackId).second || !mids.insert(mid).second)
+                    return Error("Duplicate or invalid track/MID binding");
+                bool resolved = false;
+                for (const auto& item : memberships_)
+                {
+                    if (item.first == connection || item.second->room != member->second->room) continue;
+                    const auto track = item.second->participant->GetPublishedTrack(trackId);
+                    const auto source = sessions_.find(item.first);
+                    if (!track || source == sessions_.end() || source->second->subscriber) continue;
+                    for (const auto& media : source->second->rtc->LocalDescription().medias)
+                    {
+                        if (media.mid != track->info().mid || !media.port || media.direction != MediaDirection::RecvOnly) continue;
+                        Subscription subscription{trackId, media};
+                        subscription.media.mid = mid;
+                        subscription.media.direction = MediaDirection::SendOnly;
+                        subscription.media.ssrcs.clear();
+                        subscription.media.ssrcGroups.clear();
+                        subscription.media.msids = {"packetia " + trackId};
+                        for (auto& extension : subscription.media.headerExtensions) extension.direction = MediaDirection::SendOnly;
+                        uint32_t ssrc = 0;
+                        do
+                        {
+                            if (!utils::SecureRandomBytes(reinterpret_cast<uint8_t*>(&ssrc), sizeof(ssrc)))
+                                return Error("Could not generate sender SSRC");
+                        } while (!ssrc || std::any_of(subscriptions.begin(), subscriptions.end(),
+                            [&](const auto& previous) { return previous.media.ssrcs.front().ssrc == ssrc; }));
+                        subscription.media.ssrcs.push_back({ssrc, {{"cname", "packetia"}}});
+                        subscriptions.push_back(std::move(subscription));
+                        resolved = true;
+                        break;
+                    }
+                    if (resolved) break;
+                }
+                if (!resolved) return Error("Track is unavailable in this room");
+            }
+            return CreateSession(connection, offer, subscriptions);
+        }
+        if (memberships_.count(connection)) return Error("Use publish or subscribe for a room media session");
         if (found != sessions_.end()) return UpdateSession(*found->second, offer);
         if (sessions_.size() >= config_.webrtc.max_sessions) return Error("WebRTC session limit reached");
         return CreateSession(connection, offer);
@@ -343,19 +373,26 @@ std::string WebRtcService::OnMessage(const std::string& connection, const std::s
     }
 }
 
-std::string WebRtcService::CreateSession(const std::string& connection, const std::string& offerSdp)
+std::string WebRtcService::CreateSession(const std::string& connection, const std::string& offerSdp,
+                                        const std::vector<Subscription>& subscriptions)
 {
     WebRtcSessionDescription offer;
     std::string error;
     if (!sdp::Sdp::Parse(offerSdp, sdp::SdpProfile::WebRtc, SdpType::Offer, offer, error))
         return Error("Invalid SDP offer");
     WebRtcSessionOptions options;
-    if (!RandomCredential(8, options.ice.ufrag) || !RandomCredential(24, options.ice.pwd))
+    if (!utils::SecureRandomHex(8, options.ice.ufrag) || !utils::SecureRandomHex(24, options.ice.pwd))
         return Error("Could not generate ICE credentials");
     options.ice.candidates = {"1 1 UDP 2130706431 " + config_.webrtc.public_ip + " " + std::to_string(udp_->LocalAddress().Port()) + " typ host"};
     options.ice.endOfCandidates = true;
+    if (sessions_.size() >= config_.webrtc.max_sessions) return Error("WebRTC session limit reached");
     options.medias = Capabilities();
-    SelectPrimaryCodecs(offer, options.medias);
+    if (!subscriptions.empty())
+    {
+        options.medias.clear();
+        for (const auto& subscription : subscriptions) options.medias.push_back(subscription.media);
+    }
+    options.singleCodecPerMedia = true;
     auto dtls = CreateDtlsTransport();
     auto srtp = CreateSrtpTransport();
     if (!dtls || !srtp) return Error("Encryption backend is unavailable");
@@ -364,6 +401,8 @@ std::string WebRtcService::CreateSession(const std::string& connection, const st
     // RTSP shares this registry and uses EndpointBase's process-wide allocator.
     entry->id = utils::EndpointBase::NextEndpointId();
     entry->ufrag = options.ice.ufrag;
+    entry->room_managed = memberships_.count(connection) != 0;
+    entry->subscriber = !subscriptions.empty();
     // Establish ownership before registering resources so allocation failures
     // also roll back the UDP entry through OnMessage's RemoveSession.
     auto& session = *sessions_.emplace(connection, std::move(entry)).first->second;
@@ -389,10 +428,27 @@ std::string WebRtcService::CreateSession(const std::string& connection, const st
         });
     session.endpoint = std::make_shared<PublishedEndpoint>(session.id, publisher_);
     const auto weakEndpoint = std::weak_ptr<media::SfuEndpoint>(session.endpoint);
-    options.onNegotiated = [weakEndpoint](const auto& local, const auto& remote)
+    options.onNegotiated = [weakEndpoint, subscriptions](const auto& local, const auto& remote)
     {
         const auto endpoint = weakEndpoint.lock();
         if (!endpoint) return false;
+        if (!subscriptions.empty())
+        {
+            for (const auto& subscription : subscriptions)
+            {
+                const auto media = std::find_if(local.medias.begin(), local.medias.end(),
+                    [&](const auto& item) { return item.mid == subscription.media.mid; });
+                if (media == local.medias.end() || !media->port || media->direction != MediaDirection::SendOnly ||
+                    media->codecs.size() != 1) return false;
+                RtpCodecParameters source, downstream;
+                const auto& codec = subscription.media.codecs.front();
+                if (!NegotiateRtpCodec(codec, codec, source) ||
+                    !NegotiateRtpCodec(media->codecs.front(), media->codecs.front(), downstream) ||
+                    source.encodingName != downstream.encodingName || source.clockRate != downstream.clockRate ||
+                    source.channels != downstream.channels || source.fmtp != downstream.fmtp) return false;
+            }
+            return true;
+        }
         std::vector<sdp::SdpMedia> tracks;
         for (const auto& negotiated : local.medias)
         {
@@ -429,7 +485,98 @@ std::string WebRtcService::CreateSession(const std::string& connection, const st
     session.endpoint_registered = utils::EndpointManager::Instance().Add(session.endpoint);
     if (!session.endpoint_registered || !session.rtc->start())
         return fail("Could not start WebRTC media session");
+    const auto member = memberships_.find(connection);
+    if (member != memberships_.end())
+    {
+        auto& membership = *member->second;
+        if (!membership.participant->BindEndpoint(session.endpoint)) return fail("Could not bind room endpoint");
+        if (subscriptions.empty())
+        {
+            for (const auto& media : answer.medias)
+            {
+                if (!media.port || media.direction != MediaDirection::RecvOnly) continue;
+                media::TrackInfo info;
+                info.sid = membership.participant->Id() + ":" + media.mid;
+                info.mid = media.mid;
+                info.type = media.media == "video" ? media::TrackType::Video : media::TrackType::Audio;
+                info.mimeType = media.media + "/" + media.codecs.front().encodingName;
+                if (!membership.room->PublishTrack(membership.participant->Id(), std::make_shared<media::MediaTrack>(info),
+                    0, static_cast<uint8_t>(media.codecs.front().payloadType), media.mid)) return fail("Could not publish room track");
+            }
+        }
+        else
+        {
+            for (const auto& subscription : subscriptions)
+            {
+                const auto media = std::find_if(answer.medias.begin(), answer.medias.end(),
+                    [&](const auto& item) { return item.mid == subscription.media.mid; });
+                rtsp::RtpSenderTrackConfig sender;
+                sender.local_ssrc = media->ssrcs.front().ssrc;
+                sender.payload_type = static_cast<uint8_t>(media->codecs.front().payloadType);
+                sender.sample_rate = media->codecs.front().clockRate;
+                for (const auto& extension : media->headerExtensions)
+                    if (extension.uri == RtpHeaderExtensionUri::SDES_MID)
+                    { sender.mid_extension_id = static_cast<uint8_t>(extension.id); sender.mid = media->mid; }
+                const auto codec = media->media == "video" ? CodecId::H264 : CodecId::OPUS;
+                if (!session.endpoint->ConfigureSubscription(subscription.track_id, sender, session.transport, codec) ||
+                    !membership.room->SubscribeTrack(membership.participant->Id(), subscription.track_id))
+                    return fail("Could not connect room subscription");
+            }
+        }
+    }
     return Json{{"type", "answer"}, {"session_id", session.id}, {"sdp", sdp::Sdp::Serialize(answer)}}.dump();
+}
+
+std::string WebRtcService::JoinRoom(const std::string& connection, const std::string& roomId)
+{
+    if (roomId.empty() || roomId.size() > 64 ||
+        roomId.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.") != std::string::npos)
+        return Error("Invalid room_id");
+    if (sessions_.count(connection) || memberships_.count(connection)) return Error("Connection has already joined or negotiated");
+    if (memberships_.size() >= config_.webrtc.max_sessions) return Error("Room participant limit reached");
+    std::string id;
+    if (!utils::SecureRandomHex(8, id)) return Error("Could not generate participant ID");
+    id = "p-" + id;
+    auto& target = rooms_[roomId];
+    if (!target)
+    {
+        room::RoomOptions options;
+        options.auto_subscribe = false;
+        options.max_participants = config_.webrtc.max_sessions;
+        target = std::make_shared<room::Room>(room::RoomInfo{roomId, roomId}, options);
+    }
+    auto member = std::make_unique<Membership>();
+    member->room = target;
+    member->participant = std::make_shared<room::Participant>(id, id);
+    if (!target->Join(member->participant)) return Error("Could not join room");
+    memberships_.emplace(connection, std::move(member));
+    return Json{{"type", "joined"}, {"room_id", roomId}, {"participant_id", id}}.dump();
+}
+
+std::string WebRtcService::ListTracks(const std::string& connection) const
+{
+    const auto member = memberships_.find(connection);
+    if (member == memberships_.end()) return Error("Join a room first");
+    auto tracks = Json::array();
+    for (const auto& participant : member->second->room->GetParticipants())
+        for (const auto& track : participant->GetPublishedTracks())
+        {
+            const auto info = track->info();
+            tracks.push_back({{"track_id", info.sid}, {"publisher_id", participant->Id()},
+                {"kind", info.type == media::TrackType::Video ? "video" : "audio"}, {"mime_type", info.mimeType}});
+        }
+    std::sort(tracks.begin(), tracks.end(), [](const auto& a, const auto& b) { return a.at("track_id") < b.at("track_id"); });
+    return Json{{"type", "tracks"}, {"tracks", tracks}}.dump();
+}
+
+void WebRtcService::LeaveRoom(const std::string& connection)
+{
+    const auto found = memberships_.find(connection);
+    if (found == memberships_.end()) return;
+    auto membership = std::move(found->second);
+    memberships_.erase(found);
+    membership->room->Leave(membership->participant->Id());
+    if (membership->room->ParticipantCount() == 0) rooms_.erase(membership->room->Id());
 }
 
 std::string WebRtcService::UpdateSession(Session& session, const std::string& offerSdp)
@@ -438,10 +585,6 @@ std::string WebRtcService::UpdateSession(Session& session, const std::string& of
     std::string error;
     if (!sdp::Sdp::Parse(offerSdp, sdp::SdpProfile::WebRtc, SdpType::Offer, offer, error))
         return Error("Invalid SDP offer");
-    auto capabilities = session.rtc->LocalDescription().medias;
-    const auto defaults = Capabilities();
-    capabilities.insert(capabilities.end(), defaults.begin(), defaults.end());
-    SelectPrimaryCodecs(offer, capabilities);
     if (!session.rtc->ApplyRemoteOffer(offer)) return Error(session.rtc->LastError());
     if (!session.rtc->CreateLocalAnswer(answer))
     {
@@ -463,6 +606,7 @@ bool WebRtcService::Renegotiate(uint64_t sessionId, const std::vector<sdp::SdpMe
             [&](const auto& item) { return item.second->id == sessionId; });
         if (found == sessions_.end()) { error = "Unknown WebRTC session"; return; }
         auto& session = *found->second;
+        if (session.room_managed) { error = "Room media renegotiation requires a new session"; return; }
         const auto supported = Capabilities();
         for (const auto& media : medias)
         {
@@ -513,6 +657,7 @@ bool WebRtcService::Renegotiate(uint64_t sessionId, const std::vector<sdp::SdpMe
 
 void WebRtcService::RemoveSession(const std::string& connection)
 {
+    LeaveRoom(connection);
     const auto found = sessions_.find(connection);
     if (found == sessions_.end()) return;
     auto session = std::move(found->second);

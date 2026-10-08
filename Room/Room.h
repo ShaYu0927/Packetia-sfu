@@ -44,6 +44,7 @@ struct RoomInfo
 struct PublishedTrackInfo
 {
     std::string publisher_id;
+    std::string source_track_id;
     media::MediaTrackPtr track;
     uint32_t ssrc = 0;
     uint8_t payload_type = 0;
@@ -104,7 +105,9 @@ public:
     std::vector<Participant::Ptr> GetParticipants() const;
     size_t ParticipantCount() const;
 
-    bool PublishTrack(const std::string& participant_id, const media::MediaTrackPtr& track, uint32_t ssrc, uint8_t payload_type);
+    // Room IDs may be global while an endpoint's source track ID is a local MID.
+    bool PublishTrack(const std::string& participant_id, const media::MediaTrackPtr& track, uint32_t ssrc,
+                      uint8_t payload_type, const std::string& source_track_id = {});
 
     bool UnpublishTrack(const std::string& track_id);
 

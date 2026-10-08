@@ -216,7 +216,8 @@ void Negotiation()
     CHECK(f.session->CreateLocalAnswer(answer) && answer.origin.sess_id == id);
     CHECK(f.session->start() && f.session->start());
     CHECK(f.dtls->configuredRemote.fingerprints[0].value == "REMOTE-FINGERPRINT");
-    CHECK(!f.session->ApplyRemoteOffer(offer));
+    CHECK(f.session->ApplyRemoteOffer(offer));
+    f.session->RollbackNegotiation();
     f.Handshake();
     CHECK(!f.session->SendRtp(Rtp())); // recvonly still permits RTCP.
     CHECK(f.session->SendRtcp(Rtcp()));
@@ -457,6 +458,73 @@ void BusinessOffers()
     CHECK(f.dtls->starts == 1 && f.srtp->installs == 1 && f.dtls->closes == 0);
 }
 
+std::vector<uint8_t> MidPacket(uint32_t ssrc, const std::string& mid, bool twoByte = false)
+{
+    auto packet = Rtp();
+    packet[0] |= 0x10;
+    packet[8] = ssrc >> 24; packet[9] = ssrc >> 16;
+    packet[10] = ssrc >> 8; packet[11] = ssrc;
+    packet.insert(packet.end(), {static_cast<uint8_t>(twoByte ? 0x10 : 0xBE),
+        static_cast<uint8_t>(twoByte ? 0x00 : 0xDE), 0, 0});
+    if (twoByte) packet.insert(packet.end(), {1, static_cast<uint8_t>(mid.size())});
+    else packet.push_back(0x10 | (mid.size() - 1));
+    packet.insert(packet.end(), mid.begin(), mid.end());
+    while (packet.size() % 4) packet.push_back(0);
+    packet[15] = (packet.size() - 16) / 4;
+    return packet;
+}
+
+void SharedPayloadRouting()
+{
+    auto options = Options();
+    options.medias[0].mid.clear();
+    options.medias[0].headerExtensions.push_back({1, RtpHeaderExtensionUri::SDES_MID});
+    Fixture f(options);
+    auto remote = Offer();
+    remote.medias[0].headerExtensions = options.medias[0].headerExtensions;
+    auto second = remote.medias[0];
+    second.mid = "screen";
+    remote.medias.push_back(second);
+    remote.bundle.mids.push_back(second.mid);
+    f.Start(remote);
+    f.Handshake();
+    f.Deliver(Rtp(), f.peer); // Shared PT without a MID/SSRC binding is ambiguous.
+    CHECK(f.sink->packets.empty());
+    f.Deliver(MidPacket(11, "audio"), f.peer);
+    f.Deliver(MidPacket(22, "screen", true), f.peer);
+    CHECK(f.sink->packets.size() == 2);
+    f.Deliver(MidPacket(11, "screen"), f.peer); // Cannot move an established SSRC.
+    f.Deliver(MidPacket(33, "unknown"), f.peer);
+    CHECK(f.sink->packets.size() == 2);
+    auto learned = Rtp(); learned[11] = 22;
+    f.Deliver(learned, f.peer); // Subsequent packets may omit MID.
+    CHECK(f.sink->packets.size() == 3);
+    CHECK(f.session->SendRtp(MidPacket(44, "audio")));
+    CHECK(f.session->SendRtp(MidPacket(55, "screen")));
+    CHECK(!f.session->SendRtp(MidPacket(44, "screen")));
+
+    auto desired = f.session->LocalDescription().medias;
+    desired.pop_back();
+    WebRtcSessionDescription offer, answer;
+    CHECK(f.session->CreateLocalOffer(desired, offer));
+    CHECK(offer.medias[1].port != 0 && offer.medias[1].direction == MediaDirection::Inactive);
+    sdp::SdpNegotiator peer;
+    remote.ice.candidates = {"1 1 udp 2130706431 192.0.2.2 6000 typ host"};
+    remote.dtls.setup = DtlsSetup::Passive;
+    for (auto& media : remote.medias) { media.ice = remote.ice; media.dtls = remote.dtls; }
+    CHECK(peer.ApplyOffer(offer));
+    CHECK(peer.CreateAnswer(remote, answer));
+    answer.origin.sess_id = remote.origin.sess_id;
+    answer.origin.sess_version = "2";
+    CHECK(f.session->ApplyRemoteAnswer(answer));
+    f.Deliver(learned, f.peer);
+    f.Deliver(MidPacket(66, "screen"), f.peer);
+    CHECK(f.sink->packets.size() == 3);
+    CHECK(!f.session->SendRtp(MidPacket(55, "screen")));
+    f.Deliver(MidPacket(11, "audio"), f.peer);
+    CHECK(f.sink->packets.size() == 4);
+}
+
 void Failures()
 {
     for (int kind = 0; kind < 5; ++kind)
@@ -641,7 +709,7 @@ int main()
     try
     {
         Negotiation(); Validation(); BundleAndDirections(); MediaFlow(); Failures(); StunNomination(); IceTimeout();
-        SelectedPeerRegistration(); MeetingRenegotiation(); BusinessOffers();
+        SelectedPeerRegistration(); MeetingRenegotiation(); BusinessOffers(); SharedPayloadRouting();
         std::cout << "WebRtcSession negotiation, validation, media and failure tests passed\n";
         return 0;
     }

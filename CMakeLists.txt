@@ -130,6 +130,8 @@ else()
 endif()
 
 add_library(utils STATIC
+    utils/CryptoUtil.cpp
+    utils/CryptoUtil.h
     utils/TimeUtil.cpp
     utils/TaskScheduler.cpp
     utils/SelectTaskScheduler.cpp
@@ -147,7 +149,7 @@ add_library(utils STATIC
 
 )
 
-target_link_libraries(utils PUBLIC LOGGER Threads::Threads packetia_memory)
+target_link_libraries(utils PUBLIC LOGGER Threads::Threads packetia_memory PRIVATE OpenSSL::Crypto)
 target_link_libraries(COMMON PUBLIC packetia_memory)
 target_link_libraries(network PUBLIC packetia_memory)
 
@@ -156,6 +158,7 @@ add_library(rtp STATIC
     Rtsp/Rtp.h
     Rtsp/Rtp/NackRequester.cpp
     Rtsp/Rtp/NackRequester.h
+    Rtsp/Rtp/RtpHeaderExtensions.h
     Rtsp/RtpReceiver.cpp
     Rtsp/RtpReceiver.h
     Rtsp/TrackClock.cpp
@@ -246,6 +249,15 @@ if(BUILD_TESTING)
         ${CMAKE_SOURCE_DIR}/protocol/ice/stun
     )
     add_test(NAME IceChecklistUnitTest COMMAND ice_unit_tests)
+
+    add_executable(turn_unit_tests
+        protocol/turn/test/test_TurnCodec.cpp
+        protocol/turn/test/test_TurnAuth.cpp
+        protocol/turn/test/test_TurnServer.cpp
+    )
+    target_link_libraries(turn_unit_tests PRIVATE TURN GTest::gtest GTest::gtest_main)
+    add_test(NAME TurnUnitTest COMMAND turn_unit_tests)
+    set_tests_properties(TurnUnitTest PROPERTIES TIMEOUT 30)
 endif()
 add_executable(Packetia
     server/main.cpp

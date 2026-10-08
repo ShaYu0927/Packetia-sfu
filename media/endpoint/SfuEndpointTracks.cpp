@@ -1,6 +1,7 @@
 #include "MediaEndpoint.h"
 #include "MediaStreamAffinity.h"
 #include "SdpTrackBinding.h"
+#include "../../Rtsp/Rtp/RtpHeaderExtensions.h"
 
 #include <algorithm>
 #include <limits>
@@ -9,47 +10,6 @@ namespace media
 {
 namespace
 {
-// Parse both RFC 8285 formats. Unknown extension profiles cannot establish a
-// MID binding; a previously negotiated SSRC can still identify the track.
-bool ReadExtensions(common::BufferView packet, std::unordered_map<uint8_t, std::string>& values)
-{
-    const auto* p = packet.Data();
-    if (!p || packet.Size() < 12 || (p[0] >> 6) != 2) return false;
-    size_t offset = 12 + 4 * (p[0] & 15);
-    if (offset > packet.Size()) return false;
-    if (p[0] & 0x10) {
-        if (offset + 4 > packet.Size()) return false;
-        const uint16_t profile = media_affinity::ReadUint16BE(p + offset);
-        const size_t end = offset + 4 + 4 * media_affinity::ReadUint16BE(p + offset + 2);
-        offset += 4;
-        if (end > packet.Size()) return false;
-        if (profile == 0xBEDE || (profile & 0xFFF0) == 0x1000) {
-            while (offset < end) {
-                uint8_t id = p[offset++];
-                if (id == 0) continue;
-                size_t size;
-                if (profile == 0xBEDE) {
-                    size = (id & 15) + 1;
-                    id >>= 4;
-                    if (id == 15) break;
-                } else {
-                    if (offset == end) return false;
-                    size = p[offset++];
-                }
-                if (offset + size > end || values.count(id)) return false;
-                values.emplace(id, std::string(reinterpret_cast<const char*>(p + offset), size));
-                offset += size;
-            }
-        }
-        offset = end;
-    }
-    if (p[0] & 0x20) {
-        const size_t padding = p[packet.Size() - 1];
-        if (!padding || padding > packet.Size() - offset) return false;
-    }
-    return true;
-}
-
 bool SameEncoding(const ::TrackInfo& a, const ::TrackInfo& b)
 {
     return a.type == b.type && a.codec_id == b.codec_id && a.clock_rate == b.clock_rate &&
@@ -342,7 +302,7 @@ bool SfuEndpoint::RemovePublishedTrack(const std::string& id, bool retire_identi
 bool SfuEndpoint::ResolveRtpTrack(common::BufferView packet, const std::string& hint)
 {
     std::unordered_map<uint8_t, std::string> extensions;
-    if (!ReadExtensions(packet, extensions)) return false;
+    if (!rtsp::ReadRtpHeaderExtensions(packet.Data(), packet.Size(), extensions)) return false;
     const uint32_t ssrc = media_affinity::ReadUint32BE(packet.Data() + 8);
     if (retired_ssrcs_.count(ssrc)) return false;
     const uint8_t pt = packet.Data()[1] & 127;

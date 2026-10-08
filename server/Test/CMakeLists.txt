@@ -58,7 +58,7 @@ if(TARGET media AND PACKETIA_WITH_LIBWEBSOCKETS AND PACKETIA_SRTP_AVAILABLE)
     add_executable(test_webrtc_service test_webrtc_service.cpp ../WebRtcService.cpp)
     target_link_libraries(test_webrtc_service PRIVATE
         "$<$<PLATFORM_ID:Linux>:-Wl,--start-group>"
-        server media network utils WebRtc LOGGER
+        server ROOM_LIB media network utils WebRtc LOGGER
         "$<$<PLATFORM_ID:Linux>:-Wl,--end-group>")
     add_test(NAME webrtc_service COMMAND test_webrtc_service)
     set_tests_properties(webrtc_service PROPERTIES TIMEOUT 30)

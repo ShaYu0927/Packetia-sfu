@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Packetia Room</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header><strong>Packetia Room</strong><span id="connection" role="status">Disconnected</span></header>
+  <main>
+    <form id="join-form" class="toolbar">
+      <label>Room<input id="room" value="demo" maxlength="64" required pattern="[A-Za-z0-9_.-]+"></label>
+      <label class="toggle"><input id="relay" type="checkbox">Force TURN</label>
+      <button id="join" type="submit">Join</button>
+      <button id="leave" type="button" disabled>Leave</button>
+    </form>
+    <p id="identity">No room selected</p>
+    <div class="actions">
+      <button id="publish" disabled>Publish camera</button>
+      <label>Publisher<select id="publisher" disabled><option value="">No published tracks</option></select></label>
+      <button id="watch" disabled>Watch</button>
+    </div>
+    <div class="videos">
+      <section><div class="video-title"><h2>Local</h2><span id="local-status">Idle</span></div>
+        <div class="video-surface"><video id="local" muted autoplay playsinline></video><span class="placeholder">Local camera</span></div>
+      </section>
+      <section><div class="video-title"><h2>Remote</h2><span id="remote-status">Idle</span></div>
+        <div class="video-surface"><video id="remote" autoplay playsinline controls></video><span class="placeholder">Remote stream</span></div>
+      </section>
+    </div>
+    <dl class="metrics">
+      <div><dt>ICE</dt><dd id="ice">Idle</dd></div>
+      <div><dt>Local candidate</dt><dd id="candidate">-</dd></div>
+      <div><dt>Received video frames</dt><dd id="frames">0</dd></div>
+      <div><dt>Received bytes</dt><dd id="bytes">0</dd></div>
+    </dl>
+    <p id="error" role="alert"></p>
+  </main>
+</body>
+</html>

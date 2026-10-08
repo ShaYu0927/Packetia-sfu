@@ -1,6 +1,7 @@
 #include "WebRtcSession.h"
 #include "WebRtcCodec.h"
 #include "Sdp.h"
+#include "../../Rtsp/Rtp/RtpHeaderExtensions.h"
 
 #include <algorithm>
 #include <atomic>
@@ -148,7 +149,7 @@ bool WebRtcSession::CreateLocalAnswer(WebRtcSessionDescription& answer)
     if (!dtls_ || !srtp_ || options_.ice.candidates.empty())
         return Reject("Configure crypto backends and local ICE candidates first");
     WebRtcSessionDescription result;
-    if (!negotiation_.CreateAnswer(LocalTemplate(options_.medias), result))
+    if (!negotiation_.CreateAnswer(LocalTemplate(options_.medias), result, options_.singleCodecPerMedia))
         return Reject(negotiation_.LastError());
     if (!CommitNegotiation()) return false;
     answer = std::move(result);
@@ -241,12 +242,12 @@ bool WebRtcSession::CommitNegotiation()
             return reject("Renegotiation must preserve the local DTLS role");
         for (const auto& codec : media.codecs)
         {
-            const auto old = bindings.find(codec.payloadType);
+            const auto key = std::make_pair(media.mid, codec.payloadType);
+            const auto old = bindings.find(key);
             RtpCodecParameters compatible;
-            if (old != bindings.end() && (old->second.first != media.mid ||
-                !NegotiateRtpCodec(old->second.second, codec, compatible)))
-                return reject("A negotiated payload type cannot change its track or RTP format");
-            bindings.emplace(codec.payloadType, std::make_pair(media.mid, codec));
+            if (old != bindings.end() && !NegotiateRtpCodec(old->second, codec, compatible))
+                return reject("A negotiated payload type cannot change its RTP format within a MID");
+            bindings.emplace(key, codec);
         }
     }
     IceParameters remoteIce = remote_ice_;
@@ -412,14 +413,57 @@ void WebRtcSession::HandleDtls(network::transport::ReceivedDatagram datagram)
     CompleteDtls();
 }
 
-bool WebRtcSession::AllowsRtp(const std::vector<uint8_t>& packet, bool sending) const
+bool WebRtcSession::AllowsRtp(const std::vector<uint8_t>& packet, bool sending)
 {
     if (!Classifier::IsRtp(packet.data(), packet.size())) return false;
+    std::unordered_map<uint8_t, std::string> extensions;
+    if (!rtsp::ReadRtpHeaderExtensions(packet.data(), packet.size(), extensions)) return false;
     const int pt = packet[1] & 0x7f;
+    const uint32_t ssrc = (uint32_t(packet[8]) << 24) | (uint32_t(packet[9]) << 16) |
+        (uint32_t(packet[10]) << 8) | packet[11];
+    auto& bindings = sending ? send_ssrc_bindings_ : receive_ssrc_bindings_;
+    const auto bound = bindings.find(ssrc);
+    std::string selected = bound == bindings.end() ? std::string{} : bound->second;
+    const auto select = [&](const std::string& mid)
+    {
+        if (!selected.empty() && selected != mid) return false;
+        selected = mid;
+        return true;
+    };
+    bool hasMid = false, matchedMid = false;
     for (const auto& media : negotiation_.CurrentLocal().medias)
-        if (media.port != 0 && (sending ? CanSend(media.direction) : CanReceive(media.direction)) &&
+        for (const auto& extension : media.headerExtensions)
+        {
+            if (extension.uri != "urn:ietf:params:rtp-hdrext:sdes:mid" ||
+                !(sending ? CanSend(extension.direction) : CanReceive(extension.direction))) continue;
+            const auto value = extensions.find(static_cast<uint8_t>(extension.id));
+            if (value == extensions.end()) continue;
+            hasMid = true;
+            if (value->second != media.mid) continue;
+            if (!select(media.mid)) return false;
+            matchedMid = true;
+        }
+    if (hasMid && !matchedMid) return false;
+    const auto& sources = sending ? negotiation_.CurrentLocal() : negotiation_.CurrentRemote();
+    for (const auto& media : sources.medias)
+        for (const auto& source : media.ssrcs)
+            if (source.ssrc == ssrc && !select(media.mid)) return false;
+    if (selected.empty())
+        for (const auto& media : negotiation_.CurrentLocal().medias)
+            if (media.port != 0 && std::any_of(media.codecs.begin(), media.codecs.end(),
+                [pt](const auto& codec) { return codec.payloadType == pt; }))
+            {
+                if (!selected.empty()) return false;
+                selected = media.mid;
+            }
+    for (const auto& media : negotiation_.CurrentLocal().medias)
+        if (media.mid == selected && media.port != 0 && (sending ? CanSend(media.direction) : CanReceive(media.direction)) &&
             std::any_of(media.codecs.begin(), media.codecs.end(),
-                [pt](const auto& codec) { return codec.payloadType == pt; })) return true;
+                [pt](const auto& codec) { return codec.payloadType == pt; }))
+        {
+            bindings.emplace(ssrc, media.mid);
+            return true;
+        }
     return false;
 }
 

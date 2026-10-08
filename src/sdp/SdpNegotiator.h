@@ -22,7 +22,7 @@ public:
 
     bool ApplyOffer(const SdpSession& offer);
 
-    bool CreateAnswer(const SdpSession& local, SdpSession& answer);
+    bool CreateAnswer(const SdpSession& local, SdpSession& answer, bool singleCodecPerMedia = false);
 
     bool ApplyAnswer(const SdpSession& answer);
 
@@ -47,6 +47,7 @@ private:
     bool pending_ready_ = false;
     SdpSession current_local_, current_remote_;
     SdpSession pending_local_, pending_remote_, wire_offer_;
+    std::string current_remote_sdp_, pending_remote_sdp_;
     std::string local_origin_id_;
     uint64_t next_origin_version_ = 0;
     bool origin_version_exhausted_ = false;

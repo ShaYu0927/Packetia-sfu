@@ -82,7 +82,270 @@ Apple Silicon 建议使用原生 arm64 Homebrew，避免混用 Rosetta 的 x86_6
 服务默认监听 RTSP 554、SIP 5060、RTMP 1935、UDP 9000 和 WebSocket 8080，
 启动前请确认这些端口可用。默认配置见 `server/ServerConfig.h`。
 
+## RTP 协议规范
+
+本节整理项目涉及的主要 RTP 协议规范，便于读代码和继续实现。字段和处理要求以
+RFC 正文及勘误为准；规范要求与当前支持范围分别说明，不代表项目已完整实现所有 RFC。
+RTP/RTCP 负责媒体封装、来源、排序、时间与反馈，SDP 负责协商格式，ICE/TURN 负责连通与中继。
+
+### 主要 RFC
+
+| 功能 | 规范 | 重点 |
+| --- | --- | --- |
+| RTP/RTCP 基础 | [RFC 3550](https://www.rfc-editor.org/rfc/rfc3550) | 固定头、报告、同步、SSRC 管理、接收统计 |
+| 音视频 profile | [RFC 3551](https://www.rfc-editor.org/rfc/rfc3551) | 静态/动态 PT、时钟、marker |
+| 通用扩展头 | [RFC 8285](https://www.rfc-editor.org/rfc/rfc8285) | 单字节/双字节格式、extmap、混合格式；取代 RFC 5285 |
+| SDP 与 Offer/Answer | [RFC 8866](https://www.rfc-editor.org/rfc/rfc8866)、[RFC 3264](https://www.rfc-editor.org/rfc/rfc3264) | rtpmap、fmtp、方向和能力交集 |
+| RTP/RTCP 同端口 | [RFC 5761](https://www.rfc-editor.org/rfc/rfc5761) | rtcp-mux、PT 冲突限制 |
+| BUNDLE/MID | [RFC 8843](https://www.rfc-editor.org/rfc/rfc8843) | 多媒体段共用传输及分流 |
+| RID/simulcast | [RFC 8852](https://www.rfc-editor.org/rfc/rfc8852)、[RFC 8853](https://www.rfc-editor.org/rfc/rfc8853) | 编码流标识与多编码协商 |
+| 反馈 | [RFC 4585](https://www.rfc-editor.org/rfc/rfc4585)、[RFC 5104](https://www.rfc-editor.org/rfc/rfc5104) | AVPF、NACK、PLI、FIR |
+| RTX | [RFC 4588](https://www.rfc-editor.org/rfc/rfc4588) | OSN、apt、独立重传序列号空间 |
+| Reduced-size RTCP | [RFC 5506](https://www.rfc-editor.org/rfc/rfc5506) | 独立反馈包与周期性 compound RTCP |
+| 扩展报告/CNAME | [RFC 3611](https://www.rfc-editor.org/rfc/rfc3611)、[RFC 7022](https://www.rfc-editor.org/rfc/rfc7022) | XR、跨流来源关联 |
+| 拥塞反馈与停止条件 | [RFC 8888](https://www.rfc-editor.org/rfc/rfc8888)、[RFC 8083](https://www.rfc-editor.org/rfc/rfc8083) | 标准拥塞反馈、circuit breaker |
+| SRTP/DTLS-SRTP | [RFC 3711](https://www.rfc-editor.org/rfc/rfc3711)、[RFC 7714](https://www.rfc-editor.org/rfc/rfc7714)、[RFC 5764](https://www.rfc-editor.org/rfc/rfc5764) | 认证、加密、重放防护与密钥协商 |
+| WebRTC 分流与媒体要求 | [RFC 7983](https://www.rfc-editor.org/rfc/rfc7983)、[RFC 8834](https://www.rfc-editor.org/rfc/rfc8834) | STUN/DTLS/RTP/RTCP 分流 |
+| 冗余/FEC | [RFC 2198](https://www.rfc-editor.org/rfc/rfc2198)、[RFC 5109](https://www.rfc-editor.org/rfc/rfc5109)、[RFC 8627](https://www.rfc-editor.org/rfc/rfc8627) | RED、ULPFEC、FlexFEC |
+
+### RTP 基础头：RFC 3550 §5.1
+
+```text
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|V=2|P|X|  CC   |M|     PT      |       sequence number         |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                           timestamp                           |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|           synchronization source (SSRC) identifier            |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|               CSRC identifiers (0..15 entries)                 |
+|                              ...                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|       extension envelope and data, present only if X=1        |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                   payload and optional padding                |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+多字节整数采用网络字节序，即大端；固定头 12 字节，CSRC、扩展、载荷及尾部填充不在该长度内。
+`#pragma pack` 只控制内存布局，不能代替字节序转换，也不能保证非对齐访问安全。
+
+| 字段 | 位数 | 含义与约束 |
+| --- | --- | --- |
+| V | 2 | RTP 版本为 2，与 SDP 的 v=0 无关 |
+| P | 1 | 存在尾部填充；最后一字节表示填充总长度，包括自身，不得为 0 |
+| X | 1 | CSRC 后有一个扩展封套，封套内可有多个元素 |
+| CC | 4 | CSRC 个数，0..15，每项 4 字节 |
+| M | 1 | 含义由 profile/载荷规范定义，并非统一关键帧标志 |
+| PT | 7 | 载荷格式映射，不是全局轨道标识 |
+| sequence | 16 | 每个原始包加 1，按 65536 回绕，初始值应随机 |
+| timestamp | 32 | 采样时刻，按载荷时钟计数及 2^32 回绕，初始值应随机 |
+| SSRC | 32 | 会话内同步源标识，随机选择并处理碰撞 |
+| CSRC | 每项 32 | 混流器输出的贡献源列表，不能当作 MID |
+
+- 常用静态 PT：PCMU=0、PCMA=8；96..127 为常用动态区间。H264=96、Opus=111 是本地能力示例，实际收发使用 SDP 协商值。
+- rtcp-mux 模式下不能使用 PT 64..95，以免和 RTCP 类型冲突；分流后仍需校验长度与结构。
+- 同一视频帧的多个包通常时间戳相同、序列号不同。序列号比较需处理回绕、乱序、重复和丢包，不能直接比较普通整数大小。
+- H264/H265 通常采用 90000 Hz 时钟；30 fps 相邻采样帧通常相差 3000。Opus RTP 时钟固定为 48000 Hz，20 ms 相差 960。
+- 时间戳按采样时间产生，不是收包时间；传输顺序不同时可能不单调。音频 DTX 不发包时，媒体时钟仍推进。
+- SSRC、MID、RID、PT 分别标识来源、媒体段、编码流、载荷格式。不同流的时间戳不能直接比较，需通过 RTCP SR 的 NTP/RTP 对和 CNAME 建立同步关系。
+
+### 扩展封套与元素：RFC 3550 §5.3.1 / RFC 8285
+
+```text
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|       defined by profile      |       length (32-bit words)   |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                 extension data and alignment padding          |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+One-byte, profile=0xBEDE:
++-+-+-+-+-+-+-+-+-------------------------------+
+|  ID   |  len  |       data (len + 1 bytes)      |
++-+-+-+-+-+-+-+-+-------------------------------+
+
+Two-byte, profile=0x1000 | appbits:
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-------------------------------+
+|       ID      |     length    |       data (length bytes)      |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-------------------------------+
+```
+
+封套在 `12 + 4 * CC` 字节处。length 是扩展数据的 32 位字数，不含封套自身 4 字节，允许为 0。
+未知 profile 按封套长度跳过；元素逐字节解析，整个扩展数据区用零字节补至 4 字节边界。
+
+- 单字节 ID=1..14，len=0..15，实际数据 1..16 字节；ID=15 时忽略 len 并停止元素解析。
+- RFC 8285 §4.1.2 还要求遇到 ID=0 且 len 非零时停止解析。
+- 双字节 ID=1..255，包括 ID=15；length 直接表示 0..255 字节，不加 1。profile 低 4 位 appbits 未约定时发送端应置零，接收端忽略。
+- 两种格式中的 0x00 都只占一个 padding 字节；双字节格式不再读取其后的 length。
+- 同一包只采用一种元素格式。流内混用两种格式需通过 extmap-allow-mixed 或带外方式确认接收方支持。
+- 扩展 ID 是 SDP extmap 协商的局部编号，URI 才标识含义；遵守收发方向及 BUNDLE 映射一致性。下游转发按订阅者的编号重建扩展。
+- 自定义“私有头”应约定扩展 URI 和数据编码，不改变固定头或占用保留 ID，也不直接发送 C++ 结构体内存。
+
+```sdp
+a=extmap:1 urn:ietf:params:rtp-hdrext:sdes:mid
+a=extmap:3 http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01
+```
+
+上例的 1 和 3 不是标准固定编号。常见扩展还包括 RID/repaired RID，以及
+[RFC 6464](https://www.rfc-editor.org/rfc/rfc6464) 的音量扩展。
+当前 TWCC 使用上例草案格式，与 RFC 8888 的拥塞反馈不是同一种线格式。
+
+```text
+base_header_bytes = 12 + 4 * CC
+extension_bytes   = X ? 4 + 4 * extension_length_words : 0
+payload_offset    = base_header_bytes + extension_bytes
+padding_bytes     = P ? packet[last] : 0
+payload_bytes     = packet_bytes - payload_offset - padding_bytes
+```
+
+每一步必须先校验长度。尾部填充不能侵入头部/扩展。RTP 尾部填充、扩展对齐填充、SRTP
+认证标签/MKI 是不同概念；上述公式仅用于去除 SRTP 尾部保护数据后的明文 RTP。
+
+### 常见媒体载荷
+
+载荷头位于 RTP 头之后，与 RTP 扩展头分开解析。
+
+| 编码 | 规范 | 主要内容 |
+| --- | --- | --- |
+| H264 | [RFC 6184](https://www.rfc-editor.org/rfc/rfc6184) | Single NAL、STAP-A、FU-A；packetization-mode/profile-level-id 协商 |
+| H265 | [RFC 7798](https://www.rfc-editor.org/rfc/rfc7798) | 单 NAL、AP、FU、PACI；DONL/DOND 取决于协商 |
+| Opus | [RFC 7587](https://www.rfc-editor.org/rfc/rfc7587) | 一个 RTP 载荷携带一个 Opus packet；TOC/帧结构另见 RFC 6716 |
+| PCMU/PCMA | RFC 3551 | 常见单声道 8 kHz；marker 可表示 talkspurt 开始 |
+| AAC MPEG4-GENERIC | [RFC 3640](https://www.rfc-editor.org/rfc/rfc3640) | AU-headers-length 以位计；字段长度由 fmtp 约定 |
+| AAC MP4A-LATM | [RFC 6416](https://www.rfc-editor.org/rfc/rfc6416) | LATM 格式，不能按 MPEG4-GENERIC 解析 |
+| VP8 | [RFC 7741](https://www.rfc-editor.org/rfc/rfc7741) | 载荷描述符、分区、PictureID 与时间层 |
+
+```text
+Single NAL: [F:1 | NRI:2 | Type:5] [NAL data ...]     Type=1..23
+STAP-A:     [F:1 | NRI:2 | Type=24]
+            [NAL size:16] [complete NAL ...]          repeated
+FU-A:       [F:1 | NRI:2 | Type=28]
+            [S:1 | E:1 | R:1 | original Type:5] [fragment ...]
+```
+
+FU-A 的 S/E 表示 NAL 分片开始/结束，不能同时为 1，R 为保留位。重组恢复原 NAL 头并校验
+序列连续性，不能把缺少分片的 NAL 输出为完整数据。H264 的 M 表示 access unit 最后一个包，
+FU 的 E 表示某个 NAL 的结束，两者不同。RTP 载荷不包含 Annex-B 起始码，由解包输出时添加。
+
+### RTCP、同步和接收质量
+
+```text
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|V=2|P| count/FMT | packet type   |           length              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                    packet-specific body                       |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+RTCP length 表示整个单包的 32 位字数减 1，包含公共头，字节数为 `(length + 1) * 4`；
+与 RTP 扩展的 length 定义不同。数据报可能包含多个 RTCP 单包，要逐个校验。
+
+| PT | 类型 | 内容 |
+| --- | --- | --- |
+| 200 | SR | SSRC、NTP/RTP 时间对、累计发包/载荷字节数和报告块 |
+| 201 | RR | 报告者 SSRC 和接收报告块 |
+| 202 | SDES | CNAME 等来源描述 |
+| 203 | BYE | 来源离开及可选原因 |
+| 204 | APP | 应用自定义内容 |
+| 205 | RTPFB | 如 FMT=1 的 Generic NACK |
+| 206 | PSFB | 如 FMT=1 PLI、FMT=4 FIR |
+| 207 | XR | 扩展报告 |
+
+每个接收报告块 24 字节：SSRC(32)、fraction lost(8)、cumulative lost(24 signed)、
+extended highest seq(32)、jitter(32)、LSR(32)、DLSR(32)。累计丢包是有符号 24 位值。
+LSR 为最近 SR 的 NTP 中间 32 位，DLSR 单位为 1/65536 秒。
+
+```text
+transit_i = arrival_i_in_RTP_clock_units - RTP_timestamp_i
+D         = transit_i - transit_(i-1)
+J         = J + (abs(D) - J) / 16
+RTT       = A - LSR - DLSR
+```
+
+J 的单位为 RTP clock tick，不直接是毫秒。A 是当前 NTP 中间 32 位；RTT 计算需处理回绕，
+没有可用 LSR 时不能使用此公式。不同 SSRC 的时钟和统计不能混算。
+基础 compound RTCP 通常以 SR/RR 开始并包含 SDES CNAME。发送间隔按成员数、带宽、随机化
+及 reconsideration 计算；AVPF 提前反馈、RFC 5506 独立反馈包也有调度及周期性报告要求。
+
+### 重传、冗余与 SFU 转发
+
+Generic NACK 的每项 FCI 为 PID(16)+BLP(16)：PID 是第一个丢失序列号，BLP 第 i 位表示
+`(PID + i + 1) mod 65536` 也丢失。实现需处理回绕、重复反馈、缓存过期和重传限频。
+PLI 没有 FCI，表示图片丢失，不列出具体包，也不保证立即收到 IDR。
+FIR 的 FCI 包含目标 SSRC 和请求序号，不能按 PLI 解析；发布者/编码器需实际响应请求。
+
+RTX 通过 apt 关联原 PT，采用独立重传序列号，载荷开头为 16 位 OSN；SSRC 复用模式
+使用独立 RTX SSRC 并通过 FID 分组关联。直接重发原包与 RFC 4588 RTX 封装是不同方案。
+原包重发保留 RTP sequence，但每次网络发送分配新的 TWCC sequence；同时考虑 SRTP 重放窗口。
+RED、ULPFEC、FlexFEC 分别协商并实现恢复；Opus useinbandfec 不代表通用 RTP FEC 支持。
+
+SFU 应先分流并认证/解密 SRTP，再解析 RTP；不能让未认证的扩展修改轨道绑定。
+BUNDLE 内按协商 MID 和绑定 SSRC 分流，下游按订阅者协商值改写 PT、MID、SSRC 和传输序号，
+相关 RTCP 也需正确映射。接收/发送统计按来源维护，TWCC 使用传输级序列号空间。
+MTU 扣除 IP/UDP、变长 RTP 头、SRTP 和 TURN 开销；固定 payload 上限不是 RFC 通用要求。
+
+### 当前实现范围
+
+| 入口 | 当前能力与边界 |
+| --- | --- |
+| [Rtp.h](Rtsp/Rtp.h)、[Rtp.cpp](Rtsp/Rtp.cpp) | 固定头与接收统计；完整 SSRC 碰撞管理和 RTCP 调度仍需核对 |
+| [RtpReceiver.cpp](Rtsp/RtpReceiver.cpp) | 版本/PT/SSRC 校验，按 CC/X/P 计算载荷位置 |
+| [RtpHeaderExtensions.h](Rtsp/Rtp/RtpHeaderExtensions.h) | 单/双字节解析，未知 profile 跳过；重复 ID 按本地策略拒绝；ID=0 且 len 非零的停止规则待补，失败可能留下部分输出 |
+| [RtpTransportCcExtension.cpp](Rtsp/RtpTransportCcExtension.cpp) | 仅单字节 TWCC、ID 1..14、两字节序号 |
+| [RtpSenderTrack.cpp](Rtsp/RtpSenderTrack.cpp) | 下游改写、缓存、NACK 原包重发；MID/TWCC 输出为单字节，尚非完整 RTX |
+| [H264RtpPayloadParser.cpp](Common/Depacketizer/H264RtpPayloadParser.cpp) | Single NAL/STAP-A/FU-A，不代表全部 H264 打包模式 |
+| [AudioRtpDepacketizerFactory.cpp](Common/Depacketizer/AudioRtpDepacketizerFactory.cpp) | G.711/Opus 接收工厂，其他路径/编码需单独核对 |
+| [RtcpReciver.cpp](protocol/Rtcp/RtcpReciver.cpp) | SR/RR/BYE、NACK/PLI/FIR、传输反馈入口；当前跳过 SDES，枚举不代表处理器已实现 |
+| [SdpNegotiator.cpp](src/sdp/SdpNegotiator.cpp) | PT/codec、方向、BUNDLE、扩展协商；WebRTC 使用 UDP DTLS-SRTP 与 rtcp-mux |
+
+后续按扩展边界处理、SDES/CNAME 与 compound RTCP、RTX、RID/simulcast、拥塞反馈、FEC
+逐项推进，验证协商、实际收发与退出清理。
+
+## TURN UDP 中继
+
+`protocol/turn` 提供独立的 `PacketiaTurn`，使用 IPv4 UDP 控制与中继套接字。
+支持长期凭证认证、401/438 challenge、Allocate/Refresh、CreatePermission、
+Send/Data indication、ChannelBind/ChannelData、生命周期清理、配额与 peer ACL。
+当前不包含 TCP/TLS、IPv6 或独立 STUN Binding 服务，不能等同于 coturn 全功能。
+账号由 `PACKETIA_TURN_USER` 和 `PACKETIA_TURN_PASSWORD` 环境变量提供，要求非空可打印 ASCII。
+
+```sh
+cmake --build build/webrtc-integration --target PacketiaTurn
+build/webrtc-integration/protocol/PacketiaTurn --help
+```
+
+公网运行需配置监听/中继/公告 IP 与 relay 端口范围，并放通对应 UDP 端口。
+默认 peer ACL 拒绝私网、回环、链路本地及组播目标；`--local-test` 仅允许回环 peer。
+
+## 双浏览器房间与 TURN 示例
+
+`examples/webrtc-room` 使用实际 Room/SfuEndpoint 转发链路：两个浏览器加入同一房间，
+A 发布，B 订阅，并可在 B 建连前勾选 Force TURN 强制 `iceTransportPolicy=relay`。
+WebSocket 信令支持 join、tracks、publish、subscribe、leave；每个连接当前只承担发布或订阅一种角色，
+房间内媒体重协商尚未开放。订阅通过轨道 ID 和下游 MID 显式绑定。
+
+需要启用项目的 WebRTC/libSRTP 构建依赖，并安装 Node.js。按已有构建目录运行：
+
+```sh
+cmake --build build/webrtc-integration --target PacketiaRoomDemo
+cd examples/webrtc-room
+npm ci
+npm start
+```
+
+打开 `http://127.0.0.1:18000`。启动器生成临时 token/TURN 凭证并启动 C++ 示例；
+默认 WebSocket 18080、SFU UDP 19000、TURN UDP 13478，均用于本机演示。
+其他构建目录通过 `PACKETIA_ROOM_DEMO_BINARY` 指定二进制。
+示例 TURN 只允许转发至该 SFU 的回环媒体地址。
+
+启动示例后运行 `npm run check`，需要本机 Google Chrome；检查两个独立浏览器中的视频帧增长、
+音频流量、订阅端选中的 relay 候选、视频尺寸和退出清理，并在忽略的 artifacts 目录输出截图。
+
 ## WebRTC SDP 协商
+
+房间发布/订阅的运行入口与限制见上面的双浏览器示例。
 
 - 新增 SDP codec 构建、参数校验和协商逻辑。
 - 实现 Offer/Answer 状态管理、提交与回滚机制。

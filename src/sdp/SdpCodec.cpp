@@ -405,6 +405,14 @@ bool SdpCodec::Negotiate(const RtpCodecParameters& remote, const RtpCodecParamet
     return true;
 }
 
+bool SdpCodec::SameFormat(const RtpCodecParameters& a, const RtpCodecParameters& b)
+{
+    Parameters first, second;
+    return utils::ToLowerAscii(a.encodingName) == utils::ToLowerAscii(b.encodingName) &&
+        a.clockRate == b.clockRate && std::max(1, a.channels) == std::max(1, b.channels) &&
+        ParseParameters(a.fmtp, first) && ParseParameters(b.fmtp, second) && first == second;
+}
+
 bool SdpCodec::IsAnswer(const RtpCodecParameters& offer, const RtpCodecParameters& answer)
 {
     if (offer.payloadType != answer.payloadType) return false;

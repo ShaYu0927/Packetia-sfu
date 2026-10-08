@@ -1,5 +1,6 @@
 #include "SdpNegotiator.h"
 #include "SdpCodec.h"
+#include "Sdp.h"
 
 #include <algorithm>
 #include <atomic>
@@ -116,6 +117,7 @@ bool ValidateDescription(SdpSession& description, bool answer, bool allowEmpty, 
     const auto reject = [&](const char* value) { error = value; return false; };
     if (description.type != (answer ? SdpType::Answer : SdpType::Offer) || description.medias.empty())
         return reject("Expected a normalized offer/answer with media descriptions");
+    description.profile = SdpProfile::WebRtc;
     std::set<std::string> mids;
     const SdpMedia* transport = nullptr;
     size_t active = 0;
@@ -164,9 +166,18 @@ bool ValidateDescription(SdpSession& description, bool answer, bool allowEmpty, 
                 codec.channels < 0 || !codecs.insert(codec.payloadType).second)
                 return reject("Invalid RTP codec or payload type");
         if (formats != codecs) return reject("Every active RTP format needs a codec description");
-        for (const auto& extension : media.headerExtensions)
+        for (auto& extension : media.headerExtensions)
+        {
             if (extension.id < 1 || extension.id > 255 || extension.uri.empty() || !extensions.insert(extension.id).second)
                 return reject("Invalid or duplicate RTP header extension");
+            if (extension.direction != MediaDirection::SendRecv && extension.direction != MediaDirection::SendOnly &&
+                extension.direction != MediaDirection::RecvOnly && extension.direction != MediaDirection::Inactive)
+                return reject("Invalid RTP header extension direction");
+            // Browsers commonly omit extmap direction on one-way media.
+            // Extensions can only flow in directions enabled by that m-line.
+            extension.direction = Direction(CanSend(extension.direction) && CanSend(media.direction),
+                CanReceive(extension.direction) && CanReceive(media.direction));
+        }
     }
     std::set<std::string> bundled;
     for (const auto& mid : description.bundle.mids)
@@ -178,17 +189,32 @@ bool ValidateDescription(SdpSession& description, bool answer, bool allowEmpty, 
 
 bool ValidBundlePayloads(const SdpSession& description, std::string& error)
 {
-    // Reused payload types or SSRCs make bundled RTP ambiguous here. A header
-    // extension ID may be shared only when it denotes the same URI.
-    std::set<int> payloads;
+    std::map<int, std::pair<const SdpMedia*, const RtpCodecParameters*>> payloads;
     std::map<int, std::string> extensions;
     std::set<uint32_t> ssrcs;
     for (const auto& media : description.medias)
     {
         if (!Active(media)) continue;
         for (const auto& codec : media.codecs)
-            if (!payloads.insert(codec.payloadType).second)
-            { error = "Ambiguous bundled payload types require MID demultiplexing"; return false; }
+        {
+            const auto found = payloads.emplace(codec.payloadType, std::make_pair(&media, &codec));
+            if (found.second) continue;
+            const auto& previous = *found.first->second.second;
+            if (!SdpCodec::SameFormat(previous, codec))
+            { error = "Shared BUNDLE payload types must identify the same RTP format"; return false; }
+            const auto hasMid = [](const SdpMedia& item)
+            {
+                return item.direction == MediaDirection::Inactive ||
+                    std::any_of(item.headerExtensions.begin(), item.headerExtensions.end(), [&](const auto& extension)
+                    {
+                        return extension.uri == "urn:ietf:params:rtp-hdrext:sdes:mid" && extension.id <= 14 &&
+                            (!CanSend(item.direction) || CanSend(extension.direction)) &&
+                            (!CanReceive(item.direction) || CanReceive(extension.direction));
+                    });
+            };
+            if (!hasMid(*found.first->second.first) || !hasMid(media))
+            { error = "Shared BUNDLE payload types require a negotiated MID extension"; return false; }
+        }
         for (const auto& extension : media.headerExtensions)
         {
             const auto found = extensions.emplace(extension.id, extension.uri);
@@ -222,13 +248,15 @@ bool OriginNumber(const std::string& value, uint64_t& result)
     return parsed.ec == std::errc{} && parsed.ptr == value.data() + value.size();
 }
 
-bool NewRemoteOrigin(const SdpOrigin& previous, const SdpOrigin& next)
+bool NewRemoteOrigin(const SdpOrigin& previous, const SdpOrigin& next,
+                     const std::string& previousSdp, const std::string& nextSdp)
 {
     uint64_t sessionId = 0, version = 0, nextVersion = 0;
     // Typed callers predating origin tracking may omit o=. Once a valid remote
-    // origin is committed, descriptions must stay in that session and advance.
+    // origin is committed, unchanged descriptions may retain their version.
     if (!OriginNumber(previous.sess_id, sessionId) || !OriginNumber(previous.sess_version, version)) return true;
-    return next.sess_id == previous.sess_id && OriginNumber(next.sess_version, nextVersion) && nextVersion > version;
+    return next.sess_id == previous.sess_id && OriginNumber(next.sess_version, nextVersion) &&
+        (nextVersion > version || (nextVersion == version && nextSdp == previousSdp));
 }
 
 bool DtlsAnswer(DtlsSetup offer, DtlsSetup answer)
@@ -396,8 +424,10 @@ bool SdpNegotiator::CreateOffer(const SdpSession& local, SdpSession& offer)
     if (has_current_)
     {
         // RFC 3264 keeps established m-line positions stable across reoffers.
-        // A missing mid becomes a rejected line; only new mids go at the end.
+        // Omitted MIDs pause without stopping the browser's transceiver.
         std::vector<SdpMedia> ordered;
+        const auto transport = std::find_if(result.medias.begin(), result.medias.end(),
+            [](const auto& media) { return Active(media) && RtpMedia(media); });
         for (const auto& previous : current_local_.medias)
         {
             const auto replacement = std::find_if(result.medias.begin(), result.medias.end(),
@@ -409,9 +439,21 @@ bool SdpNegotiator::CreateOffer(const SdpSession& local, SdpSession& offer)
             }
             else
             {
-                auto rejected = previous;
-                rejected.port = 0; rejected.bundleOnly = false; rejected.direction = MediaDirection::Inactive;
-                ordered.push_back(std::move(rejected));
+                auto paused = previous;
+                paused.bundleOnly = false; paused.direction = MediaDirection::Inactive;
+                // An omitted line still shares the new offer's transport role.
+                if (transport != result.medias.end())
+                {
+                    paused.ice = transport->ice;
+                    paused.dtls = transport->dtls;
+                }
+                else
+                {
+                    if (!result.ice.ufrag.empty()) paused.ice = result.ice;
+                    if (!result.dtls.fingerprints.empty()) paused.dtls = result.dtls;
+                }
+                InheritTransport(paused, result);
+                ordered.push_back(std::move(paused));
             }
         }
         for (const auto& media : result.medias)
@@ -437,6 +479,7 @@ bool SdpNegotiator::CreateOffer(const SdpSession& local, SdpSession& offer)
     wire_offer_ = std::move(result);
     pending_local_ = std::move(pending);
     pending_remote_ = {};
+    pending_remote_sdp_.clear();
     pending_ready_ = false;
     state_ = SdpNegotiationState::HaveLocalOffer;
     last_error_.clear();
@@ -449,13 +492,15 @@ bool SdpNegotiator::ApplyOffer(const SdpSession& offer)
     auto normalized = offer;
     std::string error;
     if (!ValidateDescription(normalized, false, has_current_, error)) return Reject(error);
-    if (has_current_ && !NewRemoteOrigin(current_remote_.origin, normalized.origin))
-        return Reject("Remote SDP origin must retain its session ID and increase its version");
+    auto remoteSdp = Sdp::Serialize(normalized);
+    if (has_current_ && !NewRemoteOrigin(current_remote_.origin, normalized.origin, current_remote_sdp_, remoteSdp))
+        return Reject("Remote SDP origin must retain its session ID and advance its version when content changes");
     if (has_current_ && !KeepsMediaOrder(current_remote_, normalized))
         return Reject("Reoffer must retain established m-line identities and order");
     auto wire = normalized;
     pending_remote_ = std::move(normalized);
     wire_offer_ = std::move(wire);
+    pending_remote_sdp_ = std::move(remoteSdp);
     pending_local_ = {};
     pending_ready_ = false;
     state_ = SdpNegotiationState::HaveRemoteOffer;
@@ -463,7 +508,7 @@ bool SdpNegotiator::ApplyOffer(const SdpSession& offer)
     return true;
 }
 
-bool SdpNegotiator::CreateAnswer(const SdpSession& local, SdpSession& answer)
+bool SdpNegotiator::CreateAnswer(const SdpSession& local, SdpSession& answer, bool singleCodecPerMedia)
 {
     if (state_ != SdpNegotiationState::HaveRemoteOffer) return Reject("Apply a remote offer before creating an answer");
     std::set<std::string> mids, kinds;
@@ -506,6 +551,7 @@ bool SdpNegotiator::CreateAnswer(const SdpSession& local, SdpSession& answer)
                     media.codecs.push_back(std::move(codec));
                     break;
                 }
+                if (singleCodecPerMedia && !media.codecs.empty()) break;
             }
             if (!media.codecs.empty())
             {
@@ -580,12 +626,14 @@ bool SdpNegotiator::ApplyAnswer(const SdpSession& answer)
     auto normalized = answer;
     std::string error;
     if (!ValidateDescription(normalized, true, true, error) || !ValidateAnswer(wire_offer_, normalized, error)) return Reject(error);
-    if (has_current_ && !NewRemoteOrigin(current_remote_.origin, normalized.origin))
-        return Reject("Remote SDP origin must retain its session ID and increase its version");
+    auto remoteSdp = Sdp::Serialize(normalized);
+    if (has_current_ && !NewRemoteOrigin(current_remote_.origin, normalized.origin, current_remote_sdp_, remoteSdp))
+        return Reject("Remote SDP origin must retain its session ID and advance its version when content changes");
     SdpSession local;
     if (!EffectiveOffer(wire_offer_, normalized, local)) return Reject("Selected codec cannot be applied to the offer direction");
     pending_local_ = std::move(local);
     pending_remote_ = std::move(normalized);
+    pending_remote_sdp_ = std::move(remoteSdp);
     pending_ready_ = true;
     last_error_.clear();
     return true;
@@ -596,6 +644,7 @@ bool SdpNegotiator::Commit() noexcept
     if (!pending_ready_) return false;
     current_local_ = std::move(pending_local_);
     current_remote_ = std::move(pending_remote_);
+    current_remote_sdp_ = std::move(pending_remote_sdp_);
     has_current_ = true;
     Rollback();
     return true;
@@ -606,6 +655,7 @@ void SdpNegotiator::Rollback() noexcept
     pending_local_ = {};
     pending_remote_ = {};
     wire_offer_ = {};
+    pending_remote_sdp_.clear();
     pending_ready_ = false;
     state_ = SdpNegotiationState::Stable;
     last_error_.clear();

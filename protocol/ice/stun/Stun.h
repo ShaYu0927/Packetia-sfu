@@ -24,6 +24,12 @@ enum class StunClass : uint8_t
 enum class StunMethod : uint16_t
 {
     Binding = 0x001,
+    Allocate = 0x003,
+    Refresh = 0x004,
+    Send = 0x006,
+    Data = 0x007,
+    CreatePermission = 0x008,
+    ChannelBind = 0x009,
 };
 
 enum class AttrType : uint16_t
@@ -33,8 +39,16 @@ enum class AttrType : uint16_t
     MESSAGE_INTEGRITY   = 0x0008,
     ERROR_CODE          = 0x0009,
     UNKNOWN_ATTRIBUTES  = 0x000A,
+    CHANNEL_NUMBER      = 0x000C,
+    LIFETIME            = 0x000D,
+    XOR_PEER_ADDRESS    = 0x0012,
+    DATA                = 0x0013,
     REALM               = 0x0014,
     NONCE               = 0x0015,
+    XOR_RELAYED_ADDRESS = 0x0016,
+    REQUESTED_ADDRESS_FAMILY = 0x0017,
+    REQUESTED_TRANSPORT = 0x0019,
+    MESSAGE_INTEGRITY_SHA256 = 0x001C,
     XOR_MAPPED_ADDRESS  = 0x0020,
     PRIORITY            = 0x0024,
     USE_CANDIDATE       = 0x0025,
@@ -70,6 +84,12 @@ struct AttrView
     uint16_t type = 0;
     uint16_t len = 0;
     uint32_t value_offset = 0;          // offset from start of message
+};
+
+struct StunAttribute
+{
+    uint16_t type = 0;
+    std::vector<uint8_t> value;
 };
 
 struct StunMessageInfo
@@ -173,6 +193,9 @@ public:
     static bool DecodeIceControlling(const StunMessageInfo& msg, uint64_t& out);
     static bool DecodeIceControlled(const StunMessageInfo& msg, uint64_t& out);
     static bool DecodeXorMappedAddress(const StunMessageInfo& msg, XorMappedAddress& out);
+    static bool DecodeXorAddress(const StunMessageInfo& msg, AttrType type, XorMappedAddress& out);
+    static bool EncodeXorAddress(const IpEndpoint& ep, const std::array<uint8_t, 12>& txid,
+                                std::vector<uint8_t>& out);
 
     static bool HasUseCandidate(const StunMessageInfo& msg) noexcept;
     static bool DecodeErrorCode(const StunMessageInfo& msg, StunErrorCode& out);
@@ -191,6 +214,15 @@ public:
 
     // ---------- build basic stun ----------
     static std::vector<uint8_t> BuildBindingRequest(const std::array<uint8_t, 12>& txid);
+
+    // integrity_key contains raw key bytes, including embedded zeros. The
+    // builder owns integrity/fingerprint attributes and their final ordering.
+    static bool BuildMessage(StunMethod method, StunClass klass,
+                             const std::array<uint8_t, 12>& txid,
+                             const std::vector<StunAttribute>& attributes,
+                             std::vector<uint8_t>& out,
+                             std::string_view integrity_key = {},
+                             bool add_fingerprint = false);
 
     // ---------- build ICE stun ----------
     static bool BuildIceBindingRequest(const IceRequestParams& in,

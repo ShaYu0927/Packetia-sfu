@@ -65,6 +65,22 @@ target_include_directories(ICE
 target_compile_features(ICE PUBLIC cxx_std_17)
 target_link_libraries(ICE PUBLIC LOGGER OpenSSL::Crypto)
 
+add_library(TURN STATIC
+    turn/TurnCodec.cpp
+    turn/TurnCodec.h
+    turn/TurnAuth.cpp
+    turn/TurnAuth.h
+    turn/TurnServer.cpp
+    turn/TurnServer.h
+)
+target_include_directories(TURN PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/turn)
+target_compile_features(TURN PUBLIC cxx_std_17)
+target_link_libraries(TURN PUBLIC ICE PRIVATE network utils)
+
+add_executable(PacketiaTurn turn/TurnServerMain.cpp)
+target_compile_features(PacketiaTurn PRIVATE cxx_std_17)
+target_link_libraries(PacketiaTurn PRIVATE TURN utils)
+
 add_library(WebRtc STATIC
     WebRtc/WebRtcSession.cpp
     WebRtc/WebRtcSession.h

@@ -350,7 +350,7 @@ void OfferLayoutAndOrigin()
     CHECK(negotiator.CreateOffer(next, offer));
     CHECK(offer.medias.size() == 3);
     CHECK(offer.medias[0].mid == "audio");
-    CHECK(offer.medias[0].port == 0);
+    CHECK(offer.medias[0].port != 0);
     CHECK(offer.medias[0].direction == MediaDirection::Inactive);
     CHECK(offer.medias[1].mid == "video" && offer.medias[1].port != 0);
     CHECK(offer.medias[2].mid == "audio-new" && offer.medias[2].port != 0);
@@ -361,6 +361,10 @@ void OfferLayoutAndOrigin()
     CHECK(negotiator.CreateOffer(Description("local"), offer));
     CHECK(offer.origin.sess_id == initial.origin.sess_id);
     CHECK(std::stoull(offer.origin.sess_version) > priorVersion);
+    negotiator.Rollback();
+    CHECK(negotiator.CreateOffer(SdpSession{}, offer));
+    for (const auto& media : offer.medias)
+        CHECK(media.port != 0 && media.direction == MediaDirection::Inactive && !media.ice.ufrag.empty());
     negotiator.Rollback();
 
     SdpNegotiator answerer;
@@ -400,7 +404,8 @@ void RemoteOriginFreshness()
 {
     SdpNegotiator negotiator;
     Establish(negotiator);
-    const auto staleOffer = Description("remote");
+    auto staleOffer = Description("remote");
+    staleOffer.medias[0].direction = MediaDirection::SendOnly;
     auto changedSession = Description("remote", 1);
     changedSession.origin.sess_id = "3001";
     auto missingOrigin = Description("remote", 1);
@@ -423,7 +428,9 @@ void RemoteOriginFreshness()
     CHECK(negotiator.CreateAnswer(Capabilities(), answer));
     CHECK(negotiator.Commit());
     CHECK(negotiator.CurrentRemote().origin.sess_version == "2");
-    RejectRemoteWithoutMutation(negotiator, Description("remote", 2));
+    auto changedOffer = Description("remote", 2);
+    changedOffer.medias[0].direction = MediaDirection::SendOnly;
+    RejectRemoteWithoutMutation(negotiator, changedOffer);
     RejectRemoteWithoutMutation(negotiator, Description("remote", 1));
 
     SdpSession offer;
@@ -450,9 +457,11 @@ void RemoteOriginFreshness()
     RejectRemoteWithoutMutation(negotiator, freshAnswer); // Late answer in Stable.
 
     CHECK(negotiator.CreateOffer(Description("local"), offer));
-    // A late answer from the committed transaction must not answer a new
-    // pending offer, even if its media layout would otherwise be compatible.
-    RejectRemoteWithoutMutation(negotiator, freshAnswer);
+    // Identical SDP may keep its origin version. Signaling correlates answers
+    // to transactions independently through negotiation_id.
+    CHECK(negotiator.ApplyAnswer(freshAnswer));
+    negotiator.Rollback();
+    CHECK(negotiator.CreateOffer(Description("local"), offer));
     auto retryableAnswer = AnswerFor(offer);
     retryableAnswer.origin.sess_id = "2001";
     retryableAnswer.origin.sess_version = "4";
@@ -491,6 +500,111 @@ void LegacyEmptyOrigins()
     CHECK(negotiator.Commit());
     CHECK(negotiator.CurrentRemote().origin.sess_id.empty());
     CHECK(negotiator.CurrentRemote().origin.sess_version.empty());
+}
+
+void UnchangedRemoteDescriptions()
+{
+    SdpNegotiator negotiator;
+    auto remote = Description("remote");
+    remote.profile = SdpProfile::Generic; // Typed callers may leave the profile unset.
+    // The committed effective view drops unselected codecs and narrows
+    // direction. Compare origin versions against the original wire SDP.
+    Sdp::SetCodecs(remote.medias[0], {AudioCodec(), {0, "PCMU", 8000, 1, "", {}}});
+    auto local = Capabilities();
+    local.medias[0].direction = MediaDirection::RecvOnly;
+    SdpSession answer;
+    CHECK(negotiator.ApplyOffer(remote));
+    CHECK(negotiator.CreateAnswer(local, answer));
+    CHECK(negotiator.Commit());
+    CHECK(negotiator.CurrentRemote().medias[0].codecs.size() == 1);
+    CHECK(negotiator.ApplyOffer(remote));
+    CHECK(negotiator.CreateAnswer(local, answer));
+    CHECK(negotiator.Commit());
+    auto changed = remote;
+    changed.medias[0].codecs[0].fmtp += ";maxaveragebitrate=32000";
+    RejectRemoteWithoutMutation(negotiator, changed);
+    changed = remote;
+    changed.medias[0].direction = MediaDirection::RecvOnly;
+    RejectRemoteWithoutMutation(negotiator, changed);
+
+    SdpNegotiator offerer;
+    SdpSession offer;
+    CHECK(offerer.CreateOffer(Description("local"), offer));
+    const auto firstAnswer = AnswerFor(offer);
+    CHECK(offerer.ApplyAnswer(firstAnswer));
+    CHECK(offerer.Commit());
+    CHECK(offerer.CreateOffer(offerer.CurrentLocal(), offer));
+    CHECK(offerer.ApplyAnswer(firstAnswer));
+    CHECK(offerer.Commit());
+    CHECK(offerer.CreateOffer(offerer.CurrentLocal(), offer));
+    auto changedAnswer = firstAnswer;
+    changedAnswer.medias[0].direction = MediaDirection::RecvOnly;
+    RejectRemoteWithoutMutation(offerer, changedAnswer);
+    CHECK(offerer.ApplyAnswer(firstAnswer));
+    offerer.Rollback();
+    CHECK(offerer.CreateOffer(offerer.CurrentLocal(), offer));
+    CHECK(offerer.ApplyAnswer(firstAnswer));
+    CHECK(offerer.Commit());
+}
+
+void SharedBundlePayloads()
+{
+    auto local = Description("local");
+    auto screen = local.medias[1];
+    screen.mid = "screen";
+    local.medias.push_back(screen);
+    local.bundle.mids.push_back(screen.mid);
+    auto capabilities = Capabilities("remote");
+    for (auto& media : capabilities.medias) media.mid.clear();
+    SdpNegotiator negotiator;
+    SdpSession offer;
+    CHECK(negotiator.CreateOffer(local, offer));
+    auto answer = AnswerFor(offer, capabilities);
+    CHECK(FindMedia(answer, "video").port != 0 && FindMedia(answer, "screen").port != 0);
+    CHECK(FindMedia(answer, "video").codecs[0].payloadType == FindMedia(answer, "screen").codecs[0].payloadType);
+    auto missingMid = answer;
+    missingMid.medias.back().headerExtensions.clear();
+    RejectRemoteWithoutMutation(negotiator, missingMid);
+    CHECK(negotiator.ApplyAnswer(answer));
+    CHECK(negotiator.Commit());
+    CHECK(negotiator.CreateOffer(negotiator.CurrentLocal(), offer));
+    negotiator.Rollback();
+
+    auto invalid = local;
+    invalid.medias.back().headerExtensions.clear();
+    CHECK(!negotiator.CreateOffer(invalid, offer));
+    invalid = local;
+    Sdp::SetCodecs(invalid.medias.back(), {VideoCodec(96, 0x64001f)});
+    CHECK(!negotiator.CreateOffer(invalid, offer));
+}
+
+void BrowserAnswerExtensionDirections()
+{
+    auto local = Description("local");
+    for (auto& media : local.medias) media.direction = MediaDirection::RecvOnly;
+    SdpNegotiator negotiator;
+    SdpSession offer;
+    CHECK(negotiator.CreateOffer(local, offer));
+    auto remote = Capabilities("remote");
+    for (auto& media : remote.medias) media.direction = MediaDirection::SendOnly;
+    auto answer = AnswerFor(offer, remote);
+    for (auto& media : answer.medias)
+        for (auto& extension : media.headerExtensions) extension.direction = MediaDirection::SendRecv;
+    CHECK(negotiator.ApplyAnswer(answer));
+    CHECK(negotiator.PendingRemote().medias[0].headerExtensions[0].direction == MediaDirection::SendOnly);
+    CHECK(negotiator.PendingLocal().medias[0].headerExtensions[0].direction == MediaDirection::RecvOnly);
+    CHECK(negotiator.Commit());
+
+    local = Description("local");
+    local.medias[0].headerExtensions[0].direction = MediaDirection::RecvOnly;
+    CHECK(negotiator.CreateOffer(local, offer));
+    answer = AnswerFor(offer);
+    answer.origin = negotiator.CurrentRemote().origin;
+    answer.origin.sess_version = "1";
+    // With sendrecv media, an unqualified extension really would expand the
+    // offer's recvonly extension and must still be rejected.
+    answer.medias[0].headerExtensions[0].direction = MediaDirection::SendRecv;
+    RejectRemoteWithoutMutation(negotiator, answer);
 }
 
 using Mutation = std::function<void(SdpSession&)>;
@@ -619,7 +733,8 @@ void StrictAnswers()
         answer.medias[1].port = 9;
         answer.medias[1].direction = MediaDirection::SendRecv;
     }, [](SdpSession& offer) {
-        offer.medias.pop_back();
+        offer.medias[1].port = 0;
+        offer.medias[1].direction = MediaDirection::Inactive;
         offer.bundle.mids.pop_back();
     });
     RejectAnswer("answer DTLS actpass", [](SdpSession& answer) {
@@ -746,6 +861,9 @@ int main()
         OfferLayoutAndOrigin();
         RemoteOriginFreshness();
         LegacyEmptyOrigins();
+        UnchangedRemoteDescriptions();
+        SharedBundlePayloads();
+        BrowserAnswerExtensionDirections();
         StrictAnswers();
         LegalCodecAnswers();
         InvalidOffers();

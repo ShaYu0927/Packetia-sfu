@@ -1,3 +1,9 @@
+add_executable(test_utility_helpers test_utility_helpers.cpp)
+target_compile_features(test_utility_helpers PRIVATE cxx_std_17)
+target_include_directories(test_utility_helpers PRIVATE ${CMAKE_SOURCE_DIR}/utils)
+target_link_libraries(test_utility_helpers PRIVATE utils GTest::gtest_main)
+add_test(NAME UtilityHelpersUnitTest COMMAND test_utility_helpers)
+
 add_executable(test_state_machine test_state_machine.cpp)
 target_compile_features(test_state_machine PRIVATE cxx_std_17)
 target_include_directories(test_state_machine PRIVATE ${CMAKE_SOURCE_DIR}/utils)
