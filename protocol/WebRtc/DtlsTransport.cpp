@@ -33,8 +33,7 @@ uint64_t NowMs()
         std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
-// A memory BIO is a byte stream and can merge DTLS records from separate UDP
-// packets. This BIO preserves the boundaries on both reads and writes.
+
 struct DatagramIo
 {
     std::deque<std::vector<uint8_t>> incoming;
@@ -184,6 +183,7 @@ class OpenSslDtlsTransport final : public DtlsTransport
 public:
     ~OpenSslDtlsTransport() override { Close(); }
 
+    /* 创建 OpenSSL 上下文，生成 EC 密钥和自签名证书，计算本地 SHA-256 指纹 */
     bool Initialize()
     {
         ERR_clear_error();
@@ -229,9 +229,10 @@ public:
         local_.fingerprints.push_back({"sha-256", EncodeFingerprint(digest)});
         return true;
     }
-
+    /* 提供本地指纹与 setup 参数，用于生成 SDP */
     DtlsParameters LocalParameters() const override { return local_; }
 
+    /* 保存远端 SDP 指纹，确定本端主动或被动握手角色 */
     bool Configure(const DtlsParameters& remote, DtlsSetup localSetup) override
     {
         if (!context_ || ssl_ || configured_ || closed_ ||
@@ -256,6 +257,7 @@ public:
         return true;
     }
 
+    /* 创建 SSL 和 BIO，启动握手 */
     bool Start(SendCallback send) override
     {
         if (ssl_ || !configured_ || closed_ || !send) return false;
@@ -278,6 +280,7 @@ public:
         return Drive();
     }
 
+    /* 处理传入的 DTLS 数据报 */
     bool HandleDatagram(const uint8_t* data, size_t size) override
     {
         if (!ssl_ || closed_) return false;
@@ -304,6 +307,7 @@ public:
 
     bool IsConnected() const noexcept override { return connected_ && !closed_; }
 
+    /* 握手成功后导出发送、接收方向的 SRTP 密钥 */
     bool ExportSrtpKeys(SrtpKeyingMaterial& keys) const override
     {
         if (!IsConnected()) return false;
@@ -312,8 +316,7 @@ public:
         constexpr size_t keyBytes = kSrtpKeySize + kSrtpSaltSize;
         std::array<unsigned char, keyBytes * 2> material{};
         constexpr char label[] = "EXTRACTOR-dtls_srtp";
-        if (SSL_export_keying_material(ssl_.get(), material.data(), material.size(),
-            label, sizeof(label) - 1, nullptr, 0, 0) != 1)
+        if (SSL_export_keying_material(ssl_.get(), material.data(), material.size(), label, sizeof(label) - 1, nullptr, 0, 0) != 1)
         {
             OPENSSL_cleanse(material.data(), material.size());
             return false;

@@ -45,6 +45,27 @@ struct WebRtcOptions
     std::size_t max_sessions = 128;
 };
 
+struct TurnOptions
+{
+    bool enabled = false;
+    std::string listen_ip = "127.0.0.1";
+    uint16_t listen_port = 3478;
+    bool dual_stack = false;
+    std::string relay_bind_ip = "127.0.0.1";
+    std::string advertised_ip = "127.0.0.1";
+    std::string relay_bind_ip_v6;
+    std::string advertised_ip_v6;
+    std::string realm = "packetia";
+    uint16_t relay_port_min = 49152;
+    uint16_t relay_port_max = 65535;
+    std::size_t max_sessions = 512;
+    std::size_t max_allocations = 128;
+    std::size_t max_allocations_per_user = 8;
+    std::size_t max_permissions = 64;
+    std::size_t max_channels = 64;
+    bool local_test = false;
+};
+
 
 struct AppConfig 
 {
@@ -53,6 +74,7 @@ struct AppConfig
     uint16_t udp_port = 9000, websocket_port = 8080;
     uint32_t io_threads = 1;
     WebRtcOptions webrtc;
+    TurnOptions turn;
     bool recording_enabled = true;
     bool ai_enabled = true;
     bool conference_mix_enabled = false;

@@ -80,6 +80,12 @@ void AppConfig::Validate() const {
         throw std::invalid_argument("invalid server address, port or thread count");
     if (!webrtc.max_sessions)
         throw std::invalid_argument("webrtc.max_sessions must be positive");
+    if (!turn.max_sessions || !turn.max_allocations || !turn.max_allocations_per_user ||
+        !turn.max_permissions || !turn.max_channels ||
+        (turn.relay_port_min == 0 ? turn.relay_port_max != 0 : turn.relay_port_min > turn.relay_port_max))
+        throw std::invalid_argument("invalid TURN port range or resource limits");
+    if (turn.enabled && (turn.listen_ip.empty() || !turn.listen_port || turn.realm.empty()))
+        throw std::invalid_argument("invalid TURN listener or realm");
     if (recording.directory.empty() || !recording.max_queue_frames || !recording.max_queue_bytes ||
         !recording.max_streams || !recording.max_pending_bytes || !recording.idle_timeout_ms ||
         !recording.worker_count || !recording.max_stream_queue_frames || !recording.max_stream_queue_bytes)
@@ -90,7 +96,7 @@ void AppConfig::Validate() const {
 }
 AppConfig AppConfig::FromJson(const std::string& text) {
     const auto root = Json::parse(text);
-    Keys(root, {"server", "webrtc", "services", "recording", "stream_defaults", "streams"});
+    Keys(root, {"server", "webrtc", "turn", "services", "recording", "stream_defaults", "streams"});
     AppConfig config;
     if (root.contains("server")) {
         const auto& server = root.at("server");
@@ -117,6 +123,26 @@ AppConfig AppConfig::FromJson(const std::string& text) {
         if (services.contains("recording")) config.recording_enabled = Flag(services.at("recording"));
         if (services.contains("ai")) config.ai_enabled = Flag(services.at("ai"));
         if (services.contains("conference_mix")) config.conference_mix_enabled = Flag(services.at("conference_mix"));
+    }
+    if (root.contains("turn")) {
+        const auto& turn = root.at("turn");
+        Keys(turn, {"enabled", "listen_ip", "listen_port", "dual_stack", "relay_bind_ip", "advertised_ip",
+                    "relay_bind_ip_v6", "advertised_ip_v6", "realm", "relay_port_min", "relay_port_max",
+                    "max_sessions", "max_allocations", "max_allocations_per_user", "max_permissions",
+                    "max_channels", "local_test"});
+        if (turn.contains("enabled")) config.turn.enabled = Flag(turn.at("enabled"));
+        if (turn.contains("dual_stack")) config.turn.dual_stack = Flag(turn.at("dual_stack"));
+        if (turn.contains("local_test")) config.turn.local_test = Flag(turn.at("local_test"));
+#define READ_TURN_STRING(name) if (turn.contains(#name)) config.turn.name = turn.at(#name).get<std::string>()
+        READ_TURN_STRING(listen_ip); READ_TURN_STRING(relay_bind_ip); READ_TURN_STRING(advertised_ip);
+        READ_TURN_STRING(relay_bind_ip_v6); READ_TURN_STRING(advertised_ip_v6); READ_TURN_STRING(realm);
+#undef READ_TURN_STRING
+#define READ_TURN_LIMIT(name) Number(turn, #name, config.turn.name)
+        READ_TURN_LIMIT(listen_port); READ_TURN_LIMIT(max_sessions); READ_TURN_LIMIT(max_allocations);
+        READ_TURN_LIMIT(max_allocations_per_user); READ_TURN_LIMIT(max_permissions); READ_TURN_LIMIT(max_channels);
+#undef READ_TURN_LIMIT
+        Number(turn, "relay_port_min", config.turn.relay_port_min, true);
+        Number(turn, "relay_port_max", config.turn.relay_port_max, true);
     }
     if (root.contains("stream_defaults")) {
         const auto& defaults = root.at("stream_defaults");
@@ -169,6 +195,7 @@ AppConfig AppConfig::FromEnvironment()
     config.ai_enabled = EnvironmentFlag("PACKETIA_AI", config.ai_enabled);
     config.conference_mix_enabled = EnvironmentFlag("PACKETIA_CONFERENCE_MIX", config.conference_mix_enabled);
     config.webrtc.enabled = EnvironmentFlag("PACKETIA_WEBRTC", config.webrtc.enabled);
+    config.turn.enabled = EnvironmentFlag("PACKETIA_TURN", config.turn.enabled);
     if (const char* ip = std::getenv("PACKETIA_WEBRTC_PUBLIC_IP")) config.webrtc.public_ip = ip;
     if (const char* token = std::getenv("PACKETIA_WEBRTC_TOKEN")) config.webrtc.token = token;
     if (const char* directory = std::getenv("PACKETIA_RECORD_DIR")) config.recording.directory = directory;

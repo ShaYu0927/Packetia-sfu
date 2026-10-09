@@ -9,6 +9,8 @@
 #include "rtmp_server.h"
 #include "UdpServer.h"
 #include "UdpSession.h"
+#include "TurnServer.h"
+#include "StringUtil.h"
 #include "AIService/AIService.h"
 #include "AIService/UnavailableModelProvider.h"
 #include "RecordService/RecordingService.h"
@@ -21,6 +23,7 @@
 #endif
 
 #include <stdexcept>
+#include <cstdlib>
 #include <utility>
 
 namespace server
@@ -205,6 +208,7 @@ bool ServerApp::RenegotiateWebRtc(uint64_t session_id, const std::vector<sdp::Sd
 
 void ServerApp::AddNetworkServices()
 {
+    AddTurnService();
     const auto& ip = config_.listen_ip;
     auto* loop = event_loop_.get();
     launcher_.AddIpPortService<RtspServer>(SERVICE_RTSP, ip, config_.rtsp_port, loop);
@@ -241,5 +245,66 @@ void ServerApp::AddNetworkServices()
         LOG_DEBUG("ws close, connId=", conn_id);
     });
 #endif
+}
+
+void ServerApp::AddTurnService()
+{
+    if (!config_.turn.enabled) return;
+    launcher_.AddCustomService(SERVICE_TURN,
+        [this] {
+            const char* user = std::getenv("PACKETIA_TURN_USER");
+            const char* secret = std::getenv("PACKETIA_TURN_PASSWORD");
+            if (!user || !secret)
+            {
+                LOG_ERROR("TURN requires PACKETIA_TURN_USER and PACKETIA_TURN_PASSWORD");
+                return false;
+            }
+            const std::string username(user), password(secret);
+            if (username.empty() || username.size() > 512 || password.empty() || password.size() > 763 ||
+                !utils::IsPrintableAscii(username) || !utils::IsPrintableAscii(password))
+            {
+                LOG_ERROR("TURN requires nonempty printable ASCII credentials within protocol limits");
+                return false;
+            }
+            protocol::TurnServerOptions options;
+            const auto& config = config_.turn;
+            options.listen_ip = config.listen_ip;
+            options.listen_port = config.listen_port;
+            options.dual_stack = config.dual_stack;
+            options.relay_bind_ip = config.relay_bind_ip;
+            options.advertised_ip = config.advertised_ip;
+            options.relay_bind_ip_v6 = config.relay_bind_ip_v6;
+            options.advertised_ip_v6 = config.advertised_ip_v6;
+            options.realm = config.realm;
+            options.relay_port_min = config.relay_port_min;
+            options.relay_port_max = config.relay_port_max;
+            options.max_sessions = config.max_sessions;
+            options.max_allocations = config.max_allocations;
+            options.max_allocations_per_user = config.max_allocations_per_user;
+            options.max_permissions = config.max_permissions;
+            options.max_channels = config.max_channels;
+            if (config.local_test)
+            {
+                options.allow_peer = [](const network::SocketAddr& peer) {
+                    if (peer.IsV6())
+                        return IN6_IS_ADDR_LOOPBACK(&reinterpret_cast<const sockaddr_in6*>(&peer.ss)->sin6_addr);
+                    const auto bytes = peer.IPv4Bytes();
+                    return bytes.size() == 4 && static_cast<unsigned char>(bytes[0]) == 127;
+                };
+            }
+            turn_server_ = std::make_shared<protocol::TurnServer>(event_loop_->GetTaskScheduler(), std::move(options),
+                [username, password](std::string_view user, std::string& out) {
+                    if (user != username) return false;
+                    out = password;
+                    return true;
+                });
+            if (!turn_server_->Start()) return false;
+            LOG_INFO("TURN started in Packetia on ", turn_server_->LocalAddress().ToString());
+            return true;
+        },
+        [this] {
+            if (turn_server_) turn_server_->Stop();
+            turn_server_.reset();
+        });
 }
 }

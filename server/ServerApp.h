@@ -14,6 +14,7 @@ class EventLoop;
 namespace media { class EncodedFrameRouter; }
 namespace service { class RecordingService; class IRecordingEventSink; }
 namespace sdp { struct SdpMedia; }
+namespace protocol { class TurnServer; }
 
 namespace server
 {
@@ -52,6 +53,7 @@ private:
     void ConfigureServices();
     void AddMediaServices();
     void AddNetworkServices();
+    void AddTurnService();
     void RefreshStreamPolicies();
 
     const ServerConfig config_; // Immutable network/resource startup settings.
@@ -64,6 +66,7 @@ private:
     std::shared_ptr<service::mix::ConferenceMixService> mix_service_;
     std::shared_ptr<service::RecordingService> recording_service_;
     std::shared_ptr<WebRtcService> webrtc_service_;
+    std::shared_ptr<protocol::TurnServer> turn_server_;
     // Destroy services before the resources referenced by their callbacks.
     ServerLauncher launcher_;
 };

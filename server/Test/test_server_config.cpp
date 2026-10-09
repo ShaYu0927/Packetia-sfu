@@ -75,7 +75,12 @@ void StreamConfiguration() {
         R"({"recording":{"worker_count":0}})", R"({"recording":{"reorder_ms":5001}})",
         R"({"recording":{"segment_ms":18446744073709551615}})", R"({"stream_default":{}})",
         R"({"webrtc":{"enabled":"true"}})", R"({"webrtc":{"max_sessions":0}})",
-        R"({"webrtc":{"public_ip":42}})", R"({"webrtc":{"unknown":true}})"}) {
+        R"({"webrtc":{"public_ip":42}})", R"({"webrtc":{"unknown":true}})",
+        R"({"turn":{"enabled":"true"}})", R"({"turn":{"dual_stack":1}})",
+        R"({"turn":{"listen_port":65536}})", R"({"turn":{"max_allocations":0}})",
+        R"({"turn":{"relay_port_min":60000,"relay_port_max":50000}})",
+        R"({"turn":{"relay_port_min":0,"relay_port_max":50000}})",
+        R"({"turn":{"enabled":true,"realm":""}})", R"({"turn":{"unknown":true}})"}) {
         rejected = false;
         try { config::AppConfig::FromJson(invalid); } catch (const std::exception&) { rejected = true; }
         Check(rejected, "invalid JSON configuration accepted");
@@ -91,6 +96,21 @@ void StreamConfiguration() {
     Check(rtc.webrtc.enabled && rtc.webrtc.public_ip == "192.0.2.1" &&
           rtc.webrtc.token == "test-only" && rtc.webrtc.max_sessions == 12,
           "WebRTC configuration was not applied");
+    auto turn = config::AppConfig::FromJson(R"({"turn":{
+        "enabled":true,"listen_ip":"::","listen_port":13478,"dual_stack":true,
+        "relay_bind_ip":"0.0.0.0","advertised_ip":"192.0.2.1",
+        "relay_bind_ip_v6":"::","advertised_ip_v6":"2001:db8::1","realm":"example.org",
+        "relay_port_min":0,"relay_port_max":0,"max_sessions":64,"max_allocations":32,
+        "max_allocations_per_user":4,"max_permissions":16,"max_channels":8,"local_test":true
+    }})");
+    Check(turn.turn.enabled && turn.turn.dual_stack && turn.turn.listen_ip == "::" &&
+          turn.turn.listen_port == 13478 && turn.turn.relay_bind_ip == "0.0.0.0" &&
+          turn.turn.advertised_ip == "192.0.2.1" && turn.turn.relay_bind_ip_v6 == "::" &&
+          turn.turn.advertised_ip_v6 == "2001:db8::1" && turn.turn.realm == "example.org" &&
+          turn.turn.relay_port_min == 0 && turn.turn.relay_port_max == 0 && turn.turn.max_sessions == 64 &&
+          turn.turn.max_allocations == 32 && turn.turn.max_allocations_per_user == 4 &&
+          turn.turn.max_permissions == 16 && turn.turn.max_channels == 8 && turn.turn.local_test,
+          "TURN configuration was not applied");
 
     config::ConfigStore concurrent;
     std::atomic<bool> done{false}, coherent{true};
@@ -111,10 +131,24 @@ int main() {
     try {
         SavedEnvironment recording("PACKETIA_RECORDING"), ai("PACKETIA_AI"),
                          mix("PACKETIA_CONFERENCE_MIX"), directory("PACKETIA_RECORD_DIR"), path("PACKETIA_CONFIG"),
-                         rtc("PACKETIA_WEBRTC"), rtc_ip("PACKETIA_WEBRTC_PUBLIC_IP"), rtc_token("PACKETIA_WEBRTC_TOKEN");
+                         rtc("PACKETIA_WEBRTC"), rtc_ip("PACKETIA_WEBRTC_PUBLIC_IP"), rtc_token("PACKETIA_WEBRTC_TOKEN"),
+                         turn("PACKETIA_TURN");
         auto config = server::ServerConfig::FromEnvironment();
         Check(config.recording_enabled && config.ai_enabled && !config.conference_mix_enabled, "defaults changed");
         Check(!config.webrtc.enabled, "WebRTC must be opt-in");
+        Check(!config.turn.enabled, "TURN must be opt-in");
+        Set("PACKETIA_TURN", "true");
+        config = server::ServerConfig::FromEnvironment();
+        Check(config.turn.enabled, "TURN environment override ignored");
+        Set("PACKETIA_TURN", "false");
+        config = server::ServerConfig::FromEnvironment();
+        Check(!config.turn.enabled, "TURN disable ignored");
+        Set("PACKETIA_TURN", "invalid");
+        bool turn_rejected = false;
+        try { server::ServerConfig::FromEnvironment(); }
+        catch (const std::invalid_argument&) { turn_rejected = true; }
+        Check(turn_rejected, "invalid TURN flag accepted");
+        Set("PACKETIA_TURN", nullptr);
         Set("PACKETIA_WEBRTC", "true");
         Set("PACKETIA_WEBRTC_PUBLIC_IP", "192.0.2.2");
         Set("PACKETIA_WEBRTC_TOKEN", "environment-test-only");

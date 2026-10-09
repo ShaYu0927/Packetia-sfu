@@ -26,9 +26,10 @@ void Usage()
 {
     std::cout << "PacketiaTurn [--listen-ip IP] [--listen-port PORT] [--relay-ip IP]\n"
                  "             [--public-ip IP] [--realm REALM]\n"
+                 "             [--dual-stack --listen-ip ::] [--relay-ipv6 IP] [--public-ipv6 IP]\n"
                  "             [--relay-min-port PORT] [--relay-max-port PORT] [--local-test]\n"
                  "Account: PACKETIA_TURN_USER and PACKETIA_TURN_PASSWORD environment variables.\n"
-                 "--local-test permits only loopback peers. Default peer policy permits public IPv4.\n";
+                 "--local-test permits only loopback peers. Default peer policy permits public IPv4/IPv6.\n";
 }
 } // namespace
 
@@ -41,9 +42,12 @@ int main(int argc, char** argv)
         {
             const std::string_view argument(argv[i]);
             if (argument == "--help") { Usage(); return 0; }
+            if (argument == "--dual-stack") { options.dual_stack = true; continue; }
             if (argument == "--local-test")
             {
                 options.allow_peer = [](const network::SocketAddr& peer) {
+                    if (peer.IsV6())
+                        return IN6_IS_ADDR_LOOPBACK(&reinterpret_cast<const sockaddr_in6*>(&peer.ss)->sin6_addr);
                     const auto bytes = peer.IPv4Bytes();
                     return bytes.size() == 4 && static_cast<unsigned char>(bytes[0]) == 127;
                 };
@@ -55,6 +59,8 @@ int main(int argc, char** argv)
             else if (argument == "--listen-port") options.listen_port = Port(value);
             else if (argument == "--relay-ip") options.relay_bind_ip = value;
             else if (argument == "--public-ip") options.advertised_ip = value;
+            else if (argument == "--relay-ipv6") options.relay_bind_ip_v6 = value;
+            else if (argument == "--public-ipv6") options.advertised_ip_v6 = value;
             else if (argument == "--realm") options.realm = value;
             else if (argument == "--relay-min-port") options.relay_port_min = Port(value);
             else if (argument == "--relay-max-port") options.relay_port_max = Port(value);

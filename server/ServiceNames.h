@@ -14,5 +14,6 @@
 #define SERVICE_UDP       "UdpServer"
 #define SERVICE_WS        "WsServer"
 #define SERVICE_WEBRTC    "WebRtcService"
+#define SERVICE_TURN      "TurnServer"
 
 #endif // PACKETIA_SERVER_SERVICENAMES_H_

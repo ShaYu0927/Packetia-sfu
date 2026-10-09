@@ -25,6 +25,29 @@ namespace network
             return ss.ss_family == AF_INET6;
         }
 
+        bool IsValid() const
+        {
+            return (IsV4() && len == sizeof(sockaddr_in)) ||
+                   (IsV6() && len == sizeof(sockaddr_in6));
+        }
+
+        SocketAddr Normalized() const
+        {
+            if (IsV6() && len == sizeof(sockaddr_in6))
+            {
+                const auto* in6 = reinterpret_cast<const sockaddr_in6*>(&ss);
+                if (IN6_IS_ADDR_V4MAPPED(&in6->sin6_addr))
+                {
+                    sockaddr_in in{};
+                    in.sin_family = AF_INET;
+                    in.sin_port = in6->sin6_port;
+                    memcpy(&in.sin_addr, in6->sin6_addr.s6_addr + 12, 4);
+                    return FromSockaddr(reinterpret_cast<const sockaddr*>(&in), sizeof(in));
+                }
+            }
+            return *this;
+        }
+
         std::string IPv4Bytes() const
         {
             if (!IsV4())
@@ -64,15 +87,20 @@ namespace network
             sockaddr_in in{};
             in.sin_family = AF_INET;
             in.sin_port = htons(port);
-            in.sin_addr.s_addr = inet_addr(ip.c_str());
-            memcpy(&a.ss, &in, sizeof(in));
-            a.len = sizeof(in);
+            if (inet_pton(AF_INET, ip.c_str(), &in.sin_addr) == 1)
+                return FromSockaddr(reinterpret_cast<const sockaddr*>(&in), sizeof(in));
+            sockaddr_in6 in6{};
+            in6.sin6_family = AF_INET6;
+            in6.sin6_port = htons(port);
+            if (inet_pton(AF_INET6, ip.c_str(), &in6.sin6_addr) == 1)
+                return FromSockaddr(reinterpret_cast<const sockaddr*>(&in6), sizeof(in6));
             return a;
         }
 
         static SocketAddr FromSockaddr(const sockaddr *sa, socklen_t slen)
         {
             SocketAddr a;
+            if (!sa || slen > sizeof(a.ss)) return a;
             memcpy(&a.ss, sa, slen);
             a.len = slen;
             return a;
@@ -94,7 +122,7 @@ namespace network
                 inet_ntop(AF_INET6, &in6->sin6_addr, ip, sizeof(ip));
                 port = ntohs(in6->sin6_port);
             }
-            return std::string(ip) + ":" + std::to_string(port);
+            return (IsV6() ? "[" + std::string(ip) + "]" : std::string(ip)) + ":" + std::to_string(port);
         }
 
         bool operator==(const SocketAddr &other) const
@@ -115,7 +143,7 @@ namespace network
                 auto *a = (const sockaddr_in6 *)&ss;
                 auto *b = (const sockaddr_in6 *)&other.ss;
 
-                return a->sin6_port == b->sin6_port &&
+                return a->sin6_port == b->sin6_port && a->sin6_scope_id == b->sin6_scope_id &&
                        memcmp(&a->sin6_addr, &b->sin6_addr, sizeof(in6_addr)) == 0;
             }
 
@@ -139,9 +167,9 @@ namespace network
             {
                 auto *in6 = (const sockaddr_in6 *)&a.ss;
 
-                const uint64_t *p = reinterpret_cast<const uint64_t *>(&in6->sin6_addr);
-
-                uint64_t h = p[0] ^ p[1] ^ uint64_t(in6->sin6_port);
+                uint64_t words[2]{};
+                memcpy(words, &in6->sin6_addr, sizeof(words));
+                uint64_t h = words[0] ^ words[1] ^ uint64_t(in6->sin6_port) ^ uint64_t(in6->sin6_scope_id);
 
                 return std::hash<uint64_t>()(h);
             }
@@ -156,7 +184,7 @@ namespace network
         explicit UdpSocket(int fd = -1) : fd_(fd) {}
         ~UdpSocket() = default;
 
-        int Create(); // socket(AF_INET, SOCK_DGRAM, 0)
+        int Create(int family = AF_INET, bool dual_stack = false);
         bool Bind(const std::string &ip, uint16_t port, bool reuse_address = true);
         void Close();
 
@@ -168,6 +196,8 @@ namespace network
 
     private:
         int fd_{-1};
+        int family_{AF_INET};
+        bool dual_stack_{false};
     };
 
 }

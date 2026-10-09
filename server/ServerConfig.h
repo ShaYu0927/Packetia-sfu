@@ -1,7 +1,7 @@
 #pragma once
 #include "config/AppConfig.h"
 
-namespace server {
-// Compatibility alias; configuration now belongs to the central config module.
+namespace server 
+{
 using ServerConfig = config::AppConfig;
 }

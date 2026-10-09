@@ -82,6 +82,50 @@ Apple Silicon 建议使用原生 arm64 Homebrew，避免混用 Rosetta 的 x86_6
 服务默认监听 RTSP 554、SIP 5060、RTMP 1935、UDP 9000 和 WebSocket 8080，
 启动前请确认这些端口可用。默认配置见 `server/ServerConfig.h`。
 
+## 鉴权框架（待接入）
+
+`service/Auth` 提供独立的 `packetia_auth` 库，目前只有类型、接口和组合入口，
+没有 JWT、用户登录或房间权限策略实现，也尚未替换 WebRTC 现有共享 token 校验。
+
+| 类型/接口 | 职责 |
+| --- | --- |
+| `AuthContext` | 验证后的身份、用途、Unix 秒有效期及权限列表 |
+| `PermissionGrant` | 资源类型、资源 ID、允许的动作；不隐含通配或管理员权限 |
+| `ResourceContext` | 服务端解析的资源 ID、所属房间/用户，及可选会话/流 ID |
+| `IAuthenticator::Authenticate` | 具体实现验证签名、签发者、用途、有效期和凭证状态 |
+| `IAccessPolicy::Check` | 具体实现检查用途与动作兼容性、授权范围、资源归属；缺少授权时拒绝 |
+| `AuthService` | 构造时注入两个接口；缺少实现默认拒绝，并在认证/授权时检查身份和有效期 |
+
+你可以从下面两项开始实现：
+
+1. `JwtAuthenticator : IAuthenticator`：头文件已提供声明，你可以在 JwtAuthenticator.cpp 中实现 Authenticate。使用 jwt-cpp 等成熟库，成功时返回 `AuthResult::Success(context)`，失败时返回错误码。必须要求有效期，不能只 decode 后就返回成功。
+2. `RoomAccessPolicy : IAccessPolicy`：检查目标房间、轨道的实际归属，以及 JoinRoom/Publish/Subscribe 等权限；同时拒绝 WebRTC 凭证执行管理操作。
+
+依赖注入与调用示例（authenticator/policy 为你实现的对象）：
+
+```cpp
+#include "service/Auth/AuthService.h"
+
+using namespace service::auth;
+AuthService auth(authenticator, policy);
+const auto result = auth.Authenticate(token, Audience::WebRtc);
+if (!result.Succeeded()) { /* 返回认证错误 */ }
+else
+{
+    const auto decision = auth.Authorize(*result.context, Action::JoinRoom, resource);
+    if (!decision.Allowed()) { /* 返回权限错误 */ }
+    else { /* 执行业务操作 */ }
+}
+```
+
+后续由 ServerApp 创建并注入共享 AuthService，WebRtcService 绑定成功认证的上下文到连接，
+RPC 入口按调用认证；在资源分配或业务变更前执行授权。ResourceContext 的归属信息来自服务端状态，
+不能直接复制客户端提交的房间/用户字段。鉴权组件和注入的时钟可能被并发调用，具体实现需保证线程安全。
+
+这里的同步入口不管理连接、定时器或撤销列表：过期断开、媒体清理、凭证刷新和撤销由后续接入实现。
+仅在信令时检查有效期不会自动终止已有媒体转发。JWT 的有效期为绝对 Unix 秒，不能使用单调时钟。
+错误详情留给内部处理，不记录或回显 token。TURN/ICE 凭证保持各自协议边界。
+
 ## RTP 协议规范
 
 本节整理项目涉及的主要 RTP 协议规范，便于读代码和继续实现。字段和处理要求以
@@ -305,19 +349,69 @@ MTU 扣除 IP/UDP、变长 RTP 头、SRTP 和 TURN 开销；固定 payload 上�
 
 ## TURN UDP 中继
 
-`protocol/turn` 提供独立的 `PacketiaTurn`，使用 IPv4 UDP 控制与中继套接字。
+`protocol/turn` 提供 TURN 模块，由 `ServerApp` 在 `Packetia` 主进程内统一启动、关闭，
+与 WebRTC 直接组合，不需要 RPC 或另外启动 TURN 进程。支持 IPv4/IPv6 UDP 控制与中继套接字。
 支持长期凭证认证、401/438 challenge、Allocate/Refresh、CreatePermission、
 Send/Data indication、ChannelBind/ChannelData、生命周期清理、配额与 peer ACL。
-当前不包含 TCP/TLS、IPv6 或独立 STUN Binding 服务，不能等同于 coturn 全功能。
+当前不包含 TCP/TLS 或独立 STUN Binding 服务，不能等同于 coturn 全功能。
+默认关闭，在配置文件中设置 `turn.enabled=true`，或通过 `PACKETIA_TURN=true` 开启。
 账号由 `PACKETIA_TURN_USER` 和 `PACKETIA_TURN_PASSWORD` 环境变量提供，要求非空可打印 ASCII。
+TURN 开启后，缺少账号、绑定失败或后续模块启动失败都会触发启动回滚。
+网络参数与配额放在 JSON 的 `turn` 节，字段见 `config/packetia.example.json` 和 `config/AppConfig.h`。
 
 ```sh
-cmake --build build/webrtc-integration --target PacketiaTurn
-build/webrtc-integration/protocol/PacketiaTurn --help
+cmake --build build/webrtc-integration --target Packetia
+export PACKETIA_CONFIG="$PWD/config/packetia.example.json"
+export PACKETIA_TURN=true
+export PACKETIA_TURN_USER=packetia-test
+export PACKETIA_TURN_PASSWORD=local-test-password
+export PACKETIA_WEBRTC=true
+export PACKETIA_WEBRTC_PUBLIC_IP=127.0.0.1
+export PACKETIA_WEBRTC_TOKEN=local-test-token
+build/webrtc-integration/Packetia
 ```
 
 公网运行需配置监听/中继/公告 IP 与 relay 端口范围，并放通对应 UDP 端口。
-默认 peer ACL 拒绝私网、回环、链路本地及组播目标；`--local-test` 仅允许回环 peer。
+默认 peer ACL 拒绝私网、回环、链路本地及组播目标；配置 `turn.local_test=true` 仅允许回环 peer。
+控制监听与 SFU 媒体仍使用不同的 UDP 端口，浏览器仍需在 `iceServers` 中配置 TURN URL 和账号。
+启动先完成 I/O 和工作线程，再启动 TURN 与网络模块；关闭时先停止 WebRTC，最后停止 TURN 和 I/O。
+`PacketiaTurn` 入口保留作独立协议调试工具，正常运行使用上面的 `Packetia` 入口即可。
+
+### TURN 双栈与 IPv6 中继
+
+默认仍使用 IPv4。在 JSON 中设置 `turn.dual_stack=true`、`turn.listen_ip="::"` 后，一个 IPv6 控制 socket
+同时接收 IPv4/IPv6 客户端；接收的 IPv4-mapped 地址统一为 IPv4，回复时由 socket 层转回映射形式。
+不启用双栈的 IPv6 监听设置 `IPV6_V6ONLY=1`。
+
+`turn.relay_bind_ip` / `turn.advertised_ip` 配置 IPv4 中继绑定/公告地址，
+`turn.relay_bind_ip_v6` / `turn.advertised_ip_v6` 配置 IPv6 中继绑定/公告地址。两组配置独立，
+IPv6 中继默认关闭；程序接口中清空某组的两个地址可关闭该地址族。
+客户端未携带 `REQUESTED-ADDRESS-FAMILY` 时仍请求 IPv4，值 `0x02` 请求 IPv6。
+未配置所请求的地址族返回 440，对端地址族与中继不匹配返回 443。
+IPv4 客户端可申请 IPv6 中继，IPv6 客户端也可申请 IPv4 中继。
+每个 Allocation 当前只分配一种地址族，不支持 `ADDITIONAL-ADDRESS-FAMILY` 双重分配。
+
+本机双栈测试配置，将其作为配置文件的 `turn` 节并使用上述主程序入口：
+
+```json
+"turn": {
+  "enabled": true,
+  "listen_ip": "::",
+  "listen_port": 3478,
+  "dual_stack": true,
+  "relay_bind_ip": "127.0.0.1",
+  "advertised_ip": "127.0.0.1",
+  "relay_bind_ip_v6": "::1",
+  "advertised_ip_v6": "::1",
+  "local_test": true
+}
+```
+
+公网部署应改为实际接口及可达的公告地址，并放通 IPv4/IPv6 的控制端口和中继端口范围。
+IPv6 默认 ACL 同样拒绝回环、ULA、链路本地、组播及映射/兼容 IPv4 地址。
+当前仅接受无 zone ID 的数字 IP；不支持携带 scope 的链路本地对端。
+TURN 测试覆盖四种接入/中继地址族组合的真实 UDP 转发、通道、权限到期和资源释放。
+SFU 的双栈监听与双地址 SDP 候选发布尚未在这一功能中实现。
 
 ## 双浏览器房间与 TURN 示例
 

@@ -14,6 +14,19 @@
     "public_ip": "",
     "max_sessions": 128
   },
+  "turn": {
+    "enabled": false,
+    "listen_ip": "127.0.0.1",
+    "listen_port": 3478,
+    "dual_stack": false,
+    "relay_bind_ip": "127.0.0.1",
+    "advertised_ip": "127.0.0.1",
+    "relay_bind_ip_v6": "",
+    "advertised_ip_v6": "",
+    "realm": "packetia",
+    "relay_port_min": 49152,
+    "relay_port_max": 65535
+  },
   "recording": {
     "directory": "recordings",
     "segment_ms": 60000,

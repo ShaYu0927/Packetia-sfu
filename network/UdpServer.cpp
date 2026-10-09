@@ -36,7 +36,7 @@ void UdpServer::SetHandler(IUdpHandler::Ptr h)
     else handler_ = std::move(h);
 }
 
-bool UdpServer::Start(const std::string &ip, uint16_t port, bool reuse_address)
+bool UdpServer::Start(const std::string &ip, uint16_t port, bool reuse_address, bool dual_stack)
 {
     Stop();
 
@@ -49,7 +49,8 @@ bool UdpServer::Start(const std::string &ip, uint16_t port, bool reuse_address)
 
     bool result = false;
     scheduler_->Invoke([&, this] {
-    if (sock_.Create() < 0)
+    const auto address = SocketAddr::FromIPPort(ip.empty() ? "0.0.0.0" : ip, port);
+    if (!address.IsValid() || sock_.Create(address.ss.ss_family, dual_stack) < 0)
     {
         LOG_ERROR("UdpServer Start: socket create failed");
         return;

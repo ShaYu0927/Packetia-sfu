@@ -32,7 +32,7 @@ public:
 
     void SetHandler(IUdpHandler::Ptr h);
 
-    bool Start(const std::string& ip, uint16_t port, bool reuse_address = true);
+    bool Start(const std::string& ip, uint16_t port, bool reuse_address = true, bool dual_stack = false);
     void Stop();
     SocketAddr LocalAddress() const;
 

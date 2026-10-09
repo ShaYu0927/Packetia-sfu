@@ -272,7 +272,7 @@ endif()
 target_link_libraries(Packetia
     PRIVATE
     "$<$<PLATFORM_ID:Linux>:-Wl,--start-group>"
-    server media rtsp rtp sip Rtmp network utils Rtcp LOGGER ROOM_LIB COMMON ICE WebRtc Interleaved service
+    server media rtsp rtp sip Rtmp network utils Rtcp LOGGER ROOM_LIB COMMON ICE WebRtc TURN Interleaved service
     "$<$<PLATFORM_ID:Linux>:-Wl,--end-group>"
     ${FFMPEG_LIBRARIES}
     pthread
@@ -282,6 +282,20 @@ target_link_libraries(Packetia
 
 target_compile_options(Packetia PRIVATE -H)
 target_compile_definitions(Packetia PRIVATE RTP_DEBUG=1)
+
+if(BUILD_TESTING AND (NOT PACKETIA_WITH_LIBWEBSOCKETS OR PACKETIA_SRTP_AVAILABLE))
+    add_executable(test_server_app
+        server/Test/test_server_app.cpp
+        server/ServerApp.cpp
+        server/WorkerSetup.cpp)
+    if(PACKETIA_WITH_LIBWEBSOCKETS)
+        target_sources(test_server_app PRIVATE server/WebRtcService.cpp)
+    endif()
+    get_target_property(PACKETIA_APP_LIBRARIES Packetia LINK_LIBRARIES)
+    target_link_libraries(test_server_app PRIVATE ${PACKETIA_APP_LIBRARIES} GTest::gtest GTest::gtest_main)
+    add_test(NAME server_app COMMAND test_server_app)
+    set_tests_properties(server_app PROPERTIES TIMEOUT 30)
+endif()
 
 
 # cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON

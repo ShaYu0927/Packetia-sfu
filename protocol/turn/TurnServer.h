@@ -15,8 +15,13 @@ struct TurnServerOptions
 {
     std::string listen_ip = "127.0.0.1";
     uint16_t listen_port = 3478;
+    // IPv6 wildcard listener with IPv4-mapped receive addresses normalized to IPv4.
+    bool dual_stack = false;
     std::string relay_bind_ip = "127.0.0.1";
     std::string advertised_ip = "127.0.0.1";
+    // Empty pairs disable the corresponding relay family.
+    std::string relay_bind_ip_v6;
+    std::string advertised_ip_v6;
     std::string realm = "packetia";
     uint16_t relay_port_min = 49152;
     uint16_t relay_port_max = 65535;
@@ -31,7 +36,7 @@ struct TurnServerOptions
     std::function<bool(const network::SocketAddr&)> allow_peer;
 };
 
-// IPv4 UDP control and IPv4 UDP relaying. State and sockets are owned by one
+// IPv4/IPv6 UDP control and relaying. State and sockets are owned by one
 // scheduler; public lifecycle/query methods synchronously dispatch to it.
 class TurnServer : public std::enable_shared_from_this<TurnServer>
 {
