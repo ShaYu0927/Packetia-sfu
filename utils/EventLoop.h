@@ -28,9 +28,12 @@ public:
     EventLoop(uint32_t num_threads =1);
     virtual ~EventLoop();
 
+    // Round-robin assignment at object creation/start. Retain the result and
+    // use that scheduler for the object's channels, tasks and timers.
     std::shared_ptr<TaskScheduler> GetTaskScheduler();
 
     
+    // Legacy convenience methods target scheduler 0, not the last assignment.
     bool AddTriggerEvent(TriggerEvent callback);
     TimeId AddTimer(TimeEvent timerEvent, uint32_t msec);
     void RemoveTimer(TimeId timerId);

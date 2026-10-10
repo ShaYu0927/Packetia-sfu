@@ -82,6 +82,8 @@ add_library(network STATIC
     network/UdpSession.cpp
     network/transport/DatagramProtocolClassifier.cpp
     network/transport/UdpDatagramTransport.cpp
+    network/transport/TlsContext.cpp
+    network/transport/TlsTransport.cpp
 )
 
 if(PACKETIA_WITH_LIBWEBSOCKETS)
@@ -151,7 +153,7 @@ add_library(utils STATIC
 
 target_link_libraries(utils PUBLIC LOGGER Threads::Threads packetia_memory PRIVATE OpenSSL::Crypto)
 target_link_libraries(COMMON PUBLIC packetia_memory)
-target_link_libraries(network PUBLIC packetia_memory)
+target_link_libraries(network PUBLIC packetia_memory PRIVATE OpenSSL::SSL)
 
 add_library(rtp STATIC
     Rtsp/Rtp.cpp

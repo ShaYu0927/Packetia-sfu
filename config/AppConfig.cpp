@@ -80,6 +80,8 @@ void AppConfig::Validate() const {
         throw std::invalid_argument("invalid server address, port or thread count");
     if (!webrtc.max_sessions)
         throw std::invalid_argument("webrtc.max_sessions must be positive");
+    if (!webrtc.reconnect_timeout_ms || webrtc.reconnect_timeout_ms > 120000)
+        throw std::invalid_argument("webrtc.reconnect_timeout_ms must be between 1 and 120000");
     if (!turn.max_sessions || !turn.max_allocations || !turn.max_allocations_per_user ||
         !turn.max_permissions || !turn.max_channels ||
         (turn.relay_port_min == 0 ? turn.relay_port_max != 0 : turn.relay_port_min > turn.relay_port_max))
@@ -111,11 +113,12 @@ AppConfig AppConfig::FromJson(const std::string& text) {
     }
     if (root.contains("webrtc")) {
         const auto& rtc = root.at("webrtc");
-        Keys(rtc, {"enabled", "public_ip", "token", "max_sessions"});
+        Keys(rtc, {"enabled", "public_ip", "token", "max_sessions", "reconnect_timeout_ms"});
         if (rtc.contains("enabled")) config.webrtc.enabled = Flag(rtc.at("enabled"));
         if (rtc.contains("public_ip")) config.webrtc.public_ip = rtc.at("public_ip").get<std::string>();
         if (rtc.contains("token")) config.webrtc.token = rtc.at("token").get<std::string>();
         Number(rtc, "max_sessions", config.webrtc.max_sessions);
+        Number(rtc, "reconnect_timeout_ms", config.webrtc.reconnect_timeout_ms);
     }
     if (root.contains("services")) {
         const auto& services = root.at("services");

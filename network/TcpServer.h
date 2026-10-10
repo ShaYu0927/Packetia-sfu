@@ -20,6 +20,7 @@ class TcpServer
 {
 public:
     TcpServer(EventLoop* event_loop);
+    explicit TcpServer(std::shared_ptr<TaskScheduler> scheduler);
 	virtual ~TcpServer();
 
     virtual bool Start(std::string ip, uint16_t port);
@@ -31,13 +32,19 @@ public:
 	uint16_t GetPort() const 
 	{ return port_; }
 	EventLoop* GetEventLoop() const { return event_loop_; }
+    std::shared_ptr<TaskScheduler> GetTaskScheduler() const { return acceptor_->GetTaskScheduler(); }
 
 protected:
+    // Construct and install protocol callbacks; the server starts reads after
+    // registration. OnConnected runs with disconnect cleanup already installed.
     virtual TcpConnection::Ptr OnConnect(SOCKET sockfd);
+    virtual void OnConnected(const TcpConnection::Ptr& conn) {}
 	virtual void AddConnection(SOCKET sockfd, TcpConnection::Ptr tcp_conn);
 	virtual void RemoveConnection(SOCKET sockfd);
 
-    EventLoop* event_loop_;
+    void ConfigureAcceptor();
+
+    EventLoop* event_loop_ = nullptr;
 	uint16_t port_;
 	std::string ip_;
 	std::unique_ptr<Acceptor> acceptor_;

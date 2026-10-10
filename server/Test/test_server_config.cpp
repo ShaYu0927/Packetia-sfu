@@ -75,6 +75,7 @@ void StreamConfiguration() {
         R"({"recording":{"worker_count":0}})", R"({"recording":{"reorder_ms":5001}})",
         R"({"recording":{"segment_ms":18446744073709551615}})", R"({"stream_default":{}})",
         R"({"webrtc":{"enabled":"true"}})", R"({"webrtc":{"max_sessions":0}})",
+        R"({"webrtc":{"reconnect_timeout_ms":0}})", R"({"webrtc":{"reconnect_timeout_ms":120001}})",
         R"({"webrtc":{"public_ip":42}})", R"({"webrtc":{"unknown":true}})",
         R"({"turn":{"enabled":"true"}})", R"({"turn":{"dual_stack":1}})",
         R"({"turn":{"listen_port":65536}})", R"({"turn":{"max_allocations":0}})",
@@ -96,6 +97,9 @@ void StreamConfiguration() {
     Check(rtc.webrtc.enabled && rtc.webrtc.public_ip == "192.0.2.1" &&
           rtc.webrtc.token == "test-only" && rtc.webrtc.max_sessions == 12,
           "WebRTC configuration was not applied");
+    Check(rtc.webrtc.reconnect_timeout_ms == 15000 &&
+          config::AppConfig::FromJson(R"({"webrtc":{"reconnect_timeout_ms":5000}})").webrtc.reconnect_timeout_ms == 5000,
+          "WebRTC reconnect timeout was not applied");
     auto turn = config::AppConfig::FromJson(R"({"turn":{
         "enabled":true,"listen_ip":"::","listen_port":13478,"dual_stack":true,
         "relay_bind_ip":"0.0.0.0","advertised_ip":"192.0.2.1",

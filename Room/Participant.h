@@ -6,29 +6,19 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
 #include "TrackeInfo.h"
+#include "ParticipantTypes.h"
+#include "ParticipantSession.h"
 
 class MediaSession;
 namespace media { class SfuEndpoint; }
 
 namespace room
 {
-
-/**
- * @brief 参会人状态。
- *
- * ParticipantState 用于描述一个用户在会议中的生命周期状态。
- */
-enum class ParticipantState
-{
-    Joining = 0,     // 正在加入
-    Joined,          // 已加入，但媒体链路可能还未完全建立
-    Active,          // 已激活，可以发布或订阅媒体流
-    Disconnected,    // 已断开
-};
 
 /**
  * @brief 会议参会人对象。
@@ -47,8 +37,20 @@ public:
 
 public:
     Participant(std::string participant_id, std::string name);
+    explicit Participant(ParticipantIdentity identity);
 
     ~Participant();
+
+    ParticipantInfo GetInfo() const;
+    // Bindings and Leave are serialized by the service's owner scheduler.
+    bool BindSignaling(std::string connection_id);
+    // A delayed close for an old binding must not detach its replacement.
+    bool UnbindSignaling(const SignalingBinding& expected);
+    SignalingBinding GetSignaling() const;
+
+    bool BindMediaSession(ParticipantSession::Ptr session);
+    // Protocol access through this handle still requires the owner scheduler.
+    ParticipantSession::Ptr GetMediaSession() const;
 
     /**
      * @brief 获取参会人 ID。
@@ -181,12 +183,13 @@ private:
 private:
     mutable std::mutex mutex_;
 
-    std::string participant_id_;
-    std::string name_;
+    ParticipantIdentity identity_;
+    SignalingBinding signaling_;
 
     ParticipantState state_ = ParticipantState::Joining;
 
     std::shared_ptr<MediaSession> session_;
+    ParticipantSession::Ptr media_session_;
     std::shared_ptr<media::SfuEndpoint> endpoint_;
 
     std::unordered_map<std::string, media::MediaTrackPtr> published_tracks_;

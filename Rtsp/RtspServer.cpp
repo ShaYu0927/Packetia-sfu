@@ -44,7 +44,6 @@ TcpConnection::Ptr RtspServer:: OnConnect(SOCKET sockfd)
             return session->OnRead(conn, buffer);
         });
 
-    conn->Start();
     return conn;
 }
 

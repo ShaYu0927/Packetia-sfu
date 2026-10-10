@@ -2,13 +2,16 @@
 #include "Socket.h"
 #include <cstdint>
 #include <cerrno>
+#include <cstring>
 
 
 const char BufferReader::kCRLF[] = "\r\n";
 
-BufferReader::BufferReader(uint32_t initial_size)
+BufferReader::BufferReader(uint32_t initial_size, uint32_t max_buffered_bytes)
+    : max_buffered_bytes_(max_buffered_bytes == 0
+          ? KDefaultMaxBufferedBytes : max_buffered_bytes)
 {
-    buffer_.resize(initial_size);
+    buffer_.resize(std::min(std::max(initial_size, uint32_t{1}), max_buffered_bytes_));
 }
 
 BufferReader::~BufferReader()
@@ -30,24 +33,39 @@ char *BufferReader::Peek()
     return Begin() + reader_index_;
 }
 
-int BufferReader::Read(int sockfd)
+int BufferReader::Read(int sockfd, uint32_t max_read_bytes)
 try
 {
-    uint32_t size = WritableBytes();
-    if (size == 0) 
+    const auto readable = ReadableBytes();
+    if (readable >= max_buffered_bytes_)
     {
-        buffer_.resize(buffer_.size() * 2);
+        errno = EMSGSIZE;
+        return -1;
     }
-    if(size < MAX_BYTES_PER_READ)
+    if (max_read_bytes == 0)
     {
-        uint32_t bufferReaderSize = (uint32_t)buffer_.size();
-		if(bufferReaderSize > MAX_BUFFER_SIZE) 
+        errno = EINVAL;
+        return -1;
+    }
+    const auto requested = std::min({max_read_bytes, MAX_BYTES_PER_READ,
+                                    max_buffered_bytes_ - readable});
+    if (WritableBytes() < requested && reader_index_ != 0)
+    {
+        std::memmove(Begin(), Peek(), readable);
+        reader_index_ = 0;
+        writer_index_ = readable;
+    }
+    if (WritableBytes() < requested)
+    {
+        const auto needed = writer_index_ + requested;
+        if (buffer_.capacity() < needed)
         {
-			return 0; 
-		}
-        buffer_.resize(bufferReaderSize + MAX_BYTES_PER_READ);
+            const auto grown = std::max(needed, buffer_.capacity() * 2);
+            buffer_.reserve(std::min<size_t>(max_buffered_bytes_, grown));
+        }
+        buffer_.resize(needed);
     }
-    int bytes_read = ::recv(sockfd, beginWrite(), MAX_BYTES_PER_READ, 0);
+    int bytes_read = ::recv(sockfd, beginWrite(), requested, 0);
     if(bytes_read > 0) 
     {
 		writer_index_ += bytes_read;

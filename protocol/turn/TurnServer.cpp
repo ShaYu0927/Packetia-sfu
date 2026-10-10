@@ -120,6 +120,34 @@ bool ValidFingerprint(const StunMessageInfo& msg)
 bool AllowedAttribute(StunMethod method, uint16_t raw)
 {
     const auto type = static_cast<AttrType>(raw);
+    if (method == StunMethod::Binding)
+    {
+        // Basic Binding ignores recognized attributes from other usages (RFC 8489 6.3).
+        switch (type)
+        {
+        case AttrType::MAPPED_ADDRESS:
+        case AttrType::USERNAME:
+        case AttrType::MESSAGE_INTEGRITY:
+        case AttrType::MESSAGE_INTEGRITY_SHA256:
+        case AttrType::ERROR_CODE:
+        case AttrType::UNKNOWN_ATTRIBUTES:
+        case AttrType::CHANNEL_NUMBER:
+        case AttrType::LIFETIME:
+        case AttrType::XOR_PEER_ADDRESS:
+        case AttrType::DATA:
+        case AttrType::REALM:
+        case AttrType::NONCE:
+        case AttrType::XOR_RELAYED_ADDRESS:
+        case AttrType::REQUESTED_ADDRESS_FAMILY:
+        case AttrType::REQUESTED_TRANSPORT:
+        case AttrType::XOR_MAPPED_ADDRESS:
+        case AttrType::PRIORITY:
+        case AttrType::USE_CANDIDATE:
+            return true;
+        default:
+            return false;
+        }
+    }
     if (method != StunMethod::Send && (type == AttrType::USERNAME || type == AttrType::REALM || type == AttrType::NONCE)) return true;
     if (method == StunMethod::Allocate)
         return type == AttrType::REQUESTED_TRANSPORT || type == AttrType::LIFETIME || type == AttrType::REQUESTED_ADDRESS_FAMILY;
@@ -137,7 +165,8 @@ std::vector<uint16_t> UnknownAttributes(const StunMessageInfo& msg)
     std::vector<uint16_t> result;
     for (const auto& attr : msg.attrs)
     {
-        if (attr.type == static_cast<uint16_t>(AttrType::MESSAGE_INTEGRITY)) break;
+        if (attr.type == static_cast<uint16_t>(AttrType::MESSAGE_INTEGRITY) ||
+            (msg.method == StunMethod::Binding && attr.type == static_cast<uint16_t>(AttrType::MESSAGE_INTEGRITY_SHA256))) break;
         if (attr.type < 0x8000 && !AllowedAttribute(msg.method, attr.type) &&
             std::find(result.begin(), result.end(), attr.type) == result.end()) result.push_back(attr.type);
     }
@@ -477,6 +506,22 @@ try
     }
     StunMessageInfo msg;
     if (!TurnCodec::ParseStunDatagram(data, len, msg) || !ValidFingerprint(msg)) return;
+    if (msg.method == StunMethod::Binding)
+    {
+        if (!msg.IsBindingRequest() || len > kMaxControlBytes) return;
+        const auto unknown = UnknownAttributes(msg);
+        std::vector<uint8_t> response;
+        if (!unknown.empty()) response = Error(msg, 420, {}, unknown);
+        else
+        {
+            StunAttribute mapped;
+            if (!TurnCodec::XorAddressAttribute(AttrType::XOR_MAPPED_ADDRESS, Endpoint(client), msg.txid, mapped)) return;
+            response = Success(msg, {}, {mapped});
+        }
+        // Public address discovery is stateless; retries recompute the same response.
+        if (!response.empty()) control->SendTo(client, response.data(), response.size());
+        return;
+    }
     if (msg.method == StunMethod::Send && msg.klass == StunClass::Indication)
     {
         if (session_it == sessions.end() || !session_it->second.allocation || !UnknownAttributes(msg).empty() || AttributeCount(msg, AttrType::XOR_PEER_ADDRESS) != 1 || AttributeCount(msg, AttrType::DATA) != 1) return;

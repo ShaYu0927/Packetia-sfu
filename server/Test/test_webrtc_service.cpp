@@ -472,18 +472,22 @@ void RunRoom()
     config.webrtc.enabled = true;
     config.webrtc.token = "room-secret";
     config.webrtc.max_sessions = 6;
+    config.webrtc.reconnect_timeout_ms = 1200;
     auto service = std::make_shared<server::WebRtcService>(&loop, config, nullptr);
     Require(service->Start(), "room service did not start");
     Client a(config.websocket_port), b(config.websocket_port), outsider(config.websocket_port), secondPublisher(config.websocket_port);
     const auto join = [&](Client& client, const std::string& room) {
         const auto reply = client.Request({{"type", "join"}, {"room_id", room}, {"token", config.webrtc.token}});
         Require(reply.value("type", "") == "joined", reply.dump().c_str());
-        return reply.at("participant_id").get<std::string>();
+        return reply;
     };
     Require(a.Request({{"type", "join"}, {"room_id", "demo"}, {"token", "wrong"}}).value("type", "") == "error",
         "unauthorized room join accepted");
-    const auto publisherId = join(a, "demo");
-    join(b, "demo"); join(outsider, "other"); join(secondPublisher, "demo");
+    const auto publisherJoin = join(a, "demo");
+    const auto publisherId = publisherJoin.at("participant_id").get<std::string>();
+    const auto viewerJoin = join(b, "demo");
+    const auto outsiderJoin = join(outsider, "other");
+    join(secondPublisher, "demo");
     const auto publication = a.Request({{"type", "publish"}, {"token", config.webrtc.token}, {"sdp", Offer()}});
     CheckAnswer(publication, config.udp_port);
     const auto source = std::dynamic_pointer_cast<media::SfuEndpoint>(utils::EndpointManager::Instance().Find(
@@ -530,15 +534,77 @@ void RunRoom()
     Require(b.Request(subscription).value("type", "") == "error", "duplicate room media session accepted");
     Require(a.Request({{"type", "offer"}, {"token", config.webrtc.token}, {"sdp", Offer()}}).value("type", "") == "error",
         "legacy reoffer changed room routes");
+    Client resumedPublisher(config.websocket_port);
+    Json resume = {{"type", "resume"}, {"token", config.webrtc.token}, {"room_id", "demo"},
+        {"participant_id", publisherId}, {"resume_token", publisherJoin.at("resume_token")}};
+    Require(resumedPublisher.Request(resume).value("type", "") == "error", "active participant takeover accepted");
     a.Close();
+    std::this_thread::sleep_for(50ms);
+    auto invalidRecovery = resume;
+    invalidRecovery["resume_token"] = std::string(64, '0');
+    Require(resumedPublisher.Request(invalidRecovery).value("type", "") == "error", "wrong recovery token accepted");
+    invalidRecovery = resume; invalidRecovery["room_id"] = "other";
+    Require(resumedPublisher.Request(invalidRecovery).value("type", "") == "error", "cross-room recovery accepted");
+    const auto recovered = resumedPublisher.Request(resume);
+    Require(recovered.value("type", "") == "resumed" && recovered.at("participant_id") == publisherId &&
+        recovered.at("signaling_generation") == 2 && recovered.at("ice_restart") == true, "publisher recovery failed");
+    Require(list(b).size() == 4 && destination->SubscriptionCount() == 2, "signaling disconnect lost room routes");
+    auto restartOffer = ParseDescription({{"sdp", Offer()}}, sdp::SdpType::Offer);
+    restartOffer.origin.sess_version = "2";
+    restartOffer.ice.ufrag = "newpeer";
+    restartOffer.ice.pwd = std::string(24, 'n');
+    for (auto& media : restartOffer.medias) media.ice = restartOffer.ice;
+    const auto restarted = resumedPublisher.Request({{"type", "restart_ice"}, {"token", config.webrtc.token},
+        {"sdp", sdp::Sdp::Serialize(restartOffer)}});
+    CheckAnswer(restarted, config.udp_port);
+    Require(restarted.at("session_id") == publication.at("session_id"), "ICE restart replaced media endpoint");
+    const auto previousIce = ParseDescription(publication, sdp::SdpType::Answer).medias.front().ice;
+    const auto nextIce = ParseDescription(restarted, sdp::SdpType::Answer).medias.front().ice;
+    Require(previousIce.ufrag != nextIce.ufrag && previousIce.pwd != nextIce.pwd, "server ICE credentials did not rotate");
+    Require(destination->SubscriptionCount() == 2 && list(b).size() == 4, "ICE restart removed forwarding routes");
+    Require(resumedPublisher.Request({{"type", "restart_ice"}, {"token", config.webrtc.token},
+        {"sdp", sdp::Sdp::Serialize(restartOffer)}}).value("type", "") == "error", "unchanged ICE credentials accepted");
+
+    b.Close();
+    std::this_thread::sleep_for(50ms);
+    Client resumedViewer(config.websocket_port);
+    const auto viewerRecovery = resumedViewer.Request({{"type", "resume"}, {"token", config.webrtc.token},
+        {"room_id", "demo"}, {"participant_id", viewerJoin.at("participant_id")}, {"resume_token", viewerJoin.at("resume_token")}});
+    Require(viewerRecovery.value("type", "") == "resumed", "viewer recovery failed");
+    browser.origin.sess_version = "2";
+    browser.ice.ufrag = "newviewer"; browser.ice.pwd = std::string(24, 'v');
+    for (auto& media : browser.medias) media.ice = browser.ice;
+    const auto viewerRestart = resumedViewer.Request({{"type", "restart_ice"}, {"token", config.webrtc.token},
+        {"sdp", sdp::Sdp::Serialize(browser)}});
+    Require(viewerRestart.value("type", "") == "answer" && viewerRestart.at("session_id") == reply.at("session_id"),
+        "viewer ICE restart failed");
+    const auto viewerAnswer = ParseDescription(viewerRestart, sdp::SdpType::Answer);
+    for (size_t i = 0; i < answer.medias.size(); ++i)
+        Require(viewerAnswer.medias[i].ssrcs.front().ssrc == answer.medias[i].ssrcs.front().ssrc, "restart changed downstream SSRC");
+    outsider.Close();
+    std::this_thread::sleep_for(50ms);
+    Client resumedOutsider(config.websocket_port);
+    const auto idleRecovery = resumedOutsider.Request({{"type", "resume"}, {"token", config.webrtc.token},
+        {"room_id", "other"}, {"participant_id", outsiderJoin.at("participant_id")},
+        {"resume_token", outsiderJoin.at("resume_token")}});
+    Require(idleRecovery.value("type", "") == "resumed" && idleRecovery.at("ice_restart") == false &&
+        list(resumedOutsider).empty(), "participant without media could not recover its room");
+    resumedPublisher.Close();
     const auto deadline = std::chrono::steady_clock::now() + 5s;
-    while (list(b).size() != 2)
+    while (list(resumedViewer).size() != 2)
     {
         Require(std::chrono::steady_clock::now() < deadline, "publisher disconnect left stale room tracks");
         std::this_thread::sleep_for(5ms);
     }
     Require(destination->SubscriptionCount() == 0, "publisher disconnect retained downstream routes");
-    secondPublisher.Close(); b.Close(); outsider.Close();
+    Client expiredPublisher(config.websocket_port);
+    Require(expiredPublisher.Request(resume).value("type", "") == "error", "expired participant recovered");
+    Require(resumedViewer.Request({{"type", "leave"}}).value("type", "") == "closed", "explicit leave failed");
+    Client departedViewer(config.websocket_port);
+    Require(departedViewer.Request({{"type", "resume"}, {"token", config.webrtc.token},
+        {"room_id", "demo"}, {"participant_id", viewerJoin.at("participant_id")},
+        {"resume_token", viewerJoin.at("resume_token")}}).value("type", "") == "error", "explicit leave allowed resume");
+    secondPublisher.Close(); resumedViewer.Close(); resumedOutsider.Close();
     WaitForEndpoints(baseline);
     service->Stop(); loop.Stop();
 }

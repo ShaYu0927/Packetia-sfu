@@ -224,6 +224,36 @@ TEST_F(WebRtcUdpMuxTest, UnregisterClosesOnlyOneAdapterAndRemovesBothMappings)
     });
 }
 
+TEST_F(WebRtcUdpMuxTest, RestartReplacesCredentialsAndRequiresNewPeerNomination)
+{
+    scheduler->Invoke([&] {
+        auto transport = mux->Register(1, "oldlocal");
+        auto other = mux->Register(2, "otherlocal");
+        auto sink = std::make_shared<DatagramCollector>();
+        ASSERT_TRUE(transport && other);
+        transport->SetDatagramSink(sink);
+        ASSERT_TRUE(mux->BindPeer("oldlocal", alice));
+        EXPECT_FALSE(mux->Restart("oldlocal", "otherlocal"));
+        Deliver(alice, Rtp());
+        ASSERT_EQ(sink->packets.size(), 1U);
+        ASSERT_TRUE(mux->Restart("oldlocal", "newlocal"));
+        EXPECT_TRUE(transport->IsWritable());
+        Deliver(alice, Rtp());
+        Deliver(alice, BindingRequest("oldlocal:remote"));
+        EXPECT_EQ(sink->packets.size(), 1U);
+        Deliver(bob, BindingRequest("newlocal:remote"));
+        ASSERT_EQ(sink->packets.size(), 2U);
+        ASSERT_TRUE(mux->BindPeer("newlocal", bob));
+        Deliver(alice, Rtp()); Deliver(bob, Rtp());
+        EXPECT_EQ(sink->packets.size(), 3U);
+        mux->Unregister("oldlocal");
+        EXPECT_TRUE(transport->IsWritable());
+        mux->Unregister("newlocal");
+        EXPECT_FALSE(transport->IsWritable());
+        EXPECT_TRUE(other->IsWritable());
+    });
+}
+
 TEST_F(WebRtcUdpMuxTest, CallbackMayUnregisterItsOwnSessionAndCloseClearsAllAdapters)
 {
     scheduler->Invoke([&] {

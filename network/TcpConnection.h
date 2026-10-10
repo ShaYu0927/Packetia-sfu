@@ -16,6 +16,12 @@
 class TcpConnection : public std::enable_shared_from_this<TcpConnection>
 {
 public:
+    struct Options
+    {
+        uint32_t max_receive_bytes = BufferReader::KDefaultMaxBufferedBytes;
+        size_t max_send_bytes = BufferWirte::KDefaultMaxQueuedBytes;
+        uint32_t read_budget_bytes = 128 * 1024;
+    };
     enum class SendResult { Queued, QueueFull, Closed, Failed };
 
     using Ptr = std::shared_ptr<TcpConnection>;
@@ -28,30 +34,35 @@ public:
     using ConnectionCallback = std::function<void(std::shared_ptr<TcpConnection> conn)>;
     using HighWaterMarkCallback = std::function<void(std::shared_ptr<TcpConnection> conn, size_t len)>;
 
-    using BytesCallback = std::function<void(std::shared_ptr<TcpConnection>,
-                                        const uint8_t*, size_t)>;
+    using BytesCallback = std::function<void(std::shared_ptr<TcpConnection>, const uint8_t*, size_t)>;
     using SessionCloseCallback = std::function<void(int reason)>;
 
 
     TcpConnection(TaskScheduler *task_scheduler, SOCKET sockfd);
+    TcpConnection(TaskScheduler *task_scheduler, SOCKET sockfd, Options options);
     virtual ~TcpConnection();
 
     TaskScheduler* GetTaskScheduler() const 
 	{ return task_scheduler_; }
 
 
-    void SetReadCallback(const ReadCallback& cb)
-	{ read_cb_ = cb; }
+    // Setters serialize on the owner. ReadCallback and BytesCallback are
+    // alternative modes; the most recently installed mode takes precedence.
+    void SetReadCallback(const ReadCallback& cb);
 
-    void SetCloseCallback(const CloseCallback& cb)
-	{ close_callback_ = cb; }
+    void SetCloseCallback(const CloseCallback& cb);
 
-    void SetDisconnectCallback(const DisconnectCallback& cb)
-	{ disconnect_callback_ = cb; }
+    void SetDisconnectCallback(const DisconnectCallback& cb);
+    // Owner-thread notification after a nonempty queue drains. The callback
+    // runs without the send lock and may enqueue additional bytes.
+    void SetWriteCompleteCallback(const WriteCompleteCallback& cb);
+    size_t SendCapacityBytes() const;
+    size_t QueuedSendBytes() const;
 
 
-    void SetBytesCallback(BytesCallback cb) { bytes_cb_ = std::move(cb); }
-    void SetCloseCallback(SessionCloseCallback cb) { sess_close_cb_ = std::move(cb); }
+    // Byte storage is borrowed for the duration of the callback only.
+    void SetBytesCallback(BytesCallback cb);
+    void SetCloseCallback(SessionCloseCallback cb);
 
     void Disconnect();
     // Thread-safe, bounded admission. Queued means accepted locally, not
@@ -109,12 +120,13 @@ protected:
     std::shared_ptr<Channel> channel_;
     TaskScheduler *task_scheduler_;
     std::shared_ptr<TaskScheduler> scheduler_owner_;
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
     std::atomic_bool is_closed_;
     std::atomic_bool read_continuation_pending_{false};
     bool peer_read_closed_ = false;
     bool write_pending_ = false;
     bool started_ = false;
+    uint32_t read_budget_bytes_ = 128 * 1024;
 };
 
 

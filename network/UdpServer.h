@@ -35,8 +35,10 @@ public:
     bool Start(const std::string& ip, uint16_t port, bool reuse_address = true, bool dual_stack = false);
     void Stop();
     SocketAddr LocalAddress() const;
+    std::shared_ptr<TaskScheduler> GetTaskScheduler() const { return scheduler_; }
 
     bool SendTo(const network::SocketAddr& dst, const uint8_t* data, size_t len);
+    // Sent means kernel acceptance; there is no application send queue.
     enum class SendResult { Sent, NotWritable, Closed, Failed };
     SendResult TrySendTo(const network::SocketAddr& dst, const uint8_t* data, size_t len);
     bool IsWritable() const noexcept {

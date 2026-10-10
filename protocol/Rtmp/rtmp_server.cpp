@@ -23,8 +23,13 @@ TcpConnection::Ptr RtmpServer::OnConnect(SOCKET sockfd)
     auto session = std::make_shared<RtmpSession>(connection, EndpointRole::kServer);
     session->SetHandler(handler_);
     sessions_[sockfd] = session;
-    session->Start();
     return connection;
+}
+
+void RtmpServer::OnConnected(const TcpConnection::Ptr& connection)
+{
+    auto found = sessions_.find(connection->GetSocket());
+    if (found != sessions_.end()) found->second->Start();
 }
 
 void RtmpServer::RemoveConnection(SOCKET sockfd)

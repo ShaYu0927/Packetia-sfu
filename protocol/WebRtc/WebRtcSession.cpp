@@ -1,6 +1,7 @@
 #include "WebRtcSession.h"
 #include "WebRtcCodec.h"
 #include "Sdp.h"
+#include "CryptoUtil.h"
 #include "../../Rtsp/Rtp/RtpHeaderExtensions.h"
 
 #include <algorithm>
@@ -31,6 +32,26 @@ bool SameFingerprints(const DtlsParameters& a, const DtlsParameters& b)
     return a.fingerprints.size() == b.fingerprints.size() &&
         std::is_permutation(a.fingerprints.begin(), a.fingerprints.end(), b.fingerprints.begin(),
             [](const auto& x, const auto& y) { return x.algorithm == y.algorithm && x.value == y.value; });
+}
+
+// Compare effective negotiated media while ignoring ICE generation and network addresses.
+std::string MediaShape(WebRtcSessionDescription description)
+{
+    description.origin = {};
+    description.ice = {};
+    description.dtls = {};
+    description.conn = {};
+    description.connection.clear();
+    for (auto& media : description.medias)
+    {
+        media.ice = {};
+        media.dtls = {};
+        media.conn = {};
+        if (media.port) media.port = 9;
+        media.attributes.erase(std::remove_if(media.attributes.begin(), media.attributes.end(),
+            [](const auto& attribute) { return attribute.key == "rtcp"; }), media.attributes.end());
+    }
+    return sdp::Sdp::Serialize(description);
 }
 
 } // namespace
@@ -94,7 +115,7 @@ bool WebRtcSession::CheckTransport(const WebRtcSessionDescription& remote)
         const auto& pwd = media.ice.pwd.empty() ? remote.ice.pwd : media.ice.pwd;
         const auto& dtls = media.dtls.fingerprints.empty() ? remote.dtls : media.dtls;
         const auto setup = media.dtls.setup == DtlsSetup::Unspecified ? remote.dtls.setup : media.dtls.setup;
-        if (ufrag != remote_ice_.ufrag || pwd != remote_ice_.pwd)
+        if (!restarting_ice_ && (ufrag != remote_ice_.ufrag || pwd != remote_ice_.pwd))
             return Reject("ICE restart requires a new session");
         if (!SameFingerprints(dtls, remote_dtls_))
             return Reject("Changing DTLS identity requires a new session");
@@ -209,6 +230,65 @@ void WebRtcSession::RollbackNegotiation()
     last_error_.clear();
 }
 
+bool WebRtcSession::RestartIce(const std::string& offerSdp, WebRtcSessionDescription& answer)
+{
+    WebRtcSessionDescription offer;
+    std::string error;
+    if (!sdp::Sdp::Parse(offerSdp, sdp::SdpProfile::WebRtc, SdpType::Offer, offer, error)) return Reject(error);
+    return RestartIce(offer, answer);
+}
+
+bool WebRtcSession::RestartIce(const WebRtcSessionDescription& offer, WebRtcSessionDescription& answer)
+{
+    if ((state_ != WebRtcSessionState::Connecting && state_ != WebRtcSessionState::Connected) ||
+        negotiation_.State() != sdp::SdpNegotiationState::Stable || restarting_ice_)
+        return Reject("ICE restart requires a live session with stable negotiation");
+    for (const auto& media : offer.medias)
+        if ((media.port || media.bundleOnly) &&
+            ((media.ice.ufrag.empty() ? offer.ice.ufrag : media.ice.ufrag) == remote_ice_.ufrag ||
+             (media.ice.pwd.empty() ? offer.ice.pwd : media.ice.pwd) == remote_ice_.pwd))
+            return Reject("ICE restart requires fresh remote ufrag and password");
+
+    auto local = LocalTemplate(negotiation_.CurrentLocal().medias);
+    if (!utils::SecureRandomHex(8, local.ice.ufrag) || !utils::SecureRandomHex(24, local.ice.pwd))
+        return Reject("Could not generate ICE restart credentials");
+    for (auto& media : local.medias) media.ice = local.ice;
+    restarting_ice_ = true;
+    try
+    {
+        WebRtcSessionDescription result;
+        if (!ApplyRemoteOffer(offer) || !negotiation_.CreateAnswer(local, result, options_.singleCodecPerMedia))
+        {
+            const auto reason = last_error_.empty() ? negotiation_.LastError() : last_error_;
+            RollbackNegotiation();
+            restarting_ice_ = false;
+            return Reject(reason);
+        }
+        if (MediaShape(negotiation_.PendingRemote()) != MediaShape(negotiation_.CurrentRemote()) ||
+            MediaShape(result) != MediaShape(negotiation_.CurrentLocal()))
+        {
+            RollbackNegotiation();
+            restarting_ice_ = false;
+            return Reject("ICE restart must preserve the published and subscribed media");
+        }
+        if (!CommitNegotiation())
+        {
+            const auto reason = last_error_;
+            restarting_ice_ = false;
+            return Reject(reason);
+        }
+        restarting_ice_ = false;
+        answer = std::move(result);
+        return true;
+    }
+    catch (...)
+    {
+        restarting_ice_ = false;
+        RollbackNegotiation();
+        throw;
+    }
+}
+
 bool WebRtcSession::CommitNegotiation()
 {
     const auto& local = negotiation_.PendingLocal();
@@ -253,7 +333,7 @@ bool WebRtcSession::CommitNegotiation()
     IceParameters remoteIce = remote_ice_;
     DtlsParameters remoteDtls = remote_dtls_;
     auto localRole = local_dtls_role_;
-    if (localRole == DtlsSetup::Unspecified)
+    if (localRole == DtlsSetup::Unspecified || restarting_ice_)
     {
         const auto active = std::find_if(local.medias.begin(), local.medias.end(),
             [](const auto& media) { return media.port != 0; });
@@ -263,10 +343,15 @@ bool WebRtcSession::CommitNegotiation()
         remoteDtls = remote.medias[index].dtls;
         localRole = active->dtls.setup;
     }
+    IceParameters localIce = local.ice;
+    auto localUfrag = localIce.ufrag, localPwd = localIce.pwd;
+    auto remoteUfrag = remoteIce.ufrag, remotePwd = remoteIce.pwd;
     try
     {
-        if (options_.onNegotiated && !options_.onNegotiated(local, remote))
+        if (!restarting_ice_ && options_.onNegotiated && !options_.onNegotiated(local, remote))
             return reject("Application rejected negotiated media; previous media retained");
+        if (restarting_ice_ && options_.onIceRestart && !options_.onIceRestart(options_.ice.ufrag, localIce.ufrag))
+            return reject("Could not replace ICE routing generation");
     }
     catch (const std::exception&)
     {
@@ -279,6 +364,16 @@ bool WebRtcSession::CommitNegotiation()
     remote_ice_ = std::move(remoteIce);
     remote_dtls_ = std::move(remoteDtls);
     local_dtls_role_ = localRole;
+    if (restarting_ice_)
+    {
+        options_.ice = std::move(localIce);
+        ice_.SetLocalCredentials(std::move(localUfrag), std::move(localPwd));
+        ice_.SetRemoteCredentials(std::move(remoteUfrag), std::move(remotePwd));
+        ice_.StartLiveness(options_.iceTimeoutMs);
+        transport_->ClearSelectedPeer();
+        awaiting_restart_nomination_ = true;
+        state_ = WebRtcSessionState::Connecting;
+    }
     UpdateSignalingState();
     last_error_.clear();
     return true;
@@ -316,6 +411,7 @@ void WebRtcSession::Shutdown()
     if (srtp_) srtp_->Close();
     dtls_started_ = false;
     srtp_ready_ = false;
+    awaiting_restart_nomination_ = false;
 }
 
 bool WebRtcSession::stop()
@@ -358,7 +454,7 @@ bool WebRtcSession::Tick(uint64_t nowMs)
 {
     if (state_ != WebRtcSessionState::Connecting && state_ != WebRtcSessionState::Connected) return false;
     if (!CheckIceLiveness()) return false;
-    if (!dtls_started_) return true;
+    if (!dtls_started_ || awaiting_restart_nomination_) return true;
     if (!dtls_->Tick(nowMs)) return Fail("DTLS timeout or transport failure");
     return CompleteDtls();
 }
@@ -402,7 +498,9 @@ void WebRtcSession::HandleStun(network::transport::ReceivedDatagram datagram)
             Fail("ICE peer address is already in use");
             return;
         }
+        awaiting_restart_nomination_ = false;
         BeginDtls();
+        if (srtp_ready_) state_ = WebRtcSessionState::Connected;
     }
 }
 

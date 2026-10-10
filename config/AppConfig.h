@@ -43,6 +43,7 @@ struct WebRtcOptions
     std::string public_ip;
     std::string token;
     std::size_t max_sessions = 128;
+    uint32_t reconnect_timeout_ms = 15000;
 };
 
 struct TurnOptions

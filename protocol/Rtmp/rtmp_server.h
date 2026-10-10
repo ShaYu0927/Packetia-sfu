@@ -19,6 +19,7 @@ public:
 
 protected:
     TcpConnection::Ptr OnConnect(SOCKET sockfd) override;
+    void OnConnected(const TcpConnection::Ptr& connection) override;
     void RemoveConnection(SOCKET sockfd) override;
 
 private:

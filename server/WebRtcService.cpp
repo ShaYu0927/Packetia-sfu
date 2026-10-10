@@ -86,25 +86,13 @@ public:
 };
 }
 
-struct WebRtcService::Session
-{
-    uint64_t id = 0;
-    bool endpoint_registered = false;
-    std::string ufrag;
-    std::shared_ptr<WebRtcSession> rtc;
-    std::shared_ptr<media::transport::WebRtcMediaTransport> transport;
-    std::shared_ptr<media::transport::MediaEndpointIngress> ingress;
-    std::shared_ptr<media::SfuEndpoint> endpoint;
-    std::string pending_offer_id;
-    uint64_t negotiation_deadline_ms = 0;
-    bool room_managed = false;
-    bool subscriber = false;
-};
-
 struct WebRtcService::Membership
 {
     std::shared_ptr<room::Room> room;
     std::shared_ptr<room::Participant> participant;
+    room::SignalingBinding binding;
+    std::string resume_token;
+    uint64_t reconnect_deadline_ms = 0;
 };
 
 struct WebRtcService::Subscription
@@ -132,7 +120,8 @@ bool WebRtcService::Start()
         LOG_ERROR("WebRtcService Start: requires an event loop and shared service ownership");
         return false;
     }
-    if (!config_.webrtc.enabled || config_.webrtc.token.empty() || config_.webrtc.max_sessions == 0)
+    if (!config_.webrtc.enabled || config_.webrtc.token.empty() || config_.webrtc.max_sessions == 0 ||
+        !config_.webrtc.reconnect_timeout_ms || config_.webrtc.reconnect_timeout_ms > 120000)
     {
         LOG_ERROR("WebRtcService Start: enable WebRTC with a nonempty token and positive session limit");
         return false;
@@ -186,7 +175,7 @@ bool WebRtcService::Start()
             });
             ws_->SetOnClose([weak](const std::string& connection)
             {
-                if (auto self = weak.lock()) self->RemoveSession(connection);
+                if (auto self = weak.lock()) self->OnSignalingClosed(connection);
             });
             if (!ws_->Start(config_.listen_ip, config_.websocket_port))
             {
@@ -231,6 +220,7 @@ void WebRtcService::StopOnOwner()
     }
     while (!sessions_.empty()) RemoveSession(sessions_.begin()->first);
     while (!memberships_.empty()) LeaveRoom(memberships_.begin()->first);
+    participant_connections_.clear();
     rooms_.clear();
     if (mux_) mux_->Close();
     if (udp_) udp_->SetHandler({});
@@ -262,7 +252,7 @@ std::string WebRtcService::OnMessage(const std::string& connection, const std::s
             return Json{{"type", "closed"}}.dump();
         }
         if (type != "offer" && type != "answer" && type != "rollback" && type != "join" &&
-            type != "tracks" && type != "publish" && type != "subscribe")
+            type != "tracks" && type != "publish" && type != "subscribe" && type != "resume" && type != "restart_ice")
             return Error("Unsupported signaling message type");
         if (!request.contains("token") || !request["token"].is_string()) return Error("Unauthorized");
         const auto token = request["token"].get<std::string>();
@@ -273,6 +263,15 @@ std::string WebRtcService::OnMessage(const std::string& connection, const std::s
         {
             if (!request.contains("room_id") || !request["room_id"].is_string()) return Error("Expected room_id");
             return JoinRoom(connection, request["room_id"].get<std::string>());
+        }
+        if (type == "resume")
+        {
+            if (!request.contains("room_id") || !request["room_id"].is_string() ||
+                !request.contains("participant_id") || !request["participant_id"].is_string() ||
+                !request.contains("resume_token") || !request["resume_token"].is_string())
+                return Error("Expected room, participant and resume token");
+            return ResumeRoom(connection, request["room_id"].get<std::string>(),
+                request["participant_id"].get<std::string>(), request["resume_token"].get<std::string>());
         }
         if (type == "tracks") return ListTracks(connection);
         const auto found = sessions_.find(connection);
@@ -309,6 +308,14 @@ std::string WebRtcService::OnMessage(const std::string& connection, const std::s
         if (!request.contains("sdp") || !request["sdp"].is_string()) return Error("Expected an SDP offer");
         const auto offer = request["sdp"].get<std::string>();
         if (offer.empty() || offer.size() > kMaxSdpBytes) return Error("SDP must be between 1 and 65536 bytes");
+        if (type == "restart_ice")
+        {
+            if (found == sessions_.end() || !memberships_.count(connection)) return Error("No room media session to restart");
+            WebRtcSessionDescription answer;
+            if (!found->second->rtc->RestartIce(offer, answer)) return Error(found->second->rtc->LastError());
+            return Json{{"type", "answer"}, {"session_id", found->second->id},
+                {"sdp", sdp::Sdp::Serialize(answer)}}.dump();
+        }
         if (type == "publish" || type == "subscribe")
         {
             const auto member = memberships_.find(connection);
@@ -393,11 +400,12 @@ std::string WebRtcService::CreateSession(const std::string& connection, const st
         for (const auto& subscription : subscriptions) options.medias.push_back(subscription.media);
     }
     options.singleCodecPerMedia = true;
+    options.iceTimeoutMs = std::max<uint64_t>(30000, config_.webrtc.reconnect_timeout_ms + uint64_t{10000});
     auto dtls = CreateDtlsTransport();
     auto srtp = CreateSrtpTransport();
     if (!dtls || !srtp) return Error("Encryption backend is unavailable");
 
-    auto entry = std::make_unique<Session>();
+    auto entry = std::make_shared<Session>();
     // RTSP shares this registry and uses EndpointBase's process-wide allocator.
     entry->id = utils::EndpointBase::NextEndpointId();
     entry->ufrag = options.ice.ufrag;
@@ -414,10 +422,21 @@ std::string WebRtcService::CreateSession(const std::string& connection, const st
     const auto datagram = mux_->Register(session.id, session.ufrag);
     if (!datagram) return fail("Could not register ICE session");
     const auto weakMux = std::weak_ptr<WebRtcUdpMux>(mux_);
-    options.onSelectedPeer = [weakMux, ufrag = session.ufrag](const network::SocketAddr& peer)
+    const auto weakSession = std::weak_ptr<Session>(sessions_.at(connection));
+    options.onSelectedPeer = [weakMux, weakSession](const network::SocketAddr& peer)
     {
         const auto mux = weakMux.lock();
-        return mux && mux->BindPeer(ufrag, peer);
+        const auto session = weakSession.lock();
+        return mux && session && mux->BindPeer(session->ufrag, peer);
+    };
+    options.onIceRestart = [weakMux, weakSession](const std::string& previous, const std::string& next)
+    {
+        const auto mux = weakMux.lock();
+        const auto session = weakSession.lock();
+        std::string replacement = next;
+        if (!mux || !session || !mux->Restart(previous, next)) return false;
+        session->ufrag.swap(replacement);
+        return true;
     };
     const auto weakScheduler = std::weak_ptr<TaskScheduler>(scheduler_);
     session.transport = std::make_shared<media::transport::WebRtcMediaTransport>(session.id,
@@ -489,7 +508,8 @@ std::string WebRtcService::CreateSession(const std::string& connection, const st
     if (member != memberships_.end())
     {
         auto& membership = *member->second;
-        if (!membership.participant->BindEndpoint(session.endpoint)) return fail("Could not bind room endpoint");
+        if (!membership.participant->BindMediaSession(sessions_.at(connection)))
+            return fail("Could not bind participant media session");
         if (subscriptions.empty())
         {
             for (const auto& media : answer.medias)
@@ -548,9 +568,86 @@ std::string WebRtcService::JoinRoom(const std::string& connection, const std::st
     auto member = std::make_unique<Membership>();
     member->room = target;
     member->participant = std::make_shared<room::Participant>(id, id);
+    if (!member->participant->BindSignaling(connection)) return Error("Could not bind participant signaling");
+    member->binding = member->participant->GetSignaling();
+    if (!utils::SecureRandomHex(32, member->resume_token)) return Error("Could not generate resume token");
+    const auto resumeToken = member->resume_token;
     if (!target->Join(member->participant)) return Error("Could not join room");
     memberships_.emplace(connection, std::move(member));
-    return Json{{"type", "joined"}, {"room_id", roomId}, {"participant_id", id}}.dump();
+    participant_connections_.emplace(id, connection);
+    return Json{{"type", "joined"}, {"room_id", roomId}, {"participant_id", id},
+        {"resume_token", resumeToken}, {"reconnect_timeout_ms", config_.webrtc.reconnect_timeout_ms}}.dump();
+}
+
+void WebRtcService::OnSignalingClosed(const std::string& connection)
+{
+    const auto found = memberships_.find(connection);
+    if (!started_ || found == memberships_.end()) { RemoveSession(connection); return; }
+    auto& member = *found->second;
+    if (!member.participant->UnbindSignaling(member.binding)) return;
+    member.reconnect_deadline_ms = Timestamp::NowMs() + config_.webrtc.reconnect_timeout_ms;
+    member.participant->SetState(room::ParticipantState::Reconnecting);
+    const auto session = sessions_.find(connection);
+    if (session != sessions_.end())
+    {
+        session->second->rtc->RollbackNegotiation();
+        session->second->pending_offer_id.clear();
+        session->second->negotiation_deadline_ms = 0;
+    }
+}
+
+std::string WebRtcService::ResumeRoom(const std::string& connection, const std::string& roomId,
+    const std::string& participantId, const std::string& resumeToken)
+{
+    if (memberships_.count(connection) || sessions_.count(connection)) return Error("Connection is already bound");
+    const auto index = participant_connections_.find(participantId);
+    if (index == participant_connections_.end()) return Error("Participant recovery expired");
+    const auto found = memberships_.find(index->second);
+    if (found == memberships_.end()) return Error("Participant recovery expired");
+    auto& member = *found->second;
+    if (member.room->Id() != roomId || resumeToken.size() != member.resume_token.size() ||
+        CRYPTO_memcmp(resumeToken.data(), member.resume_token.data(), resumeToken.size()) != 0)
+        return Error("Invalid participant recovery credentials");
+    if (!member.reconnect_deadline_ms) return Error("Participant is already connected");
+    const auto previous = index->second;
+    if (Timestamp::NowMs() >= member.reconnect_deadline_ms)
+    {
+        RemoveSession(previous);
+        return Error("Participant recovery expired");
+    }
+    const auto media = sessions_.find(previous);
+    if (media != sessions_.end() && (media->second->rtc->State() == WebRtcSessionState::Failed ||
+        media->second->rtc->State() == WebRtcSessionState::Closed))
+    {
+        RemoveSession(previous);
+        return Error("Media session expired; join again");
+    }
+    room::SignalingBinding nextBinding{connection, member.binding.generation + 1};
+    auto bindingConnection = connection;
+    auto indexedConnection = connection;
+    const auto response = Json{{"type", "resumed"}, {"room_id", roomId}, {"participant_id", participantId},
+        {"resume_token", member.resume_token}, {"signaling_generation", nextBinding.generation},
+        {"ice_restart", media != sessions_.end()}}.dump();
+    // Reserve both map entries before moving ownership; allocation failure
+    // leaves the suspended participant available for another resume attempt.
+    memberships_.reserve(memberships_.size() + 1);
+    if (media != sessions_.end()) sessions_.emplace(connection, media->second);
+    try { memberships_.emplace(connection, nullptr); }
+    catch (...) { sessions_.erase(connection); throw; }
+    if (!member.participant->BindSignaling(std::move(bindingConnection)))
+    {
+        memberships_.erase(connection);
+        sessions_.erase(connection);
+        return Error("Could not bind recovered participant");
+    }
+    member.binding = std::move(nextBinding);
+    member.reconnect_deadline_ms = 0;
+    member.participant->SetState(room::ParticipantState::Joined);
+    memberships_.at(connection) = std::move(memberships_.at(previous));
+    memberships_.erase(previous);
+    sessions_.erase(previous);
+    index->second.swap(indexedConnection);
+    return response;
 }
 
 std::string WebRtcService::ListTracks(const std::string& connection) const
@@ -575,6 +672,7 @@ void WebRtcService::LeaveRoom(const std::string& connection)
     if (found == memberships_.end()) return;
     auto membership = std::move(found->second);
     memberships_.erase(found);
+    participant_connections_.erase(membership->participant->Id());
     membership->room->Leave(membership->participant->Id());
     if (membership->room->ParticipantCount() == 0) rooms_.erase(membership->room->Id());
 }
@@ -673,10 +771,13 @@ bool WebRtcService::Tick()
 {
     if (!started_) return false;
     std::vector<std::string> expired;
+    const auto now = Timestamp::NowMs();
+    for (const auto& item : memberships_)
+        if (item.second->reconnect_deadline_ms && now >= item.second->reconnect_deadline_ms)
+            expired.push_back(item.first);
     for (const auto& item : sessions_)
     {
         auto& session = *item.second;
-        const auto now = Timestamp::NowMs();
         if (!session.rtc->Tick(now)) { expired.push_back(item.first); continue; }
         if (session.negotiation_deadline_ms && now >= session.negotiation_deadline_ms)
         {
@@ -690,7 +791,10 @@ bool WebRtcService::Tick()
     }
     for (const auto& connection : expired)
     {
+        const auto member = memberships_.find(connection);
+        const bool suspended = member != memberships_.end() && member->second->reconnect_deadline_ms != 0;
         RemoveSession(connection);
+        if (suspended) continue;
         if (!ws_->SendText(connection, Error("WebRTC connection closed or timed out")))
             ws_->CloseConnection(connection);
     }

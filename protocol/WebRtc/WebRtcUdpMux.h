@@ -20,6 +20,8 @@ public:
     std::shared_ptr<network::transport::UdpDatagramTransport> Register(
         uint64_t id, const std::string& localUfrag);
     void Unregister(const std::string& localUfrag);
+    // Atomically replace the ICE generation without closing its adapter.
+    bool Restart(const std::string& oldUfrag, const std::string& newUfrag);
 
     // Call only after the session authenticates an ICE nomination. Routing a
     // STUN request by USERNAME alone never establishes a media peer mapping.

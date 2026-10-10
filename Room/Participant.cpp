@@ -1,18 +1,72 @@
 #include "Participant.h"
 #include "media/endpoint/MediaEndpoint.h"
 
+#include <limits>
 #include <utility>
 
 namespace room
 {
 
 Participant::Participant(std::string participant_id, std::string name)
-    : participant_id_(std::move(participant_id)),
-      name_(std::move(name))
+    : Participant(ParticipantIdentity{std::move(participant_id), std::move(name), {}})
+{
+}
+
+Participant::Participant(ParticipantIdentity identity)
+    : identity_(std::move(identity))
 {
 }
 
 Participant::~Participant() = default;
+
+ParticipantInfo Participant::GetInfo() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return {identity_, state_, signaling_, media_session_ ? media_session_->id : 0,
+            published_tracks_.size(), subscribed_track_ids_.size()};
+}
+
+bool Participant::BindSignaling(std::string connection_id)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (connection_id.empty() || state_ == ParticipantState::Disconnected ||
+        signaling_.generation == std::numeric_limits<uint64_t>::max()) return false;
+    signaling_.connection_id = std::move(connection_id);
+    ++signaling_.generation;
+    return true;
+}
+
+bool Participant::UnbindSignaling(const SignalingBinding& expected)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (expected.connection_id.empty() || expected.connection_id != signaling_.connection_id ||
+        expected.generation != signaling_.generation) return false;
+    signaling_.connection_id.clear();
+    return true;
+}
+
+SignalingBinding Participant::GetSignaling() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return signaling_;
+}
+
+bool Participant::BindMediaSession(ParticipantSession::Ptr session)
+{
+    if (!session || !session->id || !session->endpoint || !session->endpoint->IsRunning()) return false;
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (state_ == ParticipantState::Disconnected || (media_session_ && media_session_ != session) ||
+        (endpoint_ && endpoint_ != session->endpoint)) return false;
+    endpoint_ = session->endpoint;
+    media_session_ = std::move(session);
+    return true;
+}
+
+ParticipantSession::Ptr Participant::GetMediaSession() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return media_session_;
+}
 
 bool Participant::BindEndpoint(std::shared_ptr<media::SfuEndpoint> endpoint)
 {
@@ -32,19 +86,19 @@ std::shared_ptr<media::SfuEndpoint> Participant::GetEndpoint() const
 std::string Participant::Id() const
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    return participant_id_;
+    return identity_.participant_id;
 }
 
 std::string Participant::Name() const
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    return name_;
+    return identity_.name;
 }
 
 void Participant::SetName(const std::string& name)
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    name_ = name;
+    identity_.name = name;
 }
 
 void Participant::BindSession(std::shared_ptr<MediaSession> session)
@@ -240,6 +294,8 @@ void Participant::Leave()
 {
     LeaveCallback cb;
     std::shared_ptr<media::SfuEndpoint> endpoint;
+    std::shared_ptr<MediaSession> legacy_session;
+    ParticipantSession::Ptr media_session;
 
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -250,14 +306,18 @@ void Participant::Leave()
         }
 
         state_ = ParticipantState::Disconnected;
+        signaling_.connection_id.clear();
         endpoint = std::move(endpoint_);
         published_tracks_.clear();
         subscribed_track_ids_.clear();
-        session_.reset();
+        legacy_session = std::move(session_);
+        media_session = std::move(media_session_);
         cb = on_leave_;
     }
 
     if (endpoint) endpoint->Stop();
+    legacy_session.reset();
+    media_session.reset();
     if (cb) 
     {
         cb(shared_from_this());

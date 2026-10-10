@@ -1,4 +1,5 @@
 #include "WebRtcSession.h"
+#include "Sdp.h"
 
 #include <iostream>
 #include <stdexcept>
@@ -640,6 +641,78 @@ void StunNomination()
 #endif
 }
 
+void IceRestart()
+{
+#if __has_include(<openssl/hmac.h>)
+    uint64_t now = 0;
+    bool routeAccepted = true;
+    int routes = 0;
+    auto options = Options();
+    options.iceTimeoutMs = 100;
+    options.iceClock = [&] { return now; };
+    options.onIceRestart = [&](const std::string& oldUfrag, const std::string& newUfrag) {
+        CHECK(oldUfrag == "local" && newUfrag != oldUfrag);
+        ++routes;
+        return routeAccepted;
+    };
+    Fixture f(options);
+    f.Start(); f.Handshake();
+    const auto original = f.session->RemoteDescription();
+    auto offer = original;
+    offer.origin.sess_version = "2";
+    offer.ice.ufrag = "newremote"; offer.ice.pwd = std::string(24, 'n');
+    for (auto& media : offer.medias) media.ice = offer.ice;
+    WebRtcSessionDescription answer;
+    auto invalid = offer;
+    invalid.medias.front().direction = MediaDirection::Inactive;
+    CHECK(!f.session->RestartIce(invalid, answer));
+    invalid = offer;
+    invalid.medias.front().dtls.fingerprints.front().value = "OTHER-FINGERPRINT";
+    CHECK(!f.session->RestartIce(invalid, answer));
+    CHECK(f.transport->IsSelectedPeer(f.peer) && routes == 0);
+    routeAccepted = false;
+    CHECK(!f.session->RestartIce(offer, answer));
+    CHECK(f.session->SignalingState() == sdp::SdpNegotiationState::Stable);
+    CHECK(f.session->RemoteDescription().origin.sess_version == original.origin.sess_version);
+    CHECK(f.session->SendRtp(Rtp()));
+    routeAccepted = true;
+    now = 90;
+    if (!f.session->RestartIce(offer, answer))
+        throw std::runtime_error("ICE restart: " + f.session->LastError());
+    CHECK(answer.medias.front().ice.ufrag != "local" && answer.medias.front().ice.pwd != std::string(24, 'l'));
+    CHECK(f.session->State() == WebRtcSessionState::Connecting);
+    CHECK(!f.transport->IsSelectedPeer(f.peer) && !f.session->SendRtp(Rtp()));
+    f.Deliver(Rtp(), f.peer);
+    CHECK(f.sink->packets.empty());
+
+    protocol::IceRequestParams check;
+    check.username = "local:remote"; check.password = std::string(24, 'l');
+    check.controlling = true; check.tie_breaker = 1; check.priority = 1234; check.use_candidate = true;
+    auto nominate = [&](const network::SocketAddr& peer) {
+        std::vector<uint8_t> packet(1500);
+        size_t length = 0;
+        CHECK(protocol::StunCodec::BuildIceBindingRequest(check, packet.data(), packet.size(), length));
+        packet.resize(length); f.Deliver(packet, peer);
+    };
+    nominate(f.peer);
+    CHECK(!f.transport->IsSelectedPeer(f.peer));
+    now = 100;
+    CHECK(f.session->Tick(now));
+    const auto nextPeer = network::SocketAddr::FromIPPort("192.0.2.3", 7000);
+    check.username = answer.medias.front().ice.ufrag + ":newremote";
+    check.password = answer.medias.front().ice.pwd;
+    nominate(nextPeer);
+    CHECK(f.transport->IsSelectedPeer(nextPeer) && f.session->State() == WebRtcSessionState::Connected);
+    CHECK(f.dtls->starts == 1 && f.srtp->installs == 1 && f.dtls->closes == 0);
+    f.Deliver(Rtp(), f.peer); CHECK(f.sink->packets.empty());
+    f.Deliver(Rtp(), nextPeer); CHECK(f.sink->packets.size() == 1);
+    CHECK(f.session->SendRtp(Rtp()));
+    CHECK(!f.session->RestartIce(offer, answer));
+    now = 200;
+    CHECK(!f.session->Tick(now));
+#endif
+}
+
 void SelectedPeerRegistration()
 {
 #if __has_include(<openssl/hmac.h>)
@@ -709,7 +782,7 @@ int main()
     try
     {
         Negotiation(); Validation(); BundleAndDirections(); MediaFlow(); Failures(); StunNomination(); IceTimeout();
-        SelectedPeerRegistration(); MeetingRenegotiation(); BusinessOffers(); SharedPayloadRouting();
+        SelectedPeerRegistration(); MeetingRenegotiation(); BusinessOffers(); SharedPayloadRouting(); IceRestart();
         std::cout << "WebRtcSession negotiation, validation, media and failure tests passed\n";
         return 0;
     }

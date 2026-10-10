@@ -23,7 +23,6 @@ TcpConnection::Ptr SipServer::OnConnect(SOCKET sockfd)
         auto active = weak_session.lock();
         return active && active->OnRead(std::move(current), buffer);
     });
-    conn->Start();
     return conn;
 }
 

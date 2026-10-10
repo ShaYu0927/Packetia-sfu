@@ -48,6 +48,7 @@ public:
 
     void SetSink(std::weak_ptr<IWebRtcTransportSink> sink);
     bool SelectPeer(const network::SocketAddr& peer);
+    void ClearSelectedPeer();
     bool IsSelectedPeer(const network::SocketAddr& peer) const;
 
     network::transport::DatagramSendResult Send(network::transport::DatagramProtocol protocol, const uint8_t* data, size_t size);

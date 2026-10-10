@@ -140,6 +140,25 @@ protected:
             EXPECT_TRUE(StunCodec::VerifyMessageIntegrity(msg, key));
         }
     }
+    void ExpectBinding(const std::vector<uint8_t>& bytes, const UdpPeer& source,
+                       const std::array<uint8_t, 12>& id)
+    {
+        StunMessageInfo msg;
+        ASSERT_TRUE(TurnCodec::ParseStunDatagram(bytes.data(), bytes.size(), msg));
+        EXPECT_TRUE(msg.IsBindingResponse());
+        EXPECT_EQ(msg.txid, id);
+        EXPECT_TRUE(StunCodec::VerifyFingerprint(msg));
+        EXPECT_FALSE(msg.HasAttr(static_cast<uint16_t>(AttrType::MESSAGE_INTEGRITY)));
+        EXPECT_FALSE(msg.HasAttr(static_cast<uint16_t>(AttrType::REALM)));
+        EXPECT_FALSE(msg.HasAttr(static_cast<uint16_t>(AttrType::NONCE)));
+        EXPECT_FALSE(msg.HasAttr(static_cast<uint16_t>(AttrType::XOR_RELAYED_ADDRESS)));
+        XorMappedAddress mapped;
+        ASSERT_TRUE(StunCodec::DecodeXorMappedAddress(msg, mapped));
+        EXPECT_EQ(mapped.is_ipv6, source.address.IsV6());
+        EXPECT_EQ(mapped.port, source.address.Port());
+        const auto ip = source.address.IsV6() ? source.address.IPv6Bytes() : source.address.IPv4Bytes();
+        EXPECT_EQ(std::string(reinterpret_cast<const char*>(mapped.ip.data()), ip.size()), ip);
+    }
     void Challenge(UdpPeer* socket = nullptr)
     {
         std::vector<uint8_t> request;
@@ -219,6 +238,125 @@ protected:
     std::string nonce;
 };
 } // namespace
+
+TEST_F(TurnServerTest, BindingDiscoversAddressWithoutAuthenticationOrAllocation)
+{
+    for (bool fingerprint : {false, true})
+    {
+        const auto id = Id();
+        std::vector<uint8_t> request;
+        ASSERT_TRUE(StunCodec::BuildMessage(StunMethod::Binding, StunClass::Request, id,
+            {Text(AttrType::SOFTWARE, "basic-stun-client"), {0x800f, {1, 2, 3}}}, request, {}, fingerprint));
+        const auto response = Exchange(request);
+        ExpectBinding(response, client, id);
+        EXPECT_EQ(Exchange(request), response);
+        EXPECT_EQ(server->GetStats().sessions, 0u);
+        EXPECT_EQ(server->GetStats().allocations, 0u);
+    }
+    // Binding is not an authorization grant for a subsequent Allocate.
+    Challenge();
+    EXPECT_EQ(server->GetStats().sessions, 1u);
+    EXPECT_EQ(server->GetStats().allocations, 0u);
+}
+
+TEST_F(TurnServerTest, BindingWorksAtSessionQuotaAndDoesNotModifyAllocationOrCache)
+{
+    options.max_sessions = 1;
+    StartServer();
+    const auto allocate = Allocate();
+    const auto cached = Exchange(allocate);
+    StunMessageInfo allocation;
+    ASSERT_TRUE(TurnCodec::ParseStunDatagram(allocate.data(), allocate.size(), allocation));
+    const auto request = StunCodec::BuildBindingRequest(allocation.txid);
+    ExpectBinding(Exchange(request), client, allocation.txid);
+    UdpPeer other;
+    ExpectBinding(Exchange(request, &other), other, allocation.txid);
+    EXPECT_EQ(server->GetStats().sessions, 1u);
+    EXPECT_EQ(server->GetStats().allocations, 1u);
+    EXPECT_EQ(Exchange(allocate), cached);
+    now = 599999;
+    ExpectBinding(Exchange(request), client, allocation.txid);
+    now = 600000;
+    server->Tick();
+    EXPECT_EQ(server->GetStats().allocations, 0u);
+    EXPECT_EQ(server->GetStats().sessions, 0u);
+}
+
+TEST_F(TurnServerTest, BindingUnknownRequiredAttributesReturnUnsigned420)
+{
+    const auto id = Id();
+    std::vector<uint8_t> request;
+    ASSERT_TRUE(StunCodec::BuildMessage(StunMethod::Binding, StunClass::Request, id,
+        {{0x0031, {}}, {0x0032, {1}}, {0x0031, {}}, {0x800f, {}}}, request, {}, true));
+    const auto response = Exchange(request);
+    StunMessageInfo msg;
+    ASSERT_TRUE(TurnCodec::ParseStunDatagram(response.data(), response.size(), msg));
+    EXPECT_TRUE(msg.IsBindingErrorResponse());
+    EXPECT_EQ(msg.txid, id);
+    EXPECT_TRUE(StunCodec::VerifyFingerprint(msg));
+    StunErrorCode error;
+    ASSERT_TRUE(StunCodec::DecodeErrorCode(msg, error));
+    EXPECT_EQ(error.code, 420);
+    const auto* unknown = msg.FindAttr(static_cast<uint16_t>(AttrType::UNKNOWN_ATTRIBUTES));
+    ASSERT_NE(unknown, nullptr);
+    EXPECT_EQ(msg.AttrValue(*unknown), std::string("\x00\x31\x00\x32", 4));
+    EXPECT_FALSE(msg.HasAttr(static_cast<uint16_t>(AttrType::MESSAGE_INTEGRITY)));
+    EXPECT_EQ(server->GetStats().sessions, 0u);
+}
+
+TEST_F(TurnServerTest, BindingIgnoresRecognizedAttributesWithoutLearningCredentials)
+{
+    const auto id = Id();
+    std::vector<uint8_t> request;
+    ASSERT_TRUE(StunCodec::BuildMessage(StunMethod::Binding, StunClass::Request, id,
+        {Text(AttrType::USERNAME, "not-a-turn-user"), Text(AttrType::REALM, "not-the-realm"),
+         TurnCodec::UInt32Attribute(AttrType::PRIORITY, 1234), TurnCodec::RequestedTransportAttribute(17)},
+        request, "unverified-key", true));
+    ExpectBinding(Exchange(request), client, id);
+    EXPECT_EQ(server->GetStats().sessions, 0u);
+    EXPECT_EQ(server->GetStats().allocations, 0u);
+}
+
+TEST_F(TurnServerTest, BindingDropsMalformedOversizedAndNonRequestDatagrams)
+{
+    std::vector<uint8_t> fingerprinted;
+    ASSERT_TRUE(StunCodec::BuildMessage(StunMethod::Binding, StunClass::Request, Id(), {}, fingerprinted, {}, true));
+    auto bad_fingerprint = fingerprinted;
+    bad_fingerprint.back() ^= 1;
+    auto duplicate_fingerprint = fingerprinted;
+    duplicate_fingerprint.insert(duplicate_fingerprint.end(), fingerprinted.end() - 8, fingerprinted.end());
+    utils::Utils::WriteUint16BE(duplicate_fingerprint.data() + 2, duplicate_fingerprint.size() - 20);
+    utils::Utils::WriteUint32BE(duplicate_fingerprint.data() + duplicate_fingerprint.size() - 4,
+        StunCodec::ComputeFingerprint(duplicate_fingerprint.data(), duplicate_fingerprint.size() - 8));
+    const auto request = StunCodec::BuildBindingRequest(Id());
+    auto truncated = request;
+    truncated.pop_back();
+    auto trailing = request;
+    trailing.push_back(0);
+    std::vector<uint8_t> malformed_attribute;
+    ASSERT_TRUE(StunCodec::BuildMessage(StunMethod::Binding, StunClass::Request, Id(),
+        {Text(AttrType::SOFTWARE, "")}, malformed_attribute));
+    malformed_attribute[23] = 8;
+    std::vector<uint8_t> oversized;
+    ASSERT_TRUE(StunCodec::BuildMessage(StunMethod::Binding, StunClass::Request, Id(),
+        {{static_cast<uint16_t>(AttrType::SOFTWARE), std::vector<uint8_t>(4096, 'x')}}, oversized));
+    std::vector<std::vector<uint8_t>> packets = {bad_fingerprint, duplicate_fingerprint,
+        truncated, trailing, malformed_attribute, oversized};
+    for (auto klass : {StunClass::Indication, StunClass::SuccessResponse, StunClass::ErrorResponse})
+    {
+        std::vector<uint8_t> packet;
+        ASSERT_TRUE(StunCodec::BuildMessage(StunMethod::Binding, klass, Id(), {}, packet));
+        packets.push_back(std::move(packet));
+    }
+    for (const auto& packet : packets)
+    {
+        ASSERT_TRUE(client.Send(control, packet));
+        std::vector<uint8_t> response;
+        EXPECT_FALSE(client.Receive(response, nullptr, 30));
+    }
+    EXPECT_EQ(server->GetStats().sessions, 0u);
+    EXPECT_EQ(server->GetStats().allocations, 0u);
+}
 
 TEST_F(TurnServerTest, AllocateRetransmissionRefreshAndDeletionUseRealSockets)
 {
@@ -493,6 +631,21 @@ protected:
     }
     uint8_t RelayFamily() const { return GetParam() & 2 ? 2 : 0; }
 };
+
+TEST_P(TurnDualStackTest, BindingUsesClientFamilyAndSharesListenerWithAllocate)
+{
+    const auto id = Id();
+    const auto request = StunCodec::BuildBindingRequest(id);
+    const auto response = Exchange(request);
+    ExpectBinding(response, client, id);
+    EXPECT_EQ(Exchange(request), response);
+    EXPECT_EQ(server->GetStats().sessions, 0u);
+    EXPECT_EQ(server->GetStats().allocations, 0u);
+    Allocate(RelayFamily());
+    ExpectBinding(Exchange(request), client, id);
+    EXPECT_EQ(server->GetStats().sessions, 1u);
+    EXPECT_EQ(server->GetStats().allocations, 1u);
+}
 
 TEST_P(TurnDualStackTest, AllocateIndicationsChannelsRefreshAndReleaseUseRealSockets)
 {

@@ -1,4 +1,39 @@
-## FFmpeg 与测试依赖
+# Packetia SFU
+
+基于 C++17 的音视频服务学习项目，包含 RTSP、RTMP、SIP 接入、WebRTC 房间转发、
+TURN UDP 中继及录像模块。正常运行由一个 `Packetia` 进程统一管理服务、网络监听和工作线程。
+
+当前已验证：两个浏览器加入同一房间，A 发布、B 观看，B 强制经过 TURN UDP；
+双方信令意外断开后恢复原参与者，通过 ICE restart 建立新路径并继续传输媒体。
+
+### 阅读导航
+
+- [构建与依赖](#构建与依赖)：Linux/macOS 构建、测试依赖。
+- [网络层边界与线程约定](#网络层边界与线程约定)：调度归属、TCP 缓冲、TLS 传输。
+- [TURN UDP 中继](#turn-udp-中继)：认证、资源管理、STUN 地址发现与双栈。
+- [参与者与连接数据结构](#参与者与连接数据结构)：对象归属、信令恢复与 ICE restart。
+- [双浏览器房间与 TURN 示例](#双浏览器房间与-turn-示例)：启动方式与浏览器检查。
+- [WebRTC SDP 协商](#webrtc-sdp-协商)、[RTP 协议规范](#rtp-协议规范)：协商行为与 RFC 支持边界。
+- [鉴权框架（待接入）](#鉴权框架待接入)：认证、权限接口及后续接入。
+- [本轮验证](#本轮验证)、[开发记录](#开发记录)：验证范围与历史变更。
+
+### 当前能力与限制
+
+| 模块 | 当前能力 | 当前限制 |
+| --- | --- | --- |
+| WebRTC/SFU | WebSocket 信令、H264/Opus 协商、DTLS/SRTP、房间发布与订阅 | 示例每人一个媒体会话，只承担发布或订阅一种角色；动态轨道重协商未开放 |
+| ICE | ICE-Lite、认证提名、存活检测、同会话 ICE restart | 主动检查和重新收集候选由浏览器完成；尚未接通 SFU 双栈候选发布 |
+| 断线恢复 | 默认 15 秒保留成员、媒体会话和转发关系，凭恢复凭据绑定新信令连接 | 仅同页面、同进程内恢复；刷新页面、服务重启或媒体终止后需重新加入 |
+| TURN/STUN | UDP 长期凭证认证、中继、权限、通道、到期清理、配额/ACL、IPv4/IPv6 | 不支持 TURN TCP/TLS、双地址族 Allocation 或完整 coturn 功能 |
+| TCP/TLS | 有界 TCP 缓冲、所属线程调度、TLS 1.2/1.3 服务端传输组件 | TLS 尚未接入 TURN 或 WSS 监听、应用配置 |
+| 应用鉴权 | 认证和权限框架、JWT 源码实现 | JWT 未加入构建和业务入口；WebRTC 仍使用共享 token |
+
+尚未做系统容量压测，配置中的会话上限不是实际可承载并发数。当前浏览器验证属于本机互通验证，
+公网部署仍需配置可达的媒体/中继地址、端口及安全信令入口。
+
+## 构建与依赖
+
+### Linux 与 FFmpeg 依赖
 
 主程序和录像测试通过 `pkg-config` 查找系统安装的 libavformat、libavcodec 和 libavutil
 开发包。无需编译 `third/ffmpeg` 下的源码，原有 `PACKETIA_FFMPEG_ROOT` 配置不再使用。
@@ -9,7 +44,8 @@ Ubuntu 上安装依赖并构建主程序：
 ```sh
 sudo apt update
 sudo apt install build-essential cmake pkg-config libssl-dev \
-  libavformat-dev libavcodec-dev libavutil-dev libsqlite3-dev
+  libavformat-dev libavcodec-dev libavutil-dev libsqlite3-dev \
+  libwebsockets-dev libsrtp2-dev
 
 cmake -S . -B build -DBUILD_TESTING=OFF
 cmake --build build --target Packetia -j"$(nproc)"
@@ -17,6 +53,9 @@ cmake --build build --target Packetia -j"$(nproc)"
 
 库必须与目标操作系统和 CPU 架构一致。可通过
 `pkg-config --modversion libavformat libavcodec libavutil` 检查检测到的版本。
+
+WebSocket 默认启用，需要 libwebsockets；WebRTC 媒体运行需要 libsrtp2。
+缺少 libsrtp2 时部分协议目标仍能编译，但 WebRTC 服务不能正常启用，浏览器示例和相关测试也不可用。
 
 默认 `BUILD_TESTING=ON`，只有开启时才查找 GoogleTest 并生成测试目标。
 Ubuntu 上运行完整默认测试：
@@ -40,7 +79,8 @@ ctest --test-dir build/recording-tests --output-on-failure
 
 ## 各路独立录像切片
 
-各路独立 fMP4 切片、SQLite 索引及查询接口见[录制切片说明](service/RecordService/README.md)。
+各路独立 fMP4 切片、SQLite 索引及查询接口见 [RecordingService](service/RecordService/RecordingService.h)
+和 [RecordingCatalog](service/RecordService/RecordingCatalog.h)。
 按 `(session_id, stream_id)` 分别录制，在关键帧处按媒体时间切段；支持逐流停止、重启，以及按会话、流和时间范围查询完成片段。构建需要 SQLite 3.24 以上开发库。
 
 ## 录像画面合成实验
@@ -50,10 +90,12 @@ ctest --test-dir build/recording-tests --output-on-failure
 
 ## 会议合成框架
 
-新增 [ConferenceMixService](service/ConferenceMixService/README.md)，提供会议输入配置、独立工作线程、任务启停与编码输出接口。
+[ConferenceMixService](service/ConferenceMixService/README.md) 提供会议输入配置、独立工作线程、任务启停与编码输出接口。
 当前尚未实现实际拼画面、混音和编解码。服务已注册到统一启停管理，默认关闭。
 
-录制、AI、会议合成支持全局开关、流默认值与逐流覆盖配置，见[全局配置模块](config/README.md)和[服务配置与启停](service/README.md)。
+录制、AI、会议合成支持全局开关、流默认值与逐流覆盖配置，字段见
+[AppConfig](config/AppConfig.h) 和 [配置示例](config/packetia.example.json)，统一启停入口见
+[ServerApp](server/ServerApp.cpp)。
 
 ## macOS 编译
 
@@ -61,7 +103,7 @@ ctest --test-dir build/recording-tests --output-on-failure
 在项目根目录执行：
 
 ```sh
-brew install cmake ninja pkgconf googletest openssl@3 ffmpeg sqlite libwebsockets
+brew install cmake ninja pkgconf googletest openssl@3 ffmpeg sqlite libwebsockets libsrtp
 
 cmake -S . -B build/macos -G Ninja \
   -DCMAKE_BUILD_TYPE=Debug \
@@ -80,12 +122,139 @@ Apple Silicon 建议使用原生 arm64 Homebrew，避免混用 Rosetta 的 x86_6
 `third/libwebsocket` 中预编译的 Linux 库不用于 macOS。
 
 服务默认监听 RTSP 554、SIP 5060、RTMP 1935、UDP 9000 和 WebSocket 8080，
-启动前请确认这些端口可用。默认配置见 `server/ServerConfig.h`。
+启动前请确认这些端口可用。默认配置见 `config/AppConfig.h`；`server/ServerConfig.h` 是类型别名。
+
+## 网络层边界与线程约定
+
+网络接入继续由一个 `Packetia` 进程管理。`ServerApp` 负责服务配置、启动回滚和停止，
+`EventLoop` 管理 I/O 线程，每个网络对象固定归属一个 `TaskScheduler`。
+
+| 层次 | 现有组件 | 边界 |
+| --- | --- | --- |
+| 事件调度 | `EventLoop`、`TaskScheduler`、`Channel` | 调度线程、事件注册、任务和定时器 |
+| socket 与连接 | `TcpSocket`、`UdpSocket`、`Acceptor`、`TcpConnection`、`UdpServer` | 系统收发、监听、缓冲和连接关闭 |
+| 传输适配 | `IDatagramTransport`、`UdpDatagramTransport`、`TlsTransport` | 数据报接口、独立存储及 TCP 上的 TLS 明文适配 |
+| 协议 | TURN、RTSP、SIP、RTMP、WebRTC | 拆包、认证、会话、权限和媒体路由 |
+
+### 线程归属
+
+- `EventLoop::GetTaskScheduler()` 是轮询分配入口，应在创建或启动对象时选择并保存结果。
+  `EventLoop` 的任务、定时器和 Channel 便捷接口固定操作第一个调度器，不代表当前对象的归属。
+- `TcpServer`、`Acceptor` 和 `UdpServer` 都支持注入 `shared_ptr<TaskScheduler>`。
+  注入模式下停止、重新监听仍使用同一调度器；旧调度器停止后，应使用新调度器创建新对象。
+  兼容的 `EventLoop*` 构造方式仍在每次启动时选择调度器。
+- TCP 监听器及其连接使用同一调度线程；当前 TURN 控制入口、会话、relay socket 和定时器
+  也使用同一调度线程。增加 `io_threads` 不会自动拆分单个服务的会话。
+- 读取、协议状态变更、关闭通知在对象所属线程执行。TCP 回调设置通过 `Invoke` 串行化；
+  启停和回调设置属于控制操作，调用方需串行安排。发送接口另有下述并发约定。
+- 跨线程提交业务命令使用 `Post` 并检查是否接受；数据库、远程鉴权及文件操作交给工作线程，
+  完成后回到所属调度线程检查会话是否仍然有效。I/O 线程之间避免同步 `Invoke` 相互等待。
+  调度器停止后的 `Invoke` 只用于最终清理；此时清理可在调用线程执行。
+
+### TCP 启动、缓冲与关闭
+
+`TcpServer::OnConnect` 构造连接并安装协议回调；服务随后登记连接并安装断开清理回调，
+再调用 `OnConnected` 完成协议初始化，最后统一 `Start` 注册读取事件。
+RTMP 的 transport 初始化位于 `OnConnected`，其内部 `Start` 仍然是幂等操作。
+初始化期间断连也能移除已登记连接。协议派生类析构时须先 `Stop`，保证回调所引用的状态仍有效。
+
+`TcpConnection::Options` 可按协议指定以下限制，零值使用默认值：
+
+| 配置 | 默认值 | 含义 |
+| --- | --- | --- |
+| `max_receive_bytes` | 1 MiB | 连接未消费字节及接收缓存大小上限 |
+| `max_send_bytes` | 4 MiB | 本地发送队列字节上限 |
+| `read_budget_bytes` | 128 KiB | 单次可读回调从 socket 读取的字节预算 |
+
+接收缓存复用已消费空间，满时先让协议解析；若协议保留整个满缓存且没有安排解析续调，
+则关闭连接。`BufferReader::Read` 的容量耗尽返回 `-1/EMSGSIZE`，与返回 `0` 的 EOF 分开。
+读取预算耗尽后由水平触发的 epoll/kqueue 在后续轮次继续读取。
+协议自己的累积缓存、消息大小和每轮解析数量仍需独立限制，连接限额不覆盖协议复制出去的数据。
+`RequestReadContinuation` 用于分批消费已经缓存在连接中的字节，提交失败必须由调用方处理。
+
+`ReadCallback` 和 `BytesCallback` 为两种互斥模式，最后设置的模式生效。
+前者由协议显式消费 `BufferReader`；后者在回调返回后自动消费该批字节。
+传入指针和缓冲区均为临时借用，跨线程或延迟处理需要复制或持有独立存储。
+
+`TcpConnection::Send` 支持跨线程、有界入队；`Queued` 只表示进入本地队列。
+`UdpServer::TrySendTo` 在所属线程即时发送；`Sent` 只表示内核接受，`NotWritable` 不会自动排队。
+两者均不保证对端收到；UDP 跨线程调用当前会同步等待所属线程完成，媒体路径应尽量同线程调用。
+队列满后的拒绝、暂停或关闭策略由协议决定，TCP 不可任意丢弃已经发送了一部分的消息。
+
+连接关闭只通知一次，通知期间不持有发送锁；对端半关闭时先完成已安排的解析与排队回复，
+再释放连接。UDP 会话清理与共享监听 socket 关闭分别管理。
+进程停止时先停止接入、清理协议与网络对象，再停止 I/O 线程；网络对象也保留停机后清理能力。
+
+### TLS 服务端传输
+
+`network/transport/TlsContext` 加载 PEM 证书链和匹配的未加密私钥，缺失、无效、不匹配或加密私钥
+都会返回失败，加载过程不会交互询问密码。构造完成后不再修改配置，可由多个连接共享。
+最低版本为 TLS 1.2，同时支持 TLS 1.3；使用 OpenSSL 默认密码套件，禁用压缩和重新协商。
+服务器目前不要求客户端证书，应用认证仍由上层协议负责。
+
+`TlsTransport` 包装已接受的 `TcpConnection`，使用 OpenSSL 内存 BIO，并复用连接所属调度器。
+它独占该连接的字节、关闭和发送排空回调，保留 `TcpServer` 的断开清理回调。
+在 `OnConnected` 中安装 transport，协议会话应保存它的 `shared_ptr`，握手成功后再处理协议业务。
+同一个连接不可同时安装明文协议的 TCP 读取回调。
+
+```cpp
+using network::transport::TlsContext;
+using network::transport::TlsTransport;
+
+std::string error;
+auto context = TlsContext::CreateServer({certificate_path, private_key_path}, &error);
+// 服务启动时检查 context；每个连接复用该配置。
+auto tls = std::make_shared<TlsTransport>(connection, context);
+TlsTransport::Callbacks callbacks;
+callbacks.on_ready = [] { /* 握手完成 */ };
+callbacks.on_bytes = [](const uint8_t* data, size_t size) { /* 协议累积并拆包 */ };
+callbacks.on_closed = [](TlsTransport::Error reason) { /* 清理协议会话 */ };
+bool started = tls->Start(std::move(callbacks));
+```
+
+接收链路为 `TcpConnection -> 输入 BIO -> SSL_read -> on_bytes`；发送为
+`TlsTransport::Send -> 明文队列 -> SSL_write -> 输出 BIO -> TcpConnection::Send`。
+TLS 明文仍是字节流，回调可能包含半条或多条协议消息；数据只在回调期间有效。
+所有 SSL 操作、定时器和回调在连接所属线程执行。
+`Send` 复制数据并有界入队，跨线程调用同步等待所属线程处理；`Queued` 不保证对端收到，
+握手未完成或明文队列已满返回 `NotWritable`。TLS 内部每轮最多处理 32 次读取和 32 次加密写入，
+剩余工作通过调度任务继续执行。
+
+TCP 队列满时，未接受的密文保留在输出 BIO；TCP 排空通知触发重试，仅在 TCP 接受后消费密文。
+默认握手超时 10 秒、对端 TLS 关闭响应超时 2 秒、待加密明文上限 1 MiB、输入和输出 BIO
+未消费字节各 256 KiB，均可通过 `TlsTransport::Options` 配置非零值。
+这些限制不包含 TCP 自身队列、协议累积缓存、OpenSSL 内部记录存储或分配器开销。
+
+状态为 `Created -> Handshaking -> Open`，失败进入 `Failed`。
+对端 `close_notify` 进入 `Closing`，放弃尚未加密的明文，发送 TLS 关闭响应并排空 TCP 队列后
+进入 `Closed`；未经 TLS 关闭的 TCP 断连单独报告 `TcpClosed`。
+`Close()` 是立即取消，放弃排队数据并断开 TCP，报告 `LocalClose`，不执行主动优雅 TLS 关闭。
+关闭通知最多一次；析构取消定时器、断开连接，不调用上层关闭回调。
+客户端负责验证服务器证书链和域名，公网浏览器需使用可信证书。
+
+验证：
+
+```sh
+cmake --build build/webrtc-integration --target test_tls_transport -j 4
+ctest --test-dir build/webrtc-integration --output-on-failure -R '^test_tls_transport$'
+```
+
+测试使用真实 OpenSSL 客户端覆盖 TLS 1.2/1.3、分片握手、二进制回显、微小 TCP 队列背压、
+分批发送、证书加载与信任校验、握手超时、缓冲限额、TLS/TCP 断连和资源清理。
+
+### 后续 TURN TCP/TLS 接入
+
+当前 TURN 仍仅支持 UDP，TCP socket 仍为 IPv4；尚未增加 TURN TCP/TLS 监听或会话分片。
+TLS 服务端适配已实现，但未接入应用配置或 TURN 监听。下一阶段统一 TCP 地址族和协议无关的
+字节流接口，再增加 TURN 流拆包与连接身份，复用 `TlsTransport`。
+TLS 负责握手和加解密，TURN 负责 STUN/ChannelData 消息边界和业务状态。
+WebRTC DTLS 保持数据报边界；WebSocket 当前通过 libwebsockets 适配所属调度器。
 
 ## 鉴权框架（待接入）
 
-`service/Auth` 提供独立的 `packetia_auth` 库，目前只有类型、接口和组合入口，
-没有 JWT、用户登录或房间权限策略实现，也尚未替换 WebRTC 现有共享 token 校验。
+`service/Auth` 提供独立的 `packetia_auth` 库，目前构建类型、接口和组合入口。
+`JwtAuthenticator.cpp` 已有 RS256 验证源码，但尚未加入 CMake 目标及 JWT 库依赖，
+也尚未替换 WebRTC 现有共享 token 校验。用户登录及房间权限策略仍待实现。
 
 | 类型/接口 | 职责 |
 | --- | --- |
@@ -96,9 +265,9 @@ Apple Silicon 建议使用原生 arm64 Homebrew，避免混用 Rosetta 的 x86_6
 | `IAccessPolicy::Check` | 具体实现检查用途与动作兼容性、授权范围、资源归属；缺少授权时拒绝 |
 | `AuthService` | 构造时注入两个接口；缺少实现默认拒绝，并在认证/授权时检查身份和有效期 |
 
-你可以从下面两项开始实现：
+后续接入顺序：
 
-1. `JwtAuthenticator : IAuthenticator`：头文件已提供声明，你可以在 JwtAuthenticator.cpp 中实现 Authenticate。使用 jwt-cpp 等成熟库，成功时返回 `AuthResult::Success(context)`，失败时返回错误码。必须要求有效期，不能只 decode 后就返回成功。
+1. `JwtAuthenticator : IAuthenticator`：补齐 jwt-cpp 构建依赖并将源码加入目标，验证签名、签发者、用途、有效期及错误处理；成功返回 `AuthResult::Success(context)`。当前实现尚未提取业务权限，需定义可信声明到授权范围的映射。
 2. `RoomAccessPolicy : IAccessPolicy`：检查目标房间、轨道的实际归属，以及 JoinRoom/Publish/Subscribe 等权限；同时拒绝 WebRTC 凭证执行管理操作。
 
 依赖注入与调用示例（authenticator/policy 为你实现的对象）：
@@ -353,7 +522,7 @@ MTU 扣除 IP/UDP、变长 RTP 头、SRTP 和 TURN 开销；固定 payload 上�
 与 WebRTC 直接组合，不需要 RPC 或另外启动 TURN 进程。支持 IPv4/IPv6 UDP 控制与中继套接字。
 支持长期凭证认证、401/438 challenge、Allocate/Refresh、CreatePermission、
 Send/Data indication、ChannelBind/ChannelData、生命周期清理、配额与 peer ACL。
-当前不包含 TCP/TLS 或独立 STUN Binding 服务，不能等同于 coturn 全功能。
+同一个 UDP 控制端口支持基础 STUN Binding 地址发现。当前不包含 TCP/TLS，不能等同于 coturn 全功能。
 默认关闭，在配置文件中设置 `turn.enabled=true`，或通过 `PACKETIA_TURN=true` 开启。
 账号由 `PACKETIA_TURN_USER` 和 `PACKETIA_TURN_PASSWORD` 环境变量提供，要求非空可打印 ASCII。
 TURN 开启后，缺少账号、绑定失败或后续模块启动失败都会触发启动回滚。
@@ -377,6 +546,20 @@ build/webrtc-integration/Packetia
 启动先完成 I/O 和工作线程，再启动 TURN 与网络模块；关闭时先停止 WebRTC，最后停止 TURN 和 I/O。
 `PacketiaTurn` 入口保留作独立协议调试工具，正常运行使用上面的 `Packetia` 入口即可。
 
+### 同端口 STUN 地址发现
+
+TURN 开启后，浏览器可在同一地址使用 `stun:主机:端口` 查询自身映射地址，
+也可使用 `turn:主机:端口?transport=udp` 加账号申请中继。Binding 不需要 TURN 凭据，
+返回服务器实际看到的来源 IP/端口（`XOR-MAPPED-ADDRESS`），保留请求事务 ID，附带 FINGERPRINT。
+它不返回中继地址，不创建会话或 Allocation，不占用 TURN 会话配额，也不会刷新已有资源的有效期。
+
+IPv4/IPv6 客户端均支持，双栈监听下的 IPv4-mapped 地址返回为 IPv4。
+请求允许没有 FINGERPRINT；携带时必须校验成功。未知必需属性返回 420 并列出属性类型，
+未知可选属性及已识别但本用途不使用的属性被忽略。该入口不执行 MESSAGE-INTEGRITY 身份认证，
+响应不携带 MESSAGE-INTEGRITY；ICE 连通性检查的认证仍由 SFU 的 IceAgent 处理。
+重传按当前来源地址重新计算响应，不建立事务缓存。畸形报文、非请求消息以及超过 4096 字节的请求被丢弃。
+目前仅提供现代 STUN 的 UDP Binding 子集，不包含 TCP、RFC 3489 兼容或 RFC 5780 NAT 行为探测。
+
 ### TURN 双栈与 IPv6 中继
 
 默认仍使用 IPv4。在 JSON 中设置 `turn.dual_stack=true`、`turn.listen_ip="::"` 后，一个 IPv6 控制 socket
@@ -391,19 +574,21 @@ IPv6 中继默认关闭；程序接口中清空某组的两个地址可关闭该
 IPv4 客户端可申请 IPv6 中继，IPv6 客户端也可申请 IPv4 中继。
 每个 Allocation 当前只分配一种地址族，不支持 `ADDITIONAL-ADDRESS-FAMILY` 双重分配。
 
-本机双栈测试配置，将其作为配置文件的 `turn` 节并使用上述主程序入口：
+本机双栈测试配置，可合并到配置文件并使用上述主程序入口：
 
 ```json
-"turn": {
-  "enabled": true,
-  "listen_ip": "::",
-  "listen_port": 3478,
-  "dual_stack": true,
-  "relay_bind_ip": "127.0.0.1",
-  "advertised_ip": "127.0.0.1",
-  "relay_bind_ip_v6": "::1",
-  "advertised_ip_v6": "::1",
-  "local_test": true
+{
+  "turn": {
+    "enabled": true,
+    "listen_ip": "::",
+    "listen_port": 3478,
+    "dual_stack": true,
+    "relay_bind_ip": "127.0.0.1",
+    "advertised_ip": "127.0.0.1",
+    "relay_bind_ip_v6": "::1",
+    "advertised_ip_v6": "::1",
+    "local_test": true
+  }
 }
 ```
 
@@ -413,69 +598,176 @@ IPv6 默认 ACL 同样拒绝回环、ULA、链路本地、组播及映射/兼容
 TURN 测试覆盖四种接入/中继地址族组合的真实 UDP 转发、通道、权限到期和资源释放。
 SFU 的双栈监听与双地址 SDP 候选发布尚未在这一功能中实现。
 
+## 参与者与连接数据结构
+
+`Room` 管理房间成员和跨参与者的轨道转发关系；`Participant` 管理一个参会者的身份、
+信令绑定、当前媒体会话、发布轨道和订阅记录。共享监听器、TURN 服务、TLS 上下文和线程池
+继续由所属服务或 `ServerApp` 管理，不放进参与者对象。
+
+| 数据结构 | 内容 |
+| --- | --- |
+| `ParticipantIdentity` | 房间参与者 ID、显示名称、经鉴权确认的用户 `subject_id` |
+| `SignalingBinding` | 当前信令连接 ID 和绑定代数 |
+| `ParticipantInfo` | 身份、参会状态、信令绑定、媒体会话 ID 和轨道数量的值快照 |
+| `ParticipantSession` | WebRTC 会话、媒体传输、入口、SFU 端点、协商状态和资源登记状态 |
+
+`ParticipantTypes.h` 不依赖网络或协议实现。参与者 ID 和信令连接 ID 独立，
+`BindSignaling` 每次绑定都会增加代数；`UnbindSignaling` 同时匹配连接 ID 和代数，
+避免旧连接的迟到关闭通知清除新绑定。解绑信令不等于离开房间。
+
+`ParticipantSession` 从原 `WebRtcService::Session` 提取。房间媒体创建成功后，
+`Participant::BindMediaSession` 持有该会话并关联其端点；当前每个参与者只绑定一个媒体会话，
+不允许直接覆盖已有会话或不同的端点。原 `BindSession(MediaSession)` 和单独的端点接口保留兼容。
+发布、订阅关系仍由 `Room` 的接口协调更新。
+
+`GetInfo()` 在参与者锁内生成值快照，适合状态查询；`GetMediaSession()` 返回的是活对象，
+其 ID 和对象句柄须在绑定前初始化、绑定后保持稳定，协商和协议操作仍须在所属 I/O 调度器执行。
+`Leave()` 清空信令、会话、轨道和订阅绑定，锁外停止端点、释放会话引用并通知上层；
+`WebRtcService::RemoveSession` 继续负责关闭 WebRTC/媒体传输、移除 UDP mux 路由和端点登记。
+服务里的会话表作为信令路由索引，与参与者引用同一个会话对象。
+
+房间参与者的信令意外断开后进入 `Reconnecting`，在恢复窗口内保留参与者及媒体会话；
+主动离开或恢复超时才移除房间成员。当前仍使用单条发布或订阅连接。
+`subject_id` 仅提供存储位置，现有共享 token 校验不会自动填充用户身份或执行房间权限校验。
+
+### 信令恢复与 ICE restart
+
+`webrtc.reconnect_timeout_ms` 默认 15000，允许配置 1..120000 毫秒。断开的参与者仍计入
+房间及服务人数限制，定时器到期会统一清理轨道、订阅、端点和 ICE 路由。
+未加入房间的旧式 offer 会话仍在信令断开时立即清理。
+
+加入房间的 `joined` 回复增加 `resume_token` 和 `reconnect_timeout_ms`。恢复凭据是服务端生成的
+256 位随机值，只对应当前房间中的当前参与者，不由参与者 ID 推导；客户端须同时提供原共享
+`token`。它保存在客户端内存中，应通过 WSS 传输，不能放在 URL 或日志里。
+
+新 WebSocket 建连后发送：
+
+```json
+{
+  "type": "resume",
+  "token": "<signaling-token>",
+  "room_id": "demo",
+  "participant_id": "<original-participant-id>",
+  "resume_token": "<resume-token-from-joined>"
+}
+```
+
+服务端校验房间、凭据、断线状态和截止时间，再把成员及会话索引迁移到新连接，增加信令绑定代数。
+`resumed` 回复的 `ice_restart` 表示是否存在需要恢复的媒体连接。仍在线的参与者不能被新连接接管；
+错误凭据、跨房间恢复、主动离开后的恢复和过期恢复都会拒绝。恢复凭据在参与者离开时失效。
+
+有媒体连接时，浏览器保留原 `RTCPeerConnection`、本地轨道和收流对象，调用
+`createOffer({iceRestart: true})` 并等待新一轮 ICE 候选收集完成，再发送
+`{"type":"restart_ice","token":"<signaling-token>","sdp":"<new-offer>"}`。
+服务器生成新的本地 ICE ufrag/password，回复 `answer`；浏览器调用 `setRemoteDescription`，
+随后作为 Full ICE 端发起检查和提名。服务器继续使用 ICE-Lite，不主动枚举浏览器的网卡。
+
+此次 restart 仅允许改变 ICE/网络参数，协商后的轨道、MID、PT、方向、SSRC、扩展、DTLS 指纹和角色
+保持不变。服务端保留 SFU 端点、发布轨道、订阅关系及已建立的 DTLS/SRTP 状态；原 ufrag 和地址路由
+被撤销，新路径完成认证和提名前暂停媒体收发。协商失败保留原协商与路由。
+
+`examples/webrtc-room` 自动重连信令，按指数退避重试恢复，再完成 ICE restart；ICE 状态变成 `failed`
+且信令仍在线时也会尝试 restart。恢复超时、已终止的媒体会话、页面刷新或服务端重启需要重新加入房间。
+目前没有持久化恢复、跨节点迁移、TURN/TCP 或 TURN/TLS 回退。
+
 ## 双浏览器房间与 TURN 示例
 
 `examples/webrtc-room` 使用实际 Room/SfuEndpoint 转发链路：两个浏览器加入同一房间，
 A 发布，B 订阅，并可在 B 建连前勾选 Force TURN 强制 `iceTransportPolicy=relay`。
-WebSocket 信令支持 join、tracks、publish、subscribe、leave；每个连接当前只承担发布或订阅一种角色，
-房间内媒体重协商尚未开放。订阅通过轨道 ID 和下游 MID 显式绑定。
+WebSocket 信令支持 join、tracks、publish、subscribe、resume、restart_ice、leave；
+每个参与者当前只承担发布或订阅一种角色，房间内轨道变更重协商尚未开放。
+订阅通过轨道 ID 和下游 MID 显式绑定。
 
-需要启用项目的 WebRTC/libSRTP 构建依赖，并安装 Node.js。按已有构建目录运行：
+需要安装上述 WebSocket/libSRTP 构建依赖及 Node.js。首次运行先配置构建目录；
+macOS 按上面的构建说明配置 OpenSSL/libwebsockets 路径，或通过 `PACKETIA_ROOM_DEMO_BINARY`
+使用已有构建产物。
 
 ```sh
+cmake -S . -B build/webrtc-integration -DBUILD_TESTING=ON
 cmake --build build/webrtc-integration --target PacketiaRoomDemo
 cd examples/webrtc-room
 npm ci
 npm start
 ```
 
-打开 `http://127.0.0.1:18000`。启动器生成临时 token/TURN 凭证并启动 C++ 示例；
+打开 `http://127.0.0.1:18000`，两个浏览器使用相同房间名，分别发布和订阅。
+启动器生成临时 token/TURN 凭证并启动 C++ 示例；
 默认 WebSocket 18080、SFU UDP 19000、TURN UDP 13478，均用于本机演示。
 其他构建目录通过 `PACKETIA_ROOM_DEMO_BINARY` 指定二进制。
 示例 TURN 只允许转发至该 SFU 的回环媒体地址。
 
 启动示例后运行 `npm run check`，需要本机 Google Chrome；检查两个独立浏览器中的视频帧增长、
-音频流量、订阅端选中的 relay 候选、视频尺寸和退出清理，并在忽略的 artifacts 目录输出截图。
+音频流量、订阅端选中的 relay 候选、视频尺寸、双方信令断线后的参与者恢复和 ICE restart、
+主动退出清理，并在忽略的 artifacts 目录输出截图。
 
 ## WebRTC SDP 协商
 
-房间发布/订阅的运行入口与限制见上面的双浏览器示例。
+房间发布/订阅的运行入口与限制见上面的双浏览器示例。服务器在客户端 offer 中选择本地支持的
+H264/Opus 能力，answer 沿用选中 codec 在 offer 中的 PT；本地能力声明中的 96/111 不会强制覆盖
+客户端的动态 PT。协商支持媒体方向、RTCP feedback 和 RTP header extension，并校验
+BUNDLE、ICE、DTLS、SSRC 与 m-line。Offer/Answer 状态通过提交和回滚管理。
 
-- 新增 SDP codec 构建、参数校验和协商逻辑。
-- 实现 Offer/Answer 状态管理、提交与回滚机制。
-- 支持媒体方向、RTCP feedback 和 RTP header extension 能力协商。
-- 完善 BUNDLE、ICE、DTLS、SSRC 与 m-line 校验。
-- 抽取通用 ASCII 字符串处理工具。
-- 补充 SDP codec 和 negotiator 边界测试。
+普通 re-offer 不允许直接更换 ICE 凭据；同会话换路径使用上述 `restart_ice` 入口。
+当前 restart 保持有效协商的媒体参数及 DTLS 身份不变，不同时进行增删轨道等媒体变更。
 
-## Version 0.2.0 – 2025-12-19
+## 本轮验证
 
-### Highlights
+2026-10-10 已完成主程序和房间示例构建，以下六个测试套件及 17 项房间/媒体测试通过：
+
+```sh
+cmake --build build/webrtc-integration --parallel 4
+ctest --test-dir build/webrtc-integration --output-on-failure \
+  -R '^(test_webrtc_session|test_webrtc_crypto|test_datagram_transport|webrtc_service|server_config|server_app)$'
+build/webrtc-integration/Rtsp/Test/test_rtp_input \
+  --gtest_filter='Participant.*:SfuConference.*:SfuRoomCommands.*:WebRtcMediaAdapter.*'
+```
+
+验证覆盖原参与者/会话恢复、发布与订阅关系保留、错误或过期恢复凭据拒绝、显式离开清理、
+新 ICE 凭据与提名、旧路径撤销以及协商失败回滚。TLS 组件测试入口见网络章节。
+真实 Chrome 双浏览器检查通过：订阅端保持 relay 候选，双方恢复后视频继续解码，参与者 ID 不变。
+上述结果不代表全量测试无失败：已有 `RtpPacketPoolTest.RejectsOversizedPacketBeforeAllocation`
+超大包计数失败仍待修复。
+
+## 开发记录
+
+以下记录描述各次修改当时的状态；其中的待实现能力和限制可能已在后续完成，当前状态以上文为准。
+
+### 2026-10-10：网络边界、TLS 传输与参与者断线恢复
+
+- 收紧网络对象的调度归属、TCP 启动顺序、缓冲上限及关闭流程，增加服务端 TLS 传输组件。
+- TURN UDP 控制端口增加基础 STUN Binding 地址发现。
+- 提取参与者身份、信令绑定代数、状态快照和媒体会话数据结构，明确服务与参与者的对象归属。
+- 增加恢复窗口、随机恢复凭据和新信令绑定；ICE restart 保留媒体会话、DTLS/SRTP 与 SFU 转发关系。
+- 房间示例增加自动重连及重新收集 ICE 候选，完成直接接入/强制 TURN 的双浏览器恢复验证。
+
+### Version 0.2.0 – 2025-12-19
+
+#### Highlights
 This release refactors RTSP over TCP handling by separating RTP/RTCP interleaved
 media packets from RTSP control message parsing, significantly improving
 stability and correctness.
 
-### Improvements
+#### Improvements
 - Demultiplex RTP/RTCP interleaved packets before RTSP parsing
 - Correctly handle TCP sticky packets and fragmented interleaved frames
 - Avoid treating empty buffers and partial packets as connection errors
 
-### Bug Fixes
+#### Bug Fixes
 - Fix RTSP parser being disrupted by interleaved RTP packets
 - Fix incorrect connection termination on empty read buffer
 
-### Design Changes
+#### Design Changes
 - Introduce a clear separation between media data plane and RTSP control plane
 - RTP/RTCP packets are now consumed at the connection read level
 
-# Version 0.3.0 – 2025-12-30
-## Highlights
+### Version 0.3.0 – 2025-12-30
+#### Highlights
 
 This release completes the RTSP-over-TCP interleaved media pipeline by
 introducing explicit channel-to-track binding and a codec-aware RTP track
 factory, enabling correct RTP/RTCP demultiplexing and per-track packet handling.
 
-## Improvements
+#### Improvements
 
 - Introduce RtpInterleaved channel map to dispatch interleaved RTP/RTCP packets
 by negotiated TCP channel
@@ -490,7 +782,7 @@ by negotiated TCP channel
 
 - Generate compile_commands.json via CMake for accurate IDE tooling support
 
-## Bug Fixes
+#### Bug Fixes
 
 - Fix incorrect use of track index as interleaved channel ID
 
@@ -500,7 +792,7 @@ by negotiated TCP channel
 
 - Fix undefined reference caused by missing function definitions at link time
 
-## Design Changes
+#### Design Changes
 
 - Clearly separate RTSP control plane (request/response parsing)
 from media data plane (RTP/RTCP packet dispatch)
@@ -512,12 +804,12 @@ uses weak_ptr to avoid ownership cycles
 independent of media track indices
 
 
-# Version 0.2.1 – 2026-01-01
-## Highlights
+### Version 0.2.1 – 2026-01-01
+#### Highlights
 
 - This release fixes RTSP RECORD failures caused by missing track registration during SETUP, and introduces an initial - - RTP-over-TCP interleaved processing pipeline that decouples network I/O from media processing.
 
-## Improvements
+#### Improvements
 
 - Register SDP tracks into MediaSession::tracks_ during SETUP to ensure RECORD operates on a fully initialized session
 
@@ -527,18 +819,18 @@ independent of media track indices
 
 - Add structured logging for SETUP track matching (control/codec/pt/clock/trackIdx) and for RECORD session/track validation
 
-## Bug Fixes
+#### Bug Fixes
 
 - Fix RTSP RECORD returning no response when MediaSession::tracks_ is empty (root cause: SETUP did not register tracks)
 
 - Fix incorrect/misleading logs in RECORD handler (e.g., printing “SETUP request” in RECORD path)
 
-# Version 0.3.0 – 2026-01-02
-## Highlights
+### Version 0.3.0 – 2026-01-02
+#### Highlights
 
 - This release introduces a reusable real-time packet delivery framework for RTP/RTCP processing. It adds a fixed-capacity PacketPool for deterministic memory management and a dedicated SPSC RtpRingBuffer (with RTCP priority) to decouple I/O from media processing, improving stability under load.
 
-## Improvements
+#### Improvements
 
 - Add PacketPool (object/memory pool) to provide fixed-capacity packet buffers and avoid frequent heap allocations in the RTP data path
 
@@ -548,15 +840,15 @@ independent of media track indices
 
 - Introduce queue/pool observability hooks (queue depth, dropped/exhausted counters) to facilitate load testing and tuning
 
-## Bug Fixes
+#### Bug Fixes
 
 - Fix potential lifetime issues when dispatching interleaved RTP/RTCP across threads by avoiding raw pointer ownership leaks and centralizing buffer release
 
 - Resolve const-correct locking issue in PacketPool by making internal mutex mutable (enables thread-safe const observers such as size()/stats())
 
 
-# Version 0.3.1 – 2026-01-06
-## refactor(network): fix connection lifetime issues and introduce factory-based initialization
+### Version 0.3.1 – 2026-01-06
+#### refactor(network): fix connection lifetime issues and introduce factory-based initialization
 
 - Introduce two-phase initialization for TcpConnection (construct + Start)
 - Move channel registration and event enabling out of constructors
@@ -567,10 +859,10 @@ independent of media track indices
 - Improve disconnect handling to avoid delayed callback accessing destroyed server
 
 
-# Version 0.3.2 – 2026-01-07
+### Version 0.3.2 – 2026-01-07
 
 
-## Architecture Changes
+#### Architecture Changes
 
 - Introduce a generic ShardedWorkerPool with key-based sharding to guarantee
 per-key ordering while allowing parallel execution across workers.
@@ -587,7 +879,7 @@ per-key ordering while allowing parallel execution across workers.
 - Decouple RTP consumption logic from RTSP, making the worker service reusable
 by other modules.
 
-## RTP / RTSP Improvements
+#### RTP / RTSP Improvements
 
 - Implement a clean RTSP over TCP interleaved handling model:
 
@@ -601,7 +893,7 @@ by other modules.
 
 - Move all heavy RTP processing out of IO threads to worker threads.
 
-## Worker & Scheduling
+#### Worker & Scheduling
 
 - Add queue depth limits and drop policies (DropHead / DropTail) to protect
 the system under load.
@@ -612,7 +904,7 @@ the system under load.
 
 - Improve statistics collection for enqueue, dequeue, drops, and max queue depth.
 
-## Memory & Stability
+#### Memory & Stability
 
 - Centralize packet lifetime management via PacketPool.
 
@@ -622,8 +914,8 @@ the system under load.
 
 - Improve defensive checks for invalid channels and oversized RTP packets.
 
-# Version 0.3.3 – 2026-01-11
-## fix(workerpool): fix PacketPool leak by restoring job-based release chain
+### Version 0.3.3 – 2026-01-11
+#### fix(workerpool): fix PacketPool leak by restoring job-based release chain
 
 Fix a critical memory leak where PacketPool objects were never released
 after being consumed by ShardedWorkerPool workers.
@@ -649,8 +941,8 @@ After this change:
 This fixes frequent RTSP/RTP failures (-12) caused by pool exhaustion.
 
 
-# Version 0.3.3 - 2026-01-13
-## feature: implement RTSP TCP interleaved demux and RTP worker dispatch
+### Version 0.3.3 - 2026-01-13
+#### feature: implement RTSP TCP interleaved demux and RTP worker dispatch
 
 - Add RTSP interleaved ($) frame parsing in RtspConnection
 - Bind interleaved channel to RtpTrack during SETUP (RTP/RTCP)
@@ -662,8 +954,8 @@ tips:I'm tired today, going to rest and then continue studying BBR and Gerrit
 This establishes the complete TCP → channel → track → worker RTP pipeline.
 
 
-# Version 0.3.4 - 2026-01-14
-## fix: optimize RTP track map locking and reduce log noise
+### Version 0.3.4 - 2026-01-14
+#### fix: optimize RTP track map locking and reduce log noise
 
 - Replace std::mutex with std::shared_mutex for RtpJobHandler track map
   to improve concurrency under high RTP load (read-heavy scenario)
@@ -675,8 +967,8 @@ tips: I’m just figuring out how to complete my own RTP pipeline, mainly by fol
 This change avoids unnecessary lock contention in RTP worker threads
 and prevents log flooding during track lifecycle transitions.
 
-# Version 0.3.5 - 2026-01- 15
-## feat(rtsp/rtp): introduce RTP wire header parsing and packet reorder pipeline
+### Version 0.3.5 - 2026-01- 15
+#### feat(rtsp/rtp): introduce RTP wire header parsing and packet reorder pipeline
 
 - Add RtpWireHeader to correctly parse RTP wire-format headers (RFC3550)
 - Separate RTP wire header from logical RtpHeader to avoid ABI/layout bugs
@@ -690,8 +982,8 @@ tips: I'm just learn how to work jitter buffer
 This change fixes incorrect RTP header parsing, prevents random seq/pt/ssrc
 misinterpretation, and enables stable real-time packet reordering.
 
-# Version 0.3.6 - 2026-01- 16
-## refactor(rtsp): rework RTP over TCP interleaved dispatch and job handling
+### Version 0.3.6 - 2026-01- 16
+#### refactor(rtsp): rework RTP over TCP interleaved dispatch and job handling
 
 - Introduce channel-to-track binding for RTP/RTCP interleaved streams
 - Pass weak_ptr<RtpTrack> through WorkJob instead of relying on handler-side maps
@@ -701,8 +993,8 @@ misinterpretation, and enables stable real-time packet reordering.
 Note:
 Further investigation is required for packet lifetime and use-after-free issues.
 
-# Version 0.3.7 - 2026 - 01 - 19
-## fix: resolve RTP packet lifetime issues in worker pool
+### Version 0.3.7 - 2026 - 01 - 19
+#### fix: resolve RTP packet lifetime issues in worker pool
 
 - Fix heap-use-after-free caused by incorrect ownership of RTP packet memory
 - Ensure Packet lifetime is managed consistently across worker threads
@@ -710,8 +1002,8 @@ Further investigation is required for packet lifetime and use-after-free issues.
 - Avoid double-free by unifying packet release responsibility
 - Improve robustness of RtpJobHandler::handle under concurrent execution
 
-# Version 0.3.8 - 2026-01-20
-## rtp: wire RTP parsing into worker → track pipeline
+### Version 0.3.8 - 2026-01-20
+#### rtp: wire RTP parsing into worker → track pipeline
 - Add RTP raw packet handling in RtpJobHandler
 - Parse and validate RTP headers before track processing
 - Construct RtpPacket from raw bytes and hand off to RtpTrack
@@ -719,8 +1011,8 @@ Further investigation is required for packet lifetime and use-after-free issues.
 - Lay groundwork for jitter buffer and depacketizer integration
 
 
-# Version 0.3.9 - 2026-01-21
-## refactor: add RTCP packet type enums and feedback definitions
+### Version 0.3.9 - 2026-01-21
+#### refactor: add RTCP packet type enums and feedback definitions
 - Define RTCP packet type enums (SR/RR/SDES/BYE/APP/RTPFB/PSFB/XR)
 - Add SDES item type definitions per RFC3550
 - Add RTPFB/PSFB feedback type enums (NACK/PLI/FIR/REMB, etc.)
@@ -728,15 +1020,15 @@ Further investigation is required for packet lifetime and use-after-free issues.
 - Prepare groundwork for RTCP parsing and statistics handling
 
 
-# Version 0.4.0 - 2026-01-23
-## refactor: rework RTP job payload model and fix abort caused by invalid length'
+### Version 0.4.0 - 2026-01-23
+#### refactor: rework RTP job payload model and fix abort caused by invalid length'
 - Replace void* payload with std::variant
 - Use shared_ptr<Packet> for safe cross-thread ownership
 - Remove unsafe static_cast paths
 - Fix len=0 propagation to inputRtp()
 
-# Version 0.4.1 - 2026-01-27
-## feat(rtp): implement RTP parsing, jitter buffering and H264 depacketization
+### Version 0.4.1 - 2026-01-27
+#### feat(rtp): implement RTP parsing, jitter buffering and H264 depacketization
 
 - Improve RTP header parsing and validation
 - Integrate jitter buffer for packet reordering
@@ -744,15 +1036,15 @@ Further investigation is required for packet lifetime and use-after-free issues.
 - Support H264 Single / STAP-A / FU-A depacketization
 - Output Annex-B formatted frames
 
-# DEBUG - 2026-01-28
-## debug: verify RTP pipeline end-to-end and locate PacketPool exhaustion path
+### DEBUG - 2026-01-28
+#### debug: verify RTP pipeline end-to-end and locate PacketPool exhaustion path
 
 - Verified full RTP flow from worker dispatch to RtpVideoTracker::onRtpSorted
 - Confirmed callback and sorting stages are correctly triggered
 - Identified potential lifetime and caching issues causing PacketPool exhaustion
 
-# Docs - 2026-01-31
-## docs: add RTCP XR (RFC 3611) protocol and SDP signaling notes
+### Docs - 2026-01-31
+#### docs: add RTCP XR (RFC 3611) protocol and SDP signaling notes
 - Document RTCP XR common header (PT=207) and packet structure
 - Describe the XR report block model and usage scenarios
 - Clarify sequence-number–based reporting for Duplicate RLE and Packet Receipt Times blocks
@@ -763,38 +1055,38 @@ Further investigation is required for packet lifetime and use-after-free issues.
 This change only updates protocol documentation and design notes, without affecting
 existing RTP/RTCP data path logic.
 
-# ROOM:20260204
-## feat: introduce ClientSession for per-client send handling
+### ROOM:20260204
+#### feat: introduce ClientSession for per-client send handling
 
 - Isolate per-client RTP send queue and state into ClientSession
 - Prepare MediaSession for SFU-style multi-subscriber forwarding
 
-# RoomVersion:0.0.1: 2026-02-05
-## feat: add basic SFU room
+### RoomVersion:0.0.1: 2026-02-05
+#### feat: add basic SFU room
 
 - Introduce Room module to manage participants and provide basic conference routing.
 - Add participant join/leave management and broadcast forwarding logic.
 - Each incoming RTP packet is forwarded to all other participants (N-1 fanout).
 - Prepare foundation for future subscribe-based routing / simulcast / SVC.
 
-# 2026-02-06
-## feat(rtsp/rtp): add RTP packet sorting logs and improve debug tracing
+### 2026-02-06
+#### feat(rtsp/rtp): add RTP packet sorting logs and improve debug tracing
 - Add detailed debug logs for RTP sorting pipeline (EnhancedPacketSortor)
 - Print seq/next_seq/buffer state to verify jitter-buffer reorder behavior
 - Add gdb breakpoint tracing points for emit() / inputRtp() call path
 - Improve packet dump helper to validate RTP header correctness
 - Facilitate troubleshooting for RTP packet payload/ts/seq parsing issues
 
-# Version 0.4.2 - 2026-02-08
-## feat(core): add signal-based subscription framework for stream dispatch
+### Version 0.4.2 - 2026-02-08
+#### feat(core): add signal-based subscription framework for stream dispatch
 - Add ISubscription / ISignal interfaces for callback subscription model
 - Implement SignalCOW with copy-on-write snapshots; emit does not hold the subscription writer mutex
 - Provide subscribe/cancel mechanism to manage listener lifecycle
 - Introduce SourceBase<T> abstraction to expose publish/subscribe pattern for stream modules
 - Prepare foundation for RTP/frame fan-out and modular pipeline extension
 
-# Version 0.4.3 -  2026-02-09
-## Add Depacketizer module and start H264 RTP frame reassembly
+### Version 0.4.3 -  2026-02-09
+#### Add Depacketizer module and start H264 RTP frame reassembly
 
 - Introduced a new Depacketizer module and defined a unified interface (input() / hasFrame() / popFrame()) for frame-level reconstruction based on sorted RTP packets.
 - Added initial H264Depacketizer class skeleton, preparing the architecture for future codec extensions (H265/VP8, etc.).
@@ -802,8 +1094,8 @@ existing RTP/RTCP data path logic.
 - Improved RTP header parsing to correctly handle CSRC and header extensions, with additional validation for padding scenarios.
 - Added debug logs for RtpSorted output to verify sequence continuity and payload size variations, confirming correct behavior before implementing FU-A/STAP-A reassembly logic.
 
-# Version 0.4.4 - 2026-02-14
-## Introduce RTCP module architecture and prepare RTP/RTCP interleaved processing
+### Version 0.4.4 - 2026-02-14
+#### Introduce RTCP module architecture and prepare RTP/RTCP interleaved processing
 
 - Added initial RTCP module framework following a WebRTC-style interface design, including IRtcpReceiver, IRtcpSender, and IRtcpObserver for clean protocol/business separation.
 - Implemented RtcpReceiverImpl skeleton with core entry points (OnRtcpPacket, SetObserver, SetLocalSsrc, SetRemoteSsrc) to prepare for compound RTCP parsing.
@@ -812,16 +1104,16 @@ existing RTP/RTCP data path logic.
 - Reviewed RtspConnection initialization flow and verified worker pool (media) and packet pool integration to support upcoming RTCP parsing and retransmission work.
 
 
-# Version 0.4.5- 2026-02-15
-## Title: Add RTCP receiver integration and fix build/link issues in RTP track
+### Version 0.4.5- 2026-02-15
+#### Title: Add RTCP receiver integration and fix build/link issues in RTP track
 - Introduced RTCP handling interface (inputRtcp) in RtpTrack and implemented RTCP callback mechanism via IRtcpObserver.
 - Integrated RtcpReceiverImpl into RtpVideoTracker to support parsing RTCP packets (RR/NACK/PLI events reserved).
 - Fixed namespace and constructor signature mismatch for RtcpReceiverImpl (rtcpx::IRtcpObserver*) to resolve undefined reference issues.
 - Updated CMake build linkage to ensure RTCP implementation is correctly compiled and linked for unit tests.
 Improved RTSP/RTP module structure preparing for future RTCP feedback processing and keyframe request support.
 
-# Version 0.4.6 - 2026-02-16
-## Refactor TCP stack by introducing a Session/Observer based architecture.
+### Version 0.4.6 - 2026-02-16
+#### Refactor TCP stack by introducing a Session/Observer based architecture.
 - Added generic ICodec<Msg> interface to support protocol-level decoding/encoding (SIP/RTMP/RTSP, etc.).
 - Implemented ObserverList to broadcast decoded messages to multiple business modules via ISessionObserver.
 - Introduced IConnectionObserver and improved connection-to-session callback flow for byte-level events.
@@ -831,32 +1123,32 @@ Improved RTSP/RTP module structure preparing for future RTCP feedback processing
 tips: Today is Chinese New Year. I stayed in my rented apartment and spent the day coding.
 
 
-## Commit Message (2026-02-17)
+### Commit Message (2026-02-17)
 Refactored multi-protocol TCP session architecture by introducing ProtocolDetector and ProtocolDetectorSession, enabling dynamic protocol detection and seamless promotion to protocol-specific sessions (SIP/RTSP), while fixing include dependency and compilation issues in SIP parser integration.
 
-# Version 0.4.7 - 2026-02-18
-## Refactored protocol detection and RTSP parser integration by introducing RtspProtocolParser based on ProtocolParser
+### Version 0.4.7 - 2026-02-18
+#### Refactored protocol detection and RTSP parser integration by introducing RtspProtocolParser based on ProtocolParser
 - Added RtspProtocolParser implementation based on ProtocolParser to support RTSP protocol detection (including $ interleaved framing).
 - Refactored parser declarations/definitions and fixed ParseResult scope + missing return issues to resolve compilation errors.
 - Updated build integration and linkage to eliminate duplicate Parse declarations and vtable undefined reference errors.
 
-# Version 0.4.8 - 2026-2-20
-## Refactor: Introduce protocol factory and session promotion mechanism
+### Version 0.4.8 - 2026-2-20
+#### Refactor: Introduce protocol factory and session promotion mechanism
 - Added ISessionFactory abstraction and integrated factory injection into TcpServer, enabling protocol-level session creation without coupling transport layer to specific protocol implementations.
 - Implemented dynamic session promotion in ProtocolDetectorSession: upon successful protocol detection, create concrete session (e.g., RTSP) via factory and replace current session mapping.
 - Optimized detection flow to ensure newly promoted session immediately processes existing buffer data, preventing first-packet loss during protocol switch.
 - Decoupled RtspSession from RtspServer to reduce strong dependencies and improve modularity of protocol layer.
 
-# Version 0.4.9 - 2026-2-22
-## feat(network): introduce UDP server abstraction integrated with EventLoop
+### Version 0.4.9 - 2026-2-22
+#### feat(network): introduce UDP server abstraction integrated with EventLoop
 - Added UdpSocket encapsulation for non-blocking UDP operations (create/bind/recvfrom/sendto).
 - Implemented UdpServer with Channel-based integration into existing Reactor (EventLoop + EpollTaskScheduler).
 - Introduced IUdpHandler interface for decoupled datagram processing.
 - Enabled TCP and UDP servers to coexist under the same EventLoop.
 - Prepared foundation for future RTP/RTCP/ICE integration.
 
-# Version 0.5.0 - 2026-2-23
-## feat(media): introduce UDP transport skeleton and session demux layer
+### Version 0.5.0 - 2026-2-23
+#### feat(media): introduce UDP transport skeleton and session demux layer
 - Add MediaEngine as transport entry container to manage UdpServer lifecycle
 - Implement UdpMuxHandler to demultiplex STUN / RTP / RTCP / DTLS packets
 - Introduce UdpSession abstraction to encapsulate per-peer state
@@ -864,8 +1156,8 @@ Refactored multi-protocol TCP session architecture by introducing ProtocolDetect
 - Refactor ownership model: UdpServer uses unique/shared ownership at engine level; sessions hold non-owning reference
 - Prepare groundwork for future ICE-lite + RTP integration
 
-# Version 0.5.1 - 2026-2-24
-## udp: add peer-based session routing and protocol demux
+### Version 0.5.1 - 2026-2-24
+#### udp: add peer-based session routing and protocol demux
 - Introduce peer -> UdpSession routing in UdpMuxHandler
 - Enhance SocketAddr with operator== and custom hash
 - Integrate selected peer binding mechanism
@@ -899,9 +1191,9 @@ NOTE:
 ICE connectivity check not implemented yet.
 Attribute parsing currently incomplete (no integrity/fingerprint validation).
 
-## 2026-07-26 — RTP 分轨绑定与 Tracker 内存管理
+### 2026-07-26 — RTP 分轨绑定与 Tracker 内存管理
 
-### 本次完成
+#### 本次完成
 
 - 修正 SDP 音视频 Track 与 Payload Type 的绑定逻辑。
 - 按具体 media track 查询 PT，避免多路流及音视频重复 PT 相互覆盖。
@@ -915,7 +1207,7 @@ Attribute parsing currently incomplete (no integrity/fingerprint validation).
 - 严格限制 RTP 乱序缓存大小，并增加超时清理。
 - 补充 SDP Track 绑定、Packet Pool 和排序缓存回归测试。
 
-### 当前 RTP 上行链路
+#### 当前 RTP 上行链路
 
 ```text
 RTSP interleaved 接收
@@ -928,7 +1220,7 @@ RTSP interleaved 接收
   → EncodedFrame
 ```
 
-### 当前弱网与 RTCP 状态
+#### 当前弱网与 RTCP 状态
 
 - RTP 有界排序、基本丢包发现和发送端 RTP 重传缓存已经具备。
 - RTCP SR/RR、NACK、PLI/FIR、Transport-CC 和 BWE 解析或算法组件已经存在。
@@ -939,16 +1231,16 @@ RTSP interleaved 接收
   3. PLI/FIR 关键帧恢复。
   4. Transport-CC、BWE 与弱网码率控制。
 
-### 后续待完善
+#### 后续待完善
 
 - 修复 RTP 网络入口超过 1500 字节时可能发生的静默截断。
 - 减少 `WorkJob → Packet → Tracker Pool` 的中间内存复制。
 - 将 `EncodedFrame` 接入录制、播放、转码或其他业务消费 Buffer。
 - 接通原始 RTP SFU 订阅转发链路。
 
-## 2026-07-26 — RTP Track Binding and Tracker Memory Management
+### 2026-07-26 — RTP Track Binding and Tracker Memory Management
 
-### Completed
+#### Completed
 
 - Fixed SDP audio/video track and Payload Type binding.
 - Scoped PT lookup to the corresponding media track, preventing collisions
@@ -966,7 +1258,7 @@ RTSP interleaved 接收
 - Added regression tests for SDP track binding, Packet Pool reuse, and reorder
   buffer limits.
 
-### Current RTP Ingress Pipeline
+#### Current RTP Ingress Pipeline
 
 ```text
 RTSP interleaved input
@@ -979,7 +1271,7 @@ RTSP interleaved input
   → EncodedFrame
 ```
 
-### Current Weak-Network and RTCP Status
+#### Current Weak-Network and RTCP Status
 
 - Bounded RTP reordering, basic packet-loss detection, and the sender-side RTP
   retransmission cache are available.
@@ -994,7 +1286,7 @@ RTSP interleaved input
   3. Adding PLI/FIR-based key-frame recovery.
   4. Connecting Transport-CC, BWE, and weak-network bitrate control.
 
-### Remaining Work
+#### Remaining Work
 
 - Fix possible silent truncation of RTP packets larger than 1500 bytes at the
   network ingress boundary.
@@ -1004,9 +1296,9 @@ RTSP interleaved input
   application-level consumer buffer.
 - Connect the raw RTP SFU subscription and forwarding pipeline.
 
-## 2026-08-08 — 收紧媒体传输接口并统一 RTSP RTP 接收链路
+### 2026-08-08 — 收紧媒体传输接口并统一 RTSP RTP 接收链路
 
-### 本次完成
+#### 本次完成
 
 - 统一 `IMediaTransport` 的发送、接收、连接状态和生命周期接口。
 - 新增 `ReceivedMediaPacket`，使用拥有型负载保证接收包能够安全跨线程传递。
@@ -1021,7 +1313,7 @@ RTSP interleaved input
 - 在 RTSP 断连和 `TEARDOWN` 时关闭并清理对应 Transport。
 - 修复相关 CMake include 依赖和 TCP 接收日志变量错误。
 
-### 当前接收链路
+#### 当前接收链路
 
 ```text
 TcpConnection
@@ -1033,15 +1325,15 @@ TcpConnection
   → SfuEndpoint / RTP Track
 ```
 
-### 后续工作
+#### 后续工作
 
 - 由信令层建立 `UdpSession → SfuEndpoint` 的明确绑定后，将 UDP RTP/RTCP 接入同一个 `MediaEndpointIngress`。
 - 减少 `MediaEndpoint::OnRtp()` 到 Tracker Packet Pool 之间的剩余内存复制。
 - 接通 Room/SFU 的订阅发送链路，使 `RtpSenderTrack` 通过具体 Transport 完成下行转发。
 
-## 2026-08-15 — 接入 RTCP 接收统计与弱网质量评估链路
+### 2026-08-15 — 接入 RTCP 接收统计与弱网质量评估链路
 
-### 本次完成
+#### 本次完成
 
 - 扩展 `RtpRecvStatsBase`，统一维护每个 SSRC 的 RTP/RTCP 接收统计。
 - RTP 到达时实时统计包数、负载字节数、序列号回绕、重复包、乱序包和 RFC 3550 jitter。
@@ -1061,7 +1353,7 @@ TcpConnection
 - 补充 `RtpRecvStatsBase` 接口、参数单位、调用时机及状态副作用说明。
 - 修复 `OnSenderReport` 调用名称不一致导致的编译错误。
 
-### 当前计算链路
+#### 当前计算链路
 
 ```text
 RTP packet
@@ -1081,7 +1373,7 @@ RTCP SR
   → NetworkControlUpdate
 ```
 
-### 后续工作
+#### 后续工作
 
 - 增加独立的质量评估周期，避免完全依赖上游 SR 的发送周期。
 - 周期构造并发送 RTCP RR，复用弱网评估已经生成的 report block，避免重复推进统计区间基线。
@@ -1089,9 +1381,9 @@ RTCP SR
 - 完善下行 `RtpSenderTrack` 的 RR/TWCC、RTT 和带宽估计控制链路。
 - 增加 Endpoint/Session 级音视频质量聚合策略。
 
-## 2026-09-14 — 完善录像生命周期并接通发送侧 GCC 反馈链路
+### 2026-09-14 — 完善录像生命周期并接通发送侧 GCC 反馈链路
 
-### 本次完成
+#### 本次完成
 
 - 拆分 `RecordingSession`、`RecordingInstance` 和 `RecordingSegment`，明确录像会话、执行实例与文件分段的职责。
 - 引入 `IRecorder` 和录像事件回调，补充状态流转、停止原因及失败通知。
@@ -1105,19 +1397,19 @@ RTCP SR
 - 拆出 `media_quality` 库，明确发送轨与控制器的链接依赖。
 - 新增 8 个发送侧链路测试及[接入文档](media/quality/README.md)。
 
-### 验证情况
+#### 验证情况
 
 - 发送侧与原有弱网测试共 16 项，独立构建运行通过。
 - 完整服务及录像改动尚未完成本轮联调。
 
-### 后续工作
+#### 后续工作
 
 - 当前 GCC 链路接至控制输出接口，继续接入实际 Pacer 发包和编码器调码率。
 - 实现 TWCC 超时后的 RR 回退策略。
 
-## 2026-09-23 — 重构 SFU 端点，支持多轨发布与订阅
+### 2026-09-23 — 重构 SFU 端点，支持多轨发布与订阅
 
-### 本次完成
+#### 本次完成
 
 - 将 SDP 媒体描述统一转换为现有 RTP Track 参数，复用 `StreamContext` 和 `SdpTrackBinding`。
 - 支持单个 `SfuEndpoint` 管理多条发布轨道，按 MID、SSRC 和轨道提示分流。
@@ -1129,20 +1421,20 @@ RTCP SR
 - 完善订阅失效、排队旧包丢弃及端点停止后的资源清理。
 - 补充多轨转发、房间订阅、SDP 绑定、WebRTC 传输适配和 RTSP 多轨集成测试。
 
-### 验证情况
+#### 验证情况
 
 - 主程序编译通过，新增 10 项测试全部通过，RTSP、SDP 和录制相关回归通过。
 - 完整回归仍有两项已知失败：WebRTC STUN 提名、超大 RTP 包计数。
 
-### 当前限制
+#### 当前限制
 
 - WebRTC 应用层信令组装及实际 DTLS/SRTP 后端仍待接入，尚未完成真实浏览器链路验证。
 - 暂不支持 RTX 和 simulcast 层选择；每条订阅固定转发一个源编码的 SSRC。
 - 房间接入仍需应用层绑定参与者端点，并根据下游协商结果配置订阅参数。
 
-## 2026-09-24 — 引入公共状态机并接入 ICE 与 RTSP 会话
+### 2026-09-24 — 引入公共状态机并接入 ICE 与 RTSP 会话
 
-### 本次完成
+#### 本次完成
 
 - 新增 `StateMachine` 和 `StateController`，支持强类型转换表、条件判断、动作回调和绑定业务上下文。
 - 明确非法事件、重复规则、递归派发和异常处理语义。
@@ -1151,15 +1443,15 @@ RTCP SR
 - 将 RTSP 推流流程接入状态机，保留多轨 SETUP 和失败回滚，成功处理请求后才提交状态转换。
 - 校验 RECORD/TEARDOWN 的会话归属，支持重复 RECORD、TEARDOWN 后复用 TCP 连接及断线清理。
 - 未实现的 DESCRIBE、PLAY、PAUSE 明确返回 501。
-- 补充公共状态机、ICE 和 RTSP 生命周期测试；新增 [ICE 接入说明](protocol/ice/README.md)及 [RTSP 状态机说明](Rtsp/StateMachine.md)。
+- 补充公共状态机、ICE 和 RTSP 生命周期测试；相关实现见 [IceAgent](protocol/ice/IceAgent.cpp) 及 [RtspSession](Rtsp/RtspSession.cpp)。
 
-### 验证情况
+#### 验证情况
 
 - 主程序编译通过，公共状态机、ICE、WebRTC 会话、传输及媒体适配相关测试通过。
 - RTSP TCP/UDP、多轨 SETUP、失败回滚、错误请求顺序、会话重建和断线清理测试通过。
 - 上一条记录中的 STUN 提名失败已修复；超大 RTP 包计数问题不在本次修改范围内。
 
-### 当前限制
+#### 当前限制
 
 - 应用需在会话事件循环周期调用 `WebRtcSession::Tick`，确保无流量时也能及时检测 ICE 超时。
 - ICE 建立与存活超时仍共用配置；会话级 ICE restart、完整主动检查及真实浏览器互通仍待完善。

@@ -129,12 +129,21 @@ TEST_F(ServerAppTest, SingleAppStartsTurnAndWebRtcRelaysAndReleasesResources)
     Socket client(SOCK_DGRAM), peer(SOCK_DGRAM);
     const auto control = network::SocketAddr::FromIPPort("127.0.0.1", config.turn.listen_port);
     std::array<uint8_t, 12> id{};
-    std::vector<uint8_t> request;
-    ASSERT_TRUE(StunCodec::BuildMessage(StunMethod::Allocate, StunClass::Request, id,
-        {TurnCodec::RequestedTransportAttribute(17)}, request));
+    auto request = StunCodec::BuildBindingRequest(id);
     ASSERT_TRUE(client.Send(control, request));
     auto response = client.Receive();
     StunMessageInfo message;
+    ASSERT_TRUE(TurnCodec::ParseStunDatagram(response.data(), response.size(), message));
+    ASSERT_TRUE(message.IsBindingResponse());
+    EXPECT_EQ(message.txid, id);
+    XorMappedAddress mapped;
+    ASSERT_TRUE(StunCodec::DecodeXorMappedAddress(message, mapped));
+    EXPECT_FALSE(mapped.is_ipv6);
+    EXPECT_EQ(mapped.port, client.address.Port());
+    ASSERT_TRUE(StunCodec::BuildMessage(StunMethod::Allocate, StunClass::Request, id,
+        {TurnCodec::RequestedTransportAttribute(17)}, request));
+    ASSERT_TRUE(client.Send(control, request));
+    response = client.Receive();
     ASSERT_TRUE(TurnCodec::ParseStunDatagram(response.data(), response.size(), message));
     StunErrorCode error;
     ASSERT_TRUE(StunCodec::DecodeErrorCode(message, error));

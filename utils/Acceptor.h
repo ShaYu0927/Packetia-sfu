@@ -14,6 +14,7 @@ class Acceptor
 {
 public:
     Acceptor(EventLoop* eventLoop);
+    explicit Acceptor(std::shared_ptr<TaskScheduler> scheduler);
 	virtual ~Acceptor();
 
     void SetNewConnectionCallback(const NewConnectionCallback& cb)

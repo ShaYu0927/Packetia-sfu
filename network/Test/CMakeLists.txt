@@ -58,6 +58,15 @@ target_link_libraries(test_datagram_transport
 add_test(NAME test_datagram_transport COMMAND test_datagram_transport)
 set_tests_properties(test_datagram_transport PROPERTIES TIMEOUT 30)
 
+add_executable(test_tls_transport test_tls_transport.cpp)
+target_link_libraries(test_tls_transport PRIVATE
+    "$<$<PLATFORM_ID:Linux>:-Wl,--start-group>"
+    network utils LOGGER
+    "$<$<PLATFORM_ID:Linux>:-Wl,--end-group>"
+    OpenSSL::SSL GTest::gtest GTest::gtest_main)
+add_test(NAME test_tls_transport COMMAND test_tls_transport)
+set_tests_properties(test_tls_transport PROPERTIES TIMEOUT 30)
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE)
     add_subdirectory(Posix)
 endif()

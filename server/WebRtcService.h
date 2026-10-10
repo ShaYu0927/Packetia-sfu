@@ -18,7 +18,7 @@ namespace websocket { class WsServer; }
 }
 namespace media { class IEncodedFramePublisher; }
 namespace protocol::webrtc { class WebRtcUdpMux; }
-namespace room { class Room; }
+namespace room { class Room; struct ParticipantSession; }
 
 namespace server
 {
@@ -36,13 +36,16 @@ public:
     bool Renegotiate(uint64_t sessionId, const std::vector<sdp::SdpMedia>& medias, std::string& error);
 
 private:
-    struct Session;
+    using Session = room::ParticipantSession;
     struct Membership;
     struct Subscription;
     std::string OnMessage(const std::string& connection, const std::string& message);
     std::string CreateSession(const std::string& connection, const std::string& offer,
                               const std::vector<Subscription>& subscriptions = {});
     std::string JoinRoom(const std::string& connection, const std::string& roomId);
+    std::string ResumeRoom(const std::string& connection, const std::string& roomId,
+                           const std::string& participantId, const std::string& resumeToken);
+    void OnSignalingClosed(const std::string& connection);
     std::string ListTracks(const std::string& connection) const;
     void LeaveRoom(const std::string& connection);
     std::string UpdateSession(Session& session, const std::string& offer);
@@ -57,8 +60,9 @@ private:
     std::shared_ptr<network::UdpServer> udp_;
     std::shared_ptr<network::websocket::WsServer> ws_;
     std::shared_ptr<protocol::webrtc::WebRtcUdpMux> mux_;
-    std::unordered_map<std::string, std::unique_ptr<Session>> sessions_;
+    std::unordered_map<std::string, std::shared_ptr<Session>> sessions_;
     std::unordered_map<std::string, std::unique_ptr<Membership>> memberships_;
+    std::unordered_map<std::string, std::string> participant_connections_;
     std::unordered_map<std::string, std::shared_ptr<room::Room>> rooms_;
     uint32_t timer_ = 0;
     bool started_ = false;

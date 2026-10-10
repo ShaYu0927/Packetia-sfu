@@ -37,6 +37,22 @@ void WebRtcUdpMux::Unregister(const std::string& localUfrag)
     sessions_.erase(session);
 }
 
+bool WebRtcUdpMux::Restart(const std::string& oldUfrag, const std::string& newUfrag)
+{
+    const auto previous = sessions_.find(oldUfrag);
+    if (closed_ || previous == sessions_.end() || !previous->second.transport->IsWritable() ||
+        sessions_.count(newUfrag) || newUfrag.size() < 4 || newUfrag.size() > 256 ||
+        newUfrag.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+/") != std::string::npos)
+        return false;
+    const auto transport = previous->second.transport;
+    const auto peer = previous->second.peer;
+    // Insertion may rehash; retain values and erase the previous entry by key.
+    sessions_.emplace(newUfrag, Entry{transport, {}});
+    if (peer.len) peers_.erase(peer);
+    sessions_.erase(oldUfrag);
+    return true;
+}
+
 bool WebRtcUdpMux::BindPeer(const std::string& localUfrag, const network::SocketAddr& peer)
 {
     const auto session = sessions_.find(localUfrag);

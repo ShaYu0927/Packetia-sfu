@@ -122,7 +122,7 @@ public:
     {
         std::weak_ptr<TcpSession<Msg>> weak = this->shared_from_this();
 
-        conn_->SetBytesCallback([weak](const uint8_t* data, size_t len) {
+        conn_->SetBytesCallback([weak](TcpConnection::Ptr, const uint8_t* data, size_t len) {
             if (auto self = weak.lock()) self->OnBytes(data, len);
         });
 

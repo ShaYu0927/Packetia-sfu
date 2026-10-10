@@ -100,6 +100,15 @@ bool WebRtcTransport::IsSelectedPeer(const network::SocketAddr& peer) const
     return has_selected_peer_ && selected_peer_ == peer;
 }
 
+void WebRtcTransport::ClearSelectedPeer()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    selected_peer_ = {};
+    has_selected_peer_ = false;
+    if (State() == WebRtcTransportState::Connected)
+        state_.store(WebRtcTransportState::Connecting, std::memory_order_release);
+}
+
 network::transport::DatagramSendResult WebRtcTransport::Send(network::transport::DatagramProtocol protocol, const uint8_t* data, size_t size)
 {
     network::SocketAddr peer;

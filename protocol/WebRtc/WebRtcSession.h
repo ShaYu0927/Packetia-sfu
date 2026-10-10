@@ -37,6 +37,8 @@ struct WebRtcSessionOptions
     // Reserve the authenticated peer in a shared UDP mux before starting DTLS.
     // Return false if another session owns this address. Runs on the owner loop.
     std::function<bool(const network::SocketAddr&)> onSelectedPeer;
+    // Replace the UDP mux generation atomically; false leaves the old route intact.
+    std::function<bool(const std::string&, const std::string&)> onIceRestart;
     // Apply negotiated media atomically on the owner loop, before SDP commit.
     // Returning false must leave the application's previous media intact.
     std::function<bool(const WebRtcSessionDescription&, const WebRtcSessionDescription&)> onNegotiated;
@@ -45,7 +47,8 @@ struct WebRtcSessionOptions
 // ICE-lite peer, one transport, RTP/RTCP mux, optional single BUNDLE group.
 // The owner must serialize mutations (including transport callbacks and Tick)
 // on one event loop. State() may be read by media workers. Offer/answer updates
-// keep the established transport; ICE restart requires a new session.
+// keep the established transport. RestartIce accepts a remote ICE-only offer
+// while preserving the DTLS identity, RTP parameters and existing crypto state.
 class WebRtcSession : public IWebRtcTransportSink, public std::enable_shared_from_this<WebRtcSession>
 {
 public:
@@ -67,6 +70,8 @@ public:
     bool ApplyRemoteAnswer(const WebRtcSessionDescription& answer);
     bool ApplyRemoteAnswer(const std::string& answerSdp);
     void RollbackNegotiation();
+    bool RestartIce(const std::string& offerSdp, WebRtcSessionDescription& answer);
+    bool RestartIce(const WebRtcSessionDescription& offer, WebRtcSessionDescription& answer);
     // Owner-loop accessors; pending negotiation does not replace these views.
     const WebRtcSessionDescription& LocalDescription() const noexcept { return negotiation_.CurrentLocal(); }
     const WebRtcSessionDescription& RemoteDescription() const noexcept { return negotiation_.CurrentRemote(); }
@@ -124,6 +129,8 @@ private:
     std::string last_error_;
     bool dtls_started_ = false;
     bool srtp_ready_ = false;
+    bool restarting_ice_ = false;
+    bool awaiting_restart_nomination_ = false;
 };
 
 

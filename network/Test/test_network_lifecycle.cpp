@@ -1,5 +1,6 @@
 #include "TcpConnection.h"
 #include "TcpServer.h"
+#include "TcpSession.h"
 #include "UdpServer.h"
 #include "transport/UdpDatagramTransport.h"
 #if defined(__APPLE__)
@@ -10,6 +11,7 @@ using NetworkScheduler = KqueueTaskScheduler;
 using NetworkScheduler = EpollTaskScheduler;
 #endif
 #include "rtmp_transport.h"
+#include "rtmp_server.h"
 
 #include <gtest/gtest.h>
 #include <chrono>
@@ -166,6 +168,187 @@ TEST(NetworkLifecycle, TcpHalfCloseFlushesQueuedResponse) {
     loop.Stop();
 }
 
+TEST(NetworkLifecycle, ReceiveBufferCompactsAndReportsItsLimitWithoutFakingEof) {
+    SocketPair sockets;
+    BufferReader buffer(2048, 32);
+    ASSERT_EQ(buffer.Size(), 32);
+    const std::string initial(32, 'a');
+    ASSERT_EQ(::send(sockets.fd[1], initial.data(), initial.size(), 0), 32);
+    ASSERT_EQ(buffer.Read(sockets.fd[0]), 32);
+    ASSERT_EQ(::send(sockets.fd[1], "bbbbbbbbbbbbbbbb", 16, 0), 16);
+    buffer.Retrieve(16);
+    ASSERT_EQ(buffer.Read(sockets.fd[0]), 16);
+    EXPECT_EQ(std::string(buffer.Peek(), buffer.ReadableBytes()),
+              std::string(16, 'a') + std::string(16, 'b'));
+    EXPECT_EQ(buffer.Size(), 32);
+    EXPECT_EQ(buffer.Read(sockets.fd[0]), -1);
+    EXPECT_EQ(errno, EMSGSIZE);
+    buffer.RetrieveAll();
+    ASSERT_EQ(::send(sockets.fd[1], "z", 1, 0), 1);
+    EXPECT_EQ(buffer.Read(sockets.fd[0]), 1);
+    EXPECT_EQ(*buffer.Peek(), 'z');
+    EXPECT_EQ(buffer.Size(), 32);
+}
+
+TEST(NetworkLifecycle, TcpReadBudgetDrainsAcrossEventsAndFlushesAfterHalfClose) {
+    EventLoop loop(1);
+    ASSERT_TRUE(loop.Start());
+    auto scheduler = loop.GetTaskScheduler();
+    SocketPair sockets;
+    TcpConnection::Options options;
+    options.max_receive_bytes = 32;
+    options.read_budget_bytes = 16;
+    options.max_send_bytes = 64;
+    auto connection = std::make_shared<TcpConnection>(scheduler.get(), sockets.TakeFirst(), options);
+    std::string received;
+    size_t largest_batch = 0;
+    bool replied = false;
+    std::promise<void> closed;
+    auto done = closed.get_future();
+    connection->SetReadCallback([&](auto c, BufferReader& buffer) {
+        largest_batch = std::max(largest_batch, static_cast<size_t>(buffer.ReadableBytes()));
+        received.append(buffer.Peek(), buffer.ReadableBytes());
+        buffer.RetrieveAll();
+        if (received.size() == 128 && !replied) {
+            replied = true;
+            return c->Send("ok", 2) == TcpConnection::SendResult::Queued;
+        }
+        return true;
+    });
+    connection->SetCloseCallback(TcpConnection::CloseCallback([&](auto) { closed.set_value(); }));
+    const timeval timeout{2, 0};
+    ASSERT_EQ(::setsockopt(sockets.fd[1], SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)), 0);
+    const std::string payload(128, 'x');
+    ASSERT_EQ(::send(sockets.fd[1], payload.data(), payload.size(), 0), 128);
+    ASSERT_EQ(::shutdown(sockets.fd[1], SHUT_WR), 0);
+    connection->Start();
+    ASSERT_EQ(done.wait_for(2s), std::future_status::ready);
+    EXPECT_EQ(received, payload);
+    EXPECT_LE(largest_batch, 16);
+    char response[2]{};
+    EXPECT_EQ(::recv(sockets.fd[1], response, 2, MSG_WAITALL), 2);
+    EXPECT_EQ(std::string(response, 2), "ok");
+    connection.reset();
+    loop.Stop();
+}
+
+TEST(NetworkLifecycle, TcpClosesWhenParserRetainsFullReceiveBuffer) {
+    EventLoop loop(1);
+    ASSERT_TRUE(loop.Start());
+    auto scheduler = loop.GetTaskScheduler();
+    SocketPair sockets;
+    TcpConnection::Options options;
+    options.max_receive_bytes = 32;
+    auto connection = std::make_shared<TcpConnection>(scheduler.get(), sockets.TakeFirst(), options);
+    std::promise<uint32_t> closed;
+    auto done = closed.get_future();
+    uint32_t retained = 0;
+    connection->SetReadCallback([&](auto, BufferReader& buffer) {
+        retained = buffer.ReadableBytes();
+        EXPECT_LE(buffer.Size(), 32);
+        return true;
+    });
+    connection->SetCloseCallback(TcpConnection::CloseCallback([&](auto) { closed.set_value(retained); }));
+    const std::string payload(64, 'x');
+    ASSERT_EQ(::send(sockets.fd[1], payload.data(), payload.size(), 0), 64);
+    connection->Start();
+    ASSERT_EQ(done.wait_for(2s), std::future_status::ready);
+    EXPECT_EQ(done.get(), 32);
+    EXPECT_TRUE(connection->IsClosed());
+    connection->Disconnect();
+    connection.reset();
+    loop.Stop();
+}
+
+TEST(NetworkLifecycle, TcpFullBufferCanBeConsumedByScheduledParserContinuation) {
+    EventLoop loop(1);
+    ASSERT_TRUE(loop.Start());
+    auto scheduler = loop.GetTaskScheduler();
+    SocketPair sockets;
+    TcpConnection::Options options;
+    options.max_receive_bytes = 32;
+    auto connection = std::make_shared<TcpConnection>(scheduler.get(), sockets.TakeFirst(), options);
+    bool deferred = false;
+    std::string received;
+    std::promise<void> closed;
+    auto done = closed.get_future();
+    connection->SetReadCallback([&](auto current, BufferReader& buffer) {
+        if (!deferred && buffer.ReadableBytes() == 32) {
+            deferred = true;
+            return current->RequestReadContinuation();
+        }
+        received.append(buffer.Peek(), buffer.ReadableBytes());
+        buffer.RetrieveAll();
+        return true;
+    });
+    connection->SetCloseCallback(TcpConnection::CloseCallback([&](auto) { closed.set_value(); }));
+    const std::string payload(32, 'x');
+    ASSERT_EQ(::send(sockets.fd[1], payload.data(), payload.size(), 0), 32);
+    ASSERT_EQ(::shutdown(sockets.fd[1], SHUT_WR), 0);
+    connection->Start();
+    ASSERT_EQ(done.wait_for(2s), std::future_status::ready);
+    EXPECT_TRUE(deferred);
+    EXPECT_EQ(received, payload);
+    connection.reset();
+    loop.Stop();
+}
+
+struct ByteCodec : itcp_sess::ICodec<std::string> {
+    void Feed(const uint8_t* data, size_t size, std::vector<std::string>& out) override {
+        out.emplace_back(reinterpret_cast<const char*>(data), size);
+    }
+    void Encode(const std::string& message, std::vector<uint8_t>& out) override {
+        out.assign(message.begin(), message.end());
+    }
+};
+
+struct ByteObserver : itcp_sess::ISessionObserver<std::string> {
+    std::string received;
+    std::promise<void> closed;
+    void OnMessage(const std::string& message) override { received += message; }
+    void OnSessionClosed(int) override { closed.set_value(); }
+};
+
+TEST(NetworkLifecycle, TcpSessionUsesBorrowedBytesCallbackAndConsumesExactCapacity) {
+    EventLoop loop(1);
+    ASSERT_TRUE(loop.Start());
+    auto scheduler = loop.GetTaskScheduler();
+    SocketPair sockets;
+    TcpConnection::Options options;
+    options.max_receive_bytes = 32;
+    auto connection = std::make_shared<TcpConnection>(scheduler.get(), sockets.TakeFirst(), options);
+    connection->SetReadCallback([](auto, BufferReader&) {
+        ADD_FAILURE() << "The bytes callback should replace the buffered callback";
+        return false;
+    });
+    auto session = std::make_shared<itcp_sess::TcpSession<std::string>>(
+        connection, std::make_unique<ByteCodec>());
+    auto observer = std::make_shared<ByteObserver>();
+    session->AddObserver(observer);
+    auto done = observer->closed.get_future();
+    const std::string payload(64, 'x');
+    ASSERT_EQ(::send(sockets.fd[1], payload.data(), payload.size(), 0), 64);
+    ASSERT_EQ(::shutdown(sockets.fd[1], SHUT_WR), 0);
+    session->Start();
+    ASSERT_EQ(done.wait_for(2s), std::future_status::ready);
+    EXPECT_EQ(observer->received, payload);
+    session.reset();
+    connection.reset();
+    loop.Stop();
+}
+
+TEST(NetworkLifecycle, TcpSendQuotaCanBeConfiguredPerConnection) {
+    auto scheduler = std::make_shared<NetworkScheduler>();
+    SocketPair sockets;
+    TcpConnection::Options options;
+    options.max_send_bytes = 8;
+    auto connection = std::make_shared<TcpConnection>(scheduler.get(), sockets.TakeFirst(), options);
+    EXPECT_EQ(connection->Send("12345678", 8), TcpConnection::SendResult::Queued);
+    EXPECT_EQ(connection->Send("x", 1), TcpConnection::SendResult::QueueFull);
+    connection->Disconnect();
+    EXPECT_EQ(connection->Send("x", 1), TcpConnection::SendResult::Closed);
+}
+
 TEST(NetworkLifecycle, StopDrainsAcceptedTasksAndRejectsNewTasks) {
     EventLoop loop(1);
     ASSERT_TRUE(loop.Start());
@@ -297,5 +480,81 @@ TEST(NetworkLifecycle, TcpServerStopsActiveConnectionsOnOwnerAndAfterLoopStop) {
         ::close(client);
         loop.Stop();
     }
+}
+
+class RegisteredServer : public TcpServer {
+public:
+    using TcpServer::TcpServer;
+    ~RegisteredServer() override { Stop(); }
+    std::promise<bool> initialized;
+    std::promise<bool> removed;
+protected:
+    void OnConnected(const TcpConnection::Ptr& connection) override {
+        const bool registered = connections_.count(connection->GetSocket()) == 1;
+        initialized.set_value(registered && GetTaskScheduler()->IsCurrentThread());
+        connection->Disconnect();
+    }
+    void RemoveConnection(SOCKET fd) override {
+        const bool registered = connections_.count(fd) == 1;
+        TcpServer::RemoveConnection(fd);
+        removed.set_value(registered && GetTaskScheduler()->IsCurrentThread());
+    }
+};
+
+TEST(NetworkLifecycle, ExplicitOwnerIsRetainedAndInitializationCloseRemovesConnection) {
+    EventLoop loop(2);
+    ASSERT_TRUE(loop.Start());
+    auto owner = loop.GetTaskScheduler();
+    auto other = loop.GetTaskScheduler();
+    ASSERT_NE(owner, other);
+    RegisteredServer server(owner);
+    auto initialized = server.initialized.get_future();
+    auto removed = server.removed.get_future();
+    auto udp = std::make_shared<network::UdpServer>(owner);
+    ASSERT_TRUE(udp->Start("127.0.0.1", 0));
+    ASSERT_TRUE(server.Start("127.0.0.1", 0));
+    EXPECT_EQ(server.GetTaskScheduler(), owner);
+    EXPECT_EQ(udp->GetTaskScheduler(), owner);
+    const int client = ::socket(AF_INET, SOCK_STREAM, 0);
+    ASSERT_GE(client, 0);
+    auto address = network::SocketAddr::FromIPPort("127.0.0.1", server.GetPort());
+    const int result = ::connect(client, reinterpret_cast<sockaddr*>(&address.ss), address.len);
+    ::close(client);
+    ASSERT_EQ(result, 0);
+    ASSERT_EQ(initialized.wait_for(2s), std::future_status::ready);
+    EXPECT_TRUE(initialized.get());
+    ASSERT_EQ(removed.wait_for(2s), std::future_status::ready);
+    EXPECT_TRUE(removed.get());
+    server.Stop();
+    ASSERT_TRUE(server.Start("127.0.0.1", 0));
+    EXPECT_EQ(server.GetTaskScheduler(), owner);
+    loop.Stop();
+    server.Stop();
+    udp->Stop();
+    EXPECT_FALSE(server.Start("127.0.0.1", 0));
+}
+
+TEST(NetworkLifecycle, RtmpHandshakeStartsAfterServerRegistersConnection) {
+    EventLoop loop(2);
+    ASSERT_TRUE(loop.Start());
+    protocol::rtmp::RtmpServer server(&loop);
+    ASSERT_TRUE(server.Start("127.0.0.1", 0));
+    SocketPair sockets;
+    ::close(sockets.fd[0]);
+    sockets.fd[0] = ::socket(AF_INET, SOCK_STREAM, 0);
+    ASSERT_GE(sockets.fd[0], 0);
+    const timeval timeout{2, 0};
+    ASSERT_EQ(::setsockopt(sockets.fd[0], SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)), 0);
+    auto address = network::SocketAddr::FromIPPort("127.0.0.1", server.GetPort());
+    ASSERT_EQ(::connect(sockets.fd[0], reinterpret_cast<sockaddr*>(&address.ss), address.len), 0);
+    std::vector<uint8_t> request(1537, 0);
+    request[0] = 3;
+    ASSERT_EQ(::send(sockets.fd[0], request.data(), request.size(), 0), request.size());
+    std::vector<uint8_t> response(3073);
+    ASSERT_EQ(::recv(sockets.fd[0], response.data(), response.size(), MSG_WAITALL), response.size());
+    EXPECT_EQ(response[0], 3);
+    EXPECT_TRUE(std::equal(request.begin() + 1, request.end(), response.begin() + 1537));
+    server.Stop();
+    loop.Stop();
 }
 } // namespace

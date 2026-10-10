@@ -10,6 +10,11 @@ Acceptor::Acceptor(EventLoop *eventLoop)
 
 }
 
+Acceptor::Acceptor(std::shared_ptr<TaskScheduler> scheduler)
+    : scheduler_(std::move(scheduler)), tcp_socket_(new TcpSocket)
+{
+}
+
 Acceptor::~Acceptor()
 {
     Close();
@@ -18,7 +23,7 @@ Acceptor::~Acceptor()
 int Acceptor::Listen(std::string ip, uint16_t port)
 {
     Close();
-    scheduler_ = event_loop_->GetTaskScheduler();
+    if (event_loop_) scheduler_ = event_loop_->GetTaskScheduler();
     if (!scheduler_ || scheduler_->IsStopped()) return -1;
     int result = -1;
     scheduler_->Invoke([&, this] {

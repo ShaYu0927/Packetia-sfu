@@ -18,11 +18,14 @@ uint16_t ReadUint16LE(char* data);
 class BufferReader
 {
 public:
-    BufferReader(uint32_t initial_size = 2048);
+    static constexpr uint32_t KDefaultMaxBufferedBytes = 1024 * 1024;
+    explicit BufferReader(uint32_t initial_size = 2048,
+                          uint32_t max_buffered_bytes = KDefaultMaxBufferedBytes);
     virtual ~BufferReader();
 
     uint32_t ReadableBytes() const;
     uint32_t WritableBytes() const;
+    uint32_t CapacityBytes() const { return max_buffered_bytes_; }
 
     char* Peek(); 
 
@@ -78,7 +81,8 @@ public:
     void RetrieveUntil(const char* end)
 	{ Retrieve(end - Peek()); }
 
-    int Read(int sockfd);
+    // Returns -1/EMSGSIZE when no more bytes can be buffered; 0 means EOF.
+    int Read(int sockfd, uint32_t max_read_bytes = MAX_BYTES_PER_READ);
 	uint32_t ReadAll(std::string& data);
 	uint32_t ReadUntilCrlf(std::string& data);
 private:
@@ -101,12 +105,12 @@ private:
 
 
     common::PoolVector<char> buffer_;
+    uint32_t max_buffered_bytes_;
 	size_t reader_index_ = 0;
 	size_t writer_index_ = 0;
 
 	static const char kCRLF[];
 	static const uint32_t MAX_BYTES_PER_READ = 4096;
-	static const uint32_t MAX_BUFFER_SIZE = 1024 * 100000;
 };
 
 

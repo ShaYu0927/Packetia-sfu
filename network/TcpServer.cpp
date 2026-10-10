@@ -12,10 +12,22 @@ TcpServer::TcpServer(EventLoop *event_loop)
 	, acceptor_(new Acceptor(event_loop_))
 	, is_started_(false)
 {
+    ConfigureAcceptor();
+}
+
+TcpServer::TcpServer(std::shared_ptr<TaskScheduler> scheduler)
+    : port_(0), acceptor_(new Acceptor(std::move(scheduler))), is_started_(false)
+{
+    ConfigureAcceptor();
+}
+
+void TcpServer::ConfigureAcceptor()
+{
     acceptor_->SetNewConnectionCallback([this](int sockfd) 
     {
         TcpConnection::Ptr conn = this->OnConnect(sockfd);
         if(!conn) return;
+        if (conn->IsClosed()) { RemoveConnection(sockfd); return; }
 
         this->AddConnection(sockfd, conn);
 
@@ -26,6 +38,8 @@ TcpServer::TcpServer(EventLoop *event_loop)
             // No delayed callback may outlive this server.
             RemoveConnection(fd);
         });
+        OnConnected(conn);
+        conn->Start();
     });
 }
 
@@ -75,7 +89,6 @@ TcpConnection::Ptr TcpServer::OnConnect(SOCKET sockfd)
 {
     auto ts = acceptor_->GetTaskScheduler().get();
     auto conn = std::make_shared<TcpConnection>(ts, sockfd);
-    conn->Start();              
     return conn;
 }
 

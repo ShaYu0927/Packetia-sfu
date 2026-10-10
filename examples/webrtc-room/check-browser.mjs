@@ -49,6 +49,22 @@ try {
   });
   const first = await b.evaluate(() => window.demo.stats());
   await until(async () => (await b.evaluate(() => window.demo.stats())).frames >= first.frames + 15, 15000);
+  const beforeRecovery = await b.evaluate(() => window.demo.stats());
+  await b.evaluate(() => window.demo.dropSignaling());
+  await until(async () => {
+    const stats = await b.evaluate(() => window.demo.stats());
+    return stats.recoveryCount > beforeRecovery.recoveryCount && stats.iceRestartCount > beforeRecovery.iceRestartCount &&
+      stats.participant === beforeRecovery.participant && stats.state === 'connected' &&
+      stats.candidateType === 'relay' && stats.frames >= beforeRecovery.frames + 15;
+  }, 30000);
+  const beforePublisherRecovery = await a.evaluate(() => window.demo.stats());
+  const beforeFrames = (await b.evaluate(() => window.demo.stats())).frames;
+  await a.evaluate(() => window.demo.dropSignaling());
+  await until(async () => {
+    const stats = await a.evaluate(() => window.demo.stats());
+    return stats.recoveryCount > beforePublisherRecovery.recoveryCount && stats.participant === beforePublisherRecovery.participant &&
+      stats.state === 'connected' && (await b.evaluate(() => window.demo.stats())).frames >= beforeFrames + 15;
+  }, 30000);
   const publisher = await a.evaluate(() => window.demo.stats());
   const viewer = await b.evaluate(() => window.demo.stats());
   console.log(JSON.stringify({publisher, viewer}));
@@ -79,7 +95,7 @@ try {
   await a.locator('#leave').click();
   await until(async () => (await b.evaluate(() => window.demo.refreshTracks())).length === 0, 10000);
   await b.locator('#leave').click();
-  console.log('Browser room/TURN check passed; room tracks removed after publisher leave.');
+  console.log('Browser room/TURN/recovery check passed; both participants resumed with ICE restart.');
 } catch (error) {
   if (b && !b.isClosed()) {
     console.error(JSON.stringify(await b.evaluate(async () => ({stats: await window.demo.stats(),

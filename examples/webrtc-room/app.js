@@ -5,16 +5,19 @@ let requests = Promise.resolve();
 let pending;
 let mode = '';
 let candidateErrors = [], gatheredCandidates = [];
+let resumeToken, reconnectTimeout = 15000, recovery, iceRestart;
+let leaving = false, lifecycle = 0, recoveryCount = 0, iceRestartCount = 0;
 
 function controls() {
   const joined = Boolean(participant);
-  $('join').disabled = joined || busy;
+  const unavailable = busy || Boolean(recovery);
+  $('join').disabled = joined || unavailable;
   $('room').disabled = joined || busy;
   $('relay').disabled = Boolean(pc) || busy;
   $('leave').disabled = !joined || busy;
-  $('publish').disabled = !joined || Boolean(pc) || busy;
+  $('publish').disabled = !joined || Boolean(pc) || unavailable;
   $('publisher').disabled = !joined || Boolean(pc) || busy;
-  $('watch').disabled = !joined || Boolean(pc) || busy || !$('publisher').value;
+  $('watch').disabled = !joined || Boolean(pc) || unavailable || !$('publisher').value;
 }
 function request(message) {
   const operation = requests.then(() => new Promise((resolve, reject) => {
@@ -31,10 +34,12 @@ function request(message) {
   return operation;
 }
 function reset() {
+  ++lifecycle;
   pc?.close(); pc = undefined;
   localStream?.getTracks().forEach(track => track.stop()); localStream = undefined;
   $('local').srcObject = $('remote').srcObject = null;
   participant = roomId = undefined;
+  resumeToken = undefined;
   available = []; mode = '';
   $('publisher').replaceChildren(new Option('No published tracks', ''));
   $('identity').textContent = 'No room selected';
@@ -44,7 +49,7 @@ function reset() {
   $('frames').textContent = $('bytes').textContent = '0';
   controls();
 }
-async function join(id = $('room').value) {
+async function openSocket() {
   socket = new WebSocket(config.url, 'packetia');
   const current = socket;
   current.addEventListener('message', event => {
@@ -58,14 +63,60 @@ async function join(id = $('room').value) {
   current.addEventListener('close', () => {
     if (current !== socket) return;
     if (pending) {clearTimeout(pending.timeout); pending.reject(new Error('Signaling disconnected')); pending = undefined;}
-    reset();
+    if (participant && resumeToken && !leaving) {
+      if (!recovery) {
+        $('connection').textContent = 'Reconnecting';
+        recovery = recover(lifecycle).catch(error => {
+          $('error').textContent = error.message;
+          reset(); socket?.close();
+        }).finally(() => {recovery = undefined; controls();});
+        controls();
+      }
+    } else if (!recovery) reset();
   });
   await new Promise((resolve, reject) => {
-    current.addEventListener('open', resolve, {once: true});
-    current.addEventListener('error', () => reject(new Error('Could not connect signaling')), {once: true});
+    const timeout = setTimeout(() => {current.close(); reject(new Error('Signaling connection timed out'));}, 5000);
+    current.addEventListener('open', () => {clearTimeout(timeout); resolve();}, {once: true});
+    current.addEventListener('close', () => {clearTimeout(timeout); reject(new Error('Could not connect signaling'));}, {once: true});
+    current.addEventListener('error', () => {clearTimeout(timeout); reject(new Error('Could not connect signaling'));}, {once: true});
   });
+}
+async function recover(epoch) {
+  const deadline = Date.now() + reconnectTimeout;
+  let delay = 250, lastError;
+  while (!leaving && lifecycle === epoch && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, delay));
+    if (leaving || lifecycle !== epoch) return;
+    try {
+      await openSocket();
+      const reply = await request({type: 'resume', room_id: roomId, participant_id: participant, resume_token: resumeToken});
+      if (leaving || lifecycle !== epoch) return;
+      if (reply.type !== 'resumed') throw new Error('Unexpected recovery reply');
+      resumeToken = reply.resume_token;
+      if (reply.ice_restart) {
+        if (!pc) throw new Error('Media connection is unavailable');
+        await restartIce();
+      }
+      ++recoveryCount;
+      $('connection').textContent = pc?.connectionState || 'Joined';
+      await refreshTracks();
+      return;
+    } catch (error) {
+      lastError = error;
+      socket?.close();
+      delay = Math.min(delay * 2, 2000);
+      if (/expired|Invalid participant|Unauthorized|join again/.test(error.message)) break;
+    }
+  }
+  if (!leaving && lifecycle === epoch) throw lastError || new Error('Participant recovery timed out');
+}
+async function join(id = $('room').value) {
+  leaving = false;
+  await openSocket();
   const reply = await request({type: 'join', room_id: id});
   participant = reply.participant_id; roomId = id;
+  resumeToken = reply.resume_token;
+  reconnectTimeout = reply.reconnect_timeout_ms;
   $('room').value = id;
   $('identity').textContent = `${id} / ${participant}`;
   $('connection').textContent = 'Joined';
@@ -95,7 +146,12 @@ function connection(forceRelay) {
   current.onconnectionstatechange = () => {
     if (current === pc) $('connection').textContent = current.connectionState;
   };
-  current.oniceconnectionstatechange = () => {if (current === pc) $('ice').textContent = current.iceConnectionState;};
+  current.oniceconnectionstatechange = () => {
+    if (current !== pc) return;
+    $('ice').textContent = current.iceConnectionState;
+    if (current.iceConnectionState === 'failed' && !recovery && mode && socket?.readyState === WebSocket.OPEN)
+      restartIce().catch(error => {$('error').textContent = error.message;});
+  };
   current.ontrack = event => {
     if (current !== pc) return;
     const stream = $('remote').srcObject || new MediaStream();
@@ -111,19 +167,55 @@ function preferences(transceiver, kind) {
   if (!codecs.length) throw new Error(`${name} is unavailable in this browser`);
   transceiver.setCodecPreferences(codecs);
 }
-async function offer() {
-  await pc.setLocalDescription(await pc.createOffer());
+async function offer(restart = false) {
   const current = pc;
-  if (current.iceGatheringState !== 'complete') await new Promise(resolve => {
-    const finish = () => {clearTimeout(timeout); current.removeEventListener('icegatheringstatechange', changed); resolve();};
-    const changed = () => {if (current.iceGatheringState === 'complete') finish();};
+  if (restart) {candidateErrors = []; gatheredCandidates = [];}
+  const description = await current.createOffer({iceRestart: restart});
+  // A restart can still report the previous generation as complete until
+  // gathering begins. Register before setLocalDescription and await its events.
+  let finish;
+  const gathering = new Promise(resolve => {
+    finish = () => {
+      clearTimeout(timeout);
+      current.removeEventListener('icegatheringstatechange', changed);
+      current.removeEventListener('icecandidate', candidate);
+      resolve();
+    };
+    let started = false;
+    const changed = () => {
+      if (current.iceGatheringState === 'gathering') started = true;
+      if (started && current.iceGatheringState === 'complete') finish();
+    };
+    const candidate = event => {if (!event.candidate) finish();};
     const timeout = setTimeout(finish, 20000);
     current.addEventListener('icegatheringstatechange', changed);
+    current.addEventListener('icecandidate', candidate);
   });
+  try {await current.setLocalDescription(description); await gathering;}
+  catch (error) {finish(); throw error;}
+  if (current !== pc || current.signalingState === 'closed') throw new Error('Media connection closed');
   const relayOnly = current.getConfiguration().iceTransportPolicy === 'relay';
   if (!gatheredCandidates.some(candidate => candidate.protocol === 'udp' && (!relayOnly || candidate.type === 'relay')))
     throw new Error(relayOnly ? 'No UDP TURN candidate was gathered' : 'No UDP ICE candidate was gathered');
   return current.localDescription.sdp;
+}
+function restartIce() {
+  if (iceRestart) return iceRestart;
+  const current = pc;
+  iceRestart = (async () => {
+    if (!current || current.signalingState !== 'stable') throw new Error('Media negotiation is not stable');
+    try {
+      const reply = await request({type: 'restart_ice', sdp: await offer(true)});
+      if (current !== pc) return;
+      await current.setRemoteDescription({type: 'answer', sdp: reply.sdp});
+      ++iceRestartCount;
+    } catch (error) {
+      if (current === pc && current.signalingState === 'have-local-offer')
+        await current.setLocalDescription({type: 'rollback'}).catch(() => {});
+      throw error;
+    }
+  })().finally(() => {iceRestart = undefined;});
+  return iceRestart;
 }
 async function publish(forceRelay = $('relay').checked) {
   if (!participant || pc) throw new Error('Join a room with an idle connection');
@@ -170,9 +262,12 @@ async function stats() {
   $('frames').textContent = String(frames); $('bytes').textContent = String(bytes);
   return {frames, bytes, audioBytes, candidateType, state: pc.connectionState, ice: pc.iceConnectionState,
     gatheringState: pc.iceGatheringState, gatheredCandidates, candidateErrors,
-    participant, roomId, mode, width: $('remote').videoWidth, height: $('remote').videoHeight};
+    participant, roomId, mode, recoveryCount, iceRestartCount,
+    width: $('remote').videoWidth, height: $('remote').videoHeight};
 }
 async function leave() {
+  leaving = true;
+  ++lifecycle;
   try {if (participant) await request({type: 'leave'});} finally {socket?.close(); reset();}
 }
 async function action(operation) {
@@ -187,7 +282,7 @@ $('publish').onclick = () => action(() => publish());
 $('watch').onclick = () => action(() => watch());
 $('leave').onclick = () => action(leave);
 $('publisher').onchange = controls;
-setInterval(() => {if (!busy && participant && !pc) refreshTracks().catch(() => {}); stats().catch(() => {});}, 2000);
-window.addEventListener('pagehide', () => {pc?.close(); localStream?.getTracks().forEach(track => track.stop()); socket?.close();});
-window.demo = {join, publish, watch, refreshTracks, stats, leave};
+setInterval(() => {if (!busy && !recovery && participant && !pc) refreshTracks().catch(() => {}); stats().catch(() => {});}, 2000);
+window.addEventListener('pagehide', () => {leaving = true; pc?.close(); localStream?.getTracks().forEach(track => track.stop()); socket?.close();});
+window.demo = {join, publish, watch, refreshTracks, stats, leave, restartIce, dropSignaling: () => socket?.close()};
 controls();

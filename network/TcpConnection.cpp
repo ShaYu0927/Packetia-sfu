@@ -5,11 +5,17 @@
 #include "TcpConnection.h"
 
 TcpConnection::TcpConnection(TaskScheduler *task_scheduler, SOCKET sockfd)
-    : task_scheduler_(task_scheduler)
-    , scheduler_owner_(task_scheduler->weak_from_this().lock())
-	, read_buffer_(new BufferReader)
-	, write_buffer_(new BufferWirte())
+    : TcpConnection(task_scheduler, sockfd, Options{})
+{
+}
+
+TcpConnection::TcpConnection(TaskScheduler *task_scheduler, SOCKET sockfd, Options options)
+    : read_buffer_(new BufferReader(2048, options.max_receive_bytes))
+	, write_buffer_(new BufferWirte(options.max_send_bytes))
 	, channel_(new Channel(sockfd))
+    , task_scheduler_(task_scheduler)
+    , scheduler_owner_(task_scheduler->weak_from_this().lock())
+    , read_budget_bytes_(options.read_budget_bytes == 0 ? 128 * 1024 : options.read_budget_bytes)
 {
     is_closed_ = false;
 
@@ -17,6 +23,48 @@ TcpConnection::TcpConnection(TaskScheduler *task_scheduler, SOCKET sockfd)
     SocketUtil::SetNoSigpipe(sockfd);
 	SocketUtil::SetSendBufSize(sockfd, 100 * 1024);
 	SocketUtil::SetKeepAlive(sockfd);
+}
+
+void TcpConnection::SetReadCallback(const ReadCallback& cb)
+{
+    task_scheduler_->Invoke([this, cb] { read_cb_ = cb; bytes_cb_ = {}; });
+}
+
+void TcpConnection::SetBytesCallback(BytesCallback cb)
+{
+    task_scheduler_->Invoke([this, cb = std::move(cb)] { bytes_cb_ = cb; read_cb_ = {}; });
+}
+
+void TcpConnection::SetCloseCallback(const CloseCallback& cb)
+{
+    task_scheduler_->Invoke([this, cb] { close_callback_ = cb; });
+}
+
+void TcpConnection::SetCloseCallback(SessionCloseCallback cb)
+{
+    task_scheduler_->Invoke([this, cb = std::move(cb)] { sess_close_cb_ = cb; });
+}
+
+void TcpConnection::SetDisconnectCallback(const DisconnectCallback& cb)
+{
+    task_scheduler_->Invoke([this, cb] { disconnect_callback_ = cb; });
+}
+
+void TcpConnection::SetWriteCompleteCallback(const WriteCompleteCallback& cb)
+{
+    task_scheduler_->Invoke([this, cb] { write_complete_callback_ = cb; });
+}
+
+size_t TcpConnection::SendCapacityBytes() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return write_buffer_->CapacityBytes();
+}
+
+size_t TcpConnection::QueuedSendBytes() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return write_buffer_->QueuedBytes();
 }
 
 TcpConnection::~TcpConnection()
@@ -114,19 +162,22 @@ void TcpConnection::CloseOnOwner()
         // Release the write lock before invoking any user callback.
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            write_buffer_ = std::make_unique<BufferWirte>();
+            write_buffer_ = std::make_unique<BufferWirte>(write_buffer_->CapacityBytes());
             write_pending_ = false;
         }
 
-		if (close_callback_)
+        auto closed = close_callback_;
+        auto session_closed = sess_close_cb_;
+        auto disconnected = disconnect_callback_;
+		if (closed)
         {
-			close_callback_(shared_from_this());
+			closed(shared_from_this());
 		}
-        if (sess_close_cb_) sess_close_cb_(0);
+        if (session_closed) session_closed(0);
 
-		if (disconnect_callback_) 
+		if (disconnected)
         {
-			disconnect_callback_(shared_from_this());
+			disconnected(shared_from_this());
 		}	
         channel_->CloseSocket();
 	}
@@ -136,11 +187,13 @@ void TcpConnection::HandleRead()
 {
     if (is_closed_) return;
     bool peer_closed = false;
+    uint32_t received = 0;
 
-    while (true)
+    while (received < read_budget_bytes_ &&
+           read_buffer_->ReadableBytes() < read_buffer_->CapacityBytes())
     {
-        int n = read_buffer_->Read(channel_->GetSocket());
-        if (n > 0) continue;
+        int n = read_buffer_->Read(channel_->GetSocket(), read_budget_bytes_ - received);
+        if (n > 0) { received += static_cast<uint32_t>(n); continue; }
 
         if (n == 0) { peer_closed = true; break; }
 
@@ -148,8 +201,8 @@ void TcpConnection::HandleRead()
 
         if (errno == EAGAIN || errno == EWOULDBLOCK) break;
 
-        peer_closed = true;
-        break;
+        close();
+        return;
     }
 
     
@@ -160,7 +213,8 @@ void TcpConnection::HandleRead()
         if (readable > 0)
         {
             auto p = reinterpret_cast<const uint8_t*>(read_buffer_->Peek());
-            bytes_cb_(shared_from_this(), p, readable);
+            auto callback = bytes_cb_;
+            callback(shared_from_this(), p, readable);
             read_buffer_->Retrieve(readable);
         }
     }
@@ -173,6 +227,13 @@ void TcpConnection::HandleRead()
         const size_t readable = read_buffer_->ReadableBytes();
         LOG_DEBUG("[TcpConnection] read_cb_ branch, fd=", GetSocket(), " readable=", readable);
         DispatchReadCallback();
+    }
+
+    if (!is_closed_ && !read_cb_ &&
+        read_buffer_->ReadableBytes() >= read_buffer_->CapacityBytes())
+    {
+        close();
+        return;
     }
 
     if (peer_closed && !read_cb_)
@@ -218,7 +279,15 @@ void TcpConnection::DispatchReadCallback()
         return;
     }
 
-    if (!read_cb_(shared_from_this(), *read_buffer_))
+    auto callback = read_cb_;
+    if (!callback(shared_from_this(), *read_buffer_))
+    {
+        close();
+        return;
+    }
+
+    if (!is_closed_ && !read_continuation_pending_.load() &&
+        read_buffer_->ReadableBytes() >= read_buffer_->CapacityBytes())
     {
         close();
         return;
@@ -255,6 +324,7 @@ void TcpConnection::HandleWrite()
     std::unique_lock<std::mutex> lock(mutex_);
     write_pending_ = false;
     if (is_closed_) return;
+    const bool had_bytes = !write_buffer_->IsEmpty();
 
     int ret = write_buffer_->Send(channel_->GetSocket());
     if (ret < 0) 
@@ -271,11 +341,10 @@ void TcpConnection::HandleWrite()
             channel_->DisableWriting();
             task_scheduler_->UpdateChannel(channel_);
         }
-        if (peer_read_closed_ && !read_continuation_pending_.load())
-        {
-            lock.unlock();
-            close();
-        }
+        auto callback = had_bytes ? write_complete_callback_ : WriteCompleteCallback{};
+        lock.unlock();
+        if (callback) callback(shared_from_this());
+        if (peer_read_closed_ && !read_continuation_pending_.load()) FinishPeerRead();
     } 
     else 
     {
