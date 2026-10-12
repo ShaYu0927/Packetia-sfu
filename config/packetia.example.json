@@ -24,6 +24,8 @@
     "relay_bind_ip_v6": "",
     "advertised_ip_v6": "",
     "realm": "packetia",
+    "unauthorized_ratelimit": false,
+    "unauthorized_ratelimit_rps": 10,
     "relay_port_min": 49152,
     "relay_port_max": 65535
   },

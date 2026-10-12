@@ -548,6 +548,48 @@ build/webrtc-integration/Packetia
 启动先完成 I/O 和工作线程，再启动 TURN 与网络模块；关闭时先停止 WebRTC，最后停止 TURN 和 I/O。
 `PacketiaTurn` 入口保留作独立协议调试工具，正常运行使用上面的 `Packetia` 入口即可。
 
+### UDP 401 鉴权响应限流
+
+参考 Coturn 的 `401-ratelimit` 设计，增加按来源 IP 限制 UDP 401 响应的能力，降低伪造源地址
+引发的反射放大流量。默认关闭，在配置文件中开启：
+
+```json
+{
+  "turn": {
+    "unauthorized_ratelimit": true,
+    "unauthorized_ratelimit_rps": 10
+  }
+}
+```
+
+`unauthorized_ratelimit_rps` 必须为正的 32 位整数，非法值拒绝加载，不自动回退。
+每个桶从首次使用开始保留 1000 毫秒窗口，允许前 N 次 401 响应，超出后静默丢弃响应，
+不再发送额外错误。新请求与缓存重传都计入预算；来源端口不参与计算，IPv4-mapped IPv6
+统一为 IPv4。同一 NAT 公网 IP 下的客户端共享预算，应按实际客户端数量设置阈值。
+
+`TurnAuthRateLimiter` 使用固定 4096 个桶，不动态增长；不同 IP 落入同一有效桶时共享预算，
+不会覆盖已有计数获取新额度，因此可能误限正常来源。计数饱和后不再递增，防止溢出绕过；
+超限与碰撞日志分别每桶每窗口最多记录一次。
+当前 TURN 对象由单个调度线程串行处理，限流表也归该线程所有，无需跨线程原子计数。
+每个 `TurnServer` 实例独立计数，停止时清空窗口；主程序目前只创建一个实例，不提供集群共享额度。
+
+`TurnServer::GetStats()` 提供 `unauthorized_401_requests`、`unauthorized_401_responses`、
+`unauthorized_401_dropped`、`ratelimit_hash_collisions`、`ratelimit_occupied_buckets` 和
+`ratelimit_total_buckets`。响应计数表示 UDP socket 接受发送，不保证对端收到；发送失败
+不会计作限流丢弃。桶占用数在获取快照时扫描，不在请求路径扫描。尚未提供 Prometheus HTTP 导出。
+
+这一功能只控制 UDP 401 响应，不改变现有长期凭证鉴权，不限制已鉴权请求或媒体转发，
+也不限制 STUN Binding、438 等其他响应。当前 nonce 仍按会话维护，静默丢弃不会消除
+会话及响应缓存的资源消耗；stateless nonce、未验证来源的其他错误预算需另行实现。
+
+验证入口：
+
+```sh
+cmake --build build/webrtc-integration --target turn_unit_tests test_server_config test_server_app --parallel 4
+ctest --test-dir build/webrtc-integration --output-on-failure \
+  -R '^(TurnUnitTest|server_config|server_app)$'
+```
+
 ### 同端口 STUN 地址发现
 
 TURN 开启后，浏览器可在同一地址使用 `stun:主机:端口` 查询自身映射地址，

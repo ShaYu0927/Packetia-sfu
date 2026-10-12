@@ -2,6 +2,7 @@
 #define PACKETIA_TURN_CODEC_H
 
 #include "Stun.h"
+#include "TurnConstants.h"
 
 namespace protocol
 {
@@ -16,9 +17,10 @@ struct TurnChannelDataView
 class TurnCodec
 {
 public:
-    static constexpr uint16_t kFirstChannel = 0x4000;
-    static constexpr uint16_t kLastChannel = 0x4FFF; // RFC 8656, section 12.
-    static constexpr uint8_t kUdpTransport = 17;
+    // Preserve the existing typed API; values have one macro definition.
+    static constexpr uint16_t kFirstChannel = PACKETIA_TURN_FIRST_CHANNEL;
+    static constexpr uint16_t kLastChannel = PACKETIA_TURN_LAST_CHANNEL;
+    static constexpr uint8_t kUdpTransport = PACKETIA_TURN_UDP_TRANSPORT;
 
     // These APIs consume one complete UDP datagram, not a TCP stream.
     static bool ParseStunDatagram(const uint8_t* data, size_t len, StunMessageInfo& out);
@@ -30,7 +32,7 @@ public:
     static StunAttribute RequestedTransportAttribute(uint8_t transport);
     static bool ChannelNumberAttribute(uint16_t channel, StunAttribute& out);
     static bool XorAddressAttribute(AttrType type, const IpEndpoint& ep,
-                                    const std::array<uint8_t, 12>& txid, StunAttribute& out);
+                                    const std::array<uint8_t, PACKETIA_STUN_TRANSACTION_ID_BYTES>& txid, StunAttribute& out);
 
     static bool DecodeUInt32(const StunMessageInfo& msg, AttrType type, uint32_t& out);
     static bool DecodeRequestedTransport(const StunMessageInfo& msg, uint8_t& out);

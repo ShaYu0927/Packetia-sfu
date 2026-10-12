@@ -260,7 +260,8 @@ void ServerApp::AddTurnService()
                 return false;
             }
             const std::string username(user), password(secret);
-            if (username.empty() || username.size() > 512 || password.empty() || password.size() > 763 ||
+            if (username.empty() || username.size() > PACKETIA_STUN_USERNAME_MAX_BYTES ||
+                password.empty() || password.size() > PACKETIA_STUN_TEXT_MAX_BYTES ||
                 !utils::IsPrintableAscii(username) || !utils::IsPrintableAscii(password))
             {
                 LOG_ERROR("TURN requires nonempty printable ASCII credentials within protocol limits");
@@ -283,13 +284,16 @@ void ServerApp::AddTurnService()
             options.max_allocations_per_user = config.max_allocations_per_user;
             options.max_permissions = config.max_permissions;
             options.max_channels = config.max_channels;
+            options.unauthorized_ratelimit = config.unauthorized_ratelimit;
+            options.unauthorized_ratelimit_rps = config.unauthorized_ratelimit_rps;
             if (config.local_test)
             {
                 options.allow_peer = [](const network::SocketAddr& peer) {
                     if (peer.IsV6())
                         return IN6_IS_ADDR_LOOPBACK(&reinterpret_cast<const sockaddr_in6*>(&peer.ss)->sin6_addr);
                     const auto bytes = peer.IPv4Bytes();
-                    return bytes.size() == 4 && static_cast<unsigned char>(bytes[0]) == 127;
+                    return bytes.size() == PACKETIA_STUN_IPV4_ADDRESS_BYTES &&
+                        static_cast<unsigned char>(bytes[0]) == PACKETIA_TURN_IPV4_LOOPBACK_FIRST_OCTET;
                 };
             }
             turn_server_ = std::make_shared<protocol::TurnServer>(event_loop_->GetTaskScheduler(), std::move(options),

@@ -8,6 +8,10 @@
 #include <iostream>
 #include <stdexcept>
 
+#define PACKETIA_TURN_DEBUG_IO_THREADS 1u
+#define PACKETIA_TURN_DEBUG_STOP_POLL_MS 100u
+#define PACKETIA_TURN_EXIT_INVALID_ARGUMENTS 2
+
 namespace
 {
 volatile std::sig_atomic_t stopping = 0;
@@ -17,7 +21,7 @@ uint16_t Port(std::string_view text)
 {
     unsigned int value = 0;
     const auto result = std::from_chars(text.data(), text.data() + text.size(), value);
-    if (result.ec != std::errc{} || result.ptr != text.data() + text.size() || value > 65535)
+    if (result.ec != std::errc{} || result.ptr != text.data() + text.size() || value > PACKETIA_TURN_MAX_PORT)
         throw std::invalid_argument("Invalid port");
     return static_cast<uint16_t>(value);
 }
@@ -41,7 +45,7 @@ int main(int argc, char** argv)
         for (int i = 1; i < argc; ++i)
         {
             const std::string_view argument(argv[i]);
-            if (argument == "--help") { Usage(); return 0; }
+            if (argument == "--help") { Usage(); return EXIT_SUCCESS; }
             if (argument == "--dual-stack") { options.dual_stack = true; continue; }
             if (argument == "--local-test")
             {
@@ -49,7 +53,8 @@ int main(int argc, char** argv)
                     if (peer.IsV6())
                         return IN6_IS_ADDR_LOOPBACK(&reinterpret_cast<const sockaddr_in6*>(&peer.ss)->sin6_addr);
                     const auto bytes = peer.IPv4Bytes();
-                    return bytes.size() == 4 && static_cast<unsigned char>(bytes[0]) == 127;
+                    return bytes.size() == PACKETIA_STUN_IPV4_ADDRESS_BYTES &&
+                        static_cast<unsigned char>(bytes[0]) == PACKETIA_TURN_IPV4_LOOPBACK_FIRST_OCTET;
                 };
                 continue;
             }
@@ -71,24 +76,25 @@ int main(int argc, char** argv)
     {
         std::cerr << error.what() << '\n';
         Usage();
-        return 2;
+        return PACKETIA_TURN_EXIT_INVALID_ARGUMENTS;
     }
     const char* configured_user = std::getenv("PACKETIA_TURN_USER");
     const char* configured_password = std::getenv("PACKETIA_TURN_PASSWORD");
     if (!configured_user || !configured_password)
     {
         std::cerr << "Set PACKETIA_TURN_USER and PACKETIA_TURN_PASSWORD.\n";
-        return 2;
+        return PACKETIA_TURN_EXIT_INVALID_ARGUMENTS;
     }
     const std::string username(configured_user), password(configured_password);
-    if (username.empty() || username.size() > 512 || password.empty() || password.size() > 763 ||
+    if (username.empty() || username.size() > PACKETIA_STUN_USERNAME_MAX_BYTES ||
+        password.empty() || password.size() > PACKETIA_STUN_TEXT_MAX_BYTES ||
         !utils::IsPrintableAscii(username) || !utils::IsPrintableAscii(password))
     {
         std::cerr << "TURN account must use nonempty printable ASCII credentials within protocol limits.\n";
-        return 2;
+        return PACKETIA_TURN_EXIT_INVALID_ARGUMENTS;
     }
-    EventLoop loop{1};
-    if (!loop.Start()) return 1;
+    EventLoop loop{PACKETIA_TURN_DEBUG_IO_THREADS};
+    if (!loop.Start()) return EXIT_FAILURE;
     auto server = std::make_shared<protocol::TurnServer>(loop.GetTaskScheduler(), options,
         [username, password](std::string_view user, std::string& out) {
             if (user != username) return false;
@@ -98,13 +104,13 @@ int main(int argc, char** argv)
     if (!server->Start())
     {
         std::cerr << "Could not start TURN UDP listener; check addresses, port range, and realm.\n";
-        return 1;
+        return EXIT_FAILURE;
     }
     std::signal(SIGINT, StopSignal);
     std::signal(SIGTERM, StopSignal);
     std::cout << "TURN UDP listening on " << server->LocalAddress().ToString() << std::endl;
-    while (!stopping) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    while (!stopping) std::this_thread::sleep_for(std::chrono::milliseconds(PACKETIA_TURN_DEBUG_STOP_POLL_MS));
     server->Stop();
     loop.Stop();
-    return 0;
+    return EXIT_SUCCESS;
 }

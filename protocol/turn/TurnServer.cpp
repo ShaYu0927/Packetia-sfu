@@ -1,32 +1,55 @@
 #include "TurnServer.h"
+#include "TurnAuthRateLimiter.h"
 
 #include "CryptoUtil.h"
 #include "TimeUtil.h"
 #include "UdpServer.h"
 #include "utils.h"
+#include "logger.h"
 
 #include <algorithm>
+#include <climits>
 #include <deque>
 #include <limits>
 #include <unordered_map>
 #include <utility>
 
+// Numeric prefixes for the existing default peer ACL (host byte order).
+#define PACKETIA_TURN_IPV4_FIRST_OCTET_SHIFT 24u
+#define PACKETIA_TURN_IPV4_CLASS_SHIFT 28u
+#define PACKETIA_TURN_IPV4_MULTICAST_CLASS 14u
+#define PACKETIA_TURN_IPV4_PRIVATE_10_FIRST_OCTET 10u
+#define PACKETIA_TURN_IPV4_PREFIX_12_MASK 0xFFF00000u
+#define PACKETIA_TURN_IPV4_PREFIX_16_MASK 0xFFFF0000u
+#define PACKETIA_TURN_IPV4_PREFIX_10_MASK 0xFFC00000u
+#define PACKETIA_TURN_IPV4_PREFIX_15_MASK 0xFFFE0000u
+#define PACKETIA_TURN_IPV4_PRIVATE_172_NETWORK 0xAC100000u
+#define PACKETIA_TURN_IPV4_PRIVATE_192_NETWORK 0xC0A80000u
+#define PACKETIA_TURN_IPV4_LINK_LOCAL_NETWORK 0xA9FE0000u
+#define PACKETIA_TURN_IPV4_SHARED_NETWORK 0x64400000u
+#define PACKETIA_TURN_IPV4_BENCHMARK_NETWORK 0xC6120000u
+#define PACKETIA_TURN_IPV6_UNIQUE_LOCAL_MASK 0xfeu
+#define PACKETIA_TURN_IPV6_UNIQUE_LOCAL_PREFIX 0xfcu
+#define PACKETIA_TURN_IPV6_SITE_LOCAL_FIRST_BYTE 0xfeu
+#define PACKETIA_TURN_IPV6_SITE_LOCAL_SECOND_MASK 0xc0u
+
 namespace protocol
 {
 namespace
 {
-constexpr uint64_t kPermissionMs = 300000;
-constexpr uint64_t kChannelMs = 600000;
-constexpr uint64_t kSessionIdleMs = 60000;
-constexpr uint64_t kCacheMs = 40000;
-constexpr size_t kMaxCachedResponses = 8;
-constexpr size_t kMaxControlBytes = 4096;
-constexpr uint32_t kDefaultLifetime = 600;
-constexpr uint32_t kMaxLifetime = 3600;
+constexpr uint64_t kPermissionMs = PACKETIA_TURN_PERMISSION_LIFETIME_MS;
+constexpr uint64_t kChannelMs = PACKETIA_TURN_CHANNEL_LIFETIME_MS;
+constexpr uint64_t kSessionIdleMs = PACKETIA_TURN_SESSION_IDLE_MS;
+constexpr uint64_t kCacheMs = PACKETIA_TURN_RESPONSE_CACHE_MS;
+constexpr size_t kMaxCachedResponses = PACKETIA_TURN_MAX_CACHED_RESPONSES;
+constexpr size_t kMaxControlBytes = PACKETIA_TURN_MAX_CONTROL_BYTES;
+constexpr uint32_t kDefaultLifetime = PACKETIA_TURN_DEFAULT_ALLOCATION_LIFETIME_SECONDS;
+constexpr uint32_t kMaxLifetime = PACKETIA_TURN_MAX_ALLOCATION_LIFETIME_SECONDS;
 
 bool UnicastV4(uint32_t host_ip)
 {
-    return (host_ip >> 24) != 0 && (host_ip >> 28) < 14;
+    return (host_ip >> PACKETIA_TURN_IPV4_FIRST_OCTET_SHIFT) != 0 &&
+        (host_ip >> PACKETIA_TURN_IPV4_CLASS_SHIFT) < PACKETIA_TURN_IPV4_MULTICAST_CLASS;
 }
 
 bool Unicast(const network::SocketAddr& address)
@@ -56,17 +79,25 @@ bool PublicPeer(const network::SocketAddr& peer)
     if (peer.IsV6())
     {
         const auto* ip = &reinterpret_cast<const sockaddr_in6*>(&peer.ss)->sin6_addr;
+        const bool site_local = ip->s6_addr[0] == PACKETIA_TURN_IPV6_SITE_LOCAL_FIRST_BYTE &&
+            (ip->s6_addr[1] & PACKETIA_TURN_IPV6_SITE_LOCAL_SECOND_MASK) == PACKETIA_TURN_IPV6_SITE_LOCAL_SECOND_MASK;
+        const auto* compatible_prefix_end = ip->s6_addr +
+            (PACKETIA_STUN_IPV6_ADDRESS_BYTES - PACKETIA_STUN_IPV4_ADDRESS_BYTES);
         return Unicast(peer) && !IN6_IS_ADDR_LOOPBACK(ip) && !IN6_IS_ADDR_LINKLOCAL(ip) &&
-            (ip->s6_addr[0] & 0xfe) != 0xfc &&
-            !(ip->s6_addr[0] == 0xfe && (ip->s6_addr[1] & 0xc0) == 0xc0) &&
+            (ip->s6_addr[0] & PACKETIA_TURN_IPV6_UNIQUE_LOCAL_MASK) != PACKETIA_TURN_IPV6_UNIQUE_LOCAL_PREFIX &&
+            !site_local &&
             // Reject deprecated IPv4-compatible addresses as well as mapped addresses.
-            !(std::all_of(ip->s6_addr, ip->s6_addr + 12, [](uint8_t b) { return b == 0; }));
+            !std::all_of(ip->s6_addr, compatible_prefix_end, [](uint8_t b) { return b == 0; });
     }
     const uint32_t ip = ntohl(reinterpret_cast<const sockaddr_in*>(&peer.ss)->sin_addr.s_addr);
-    return UnicastV4(ip) && (ip >> 24) != 10 && (ip >> 24) != 127 &&
-        (ip & 0xFFF00000u) != 0xAC100000u && (ip & 0xFFFF0000u) != 0xC0A80000u &&
-        (ip & 0xFFFF0000u) != 0xA9FE0000u && (ip & 0xFFC00000u) != 0x64400000u &&
-        (ip & 0xFFFE0000u) != 0xC6120000u;
+    const auto first_octet = ip >> PACKETIA_TURN_IPV4_FIRST_OCTET_SHIFT;
+    return UnicastV4(ip) && first_octet != PACKETIA_TURN_IPV4_PRIVATE_10_FIRST_OCTET &&
+        first_octet != PACKETIA_TURN_IPV4_LOOPBACK_FIRST_OCTET &&
+        (ip & PACKETIA_TURN_IPV4_PREFIX_12_MASK) != PACKETIA_TURN_IPV4_PRIVATE_172_NETWORK &&
+        (ip & PACKETIA_TURN_IPV4_PREFIX_16_MASK) != PACKETIA_TURN_IPV4_PRIVATE_192_NETWORK &&
+        (ip & PACKETIA_TURN_IPV4_PREFIX_16_MASK) != PACKETIA_TURN_IPV4_LINK_LOCAL_NETWORK &&
+        (ip & PACKETIA_TURN_IPV4_PREFIX_10_MASK) != PACKETIA_TURN_IPV4_SHARED_NETWORK &&
+        (ip & PACKETIA_TURN_IPV4_PREFIX_15_MASK) != PACKETIA_TURN_IPV4_BENCHMARK_NETWORK;
 }
 
 /* Permission 按 IP 匹配，不包含对端端口。 */
@@ -167,7 +198,7 @@ std::vector<uint16_t> UnknownAttributes(const StunMessageInfo& msg)
     {
         if (attr.type == static_cast<uint16_t>(AttrType::MESSAGE_INTEGRITY) ||
             (msg.method == StunMethod::Binding && attr.type == static_cast<uint16_t>(AttrType::MESSAGE_INTEGRITY_SHA256))) break;
-        if (attr.type < 0x8000 && !AllowedAttribute(msg.method, attr.type) &&
+        if (attr.type < PACKETIA_STUN_OPTIONAL_ATTRIBUTE_START && !AllowedAttribute(msg.method, attr.type) &&
             std::find(result.begin(), result.end(), attr.type) == result.end()) result.push_back(attr.type);
     }
     return result;
@@ -189,7 +220,7 @@ struct TurnServer::Impl
         std::shared_ptr<network::UdpServer> relay;
         network::SocketAddr advertised;
         std::string username;
-        std::array<uint8_t, 12> transaction{};
+        std::array<uint8_t, PACKETIA_STUN_TRANSACTION_ID_BYTES> transaction{};
         std::vector<uint8_t> request;
         uint64_t generation = 0;
         uint64_t expires = 0;
@@ -198,10 +229,11 @@ struct TurnServer::Impl
     };
     struct CachedResponse
     {
-        std::array<uint8_t, 12> transaction{};
+        std::array<uint8_t, PACKETIA_STUN_TRANSACTION_ID_BYTES> transaction{};
         std::vector<uint8_t> request;
         std::vector<uint8_t> response;
         uint64_t expires = 0;
+        bool unauthorized = false;
     };
     struct Session
     {
@@ -222,12 +254,13 @@ struct TurnServer::Impl
     uint32_t next_port = 0;
     uint64_t generation = 0;
     Stats stats;
+    TurnAuthRateLimiter unauthorized_limiter;
     bool started = false;
 
     Impl(std::shared_ptr<TaskScheduler> scheduler, TurnServerOptions options, TurnAuth::PasswordLookup lookup)
         : scheduler(std::move(scheduler)), options(std::move(options)),
           clock(this->options.clock ? this->options.clock : TurnAuth::Clock(Timestamp::NowMs)),
-          auth(this->options.realm, std::move(lookup), 600000, clock), next_port(this->options.relay_port_min) {}
+          auth(this->options.realm, std::move(lookup), PACKETIA_TURN_NONCE_LIFETIME_MS, clock), next_port(this->options.relay_port_min) {}
 
     bool PeerAllowed(const network::SocketAddr& peer, bool require_port = true) const
     {
@@ -276,14 +309,14 @@ struct TurnServer::Impl
         auto view = msg;
         view.attrs = {attr};
         XorMappedAddress decoded;
-        if (!StunCodec::DecodeXorAddress(view, AttrType::XOR_PEER_ADDRESS, decoded)) return 400;
-        if (decoded.is_ipv6 != allocation.advertised.IsV6()) return 443;
+        if (!StunCodec::DecodeXorAddress(view, AttrType::XOR_PEER_ADDRESS, decoded)) return PACKETIA_STUN_ERROR_BAD_REQUEST;
+        if (decoded.is_ipv6 != allocation.advertised.IsV6()) return PACKETIA_STUN_ERROR_PEER_ADDRESS_FAMILY_MISMATCH;
         if (decoded.is_ipv6)
         {
             sockaddr_in6 address{};
             address.sin6_family = AF_INET6;
             address.sin6_port = htons(decoded.port);
-            std::copy_n(decoded.ip.begin(), 16, address.sin6_addr.s6_addr);
+            std::copy_n(decoded.ip.begin(), PACKETIA_STUN_IPV6_ADDRESS_BYTES, address.sin6_addr.s6_addr);
             out = network::SocketAddr::FromSockaddr(reinterpret_cast<sockaddr*>(&address), sizeof(address));
         }
         else
@@ -291,10 +324,10 @@ struct TurnServer::Impl
             sockaddr_in address{};
             address.sin_family = AF_INET;
             address.sin_port = htons(decoded.port);
-            std::copy_n(decoded.ip.begin(), 4, reinterpret_cast<uint8_t*>(&address.sin_addr));
+            std::copy_n(decoded.ip.begin(), PACKETIA_STUN_IPV4_ADDRESS_BYTES, reinterpret_cast<uint8_t*>(&address.sin_addr));
             out = network::SocketAddr::FromSockaddr(reinterpret_cast<sockaddr*>(&address), sizeof(address));
         }
-        return PeerAllowed(out, msg.method != StunMethod::CreatePermission) ? 0 : 403;
+        return PeerAllowed(out, msg.method != StunMethod::CreatePermission) ? 0 : PACKETIA_STUN_ERROR_FORBIDDEN;
     }
 
     std::vector<uint8_t> Success(const StunMessageInfo& msg, std::string_view key,
@@ -309,13 +342,13 @@ struct TurnServer::Impl
                               const std::vector<uint16_t>& unknown = {}) const
     {
         std::vector<StunAttribute> attributes = {{static_cast<uint16_t>(AttrType::ERROR_CODE),
-            {0, 0, uint8_t(code / 100), uint8_t(code % 100)}}};
+            {0, 0, uint8_t(code / PACKETIA_STUN_ERROR_CLASS_DIVISOR), uint8_t(code % PACKETIA_STUN_ERROR_CLASS_DIVISOR)}}};
         if (!unknown.empty())
         {
             StunAttribute attr{static_cast<uint16_t>(AttrType::UNKNOWN_ATTRIBUTES), {}};
             for (auto value : unknown)
             {
-                attr.value.push_back(uint8_t(value >> 8));
+                attr.value.push_back(uint8_t(value >> CHAR_BIT));
                 attr.value.push_back(uint8_t(value));
             }
             attributes.push_back(std::move(attr));
@@ -326,6 +359,31 @@ struct TurnServer::Impl
     }
 
     std::shared_ptr<network::UdpServer> OpenRelay(IpFamily family);
+    void SendResponse(const network::SocketAddr& client, const std::vector<uint8_t>& response,
+                      bool unauthorized)
+    {
+        if (unauthorized)
+        {
+            ++stats.unauthorized_401_requests;
+            if (options.unauthorized_ratelimit)
+            {
+                const auto decision = unauthorized_limiter.Consume(
+                    client, clock(), options.unauthorized_ratelimit_rps);
+                if (decision.collision) ++stats.ratelimit_hash_collisions;
+                if (decision.first_collision)
+                    LOG_INFO("TURN 401 rate-limit bucket collision; sharing active budget");
+                if (decision.first_drop)
+                    LOG_INFO("TURN 401 rate-limit exceeded; suppressing responses for this window");
+                if (decision.suppressed)
+                {
+                    ++stats.unauthorized_401_dropped;
+                    return;
+                }
+            }
+        }
+        if (control->SendTo(client, response.data(), response.size()) && unauthorized)
+            ++stats.unauthorized_401_responses;
+    }
     std::vector<uint8_t> HandleRequest(const network::SocketAddr& client, Session& session,
         const StunMessageInfo& msg, const TurnAuthResult& authenticated, const uint8_t* data, size_t len);
     void OnControl(const network::SocketAddr& client, const uint8_t* data, size_t len);
@@ -382,61 +440,65 @@ std::vector<uint8_t> TurnServer::Impl::HandleRequest(const network::SocketAddr& 
     const auto key = std::string_view(authenticated.integrity_key);
     auto* allocation = session.allocation.get();
     if (allocation && allocation->username != authenticated.username)
-        return Error(msg, msg.method == StunMethod::Allocate ? 437 : 441, key);
+        return Error(msg, msg.method == StunMethod::Allocate
+            ? PACKETIA_STUN_ERROR_ALLOCATION_MISMATCH : PACKETIA_STUN_ERROR_WRONG_CREDENTIALS, key);
     const auto unknown = UnknownAttributes(msg);
-    if (!unknown.empty()) return Error(msg, 420, key, unknown);
+    if (!unknown.empty()) return Error(msg, PACKETIA_STUN_ERROR_UNKNOWN_ATTRIBUTE, key, unknown);
     const uint64_t now = clock();
     if (msg.method == StunMethod::Allocate || msg.method == StunMethod::Refresh)
     {
         uint32_t lifetime = kDefaultLifetime;
-        if (AttributeCount(msg, AttrType::LIFETIME) > 1) return Error(msg, 400, key);
+        if (AttributeCount(msg, AttrType::LIFETIME) > 1) return Error(msg, PACKETIA_STUN_ERROR_BAD_REQUEST, key);
         if (AttributeCount(msg, AttrType::LIFETIME) && !TurnCodec::DecodeUInt32(msg, AttrType::LIFETIME, lifetime))
-            return Error(msg, 400, key);
+            return Error(msg, PACKETIA_STUN_ERROR_BAD_REQUEST, key);
         if (msg.method == StunMethod::Refresh)
         {
-            if (!allocation) return Error(msg, 437, key);
+            if (!allocation) return Error(msg, PACKETIA_STUN_ERROR_ALLOCATION_MISMATCH, key);
             if (lifetime != 0) lifetime = std::clamp(lifetime, kDefaultLifetime, kMaxLifetime);
             auto response = Success(msg, key, {TurnCodec::UInt32Attribute(AttrType::LIFETIME, lifetime)});
             if (response.empty()) return {};
             if (lifetime == 0) session.allocation.reset();
-            else allocation->expires = Deadline(now, uint64_t(lifetime) * 1000);
+            else allocation->expires = Deadline(now, uint64_t(lifetime) * PACKETIA_TURN_MS_PER_SECOND);
             return response;
         }
         uint8_t transport = 0;
         if (AttributeCount(msg, AttrType::REQUESTED_TRANSPORT) != 1 ||
-            !TurnCodec::DecodeRequestedTransport(msg, transport)) return Error(msg, 400, key);
-        if (transport != TurnCodec::kUdpTransport) return Error(msg, 442, key);
+            !TurnCodec::DecodeRequestedTransport(msg, transport)) return Error(msg, PACKETIA_STUN_ERROR_BAD_REQUEST, key);
+        if (transport != TurnCodec::kUdpTransport) return Error(msg, PACKETIA_STUN_ERROR_UNSUPPORTED_TRANSPORT_PROTOCOL, key);
         IpFamily requested_family = IpFamily::IPv4;
-        if (AttributeCount(msg, AttrType::REQUESTED_ADDRESS_FAMILY) > 1) return Error(msg, 400, key);
+        if (AttributeCount(msg, AttrType::REQUESTED_ADDRESS_FAMILY) > 1) return Error(msg, PACKETIA_STUN_ERROR_BAD_REQUEST, key);
         if (const auto* family = msg.FindAttr(static_cast<uint16_t>(AttrType::REQUESTED_ADDRESS_FAMILY)))
         {
-            if (family->len != 4) return Error(msg, 400, key);
+            if (family->len != PACKETIA_STUN_UINT32_ATTRIBUTE_BYTES) return Error(msg, PACKETIA_STUN_ERROR_BAD_REQUEST, key);
             const auto value = msg.raw[family->value_offset];
-            if (value != 1 && value != 2) return Error(msg, 400, key);
-            requested_family = value == 2 ? IpFamily::IPv6 : IpFamily::IPv4;
+            if (value != PACKETIA_STUN_ADDRESS_FAMILY_IPV4 && value != PACKETIA_STUN_ADDRESS_FAMILY_IPV6)
+                return Error(msg, PACKETIA_STUN_ERROR_BAD_REQUEST, key);
+            requested_family = value == PACKETIA_STUN_ADDRESS_FAMILY_IPV6 ? IpFamily::IPv6 : IpFamily::IPv4;
         }
         const auto& public_ip = requested_family == IpFamily::IPv6 ? options.advertised_ip_v6 : options.advertised_ip;
-        if (public_ip.empty()) return Error(msg, 440, key);
+        if (public_ip.empty()) return Error(msg, PACKETIA_STUN_ERROR_ADDRESS_FAMILY_NOT_SUPPORTED, key);
         lifetime = std::clamp(lifetime, kDefaultLifetime, kMaxLifetime);
         std::unique_ptr<Allocation> pending;
         if (allocation)
         {
-            if (allocation->transaction != msg.txid) return Error(msg, 437, key);
-            if (allocation->request != std::vector<uint8_t>(data, data + len)) return Error(msg, 400, key);
-            lifetime = static_cast<uint32_t>((allocation->expires - now + 999) / 1000);
+            if (allocation->transaction != msg.txid) return Error(msg, PACKETIA_STUN_ERROR_ALLOCATION_MISMATCH, key);
+            if (allocation->request != std::vector<uint8_t>(data, data + len)) return Error(msg, PACKETIA_STUN_ERROR_BAD_REQUEST, key);
+            lifetime = static_cast<uint32_t>((allocation->expires - now +
+                (PACKETIA_TURN_MS_PER_SECOND - 1)) / PACKETIA_TURN_MS_PER_SECOND);
         }
         else
         {
             if (AllocationCount() >= options.max_allocations ||
-                AllocationCount(authenticated.username) >= options.max_allocations_per_user) return Error(msg, 486, key);
+                AllocationCount(authenticated.username) >= options.max_allocations_per_user)
+                return Error(msg, PACKETIA_STUN_ERROR_ALLOCATION_QUOTA_REACHED, key);
             pending = std::make_unique<Allocation>();
             pending->relay = OpenRelay(requested_family);
-            if (!pending->relay) return Error(msg, 508, key);
+            if (!pending->relay) return Error(msg, PACKETIA_STUN_ERROR_INSUFFICIENT_CAPACITY, key);
             pending->advertised = network::SocketAddr::FromIPPort(public_ip, pending->relay->LocalAddress().Port());
             pending->username = authenticated.username;
             pending->transaction = msg.txid;
             pending->request.assign(data, data + len);
-            pending->expires = Deadline(now, uint64_t(lifetime) * 1000);
+            pending->expires = Deadline(now, uint64_t(lifetime) * PACKETIA_TURN_MS_PER_SECOND);
             pending->generation = ++generation;
             pending->relay->SetHandler(std::make_shared<RelayHandler>(owner, client, pending->generation));
             allocation = pending.get();
@@ -448,7 +510,7 @@ std::vector<uint8_t> TurnServer::Impl::HandleRequest(const network::SocketAddr& 
         if (!response.empty() && pending) session.allocation = std::move(pending);
         return response;
     }
-    if (!allocation) return Error(msg, 437, key);
+    if (!allocation) return Error(msg, PACKETIA_STUN_ERROR_ALLOCATION_MISMATCH, key);
 
     std::vector<network::SocketAddr> peers;
     for (const auto& attr : msg.attrs)
@@ -459,23 +521,23 @@ std::vector<uint8_t> TurnServer::Impl::HandleRequest(const network::SocketAddr& 
         if (const auto error = DecodePeer(msg, attr, *allocation, peer)) return Error(msg, error, key);
         peers.push_back(peer);
     }
-    if (peers.empty()) return Error(msg, 400, key);
-    if (msg.method == StunMethod::ChannelBind && peers.size() != 1) return Error(msg, 400, key);
+    if (peers.empty()) return Error(msg, PACKETIA_STUN_ERROR_BAD_REQUEST, key);
+    if (msg.method == StunMethod::ChannelBind && peers.size() != 1) return Error(msg, PACKETIA_STUN_ERROR_BAD_REQUEST, key);
     auto permissions = allocation->permissions;
     for (const auto& peer : peers) permissions[PeerIp(peer)] = Deadline(now, kPermissionMs);
-    if (permissions.size() > options.max_permissions) return Error(msg, 508, key);
+    if (permissions.size() > options.max_permissions) return Error(msg, PACKETIA_STUN_ERROR_INSUFFICIENT_CAPACITY, key);
     if (msg.method == StunMethod::ChannelBind)
     {
         uint16_t channel = 0;
         if (AttributeCount(msg, AttrType::CHANNEL_NUMBER) != 1 || !TurnCodec::DecodeChannelNumber(msg, channel))
-            return Error(msg, 400, key);
+            return Error(msg, PACKETIA_STUN_ERROR_BAD_REQUEST, key);
         const auto existing = allocation->channels.find(channel);
-        if (existing != allocation->channels.end() && !(existing->second.peer == peers.front())) return Error(msg, 400, key);
+        if (existing != allocation->channels.end() && !(existing->second.peer == peers.front())) return Error(msg, PACKETIA_STUN_ERROR_BAD_REQUEST, key);
         for (const auto& binding : allocation->channels)
-            if (binding.first != channel && binding.second.peer == peers.front()) return Error(msg, 400, key);
+            if (binding.first != channel && binding.second.peer == peers.front()) return Error(msg, PACKETIA_STUN_ERROR_BAD_REQUEST, key);
         auto channels = allocation->channels;
         channels[channel] = {peers.front(), Deadline(now, kChannelMs)};
-        if (channels.size() > options.max_channels) return Error(msg, 508, key);
+        if (channels.size() > options.max_channels) return Error(msg, PACKETIA_STUN_ERROR_INSUFFICIENT_CAPACITY, key);
         auto response = Success(msg, key);
         if (response.empty()) return {};
         allocation->permissions.swap(permissions);
@@ -490,7 +552,7 @@ std::vector<uint8_t> TurnServer::Impl::HandleRequest(const network::SocketAddr& 
 void TurnServer::Impl::OnControl(const network::SocketAddr& client, const uint8_t* data, size_t len)
 try
 {
-    if (!started || !data || len == 0 || len > 65507 || !client.IsValid()) return;
+    if (!started || !data || len == 0 || len > PACKETIA_TURN_MAX_UDP_DATAGRAM_BYTES || !client.IsValid()) return;
     const auto now = clock();
     Prune(now);
     auto session_it = sessions.find(client);
@@ -511,7 +573,7 @@ try
         if (!msg.IsBindingRequest() || len > kMaxControlBytes) return;
         const auto unknown = UnknownAttributes(msg);
         std::vector<uint8_t> response;
-        if (!unknown.empty()) response = Error(msg, 420, {}, unknown);
+        if (!unknown.empty()) response = Error(msg, PACKETIA_STUN_ERROR_UNKNOWN_ATTRIBUTE, {}, unknown);
         else
         {
             StunAttribute mapped;
@@ -547,7 +609,7 @@ try
     {
         if (cached.transaction != msg.txid) continue;
         if (cached.request.size() == len && std::equal(cached.request.begin(), cached.request.end(), data))
-            control->SendTo(client, cached.response.data(), cached.response.size());
+            SendResponse(client, cached.response, cached.unauthorized);
         return;
     }
     auto authenticated = auth.Authenticate(data, len, session.auth);
@@ -556,10 +618,12 @@ try
     else if (authenticated.status == TurnAuthResult::Status::Authorized)
         response = HandleRequest(client, session, msg, authenticated, data, len);
     if (response.empty()) return;
-    session.cache.push_back({msg.txid, {data, data + len}, std::move(response), Deadline(now, kCacheMs)});
+    const bool unauthorized = authenticated.status == TurnAuthResult::Status::Response &&
+        authenticated.error_code == PACKETIA_STUN_ERROR_UNAUTHORIZED;
+    session.cache.push_back({msg.txid, {data, data + len}, std::move(response), Deadline(now, kCacheMs), unauthorized});
     if (session.cache.size() > kMaxCachedResponses) session.cache.pop_front();
     const auto& reply = session.cache.back().response;
-    control->SendTo(client, reply.data(), reply.size());
+    SendResponse(client, reply, unauthorized);
 }
 catch (const std::bad_alloc&) {} // Drop under memory pressure; pending allocations own their sockets.
 
@@ -580,7 +644,7 @@ try
             control->SendTo(client, packet.data(), packet.size())) ++stats.peer_to_client;
         return;
     }
-    std::array<uint8_t, 12> txid{};
+    std::array<uint8_t, PACKETIA_STUN_TRANSACTION_ID_BYTES> txid{};
     if (!utils::SecureRandomBytes(txid.data(), txid.size())) return;
     StunAttribute address;
     if (!TurnCodec::XorAddressAttribute(AttrType::XOR_PEER_ADDRESS, Endpoint(peer), txid, address)) return;
@@ -612,7 +676,8 @@ bool TurnServer::Start()
             (state.options.relay_port_min == 0 ? state.options.relay_port_max != 0 :
              state.options.relay_port_min > state.options.relay_port_max) ||
             !state.options.max_sessions || !state.options.max_allocations || !state.options.max_allocations_per_user ||
-            !state.options.max_permissions || !state.options.max_channels) return;
+            !state.options.max_permissions || !state.options.max_channels ||
+            !state.options.unauthorized_ratelimit_rps) return;
         state.owner = weak_from_this();
         state.control = std::make_shared<network::UdpServer>(state.scheduler);
         if (!state.control->Start(state.options.listen_ip, state.options.listen_port, false, state.options.dual_stack)) return;
@@ -623,7 +688,7 @@ bool TurnServer::Start()
             if (!server || !server->impl_->started) return false;
             server->impl_->Prune(server->impl_->clock());
             return true;
-        }, 1000);
+        }, PACKETIA_TURN_PRUNE_INTERVAL_MS);
         if (!state.timer) { Stop(); return; }
         result = true;
     });
@@ -638,6 +703,7 @@ void TurnServer::Stop()
         state.started = false;
         if (state.timer) { state.scheduler->RemoveTimer(state.timer); state.timer = 0; }
         state.sessions.clear();
+        state.unauthorized_limiter.Reset();
         if (state.control) { state.control->SetHandler({}); state.control->Stop(); state.control.reset(); }
     });
 }
@@ -663,6 +729,8 @@ TurnServer::Stats TurnServer::GetStats() const
         stats = impl_->stats;
         stats.sessions = impl_->sessions.size();
         stats.allocations = impl_->AllocationCount();
+        stats.ratelimit_total_buckets = TurnAuthRateLimiter::kBucketCount;
+        stats.ratelimit_occupied_buckets = impl_->unauthorized_limiter.OccupiedBuckets(impl_->clock());
     });
     return stats;
 }

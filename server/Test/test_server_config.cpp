@@ -78,6 +78,11 @@ void StreamConfiguration() {
         R"({"webrtc":{"reconnect_timeout_ms":0}})", R"({"webrtc":{"reconnect_timeout_ms":120001}})",
         R"({"webrtc":{"public_ip":42}})", R"({"webrtc":{"unknown":true}})",
         R"({"turn":{"enabled":"true"}})", R"({"turn":{"dual_stack":1}})",
+        R"({"turn":{"unauthorized_ratelimit":1}})",
+        R"({"turn":{"unauthorized_ratelimit_rps":0}})",
+        R"({"turn":{"unauthorized_ratelimit_rps":-1}})",
+        R"({"turn":{"unauthorized_ratelimit_rps":1.5}})",
+        R"({"turn":{"unauthorized_ratelimit_rps":4294967296}})",
         R"({"turn":{"listen_port":65536}})", R"({"turn":{"max_allocations":0}})",
         R"({"turn":{"relay_port_min":60000,"relay_port_max":50000}})",
         R"({"turn":{"relay_port_min":0,"relay_port_max":50000}})",
@@ -105,7 +110,8 @@ void StreamConfiguration() {
         "relay_bind_ip":"0.0.0.0","advertised_ip":"192.0.2.1",
         "relay_bind_ip_v6":"::","advertised_ip_v6":"2001:db8::1","realm":"example.org",
         "relay_port_min":0,"relay_port_max":0,"max_sessions":64,"max_allocations":32,
-        "max_allocations_per_user":4,"max_permissions":16,"max_channels":8,"local_test":true
+        "max_allocations_per_user":4,"max_permissions":16,"max_channels":8,"local_test":true,
+        "unauthorized_ratelimit":true,"unauthorized_ratelimit_rps":7
     }})");
     Check(turn.turn.enabled && turn.turn.dual_stack && turn.turn.listen_ip == "::" &&
           turn.turn.listen_port == 13478 && turn.turn.relay_bind_ip == "0.0.0.0" &&
@@ -115,6 +121,15 @@ void StreamConfiguration() {
           turn.turn.max_allocations == 32 && turn.turn.max_allocations_per_user == 4 &&
           turn.turn.max_permissions == 16 && turn.turn.max_channels == 8 && turn.turn.local_test,
           "TURN configuration was not applied");
+    Check(turn.turn.unauthorized_ratelimit && turn.turn.unauthorized_ratelimit_rps == 7 &&
+          !config::AppConfig{}.turn.unauthorized_ratelimit &&
+          config::AppConfig{}.turn.unauthorized_ratelimit_rps == 10,
+          "TURN rate-limit configuration/defaults were not applied");
+    auto invalid_limit = config::AppConfig{};
+    invalid_limit.turn.unauthorized_ratelimit_rps = 0;
+    rejected = false;
+    try { invalid_limit.Validate(); } catch (const std::invalid_argument&) { rejected = true; }
+    Check(rejected, "zero TURN rate-limit threshold accepted programmatically");
 
     config::ConfigStore concurrent;
     std::atomic<bool> done{false}, coherent{true};

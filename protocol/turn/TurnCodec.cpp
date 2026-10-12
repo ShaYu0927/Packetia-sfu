@@ -15,7 +15,8 @@ bool ValidChannel(uint16_t channel)
 const AttrView* FourByteAttribute(const StunMessageInfo& msg, AttrType type)
 {
     const auto* attr = msg.FindAttr(static_cast<uint16_t>(type));
-    if (!attr || attr->len != 4 || msg.AttrValue(*attr).size() != 4) return nullptr;
+    if (!attr || attr->len != PACKETIA_STUN_UINT32_ATTRIBUTE_BYTES ||
+        msg.AttrValue(*attr).size() != PACKETIA_STUN_UINT32_ATTRIBUTE_BYTES) return nullptr;
     return attr;
 }
 } // namespace
@@ -32,14 +33,14 @@ bool TurnCodec::ParseStunDatagram(const uint8_t* data, size_t len, StunMessageIn
 bool TurnCodec::ParseChannelDataDatagram(const uint8_t* data, size_t len, TurnChannelDataView& out)
 {
     out = {};
-    if (!data || len < 4) return false;
+    if (!data || len < PACKETIA_TURN_CHANNEL_HEADER_BYTES) return false;
     const uint16_t channel = utils::Utils::ReadUint16BE(data);
-    const size_t payload_size = utils::Utils::ReadUint16BE(data + 2);
-    if (!ValidChannel(channel) || payload_size > len - 4) return false;
+    const size_t payload_size = utils::Utils::ReadUint16BE(data + PACKETIA_TURN_CHANNEL_LENGTH_OFFSET);
+    if (!ValidChannel(channel) || payload_size > len - PACKETIA_TURN_CHANNEL_HEADER_BYTES) return false;
 
     // UDP may carry padding. It is outside the declared application data.
     out.channel = channel;
-    out.data = {reinterpret_cast<const char*>(data + 4), payload_size};
+    out.data = {reinterpret_cast<const char*>(data + PACKETIA_TURN_CHANNEL_HEADER_BYTES), payload_size};
     return true;
 }
 
@@ -47,39 +48,46 @@ bool TurnCodec::BuildChannelData(uint16_t channel, std::string_view data,
                                  std::vector<uint8_t>& out, bool pad_to_four)
 {
     out.clear();
-    if (!ValidChannel(channel) || data.size() > 0xFFFF) return false;
-    std::vector<uint8_t> buf(4, 0);
+    if (!ValidChannel(channel) || data.size() > PACKETIA_TURN_CHANNEL_MAX_PAYLOAD_BYTES) return false;
+    std::vector<uint8_t> buf(PACKETIA_TURN_CHANNEL_HEADER_BYTES, 0);
     utils::Utils::WriteUint16BE(buf.data(), channel);
-    utils::Utils::WriteUint16BE(buf.data() + 2, static_cast<uint16_t>(data.size()));
+    utils::Utils::WriteUint16BE(buf.data() + PACKETIA_TURN_CHANNEL_LENGTH_OFFSET, static_cast<uint16_t>(data.size()));
     if (!data.empty()) buf.insert(buf.end(), data.begin(), data.end());
-    if (pad_to_four) buf.resize((buf.size() + 3u) & ~size_t(3u), 0);
+    if (pad_to_four)
+    {
+        constexpr size_t padding_mask = PACKETIA_STUN_ATTRIBUTE_ALIGNMENT_BYTES - 1;
+        buf.resize((buf.size() + padding_mask) & ~padding_mask, 0);
+    }
     out.swap(buf);
     return true;
 }
 
 StunAttribute TurnCodec::UInt32Attribute(AttrType type, uint32_t value)
 {
-    StunAttribute attr{static_cast<uint16_t>(type), std::vector<uint8_t>(4, 0)};
+    StunAttribute attr{static_cast<uint16_t>(type), std::vector<uint8_t>(PACKETIA_STUN_UINT32_ATTRIBUTE_BYTES, 0)};
     utils::Utils::WriteUint32BE(attr.value.data(), value);
     return attr;
 }
 
 StunAttribute TurnCodec::RequestedTransportAttribute(uint8_t transport)
 {
-    return {static_cast<uint16_t>(AttrType::REQUESTED_TRANSPORT), {transport, 0, 0, 0}};
+    StunAttribute attr{static_cast<uint16_t>(AttrType::REQUESTED_TRANSPORT),
+                       std::vector<uint8_t>(PACKETIA_STUN_UINT32_ATTRIBUTE_BYTES, 0)};
+    attr.value[0] = transport;
+    return attr;
 }
 
 bool TurnCodec::ChannelNumberAttribute(uint16_t channel, StunAttribute& out)
 {
     out = {};
     if (!ValidChannel(channel)) return false;
-    out = {static_cast<uint16_t>(AttrType::CHANNEL_NUMBER), std::vector<uint8_t>(4, 0)};
+    out = {static_cast<uint16_t>(AttrType::CHANNEL_NUMBER), std::vector<uint8_t>(PACKETIA_STUN_UINT32_ATTRIBUTE_BYTES, 0)};
     utils::Utils::WriteUint16BE(out.value.data(), channel);
     return true;
 }
 
 bool TurnCodec::XorAddressAttribute(AttrType type, const IpEndpoint& ep,
-                                    const std::array<uint8_t, 12>& txid, StunAttribute& out)
+                                    const std::array<uint8_t, PACKETIA_STUN_TRANSACTION_ID_BYTES>& txid, StunAttribute& out)
 {
     out = {};
     if (type != AttrType::XOR_MAPPED_ADDRESS && type != AttrType::XOR_PEER_ADDRESS &&

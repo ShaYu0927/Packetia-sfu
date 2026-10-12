@@ -52,10 +52,10 @@ public:
         return sendto(fd, data.data(), data.size(), 0, reinterpret_cast<const sockaddr*>(&target.ss), target.len)
             == static_cast<ssize_t>(data.size());
     }
-    std::vector<uint8_t> Receive()
+    std::vector<uint8_t> Receive(int timeout_ms = 1000)
     {
         pollfd event{fd, POLLIN, 0};
-        if (poll(&event, 1, 1000) != 1) return {};
+        if (poll(&event, 1, timeout_ms) != 1) return {};
         std::vector<uint8_t> data(65536);
         const auto size = recv(fd, data.data(), data.size(), 0);
         if (size < 0) return {};
@@ -111,6 +111,8 @@ protected:
 TEST_F(ServerAppTest, SingleAppStartsTurnAndWebRtcRelaysAndReleasesResources)
 {
     using namespace protocol;
+    config.turn.unauthorized_ratelimit = true;
+    config.turn.unauthorized_ratelimit_rps = 1;
     reservations.clear();
     server::ServerApp app(config);
     ASSERT_TRUE(app.Start());
@@ -148,6 +150,10 @@ TEST_F(ServerAppTest, SingleAppStartsTurnAndWebRtcRelaysAndReleasesResources)
     StunErrorCode error;
     ASSERT_TRUE(StunCodec::DecodeErrorCode(message, error));
     ASSERT_EQ(error.code, 401);
+    // ServerApp must pass the configured limiter through to TURN. Cached
+    // challenges are suppressed, while subsequent authenticated relay works.
+    ASSERT_TRUE(client.Send(control, request));
+    EXPECT_TRUE(client.Receive(50).empty());
     const auto* nonce = message.FindAttr(static_cast<uint16_t>(AttrType::NONCE));
     ASSERT_NE(nonce, nullptr);
     const std::vector<StunAttribute> credentials = {Text(AttrType::USERNAME, "server-app-test"),

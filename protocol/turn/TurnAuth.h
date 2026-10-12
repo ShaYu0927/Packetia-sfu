@@ -36,7 +36,7 @@ public:
     using PasswordLookup = std::function<bool(std::string_view username, std::string& password)>;
     using NonceGenerator = std::function<bool(std::string& nonce)>;
 
-    TurnAuth(std::string realm, PasswordLookup lookup, uint64_t nonce_lifetime_ms = 600000,
+    TurnAuth(std::string realm, PasswordLookup lookup, uint64_t nonce_lifetime_ms = PACKETIA_TURN_NONCE_LIFETIME_MS,
              Clock clock = {}, NonceGenerator nonce_generator = {});
 
     // Legacy long-term credentials, with printable ASCII accounts only.

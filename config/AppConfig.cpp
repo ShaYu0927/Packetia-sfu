@@ -83,7 +83,7 @@ void AppConfig::Validate() const {
     if (!webrtc.reconnect_timeout_ms || webrtc.reconnect_timeout_ms > 120000)
         throw std::invalid_argument("webrtc.reconnect_timeout_ms must be between 1 and 120000");
     if (!turn.max_sessions || !turn.max_allocations || !turn.max_allocations_per_user ||
-        !turn.max_permissions || !turn.max_channels ||
+        !turn.max_permissions || !turn.max_channels || !turn.unauthorized_ratelimit_rps ||
         (turn.relay_port_min == 0 ? turn.relay_port_max != 0 : turn.relay_port_min > turn.relay_port_max))
         throw std::invalid_argument("invalid TURN port range or resource limits");
     if (turn.enabled && (turn.listen_ip.empty() || !turn.listen_port || turn.realm.empty()))
@@ -132,10 +132,12 @@ AppConfig AppConfig::FromJson(const std::string& text) {
         Keys(turn, {"enabled", "listen_ip", "listen_port", "dual_stack", "relay_bind_ip", "advertised_ip",
                     "relay_bind_ip_v6", "advertised_ip_v6", "realm", "relay_port_min", "relay_port_max",
                     "max_sessions", "max_allocations", "max_allocations_per_user", "max_permissions",
-                    "max_channels", "local_test"});
+                    "max_channels", "local_test", "unauthorized_ratelimit", "unauthorized_ratelimit_rps"});
         if (turn.contains("enabled")) config.turn.enabled = Flag(turn.at("enabled"));
         if (turn.contains("dual_stack")) config.turn.dual_stack = Flag(turn.at("dual_stack"));
         if (turn.contains("local_test")) config.turn.local_test = Flag(turn.at("local_test"));
+        if (turn.contains("unauthorized_ratelimit"))
+            config.turn.unauthorized_ratelimit = Flag(turn.at("unauthorized_ratelimit"));
 #define READ_TURN_STRING(name) if (turn.contains(#name)) config.turn.name = turn.at(#name).get<std::string>()
         READ_TURN_STRING(listen_ip); READ_TURN_STRING(relay_bind_ip); READ_TURN_STRING(advertised_ip);
         READ_TURN_STRING(relay_bind_ip_v6); READ_TURN_STRING(advertised_ip_v6); READ_TURN_STRING(realm);
@@ -143,6 +145,7 @@ AppConfig AppConfig::FromJson(const std::string& text) {
 #define READ_TURN_LIMIT(name) Number(turn, #name, config.turn.name)
         READ_TURN_LIMIT(listen_port); READ_TURN_LIMIT(max_sessions); READ_TURN_LIMIT(max_allocations);
         READ_TURN_LIMIT(max_allocations_per_user); READ_TURN_LIMIT(max_permissions); READ_TURN_LIMIT(max_channels);
+        READ_TURN_LIMIT(unauthorized_ratelimit_rps);
 #undef READ_TURN_LIMIT
         Number(turn, "relay_port_min", config.turn.relay_port_min, true);
         Number(turn, "relay_port_max", config.turn.relay_port_max, true);

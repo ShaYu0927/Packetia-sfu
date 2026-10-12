@@ -1,6 +1,7 @@
 #pragma once
 
 #include "service/RecordService/RecordingOptions.h"
+#include "protocol/turn/TurnConstants.h"
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -50,21 +51,23 @@ struct TurnOptions
 {
     bool enabled = false;
     std::string listen_ip = "127.0.0.1";
-    uint16_t listen_port = 3478;
+    uint16_t listen_port = PACKETIA_TURN_DEFAULT_LISTEN_PORT;
     bool dual_stack = false;
     std::string relay_bind_ip = "127.0.0.1";
     std::string advertised_ip = "127.0.0.1";
     std::string relay_bind_ip_v6;
     std::string advertised_ip_v6;
     std::string realm = "packetia";
-    uint16_t relay_port_min = 49152;
-    uint16_t relay_port_max = 65535;
-    std::size_t max_sessions = 512;
-    std::size_t max_allocations = 128;
-    std::size_t max_allocations_per_user = 8;
-    std::size_t max_permissions = 64;
-    std::size_t max_channels = 64;
+    uint16_t relay_port_min = PACKETIA_TURN_DEFAULT_RELAY_PORT_MIN;
+    uint16_t relay_port_max = PACKETIA_TURN_DEFAULT_RELAY_PORT_MAX;
+    std::size_t max_sessions = PACKETIA_TURN_DEFAULT_MAX_SESSIONS;
+    std::size_t max_allocations = PACKETIA_TURN_DEFAULT_MAX_ALLOCATIONS;
+    std::size_t max_allocations_per_user = PACKETIA_TURN_DEFAULT_MAX_ALLOCATIONS_PER_USER;
+    std::size_t max_permissions = PACKETIA_TURN_DEFAULT_MAX_PERMISSIONS;
+    std::size_t max_channels = PACKETIA_TURN_DEFAULT_MAX_CHANNELS;
     bool local_test = false;
+    bool unauthorized_ratelimit = false;
+    uint32_t unauthorized_ratelimit_rps = PACKETIA_TURN_DEFAULT_UNAUTHORIZED_RPS;
 };
 
 

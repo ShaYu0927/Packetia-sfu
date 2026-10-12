@@ -1,6 +1,9 @@
 #ifndef _STUN_H_
 #define _STUN_H_
 
+#include "StunErrorCodes.h"
+#include "StunConstants.h"
+
 #include <cstdint>
 #include <vector>
 #include <array>

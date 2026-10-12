@@ -50,6 +50,8 @@ add_library(ICE STATIC
     ice/IceAgent.h
     ice/IceCandidate.cpp
     ice/stun/Stun.cpp
+    ice/stun/StunErrorCodes.h
+    ice/stun/StunConstants.h
     ice/IceCandidateStore.cpp
     ice/IceChecklist.cpp
     ice/IceContext.cpp
@@ -68,8 +70,11 @@ target_link_libraries(ICE PUBLIC LOGGER OpenSSL::Crypto)
 add_library(TURN STATIC
     turn/TurnCodec.cpp
     turn/TurnCodec.h
+    turn/TurnConstants.h
     turn/TurnAuth.cpp
     turn/TurnAuth.h
+    turn/TurnAuthRateLimiter.cpp
+    turn/TurnAuthRateLimiter.h
     turn/TurnServer.cpp
     turn/TurnServer.h
 )

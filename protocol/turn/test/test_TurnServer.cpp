@@ -239,6 +239,72 @@ protected:
 };
 } // namespace
 
+TEST_F(TurnServerTest, UnauthorizedRateLimitIsOptInAndHighThresholdAllowsChallenges)
+{
+    options.unauthorized_ratelimit_rps = 1;
+    StartServer();
+    for (int i = 0; i < 3; ++i) Challenge();
+    EXPECT_EQ(server->GetStats().unauthorized_401_responses, 3u);
+    EXPECT_EQ(server->GetStats().unauthorized_401_dropped, 0u);
+    EXPECT_EQ(server->GetStats().ratelimit_occupied_buckets, 0u);
+    options.unauthorized_ratelimit = true;
+    options.unauthorized_ratelimit_rps = 100000;
+    StartServer();
+    for (int i = 0; i < 10; ++i) Challenge();
+    const auto stats = server->GetStats();
+    EXPECT_EQ(stats.unauthorized_401_requests, 10u);
+    EXPECT_EQ(stats.unauthorized_401_responses, 10u);
+    EXPECT_EQ(stats.unauthorized_401_dropped, 0u);
+    EXPECT_EQ(stats.ratelimit_occupied_buckets, 1u);
+    EXPECT_EQ(stats.ratelimit_total_buckets, 4096u);
+}
+
+TEST_F(TurnServerTest, UnauthorizedRateLimitDoesNotConsumeAuthenticatedOrOtherResponses)
+{
+    options.unauthorized_ratelimit = true;
+    options.unauthorized_ratelimit_rps = 1;
+    StartServer();
+    const auto allocation = Allocate(); // Uses the entire 401 budget, then authenticates successfully.
+    ExpectCode(Exchange(allocation), 0); // Cached success must also bypass the limiter.
+    const auto id = Id();
+    ExpectBinding(Exchange(StunCodec::BuildBindingRequest(id)), client, id);
+    const auto old_nonce = nonce;
+    nonce = "forged-nonce";
+    ExpectCode(Exchange(Request(StunMethod::Refresh, {}, Id())), 438);
+    nonce = old_nonce;
+    ExpectCode(Permission(peer.address), 0);
+    const std::vector<uint8_t> payload{1, 2, 3};
+    ASSERT_TRUE(client.Send(control, SendIndication(peer.address, payload)));
+    std::vector<uint8_t> received;
+    ASSERT_TRUE(peer.Receive(received));
+    EXPECT_EQ(received, payload);
+    EXPECT_EQ(server->GetStats().client_to_peer, 1u);
+    // Invalid integrity still produces a 401 and spends the same budget.
+    auto invalid = Request(StunMethod::Refresh, {}, Id());
+    StunMessageInfo parsed;
+    ASSERT_TRUE(TurnCodec::ParseStunDatagram(invalid.data(), invalid.size(), parsed));
+    const auto* integrity = parsed.FindAttr(static_cast<uint16_t>(AttrType::MESSAGE_INTEGRITY));
+    ASSERT_NE(integrity, nullptr);
+    invalid[integrity->value_offset] ^= 1;
+    utils::Utils::WriteUint32BE(invalid.data() + invalid.size() - 4,
+        StunCodec::ComputeFingerprint(invalid.data(), invalid.size() - 8));
+    ASSERT_TRUE(client.Send(control, invalid));
+    EXPECT_FALSE(client.Receive(received, nullptr, 50));
+    const auto stats = server->GetStats();
+    EXPECT_EQ(stats.unauthorized_401_requests, 2u);
+    EXPECT_EQ(stats.unauthorized_401_responses, 1u);
+    EXPECT_EQ(stats.unauthorized_401_dropped, 1u);
+}
+
+TEST_F(TurnServerTest, UnauthorizedRateLimitRejectsZeroProgrammaticThreshold)
+{
+    server->Stop();
+    options.unauthorized_ratelimit_rps = 0;
+    server = std::make_shared<TurnServer>(scheduler, options,
+        [](std::string_view, std::string&) { return false; });
+    EXPECT_FALSE(server->Start());
+}
+
 TEST_F(TurnServerTest, BindingDiscoversAddressWithoutAuthenticationOrAllocation)
 {
     for (bool fingerprint : {false, true})
@@ -631,6 +697,42 @@ protected:
     }
     uint8_t RelayFamily() const { return GetParam() & 2 ? 2 : 0; }
 };
+
+TEST_P(TurnDualStackTest, UnauthorizedRateLimitCoversCachedRetriesPortsAndWindowExpiry)
+{
+    options.unauthorized_ratelimit = true;
+    options.unauthorized_ratelimit_rps = 1;
+    Restart();
+    std::vector<uint8_t> request;
+    ASSERT_TRUE(StunCodec::BuildMessage(StunMethod::Allocate, StunClass::Request, Id(),
+        {TurnCodec::RequestedTransportAttribute(17)}, request));
+    const auto first = Exchange(request);
+    ExpectCode(first, 401);
+    UdpPeer other(client.address.IsV6() ? "::1" : "127.0.0.1");
+    ASSERT_NE(other.address.Port(), client.address.Port());
+    std::vector<uint8_t> response;
+    ASSERT_TRUE(client.Send(control, request)); // Exact retransmission is served from cache.
+    EXPECT_FALSE(client.Receive(response, nullptr, 50));
+    ASSERT_TRUE(other.Send(control, request)); // Same IP, different port/session.
+    EXPECT_FALSE(other.Receive(response, nullptr, 50));
+    auto stats = server->GetStats();
+    EXPECT_EQ(stats.unauthorized_401_requests, 3u);
+    EXPECT_EQ(stats.unauthorized_401_responses, 1u);
+    EXPECT_EQ(stats.unauthorized_401_dropped, 2u);
+    EXPECT_EQ(stats.ratelimit_occupied_buckets, 1u);
+    now = 999;
+    ASSERT_TRUE(client.Send(control, request));
+    EXPECT_FALSE(client.Receive(response, nullptr, 50));
+    now = 1000;
+    EXPECT_EQ(server->GetStats().ratelimit_occupied_buckets, 0u);
+    EXPECT_EQ(Exchange(request), first); // Still cached, but new response budget.
+    server->Stop();
+    ASSERT_TRUE(server->Start());
+    control = network::SocketAddr::FromIPPort(client.address.IsV6() ? "::1" : "127.0.0.1",
+        server->LocalAddress().Port());
+    EXPECT_EQ(server->GetStats().ratelimit_occupied_buckets, 0u);
+    ExpectCode(Exchange(request), 401);
+}
 
 TEST_P(TurnDualStackTest, BindingUsesClientFamilyAndSharesListenerWithAllocate)
 {

@@ -25,7 +25,7 @@ TurnAuthResult InternalError()
 {
     TurnAuthResult result;
     result.status = TurnAuthResult::Status::InternalError;
-    result.error_code = 500;
+    result.error_code = PACKETIA_STUN_ERROR_SERVER_ERROR;
     return result;
 }
 
@@ -44,19 +44,20 @@ TurnAuth::TurnAuth(std::string realm, PasswordLookup lookup, uint64_t nonce_life
 {
     if (!clock_) clock_ = Timestamp::NowMs;
     if (!nonce_generator_)
-        nonce_generator_ = [](std::string& nonce) { return utils::SecureRandomHex(32, nonce); };
+        nonce_generator_ = [](std::string& nonce) { return utils::SecureRandomHex(PACKETIA_TURN_NONCE_RANDOM_BYTES, nonce); };
 }
 
 bool TurnAuth::DerivePreparedLegacyKey(std::string_view username, std::string_view realm,
                                       std::string_view password, std::string& out)
 {
     out.clear();
-    if (username.empty() || realm.empty() || username.size() > 512 || realm.size() > 763 ||
-        password.size() > 763 || username.find('\0') != std::string_view::npos ||
+    if (username.empty() || realm.empty() || username.size() > PACKETIA_STUN_USERNAME_MAX_BYTES ||
+        realm.size() > PACKETIA_STUN_TEXT_MAX_BYTES ||
+        password.size() > PACKETIA_STUN_TEXT_MAX_BYTES || username.find('\0') != std::string_view::npos ||
         realm.find('\0') != std::string_view::npos || password.find('\0') != std::string_view::npos) return false;
 
     std::string input;
-    input.reserve(username.size() + realm.size() + password.size() + 2);
+    input.reserve(username.size() + realm.size() + password.size() + PACKETIA_TURN_CREDENTIAL_SEPARATOR_BYTES);
     input.append(username.data(), username.size());
     input.push_back(':');
     input.append(realm.data(), realm.size());
@@ -65,7 +66,7 @@ bool TurnAuth::DerivePreparedLegacyKey(std::string_view username, std::string_vi
     uint8_t digest[EVP_MAX_MD_SIZE];
     unsigned int digest_size = 0;
     const bool ok = EVP_Digest(input.data(), input.size(), digest, &digest_size, EVP_md5(), nullptr) == 1 &&
-                    digest_size == 16;
+                    digest_size == PACKETIA_TURN_LEGACY_KEY_BYTES;
     OPENSSL_cleanse(input.data(), input.size());
     if (ok) out.assign(reinterpret_cast<const char*>(digest), digest_size);
     OPENSSL_cleanse(digest, sizeof(digest));
@@ -82,7 +83,7 @@ bool TurnAuth::EnsureNonce(TurnAuthContext& context, uint64_t now) const
 {
     if (!NonceExpired(context, now)) return true;
     std::string nonce;
-    if (!nonce_generator_(nonce) || !ValidAsciiText(nonce, 763) || nonce == context.nonce_) return false;
+    if (!nonce_generator_(nonce) || !ValidAsciiText(nonce, PACKETIA_STUN_TEXT_MAX_BYTES) || nonce == context.nonce_) return false;
     context.nonce_ = std::move(nonce);
     context.nonce_issued_ms_ = now;
     return true;
@@ -91,10 +92,10 @@ bool TurnAuth::EnsureNonce(TurnAuthContext& context, uint64_t now) const
 TurnAuthResult TurnAuth::ErrorResponse(const StunMessageInfo& request, uint16_t code,
                                       std::string_view reason, TurnAuthContext& context, uint64_t now) const
 {
-    std::vector<uint8_t> error = {0, 0, uint8_t(code / 100), uint8_t(code % 100)};
+    std::vector<uint8_t> error = {0, 0, uint8_t(code / PACKETIA_STUN_ERROR_CLASS_DIVISOR), uint8_t(code % PACKETIA_STUN_ERROR_CLASS_DIVISOR)};
     error.insert(error.end(), reason.begin(), reason.end());
     std::vector<StunAttribute> attributes = {{static_cast<uint16_t>(AttrType::ERROR_CODE), std::move(error)}};
-    if (code == 401 || code == 438)
+    if (code == PACKETIA_STUN_ERROR_UNAUTHORIZED || code == PACKETIA_STUN_ERROR_STALE_NONCE)
     {
         if (!EnsureNonce(context, now)) return InternalError();
         attributes.push_back(TextAttribute(AttrType::REALM, realm_));
@@ -110,7 +111,7 @@ TurnAuthResult TurnAuth::ErrorResponse(const StunMessageInfo& request, uint16_t 
 
 bool TurnAuth::IsConfigured() const
 {
-    return ValidAsciiText(realm_, 127) && lookup_ && nonce_lifetime_ms_ != 0;
+    return ValidAsciiText(realm_, PACKETIA_TURN_REALM_MAX_BYTES) && lookup_ && nonce_lifetime_ms_ != 0;
 }
 
 TurnAuthResult TurnAuth::Authenticate(const uint8_t* data, size_t len, TurnAuthContext& context) const
@@ -129,10 +130,12 @@ TurnAuthResult TurnAuth::Authenticate(const uint8_t* data, size_t len, TurnAuthC
     // FINGERPRINT is optional for TURN. Corruption is silently discarded.
     if (fingerprints && (fingerprints != 1 || !StunCodec::VerifyFingerprint(msg))) return {};
     if (integrities > 1 || msg.HasAttr(static_cast<uint16_t>(AttrType::MESSAGE_INTEGRITY_SHA256)))
-        return ErrorResponse(msg, 400, "Unsupported integrity attributes", context, now);
+        return ErrorResponse(msg, PACKETIA_STUN_ERROR_BAD_REQUEST, "Unsupported integrity attributes", context, now);
     const auto* integrity = msg.FindAttr(static_cast<uint16_t>(AttrType::MESSAGE_INTEGRITY));
-    if (!integrity) return ErrorResponse(msg, 401, "Unauthorized", context, now);
-    if (integrity->len != 20) return ErrorResponse(msg, 400, "Bad MESSAGE-INTEGRITY", context, now);
+    if (!integrity)
+        return ErrorResponse(msg, PACKETIA_STUN_ERROR_UNAUTHORIZED, "Unauthorized", context, now);
+    if (integrity->len != PACKETIA_STUN_INTEGRITY_SHA1_BYTES)
+        return ErrorResponse(msg, PACKETIA_STUN_ERROR_BAD_REQUEST, "Bad MESSAGE-INTEGRITY", context, now);
 
     // Only attributes before MESSAGE-INTEGRITY can supply authenticated values.
     // Reject duplicate credentials rather than let different layers pick different copies.
@@ -145,32 +148,36 @@ TurnAuthResult TurnAuth::Authenticate(const uint8_t* data, size_t len, TurnAuthC
         if (attr.type == static_cast<uint16_t>(AttrType::NONCE)) ++nonces;
     }
     if (usernames != 1 || realms != 1 || nonces != 1)
-        return ErrorResponse(msg, 400, "Missing or duplicate credentials", context, now);
+        return ErrorResponse(msg, PACKETIA_STUN_ERROR_BAD_REQUEST, "Missing or duplicate credentials", context, now);
 
     const auto username = msg.AttrValue(*msg.FindAttr(static_cast<uint16_t>(AttrType::USERNAME)));
     const auto realm = msg.AttrValue(*msg.FindAttr(static_cast<uint16_t>(AttrType::REALM)));
     const auto nonce = msg.AttrValue(*msg.FindAttr(static_cast<uint16_t>(AttrType::NONCE)));
-    if (!ValidAsciiText(username, 512) || !ValidAsciiText(realm, 127) || !ValidAsciiText(nonce, 763))
-        return ErrorResponse(msg, 400, "Bad credential encoding", context, now);
-    if (realm != realm_) return ErrorResponse(msg, 401, "Unauthorized", context, now);
+    if (!ValidAsciiText(username, PACKETIA_STUN_USERNAME_MAX_BYTES) ||
+        !ValidAsciiText(realm, PACKETIA_TURN_REALM_MAX_BYTES) ||
+        !ValidAsciiText(nonce, PACKETIA_STUN_TEXT_MAX_BYTES))
+        return ErrorResponse(msg, PACKETIA_STUN_ERROR_BAD_REQUEST, "Bad credential encoding", context, now);
+    if (realm != realm_)
+        return ErrorResponse(msg, PACKETIA_STUN_ERROR_UNAUTHORIZED, "Unauthorized", context, now);
 
     // Like coturn's per-session nonce, expiry or mismatch triggers a fresh
     // challenge before credential lookup. No relay allocation is authorized.
     if (NonceExpired(context, now) || nonce.size() != context.nonce_.size() ||
         CRYPTO_memcmp(nonce.data(), context.nonce_.data(), nonce.size()) != 0)
-        return ErrorResponse(msg, 438, "Stale Nonce", context, now);
+        return ErrorResponse(msg, PACKETIA_STUN_ERROR_STALE_NONCE, "Stale Nonce", context, now);
 
     std::string password;
-    if (!lookup_(username, password)) return ErrorResponse(msg, 401, "Unauthorized", context, now);
+    if (!lookup_(username, password))
+        return ErrorResponse(msg, PACKETIA_STUN_ERROR_UNAUTHORIZED, "Unauthorized", context, now);
     std::string key;
-    const bool derived = ValidAsciiText(password, 763, true) &&
+    const bool derived = ValidAsciiText(password, PACKETIA_STUN_TEXT_MAX_BYTES, true) &&
         DerivePreparedLegacyKey(username, realm_, password, key);
     OPENSSL_cleanse(password.data(), password.size());
     if (!derived) return InternalError();
     if (!StunCodec::VerifyMessageIntegrity(msg, key))
     {
         OPENSSL_cleanse(key.data(), key.size());
-        return ErrorResponse(msg, 401, "Unauthorized", context, now);
+        return ErrorResponse(msg, PACKETIA_STUN_ERROR_UNAUTHORIZED, "Unauthorized", context, now);
     }
     TurnAuthResult result;
     result.status = TurnAuthResult::Status::Authorized;

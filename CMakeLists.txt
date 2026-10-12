@@ -255,6 +255,7 @@ if(BUILD_TESTING)
     add_executable(turn_unit_tests
         protocol/turn/test/test_TurnCodec.cpp
         protocol/turn/test/test_TurnAuth.cpp
+        protocol/turn/test/test_TurnAuthRateLimiter.cpp
         protocol/turn/test/test_TurnServer.cpp
     )
     target_link_libraries(turn_unit_tests PRIVATE TURN GTest::gtest GTest::gtest_main)
