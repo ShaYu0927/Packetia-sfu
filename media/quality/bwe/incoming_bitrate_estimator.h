@@ -13,6 +13,7 @@ class IncomingBitrateEstimator
 {
 public:
     uint32_t Update(size_t packet_size, int64_t now_ms);
+    void Reset();
 
 private:
     struct Sample 
@@ -23,6 +24,7 @@ private:
 
     std::deque<Sample> samples_;
     int64_t window_ms_ = 500;
+    uint64_t total_bytes_ = 0;
 };
 
 

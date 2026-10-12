@@ -15,6 +15,7 @@ TURN UDP 中继及录像模块。正常运行由一个 `Packetia` 进程统一�
 - [双浏览器房间与 TURN 示例](#双浏览器房间与-turn-示例)：启动方式与浏览器检查。
 - [WebRTC SDP 协商](#webrtc-sdp-协商)、[RTP 协议规范](#rtp-协议规范)：协商行为与 RFC 支持边界。
 - [鉴权框架（待接入）](#鉴权框架待接入)：认证、权限接口及后续接入。
+- [弱网与带宽控制](#弱网与带宽控制)、[发送控制详细说明](media/quality/README.md)：NACK/SRTP 重传、TWCC/RR、OU 时延检测与码率控制。
 - [本轮验证](#本轮验证)、[开发记录](#开发记录)：验证范围与历史变更。
 
 ### 当前能力与限制
@@ -26,6 +27,7 @@ TURN UDP 中继及录像模块。正常运行由一个 `Packetia` 进程统一�
 | 断线恢复 | 默认 15 秒保留成员、媒体会话和转发关系，凭恢复凭据绑定新信令连接 | 仅同页面、同进程内恢复；刷新页面、服务重启或媒体终止后需重新加入 |
 | TURN/STUN | UDP 长期凭证认证、中继、权限、通道、到期清理、配额/ACL、IPv4/IPv6 | 不支持 TURN TCP/TLS、双地址族 Allocation 或完整 coturn 功能 |
 | TCP/TLS | 有界 TCP 缓冲、所属线程调度、TLS 1.2/1.3 服务端传输组件 | TLS 尚未接入 TURN 或 WSS 监听、应用配置 |
+| 弱网与带宽控制 | NACK 重传、PLI/FIR、TWCC/RR、时延/接收速率/RTT/丢包联合码率控制 | 输出控制建议；实际 Pacer、媒体降码率、分层选择、FEC 与主动探测尚未接入 |
 | 应用鉴权 | 认证和权限框架、JWT 源码实现 | JWT 未加入构建和业务入口；WebRTC 仍使用共享 token |
 
 尚未做系统容量压测，配置中的会话上限不是实际可承载并发数。当前浏览器验证属于本机互通验证，
@@ -710,7 +712,45 @@ BUNDLE、ICE、DTLS、SSRC 与 m-line。Offer/Answer 状态通过提交和回滚
 普通 re-offer 不允许直接更换 ICE 凭据；同会话换路径使用上述 `restart_ice` 入口。
 当前 restart 保持有效协商的媒体参数及 DTLS 身份不变，不同时进行增删轨道等媒体变更。
 
+## 弱网与带宽控制
+
+下行音视频和重传共用每条 Transport 的 `SendSideController`，独立维护 TWCC 序号、
+发送历史和带宽估计。参考 BWE 代码的 OU 时延检测与 RemoteRateControl 核心算法已适配到
+`media/quality/bwe`，使用项目现有类型和控制接口，无需旧工程的配置及 trace 依赖。
+
+```text
+RtpSenderTrack 发送成功 → SendSideController 记录发送历史
+观众 RTCP TWCC → 匹配发送历史 → TransportBweController
+  → 时延趋势 + 接收速率 + RTT + 丢包 → 目标码率 / Pacer 配置建议
+观众 RTCP RR → TWCC 有效时补充 RTT；TWCC 过期后驱动 RR 回退
+```
+
+码率由 `BitrateConstraints` 统一限制。正常启动使用配置的初始码率，接收速率有效后观察约
+2 秒初始化估计；持续排队会提前降码率，轻微排队或丢包观察期间保持，路径稳定后逐步恢复。
+升码率按经过的时间和 RTT 推进，避免反馈频率越高、增长越快。
+接收速率与目标码率分别输出；估计尚未初始化时 `bandwidth_bps` 为 0，目标码率仍有效。
+网络断开或显式路由变化事件会清空旧估计；完全没有反馈时的周期超时处理仍待实现。
+
+SRTP 发送端允许重新保护缓存的原 RTP 序号及 payload，重传重新分配 TWCC 序号；
+接收端继续执行认证和防重放。当前协商的保护配置为 `SRTP_AES128_CM_SHA1_80`。
+
+业务可通过 `SetUpdateCallback` 消费控制输出。目前还没有实际 Pacer 和媒体码率策略执行，
+带宽算法测试通过不代表真实浏览器弱网质量已经验收。详见[弱网与发送控制说明](media/quality/README.md)。
+
 ## 本轮验证
+
+2026-10-12 本轮弱网验证：主程序编译通过，33 项弱网测试、27 项 RTCP/SFU 回归、
+WebRTC 会话与 DTLS/SRTP 测试通过。新增 15 项带宽算法测试覆盖启动约束、反馈频率、RTT、
+丢包与排队交叠、时钟回绕、路径重置及数值边界；真实 TWCC 字节验证降码率和恢复链路。
+
+```sh
+cmake --build build/webrtc-integration \
+  --target Packetia test_weak_network_manual test_rtp_input test_webrtc_session test_webrtc_crypto --parallel 4
+ctest --test-dir build/webrtc-integration --output-on-failure \
+  -R '^(test_weak_network_manual|test_webrtc_session|test_webrtc_crypto)$'
+build/webrtc-integration/Rtsp/Test/test_rtp_input \
+  --gtest_filter='RtcpChainTest.*:SfuConference.SubscriberOwnsSenderAndFeedbackReturnsToPublisher:SfuConference.RebuildsDownstreamMidAndTwccInsteadOfCopyingUpstreamIds'
+```
 
 2026-10-10 已完成主程序和房间示例构建，以下六个测试套件及 17 项房间/媒体测试通过：
 
@@ -731,6 +771,14 @@ build/webrtc-integration/Rtsp/Test/test_rtp_input \
 ## 开发记录
 
 以下记录描述各次修改当时的状态；其中的待实现能力和限制可能已在后续完成，当前状态以上文为准。
+
+### 2026-10-12：集成发送侧带宽算法与修复 SRTP 重传
+
+- 将参考 OU 时延检测、接收速率与 RemoteRateControl 码率算法适配到现有 TWCC 链路。
+- 统一启动码率约束，补齐 RTT 传递、时间驱动的升码率、丢包观察及网络/路由重置。
+- 区分实测接收速率和目标码率，保护低码率减法、100% 丢包及大码率计算边界。
+- 允许发送端重新保护 NACK 缓存包，验证接收端仍拒绝迟到原包和重复重传。
+- 补充 15 项带宽算法测试及弱网接入说明；当前闭环到达控制输出接口。
 
 ### 2026-10-10：网络边界、TLS 传输与参与者断线恢复
 

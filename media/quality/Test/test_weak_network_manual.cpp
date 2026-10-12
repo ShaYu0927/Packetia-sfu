@@ -140,7 +140,8 @@ TEST(WeakNetworkManualTest, RemoteBitrateControllerReactsToManualUsageAndLoss)
     const auto normal = controller.Update(BandwidthUsage::kNormal, 600000, 0.0, 1000);
     EXPECT_EQ(normal.usage, BandwidthUsage::kNormal);
     EXPECT_EQ(normal.rc_state, RateControlState::kIncrease);
-    EXPECT_EQ(normal.target_bitrate_bps, 551250U);
+    EXPECT_EQ(normal.target_bitrate_bps, 500000U);
+    EXPECT_FALSE(normal.estimate_valid);
 
     const auto congested = controller.Update(BandwidthUsage::kOverUsing,
                                              400000, 0.20, 1100);
@@ -150,7 +151,9 @@ TEST(WeakNetworkManualTest, RemoteBitrateControllerReactsToManualUsageAndLoss)
               << " congested_loss_rate=" << congested.loss_rate << '\n';
     EXPECT_EQ(congested.usage, BandwidthUsage::kOverUsing);
     EXPECT_EQ(congested.rc_state, RateControlState::kDecrease);
-    EXPECT_EQ(congested.target_bitrate_bps, 306000U);
+    EXPECT_LT(congested.target_bitrate_bps, 400000U);
+    EXPECT_GE(congested.target_bitrate_bps, 80000U);
+    EXPECT_TRUE(congested.estimate_valid);
 }
 
 TEST(WeakNetworkManualTest, NetworkPolicyClassifiesQualityAndThrottlesPli)

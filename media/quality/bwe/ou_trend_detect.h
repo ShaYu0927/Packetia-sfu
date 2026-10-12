@@ -11,11 +11,11 @@ class OUTrendDetect
 public:
     struct Config
     {
-        double threshold_ms = 25.0;
-        double weak_threshold_ms = 5.0;
-        double decay_step = 16.0;
-        int overuse_duration_ms = 100;
-        int jitter_window_ms = 500;
+        double threshold_ms = 35.0;
+        double weak_threshold_ms = 7.0;
+        int overuse_duration_ms = 35;
+        int jitter_window_ms = 10500;
+        double jitter_floor_ms = 30.0;
         uint32_t size_delay_bitrate_bps = 1000 * 1000;
     };
 
@@ -25,6 +25,8 @@ public:
     BandwidthUsage OnPacket(uint32_t send_ms, int64_t arrival_ms, size_t packet_size);
 
     void Reset();
+    void SetNetworkEstimate(uint32_t bitrate_bps, uint32_t rtt_ms);
+    void SetRateControlRegion(RateControlRegion region) { region_ = region; }
 
     double trend_ms() const { return trend_ms_; }
     double effective_trend_ms() const { return effective_trend_ms_; }
@@ -54,6 +56,11 @@ private:
     double max_jitter_ms_ = 0.0;
     double size_delay_ms_ = 0.0;
     int overuse_duration_ms_ = 0;
+    BandwidthUsage usage_ = BandwidthUsage::kNormal;
+    RateControlRegion region_ = RateControlRegion::kUnknown;
+    uint32_t bitrate_bps_ = 1000 * 1000;
+    uint32_t rtt_ms_ = 0;
+    bool rtt_changed_ = false;
 
     std::deque<JitterSample> jitter_window_;
 };

@@ -166,6 +166,44 @@ void CheckProtectedPackets(SrtpTransport& sender, SrtpTransport& receiver, bool 
     CHECK(encrypted.empty());
 }
 
+void CheckRtpRetransmission(SrtpTransport& sender, SrtpTransport& receiver)
+{
+    // NACK retransmits the original RTP sequence and payload, with a fresh
+    // transport-wide sequence in the unencrypted RTP header extension.
+    const std::vector<uint8_t> plaintext{
+        0x90, 111, 0, 2, 0, 0, 1, 0x40, 0x12, 0x34, 0x56, 0x78,
+        0xbe, 0xde, 0, 1, 0x11, 0, 10, 0, 1, 2, 3, 4};
+    auto lost = plaintext;
+    CHECK(sender.ProtectRtp(lost));
+    // Simulate loss: the receiver has never seen the original ciphertext.
+    auto retryPlaintext = plaintext;
+    retryPlaintext[18] = 11;
+    auto retry = retryPlaintext;
+    CHECK(sender.ProtectRtp(retry));
+    auto delivered = retry;
+    CHECK(receiver.UnprotectRtp(delivered));
+    CHECK(delivered == retryPlaintext);
+    CHECK(!receiver.UnprotectRtp(retry));
+    CHECK(retry.empty());
+    // A delayed original after the successful retry is also a replay.
+    CHECK(!receiver.UnprotectRtp(lost));
+    CHECK(lost.empty());
+
+    // A duplicated/spurious NACK may also retransmit an already received packet.
+    auto receivedPlaintext = plaintext;
+    receivedPlaintext[3] = 3;
+    receivedPlaintext[18] = 12;
+    auto received = receivedPlaintext;
+    CHECK(sender.ProtectRtp(received));
+    CHECK(receiver.UnprotectRtp(received));
+    CHECK(received == receivedPlaintext);
+    receivedPlaintext[18] = 13;
+    auto duplicate = receivedPlaintext;
+    CHECK(sender.ProtectRtp(duplicate));
+    CHECK(!receiver.UnprotectRtp(duplicate));
+    CHECK(duplicate.empty());
+}
+
 void CheckSrtp()
 {
     Pair pair;
@@ -183,6 +221,7 @@ void CheckSrtp()
     CHECK(!client->Configure(clientKeys));
     CheckProtectedPackets(*client, *server, false, 1);
     CheckProtectedPackets(*server, *client, false, 1);
+    CheckRtpRetransmission(*client, *server);
     CheckProtectedPackets(*client, *server, true, 0);
     CheckProtectedPackets(*server, *client, true, 0);
     std::vector<uint8_t> oversized(65508, 0);

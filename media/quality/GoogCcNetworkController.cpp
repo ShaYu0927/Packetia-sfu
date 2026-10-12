@@ -4,27 +4,37 @@ namespace media
 {
 
 GoogCcNetworkController::GoogCcNetworkController(const NetworkControllerConfig& config)
-    : network_available_(config.network_available)
+    : network_available_(config.network_available), bitrate_(config.bitrate)
 {
     policy_.SetBitrateConstraints(config.bitrate);
+    delay_bwe_.SetBitrateConstraints(config.bitrate);
 }
 
 NetworkControlUpdate GoogCcNetworkController::OnNetworkAvailability(
     const NetworkAvailability& msg)
 {
+    if (network_available_ == msg.network_available) return latest_update_;
     network_available_ = msg.network_available;
     if (!network_available_)
     {
         // 清除旧动作，避免网络断开后调用者继续使用旧 Pacer/目标码率。
         latest_update_ = NetworkControlUpdate{};
+        delay_bwe_.Reset();
+        policy_ = NetworkController();
+        policy_.SetBitrateConstraints(bitrate_);
+        latest_feedback_ = WeakNetFeedback{};
+        latest_bwe_.reset();
+        has_feedback_ = false;
     }
     return latest_update_;
 }
 
 NetworkControlUpdate GoogCcNetworkController::OnNetworkRouteChange(const NetworkRouteChange& msg)
 {
-    // 路由变化意味着旧路径上的时延和吞吐样本已经失效。当前先重置
-    // 编排层状态；各个估计器的显式 Reset 会在拆分子组件时补齐。
+    // Reset delay, receive-rate, capacity, loss baseline and initialization.
+    delay_bwe_.SetBitrateConstraints(msg.bitrate);
+    bitrate_ = msg.bitrate;
+    policy_ = NetworkController();
     policy_.SetBitrateConstraints(msg.bitrate);
     latest_feedback_ = WeakNetFeedback{};
     latest_bwe_.reset();
@@ -44,10 +54,12 @@ NetworkControlUpdate GoogCcNetworkController::OnProcessInterval(const ProcessInt
 
 NetworkControlUpdate GoogCcNetworkController::OnRoundTripTimeUpdate(const RoundTripTimeUpdate& msg)
 {
+    if (!network_available_) return EmptyUpdate();
     // RTT 本身不提供吞吐信息；只有已经收到其他反馈后才重新计算策略，
     // 避免启动阶段凭一个 RTT 样本产生没有依据的目标码率。
     latest_feedback_.now_ms = msg.at_time_ms;
     latest_feedback_.rtt_ms = msg.rtt_ms;
+    delay_bwe_.SetRtt(msg.rtt_ms);
     if (network_available_ && has_feedback_ && latest_bwe_)
     {
         latest_update_ = policy_.OnBweResultAndFeedback(*latest_bwe_, latest_feedback_);
@@ -66,9 +78,8 @@ NetworkControlUpdate GoogCcNetworkController::OnTransportPacketsFeedback(const T
     const BweResult bwe = delay_bwe_.OnTransportFeedback(msg.feedback);
     latest_bwe_ = bwe;
 
-   
     latest_feedback_.now_ms = msg.feedback.feedback_time_ms;
-    latest_feedback_.receive_bitrate_bps = bwe.target_bitrate_bps;
+    latest_feedback_.receive_bitrate_bps = bwe.incoming_bitrate_bps;
     latest_feedback_.loss_rate = msg.feedback.LossRate();
     latest_feedback_.delay_gradient_ms = bwe.delay_trend_ms;
     has_feedback_ = true;
@@ -79,12 +90,12 @@ NetworkControlUpdate GoogCcNetworkController::OnTransportPacketsFeedback(const T
 NetworkControlUpdate GoogCcNetworkController::OnReceiverFeedback(const WeakNetFeedback& feedback)
 {
     // RR、NACK、PLI 等非 TWCC 指标仍沿用原来的弱网控制入口。
+    if (!network_available_) return EmptyUpdate();
     latest_feedback_ = feedback;
     has_feedback_ = true;
-    if (!network_available_)
-    {
-        return EmptyUpdate();
-    }
+    delay_bwe_.SetRtt(feedback.rtt_ms);
+    // Once RR fallback takes over, an RTT event must not replay old TWCC BWE.
+    latest_bwe_.reset();
     latest_update_ = policy_.OnFeedback(feedback);
     return latest_update_;
 }

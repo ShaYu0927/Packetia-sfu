@@ -20,6 +20,9 @@ class TransportBweController
 {
 public:
     BweResult OnTransportFeedback(const media::TransportFeedback& feedback);
+    void SetBitrateConstraints(const media::BitrateConstraints& constraints);
+    void SetRtt(uint32_t rtt_ms);
+    void Reset();
 
     void AddObserver(const std::shared_ptr<IBweObserver>& observer);
     void RemoveObserver(const std::shared_ptr<IBweObserver>& observer);
@@ -33,6 +36,7 @@ private:
     OUTrendDetect trend_detector_;
     IncomingBitrateEstimator incoming_bitrate_;
     RemoteBitrateController bitrate_controller_;
+    uint32_t rtt_ms_ = 0;
 
     std::vector<std::weak_ptr<IBweObserver>> observers_;
 };

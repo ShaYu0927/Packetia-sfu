@@ -12,8 +12,8 @@ namespace media
 /**
  * GoogCC 形状的编排层。
  *
- * 当前阶段只拆架构，不改变线上算法：
- *   - TransportBweController 负责基于 Transport-CC 的时延/吞吐估计；
+ *   - TransportBweController 负责基于 Transport-CC 的 OU 时延趋势、
+ *     接收速率和时间/RTT 驱动的 RemoteBitrateController；
  *   - NetworkController 负责质量分级、目标码率和 Pacer 建议。
  *
  * 后续可以逐个加入 ProbeController、AcknowledgedBitrateEstimator、ALR、
@@ -37,8 +37,9 @@ private:
     // 返回不包含目标码率、Pacer、探测或关键帧请求的空动作。
     NetworkControlUpdate EmptyUpdate() const;
 
-    // 网络不可用时仍可缓存观测值，但禁止输出新的发送控制动作。
+    // 网络不可用时不推进估计，恢复后等待新路径反馈。
     bool network_available_ = true;
+    BitrateConstraints bitrate_;
 
     // 最近一次 RR/弱网汇总反馈；TWCC 和 RTT 更新会补充这份状态。
     WeakNetFeedback latest_feedback_;

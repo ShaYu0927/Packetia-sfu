@@ -1,5 +1,6 @@
 #include "NetworkController.h"
 #include <algorithm>
+#include <stdexcept>
 
 namespace media
 {
@@ -12,11 +13,18 @@ NetworkController::NetworkController()
 
 void NetworkController::SetBitrateConstraints(const BitrateConstraints& constraints)
 {
+    if (!constraints.min_bitrate_bps || constraints.min_bitrate_bps > constraints.start_bitrate_bps ||
+        constraints.start_bitrate_bps > constraints.max_bitrate_bps)
+        throw std::invalid_argument("invalid network bitrate constraints");
     bitrate_ = constraints;
-    fallback_target_bitrate_bps_ = std::max(bitrate_.min_bitrate_bps,
-                                            std::min(fallback_target_bitrate_bps_, bitrate_.max_bitrate_bps));
-    stable_target_bitrate_bps_ = std::max(bitrate_.min_bitrate_bps,
-                                          std::min(stable_target_bitrate_bps_, bitrate_.max_bitrate_bps));
+    if (!has_feedback_)
+        fallback_target_bitrate_bps_ = stable_target_bitrate_bps_ = bitrate_.start_bitrate_bps;
+    else {
+        fallback_target_bitrate_bps_ = std::clamp(fallback_target_bitrate_bps_,
+            bitrate_.min_bitrate_bps, bitrate_.max_bitrate_bps);
+        stable_target_bitrate_bps_ = std::clamp(stable_target_bitrate_bps_,
+            bitrate_.min_bitrate_bps, bitrate_.max_bitrate_bps);
+    }
 }
 
 NetworkControlUpdate NetworkController::OnFeedback(const WeakNetFeedback& feedback)
@@ -105,7 +113,8 @@ NetworkControlUpdate NetworkController::BuildUpdate(const BweResult* bwe, const 
         switch (quality)
         {
         case NetworkQualityLevel::Excellent:
-            target_bitrate_bps = static_cast<uint32_t>(target_bitrate_bps * 1.05);
+            target_bitrate_bps = static_cast<uint32_t>(std::min<double>(
+                target_bitrate_bps * 1.05, bitrate_.max_bitrate_bps));
             break;
         case NetworkQualityLevel::Weak:
             target_bitrate_bps = static_cast<uint32_t>(target_bitrate_bps * 0.85);
@@ -152,13 +161,14 @@ NetworkControlUpdate NetworkController::BuildUpdate(const BweResult* bwe, const 
 
     if (bwe)
     {
-        update.target_rate.estimate.recv_bitrate_bps = bwe->target_bitrate_bps;
-        update.target_rate.estimate.bandwidth_bps = bwe->target_bitrate_bps;
+        update.target_rate.estimate.recv_bitrate_bps = bwe->incoming_bitrate_bps;
+        update.target_rate.estimate.bandwidth_bps = bwe->estimate_valid ? bwe->target_bitrate_bps : 0;
     }
 
     update.has_pacer_config = true;
     update.pacer_config.update_time_ms = feedback.now_ms;
-    update.pacer_config.pacing_bitrate_bps = target_bitrate_bps * 12 / 10;
+    update.pacer_config.pacing_bitrate_bps = static_cast<uint32_t>(std::min<uint64_t>(
+        static_cast<uint64_t>(target_bitrate_bps) * 12 / 10, UINT32_MAX));
     update.pacer_config.time_window_ms = 40;
 
     update.enable_nack = true;

@@ -1,8 +1,33 @@
 #include "transport_bwe_controller.h"
 #include <algorithm>
+#include <limits>
+
+void TransportBweController::SetBitrateConstraints(const media::BitrateConstraints& constraints)
+{
+    bitrate_controller_.SetBitrateConstraints(constraints.min_bitrate_bps,
+        constraints.start_bitrate_bps, constraints.max_bitrate_bps);
+    Reset();
+}
+
+void TransportBweController::SetRtt(uint32_t rtt_ms)
+{
+    if (!rtt_ms) return;
+    rtt_ms_ = rtt_ms;
+    bitrate_controller_.SetRtt(rtt_ms);
+}
+
+void TransportBweController::Reset()
+{
+    trend_detector_.Reset();
+    incoming_bitrate_.Reset();
+    bitrate_controller_.Reset();
+    rtt_ms_ = 0;
+}
 
 BweResult TransportBweController::OnTransportFeedback(const media::TransportFeedback& feedback)
 {
+    trend_detector_.SetNetworkEstimate(bitrate_controller_.target_bitrate_bps(), rtt_ms_);
+    trend_detector_.SetRateControlRegion(bitrate_controller_.region());
     BandwidthUsage usage = BandwidthUsage::kNormal;
     uint32_t incoming_bitrate_bps = 0;
 
@@ -37,14 +62,22 @@ BweResult TransportBweController::OnTransportFeedback(const media::TransportFeed
         usage = trend_detector_.OnPacket(static_cast<uint32_t>(sent.send_time_ms),
                                          static_cast<int64_t>(packet->receive_time_ms),
                                          sent.size_bytes);
-        incoming_bitrate_bps = incoming_bitrate_.Update(sent.size_bytes,
-                                                        static_cast<int64_t>(packet->receive_time_ms));
     }
+
+    // Receive-rate samples need receive-clock order; the trend detector above
+    // uses send order and skips backwards arrival samples caused by reordering.
+    std::sort(received_packets.begin(), received_packets.end(), [](const auto* a, const auto* b) {
+        return a->receive_time_ms < b->receive_time_ms;
+    });
+    for (const auto* packet : received_packets)
+        incoming_bitrate_bps = incoming_bitrate_.Update(packet->sent_packet.size_bytes,
+            static_cast<int64_t>(packet->receive_time_ms));
 
     BweResult result = bitrate_controller_.Update(usage,
                                                   incoming_bitrate_bps,
                                                   feedback.LossRate(),
-                                                  static_cast<int64_t>(feedback.feedback_time_ms));
+                                                  static_cast<int64_t>(std::min<uint64_t>(feedback.feedback_time_ms,
+                                                      std::numeric_limits<int64_t>::max())));
     result.delay_trend_ms = trend_detector_.effective_trend_ms();
     NotifyBweResult(result);
     return result;

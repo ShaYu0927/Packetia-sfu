@@ -74,7 +74,10 @@ private:
         // srtp_create derives and retains its own keys synchronously.
         policy.key = const_cast<unsigned char*>(key.data());
         policy.window_size = 1024;
-        policy.allow_repeat_tx = 0;
+        // NACK retries retain the original RTP sequence and encrypted payload.
+        // Only the plaintext header (e.g. TWCC sequence) may be rebuilt. Permit
+        // outbound reprotection; inbound authentication/replay checks stay on.
+        policy.allow_repeat_tx = type == ssrc_any_outbound ? 1 : 0;
         return srtp_create(&context, &policy) == srtp_err_status_ok;
     }
 
