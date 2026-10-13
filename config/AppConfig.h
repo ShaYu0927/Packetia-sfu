@@ -1,6 +1,8 @@
 #pragma once
 
 #include "service/RecordService/RecordingOptions.h"
+#include "service/Account/AccountOptions.h"
+#include "network/http/HttpOptions.h"
 #include "protocol/turn/TurnConstants.h"
 #include <cstddef>
 #include <cstdint>
@@ -42,7 +44,8 @@ struct WebRtcOptions
 {
     bool enabled = false;
     std::string public_ip;
-    std::string token;
+    // JWT issuer (API key) -> HS256 secret; credentials remain server-side.
+    std::map<std::string, std::string> api_keys;
     std::size_t max_sessions = 128;
     uint32_t reconnect_timeout_ms = 15000;
 };
@@ -77,6 +80,8 @@ struct AppConfig
     uint16_t rtsp_port = 554, sip_port = 5060, rtmp_port = 1935;
     uint16_t udp_port = 9000, websocket_port = 8080;
     uint32_t io_threads = 1;
+    service::account::AccountOptions account;
+    network::http::HttpOptions http;
     WebRtcOptions webrtc;
     TurnOptions turn;
     bool recording_enabled = true;

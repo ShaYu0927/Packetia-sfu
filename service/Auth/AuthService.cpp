@@ -21,11 +21,11 @@ AuthService::AuthService(std::shared_ptr<const IAuthenticator> authenticator,
 {
 }
 
-AuthError AuthService::ValidateContext(const AuthContext& caller) const
+AuthError AuthService::ValidateContext(const AuthContext& caller, bool check_expiry) const
 {
     if (caller.subject_id.empty() || caller.expires_at_unix_seconds <= 0)
         return AuthError::InvalidToken;
-    if (clock_() >= caller.expires_at_unix_seconds) return AuthError::ExpiredToken;
+    if (check_expiry && clock_() >= caller.expires_at_unix_seconds) return AuthError::ExpiredToken;
     return AuthError::None;
 }
 
@@ -38,7 +38,7 @@ AuthResult AuthService::Authenticate(std::string_view token, Audience expected_a
         return AuthResult::Failure(result.error);
     if (result.context->audience != expected_audience)
         return AuthResult::Failure(AuthError::WrongAudience);
-    const auto error = ValidateContext(*result.context);
+    const auto error = ValidateContext(*result.context, true);
     if (error != AuthError::None) return AuthResult::Failure(error);
     return result;
 }
@@ -46,7 +46,7 @@ AuthResult AuthService::Authenticate(std::string_view token, Audience expected_a
 AuthDecision AuthService::Authorize(const AuthContext& caller, Action action, const ResourceContext& resource) const
 {
     if (!policy_) return AuthDecision::Deny(AuthError::NotConfigured);
-    const auto error = ValidateContext(caller);
+    const auto error = ValidateContext(caller, false);
     if (error != AuthError::None) return AuthDecision::Deny(error);
     return policy_->Check(caller, action, resource);
 }

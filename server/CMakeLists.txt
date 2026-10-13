@@ -1,4 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
+add_subdirectory(api)
 
 # Keep the lifecycle controller independent of concrete network/media services.
 add_library(server STATIC
@@ -19,6 +20,6 @@ if(PACKETIA_WITH_LIBWEBSOCKETS AND PACKETIA_SRTP_AVAILABLE)
     add_executable(PacketiaRoomDemo examples/WebRtcRoomDemo.cpp WebRtcService.cpp)
     target_link_libraries(PacketiaRoomDemo PRIVATE
         "$<$<PLATFORM_ID:Linux>:-Wl,--start-group>"
-        server ROOM_LIB media network utils WebRtc TURN LOGGER
+        server ROOM_LIB media network utils WebRtc TURN LOGGER packetia_auth
         "$<$<PLATFORM_ID:Linux>:-Wl,--end-group>")
 endif()

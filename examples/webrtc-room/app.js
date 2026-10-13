@@ -7,17 +7,26 @@ let mode = '';
 let candidateErrors = [], gatheredCandidates = [];
 let resumeToken, reconnectTimeout = 15000, recovery, iceRestart;
 let leaving = false, lifecycle = 0, recoveryCount = 0, iceRestartCount = 0;
+const identity = `demo-${crypto.randomUUID()}`;
+let role = 'publisher';
 
 function controls() {
   const joined = Boolean(participant);
   const unavailable = busy || Boolean(recovery);
   $('join').disabled = joined || unavailable;
   $('room').disabled = joined || busy;
+  $('role').disabled = joined || busy;
   $('relay').disabled = Boolean(pc) || busy;
   $('leave').disabled = !joined || busy;
-  $('publish').disabled = !joined || Boolean(pc) || unavailable;
+  $('publish').disabled = !joined || role !== 'publisher' || Boolean(pc) || unavailable;
   $('publisher').disabled = !joined || Boolean(pc) || busy;
-  $('watch').disabled = !joined || Boolean(pc) || unavailable || !$('publisher').value;
+  $('watch').disabled = !joined || role !== 'viewer' || Boolean(pc) || unavailable || !$('publisher').value;
+}
+async function roomToken(id) {
+  const response = await fetch('/token', {method: 'POST', signal: AbortSignal.timeout(5000), headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({identity, room: id, role})});
+  if (!response.ok) throw new Error('Could not obtain a room token');
+  return (await response.json()).token;
 }
 function request(message) {
   const operation = requests.then(() => new Promise((resolve, reject) => {
@@ -28,7 +37,7 @@ function request(message) {
       socket?.close();
     }, 10000);
     pending = {resolve, reject, timeout};
-    socket.send(JSON.stringify({...message, token: config.token}));
+    socket.send(JSON.stringify(message));
   }));
   requests = operation.catch(() => {});
   return operation;
@@ -89,7 +98,8 @@ async function recover(epoch) {
     if (leaving || lifecycle !== epoch) return;
     try {
       await openSocket();
-      const reply = await request({type: 'resume', room_id: roomId, participant_id: participant, resume_token: resumeToken});
+      const token = await roomToken(roomId);
+      const reply = await request({type: 'resume', token, room_id: roomId, participant_id: participant, resume_token: resumeToken});
       if (leaving || lifecycle !== epoch) return;
       if (reply.type !== 'resumed') throw new Error('Unexpected recovery reply');
       resumeToken = reply.resume_token;
@@ -112,8 +122,10 @@ async function recover(epoch) {
 }
 async function join(id = $('room').value) {
   leaving = false;
+  role = $('role').value;
+  const token = await roomToken(id);
   await openSocket();
-  const reply = await request({type: 'join', room_id: id});
+  const reply = await request({type: 'join', token, room_id: id});
   participant = reply.participant_id; roomId = id;
   resumeToken = reply.resume_token;
   reconnectTimeout = reply.reconnect_timeout_ms;

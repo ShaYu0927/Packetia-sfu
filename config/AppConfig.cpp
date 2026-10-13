@@ -78,10 +78,22 @@ void AppConfig::Validate() const {
         throw std::invalid_argument("invalid segment duration or reorder window (0..5000 ms)");
     if (listen_ip.empty() || !rtsp_port || !sip_port || !rtmp_port || !udp_port || !websocket_port || !io_threads)
         throw std::invalid_argument("invalid server address, port or thread count");
+    if (!account.IsValid())
+        throw std::invalid_argument("invalid account database, session lifetime or worker limits");
+    if (http.listen_ip.empty() || !http.listen_port || !http.max_body_bytes || http.max_body_bytes > 1024 * 1024)
+        throw std::invalid_argument("invalid HTTP address, port or request body limit (1..1048576 bytes)");
+    if (http.enabled && !account.enabled)
+        throw std::invalid_argument("http.enabled requires account.enabled");
     if (!webrtc.max_sessions)
         throw std::invalid_argument("webrtc.max_sessions must be positive");
     if (!webrtc.reconnect_timeout_ms || webrtc.reconnect_timeout_ms > 120000)
         throw std::invalid_argument("webrtc.reconnect_timeout_ms must be between 1 and 120000");
+    for (const auto& key : webrtc.api_keys) {
+        if (key.first.empty() || key.first.size() > 128 ||
+            !std::all_of(key.first.begin(), key.first.end(), [](unsigned char ch) { return ch >= 33 && ch <= 126; }) ||
+            key.second.size() < 32 || key.second.size() > 4096)
+            throw std::invalid_argument("webrtc.api_keys requires printable API keys (1..128 bytes) and secrets (32..4096 bytes)");
+    }
     if (!turn.max_sessions || !turn.max_allocations || !turn.max_allocations_per_user ||
         !turn.max_permissions || !turn.max_channels || !turn.unauthorized_ratelimit_rps ||
         (turn.relay_port_min == 0 ? turn.relay_port_max != 0 : turn.relay_port_min > turn.relay_port_max))
@@ -98,7 +110,7 @@ void AppConfig::Validate() const {
 }
 AppConfig AppConfig::FromJson(const std::string& text) {
     const auto root = Json::parse(text);
-    Keys(root, {"server", "webrtc", "turn", "services", "recording", "stream_defaults", "streams"});
+    Keys(root, {"server", "account", "http", "webrtc", "turn", "services", "recording", "stream_defaults", "streams"});
     AppConfig config;
     if (root.contains("server")) {
         const auto& server = root.at("server");
@@ -111,12 +123,36 @@ AppConfig AppConfig::FromJson(const std::string& text) {
         Number(server, "websocket_port", config.websocket_port);
         Number(server, "io_threads", config.io_threads);
     }
+    if (root.contains("account")) {
+        const auto& account = root.at("account");
+        Keys(account, {"enabled", "database_path", "session_ttl_seconds", "worker_count", "max_pending_requests"});
+        if (account.contains("enabled")) config.account.enabled = Flag(account.at("enabled"));
+        if (account.contains("database_path")) config.account.database_path = account.at("database_path").get<std::string>();
+        Number(account, "session_ttl_seconds", config.account.session_ttl_seconds);
+        Number(account, "worker_count", config.account.worker_count);
+        Number(account, "max_pending_requests", config.account.max_pending_requests);
+    }
+    if (root.contains("http")) {
+        const auto& http = root.at("http");
+        Keys(http, {"enabled", "listen_ip", "listen_port", "max_body_bytes"});
+        if (http.contains("enabled")) config.http.enabled = Flag(http.at("enabled"));
+        if (http.contains("listen_ip")) config.http.listen_ip = http.at("listen_ip").get<std::string>();
+        Number(http, "listen_port", config.http.listen_port);
+        Number(http, "max_body_bytes", config.http.max_body_bytes);
+    }
     if (root.contains("webrtc")) {
         const auto& rtc = root.at("webrtc");
-        Keys(rtc, {"enabled", "public_ip", "token", "max_sessions", "reconnect_timeout_ms"});
+        if (rtc.contains("token"))
+            throw std::invalid_argument("webrtc.token was removed; configure webrtc.api_keys and issue room JWTs");
+        Keys(rtc, {"enabled", "public_ip", "api_keys", "max_sessions", "reconnect_timeout_ms"});
         if (rtc.contains("enabled")) config.webrtc.enabled = Flag(rtc.at("enabled"));
         if (rtc.contains("public_ip")) config.webrtc.public_ip = rtc.at("public_ip").get<std::string>();
-        if (rtc.contains("token")) config.webrtc.token = rtc.at("token").get<std::string>();
+        if (rtc.contains("api_keys")) {
+            const auto& keys = rtc.at("api_keys");
+            if (!keys.is_object()) throw std::invalid_argument("webrtc.api_keys must be an object");
+            for (auto it = keys.begin(); it != keys.end(); ++it)
+                config.webrtc.api_keys.emplace(it.key(), it.value().get<std::string>());
+        }
         Number(rtc, "max_sessions", config.webrtc.max_sessions);
         Number(rtc, "reconnect_timeout_ms", config.webrtc.reconnect_timeout_ms);
     }
@@ -203,7 +239,13 @@ AppConfig AppConfig::FromEnvironment()
     config.webrtc.enabled = EnvironmentFlag("PACKETIA_WEBRTC", config.webrtc.enabled);
     config.turn.enabled = EnvironmentFlag("PACKETIA_TURN", config.turn.enabled);
     if (const char* ip = std::getenv("PACKETIA_WEBRTC_PUBLIC_IP")) config.webrtc.public_ip = ip;
-    if (const char* token = std::getenv("PACKETIA_WEBRTC_TOKEN")) config.webrtc.token = token;
+    if (std::getenv("PACKETIA_WEBRTC_TOKEN"))
+        throw std::invalid_argument("PACKETIA_WEBRTC_TOKEN was removed; use PACKETIA_WEBRTC_API_KEY and PACKETIA_WEBRTC_API_SECRET");
+    const auto api_key = std::getenv("PACKETIA_WEBRTC_API_KEY");
+    const auto api_secret = std::getenv("PACKETIA_WEBRTC_API_SECRET");
+    if (static_cast<bool>(api_key) != static_cast<bool>(api_secret))
+        throw std::invalid_argument("PACKETIA_WEBRTC_API_KEY and PACKETIA_WEBRTC_API_SECRET must be set together");
+    if (api_key) config.webrtc.api_keys[api_key] = api_secret;
     if (const char* directory = std::getenv("PACKETIA_RECORD_DIR")) config.recording.directory = directory;
     config.Validate();
     return config;

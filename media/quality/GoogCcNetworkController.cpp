@@ -10,8 +10,7 @@ GoogCcNetworkController::GoogCcNetworkController(const NetworkControllerConfig& 
     delay_bwe_.SetBitrateConstraints(config.bitrate);
 }
 
-NetworkControlUpdate GoogCcNetworkController::OnNetworkAvailability(
-    const NetworkAvailability& msg)
+NetworkControlUpdate GoogCcNetworkController::OnNetworkAvailability(const NetworkAvailability& msg)
 {
     if (network_available_ == msg.network_available) return latest_update_;
     network_available_ = msg.network_available;
@@ -31,7 +30,6 @@ NetworkControlUpdate GoogCcNetworkController::OnNetworkAvailability(
 
 NetworkControlUpdate GoogCcNetworkController::OnNetworkRouteChange(const NetworkRouteChange& msg)
 {
-    // Reset delay, receive-rate, capacity, loss baseline and initialization.
     delay_bwe_.SetBitrateConstraints(msg.bitrate);
     bitrate_ = msg.bitrate;
     policy_ = NetworkController();

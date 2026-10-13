@@ -12,6 +12,7 @@
   <main>
     <form id="join-form" class="toolbar">
       <label>Room<input id="room" value="demo" maxlength="64" required pattern="[A-Za-z0-9_.-]+"></label>
+      <label>Role<select id="role"><option value="publisher">Publisher</option><option value="viewer">Viewer</option></select></label>
       <label class="toggle"><input id="relay" type="checkbox">Force TURN</label>
       <button id="join" type="submit">Join</button>
       <button id="leave" type="button" disabled>Leave</button>

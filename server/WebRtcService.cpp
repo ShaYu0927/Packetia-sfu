@@ -14,6 +14,9 @@
 #include "network/websocket/WsServer.h"
 #include "protocol/WebRtc/WebRtcCodec.h"
 #include "protocol/WebRtc/WebRtcUdpMux.h"
+#include "service/Auth/JwtAuthenticator.h"
+#include "service/Auth/KeyProvider.h"
+#include "service/Auth/RoomAccessPolicy.h"
 #include "third/nlohmann/json.hpp"
 
 #include <openssl/crypto.h>
@@ -21,6 +24,7 @@
 #include <algorithm>
 #include <set>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 
 namespace server
@@ -29,6 +33,7 @@ namespace
 {
 using Json = nlohmann::json;
 using namespace protocol::webrtc;
+namespace auth = service::auth;
 constexpr size_t kMaxSdpBytes = 64 * 1024;
 // Account for JSON escaping of an otherwise valid SDP.
 constexpr size_t kMaxMessageBytes = 6 * kMaxSdpBytes + 4096;
@@ -37,6 +42,23 @@ constexpr uint64_t kNegotiationTimeoutMs = 30000;
 std::string Error(const std::string& error)
 {
     return Json{{"type", "error"}, {"error", error}}.dump();
+}
+
+std::string AuthError(auth::AuthError error)
+{
+    const char* code = "unauthenticated";
+    if (error == auth::AuthError::Forbidden) code = "forbidden";
+    else if (error == auth::AuthError::ExpiredToken) code = "token_expired";
+    return Json{{"type", "error"}, {"error", error == auth::AuthError::Forbidden ? "Forbidden" : "Unauthorized"},
+                {"code", code}}.dump();
+}
+
+auth::ResourceContext RoomResource(const std::string& roomId)
+{
+    auth::ResourceContext resource;
+    resource.type = auth::ResourceType::Room;
+    resource.id = resource.room_id = roomId;
+    return resource;
 }
 
 int AddressFamily(const std::string& ip)
@@ -88,6 +110,9 @@ public:
 
 struct WebRtcService::Membership
 {
+    // Verified admission claims belong to this signaling binding. Media packets
+    // never carry a JWT; subsequent operations use this immutable grant snapshot.
+    auth::AuthContext caller;
     std::shared_ptr<room::Room> room;
     std::shared_ptr<room::Participant> participant;
     room::SignalingBinding binding;
@@ -101,9 +126,35 @@ struct WebRtcService::Subscription
     WebRtcMediaDescription media;
 };
 
+// JSON stays at the signaling boundary; dispatch uses a single parsed type.
+struct WebRtcService::SignalingRequest
+{
+    enum class Type { Unknown, Leave, Join, Resume, Tracks, Publish, Subscribe, Offer, Answer, Rollback, RestartIce };
+
+    static Type ParseType(std::string_view name)
+    {
+        static constexpr std::pair<std::string_view, Type> types[] = {
+            {"close", Type::Leave}, {"leave", Type::Leave},
+            {"join", Type::Join}, {"resume", Type::Resume}, {"tracks", Type::Tracks},
+            {"publish", Type::Publish}, {"subscribe", Type::Subscribe},
+            {"offer", Type::Offer}, {"answer", Type::Answer}, {"rollback", Type::Rollback},
+            {"restart_ice", Type::RestartIce}
+        };
+        for (const auto& type : types)
+            if (type.first == name) return type.second;
+        return Type::Unknown;
+    }
+
+    Type type;
+    Json body;
+};
+
 WebRtcService::WebRtcService(EventLoop* loop, config::AppConfig config,
                              std::shared_ptr<media::IEncodedFramePublisher> publisher)
-    : loop_(loop), config_(std::move(config)), publisher_(std::move(publisher))
+    : loop_(loop), config_(std::move(config)),
+      auth_(std::make_shared<auth::JwtAuthenticator>(std::make_shared<auth::StaticKeyProvider>(config_.webrtc.api_keys)),
+            std::make_shared<auth::RoomAccessPolicy>()),
+      publisher_(std::move(publisher))
 {
 }
 
@@ -120,10 +171,16 @@ bool WebRtcService::Start()
         LOG_ERROR("WebRtcService Start: requires an event loop and shared service ownership");
         return false;
     }
-    if (!config_.webrtc.enabled || config_.webrtc.token.empty() || config_.webrtc.max_sessions == 0 ||
+    try { config_.Validate(); }
+    catch (const std::invalid_argument& error)
+    {
+        LOG_ERROR("WebRtcService Start: ", error.what());
+        return false;
+    }
+    if (!config_.webrtc.enabled || config_.webrtc.api_keys.empty() || config_.webrtc.max_sessions == 0 ||
         !config_.webrtc.reconnect_timeout_ms || config_.webrtc.reconnect_timeout_ms > 120000)
     {
-        LOG_ERROR("WebRtcService Start: enable WebRTC with a nonempty token and positive session limit");
+        LOG_ERROR("WebRtcService Start: enable WebRTC with API keys and a positive session limit");
         return false;
     }
     if (AddressFamily(config_.webrtc.public_ip) == AF_UNSPEC)
@@ -238,146 +295,203 @@ std::string WebRtcService::OnMessage(const std::string& connection, const std::s
     const bool hadSession = sessions_.count(connection) != 0;
     try
     {
-        const auto request = Json::parse(message, [](int depth, Json::parse_event_t, Json&)
+        auto body = Json::parse(message, [](int depth, Json::parse_event_t, Json&)
         {
             if (depth > 8) throw std::invalid_argument("JSON nesting limit exceeded");
             return true;
         });
-        if (!request.is_object() || !request.contains("type") || !request["type"].is_string())
+        if (!body.is_object() || !body.contains("type") || !body["type"].is_string())
             return Error("Expected a signaling message type");
-        const auto type = request["type"].get<std::string>();
-        if (type == "close" || type == "leave")
-        {
-            RemoveSession(connection);
-            return Json{{"type", "closed"}}.dump();
-        }
-        if (type != "offer" && type != "answer" && type != "rollback" && type != "join" &&
-            type != "tracks" && type != "publish" && type != "subscribe" && type != "resume" && type != "restart_ice")
-            return Error("Unsupported signaling message type");
-        if (!request.contains("token") || !request["token"].is_string()) return Error("Unauthorized");
-        const auto token = request["token"].get<std::string>();
-        if (token.size() != config_.webrtc.token.size() ||
-            CRYPTO_memcmp(token.data(), config_.webrtc.token.data(), token.size()) != 0)
-            return Error("Unauthorized");
-        if (type == "join")
-        {
-            if (!request.contains("room_id") || !request["room_id"].is_string()) return Error("Expected room_id");
-            return JoinRoom(connection, request["room_id"].get<std::string>());
-        }
-        if (type == "resume")
-        {
-            if (!request.contains("room_id") || !request["room_id"].is_string() ||
-                !request.contains("participant_id") || !request["participant_id"].is_string() ||
-                !request.contains("resume_token") || !request["resume_token"].is_string())
-                return Error("Expected room, participant and resume token");
-            return ResumeRoom(connection, request["room_id"].get<std::string>(),
-                request["participant_id"].get<std::string>(), request["resume_token"].get<std::string>());
-        }
-        if (type == "tracks") return ListTracks(connection);
-        const auto found = sessions_.find(connection);
-        if (type == "answer" || type == "rollback")
-        {
-            if (found == sessions_.end()) return Error("No session to negotiate");
-            auto& session = *found->second;
-            if (session.pending_offer_id.empty() || !request.contains("negotiation_id") ||
-                !request["negotiation_id"].is_string() || request["negotiation_id"] != session.pending_offer_id)
-                return Error("Answer or rollback does not match the pending offer");
-            if (type == "answer")
-            {
-                if (!request.contains("sdp") || !request["sdp"].is_string()) return Error("Expected an SDP answer");
-                const auto answer = request["sdp"].get<std::string>();
-                if (answer.empty() || answer.size() > kMaxSdpBytes) return Error("Invalid SDP answer size");
-                if (!session.rtc->ApplyRemoteAnswer(answer))
-                {
-                    const auto error = session.rtc->LastError();
-                    if (session.rtc->SignalingState() == sdp::SdpNegotiationState::Stable)
-                    {
-                        session.pending_offer_id.clear();
-                        session.negotiation_deadline_ms = 0;
-                    }
-                    return Error(error);
-                }
-            }
-            else session.rtc->RollbackNegotiation();
-            const auto id = std::move(session.pending_offer_id);
-            session.pending_offer_id.clear();
-            session.negotiation_deadline_ms = 0;
-            return Json{{"type", type == "answer" ? "negotiated" : "rolled_back"},
-                {"session_id", session.id}, {"negotiation_id", id}}.dump();
-        }
-        if (!request.contains("sdp") || !request["sdp"].is_string()) return Error("Expected an SDP offer");
-        const auto offer = request["sdp"].get<std::string>();
-        if (offer.empty() || offer.size() > kMaxSdpBytes) return Error("SDP must be between 1 and 65536 bytes");
-        if (type == "restart_ice")
-        {
-            if (found == sessions_.end() || !memberships_.count(connection)) return Error("No room media session to restart");
-            WebRtcSessionDescription answer;
-            if (!found->second->rtc->RestartIce(offer, answer)) return Error(found->second->rtc->LastError());
-            return Json{{"type", "answer"}, {"session_id", found->second->id},
-                {"sdp", sdp::Sdp::Serialize(answer)}}.dump();
-        }
-        if (type == "publish" || type == "subscribe")
-        {
-            const auto member = memberships_.find(connection);
-            if (member == memberships_.end()) return Error("Join a room before publishing or subscribing");
-            if (found != sessions_.end()) return Error("Leave and rejoin before changing the room media session");
-            if (type == "publish") return CreateSession(connection, offer);
-            if (!request.contains("tracks") || !request["tracks"].is_array() || request["tracks"].empty() ||
-                request["tracks"].size() > 8) return Error("Expected 1-8 track/MID bindings");
-            std::vector<Subscription> subscriptions;
-            std::set<std::string> trackIds, mids;
-            for (const auto& binding : request["tracks"])
-            {
-                const auto trackId = binding.at("track_id").get<std::string>();
-                const auto mid = binding.at("mid").get<std::string>();
-                if (mid.empty() || mid.size() > 16 || !trackIds.insert(trackId).second || !mids.insert(mid).second)
-                    return Error("Duplicate or invalid track/MID binding");
-                bool resolved = false;
-                for (const auto& item : memberships_)
-                {
-                    if (item.first == connection || item.second->room != member->second->room) continue;
-                    const auto track = item.second->participant->GetPublishedTrack(trackId);
-                    const auto source = sessions_.find(item.first);
-                    if (!track || source == sessions_.end() || source->second->subscriber) continue;
-                    for (const auto& media : source->second->rtc->LocalDescription().medias)
-                    {
-                        if (media.mid != track->info().mid || !media.port || media.direction != MediaDirection::RecvOnly) continue;
-                        Subscription subscription{trackId, media};
-                        subscription.media.mid = mid;
-                        subscription.media.direction = MediaDirection::SendOnly;
-                        subscription.media.ssrcs.clear();
-                        subscription.media.ssrcGroups.clear();
-                        subscription.media.msids = {"packetia " + trackId};
-                        for (auto& extension : subscription.media.headerExtensions) extension.direction = MediaDirection::SendOnly;
-                        uint32_t ssrc = 0;
-                        do
-                        {
-                            if (!utils::SecureRandomBytes(reinterpret_cast<uint8_t*>(&ssrc), sizeof(ssrc)))
-                                return Error("Could not generate sender SSRC");
-                        } while (!ssrc || std::any_of(subscriptions.begin(), subscriptions.end(),
-                            [&](const auto& previous) { return previous.media.ssrcs.front().ssrc == ssrc; }));
-                        subscription.media.ssrcs.push_back({ssrc, {{"cname", "packetia"}}});
-                        subscriptions.push_back(std::move(subscription));
-                        resolved = true;
-                        break;
-                    }
-                    if (resolved) break;
-                }
-                if (!resolved) return Error("Track is unavailable in this room");
-            }
-            return CreateSession(connection, offer, subscriptions);
-        }
-        if (memberships_.count(connection)) return Error("Use publish or subscribe for a room media session");
-        if (found != sessions_.end()) return UpdateSession(*found->second, offer);
-        if (sessions_.size() >= config_.webrtc.max_sessions) return Error("WebRTC session limit reached");
-        return CreateSession(connection, offer);
+        const auto type = SignalingRequest::ParseType(body["type"].get_ref<const std::string&>());
+        return DispatchMessage(connection, SignalingRequest{type, std::move(body)});
     }
     catch (const std::exception&)
     {
         // Do not echo parser diagnostics: they can contain credentials.
+        // Handlers share this cleanup boundary for partially created sessions.
         if (!hadSession) RemoveSession(connection);
         return Error("Invalid signaling request");
     }
+}
+
+std::string WebRtcService::DispatchMessage(const std::string& connection, const SignalingRequest& request)
+{
+    using Type = SignalingRequest::Type;
+    if (request.type == Type::Unknown) return Error("Unsupported signaling message type");
+    if (request.type == Type::Leave)
+    {
+        RemoveSession(connection);
+        return Json{{"type", "closed"}}.dump();
+    }
+    if (request.type == Type::Join || request.type == Type::Resume)
+        return HandleAdmission(connection, request);
+
+    const auto rejection = AuthorizeMessage(connection, request);
+    if (!rejection.empty()) return rejection;
+    switch (request.type)
+    {
+    case Type::Tracks: return ListTracks(connection);
+    case Type::Offer:
+        return Error("Room media renegotiation requires a new session; use restart_ice for ICE recovery");
+    case Type::Answer:
+    case Type::Rollback:
+        return HandleNegotiationReply(*sessions_.at(connection), request);
+    case Type::Publish:
+    case Type::Subscribe:
+    case Type::RestartIce:
+        return HandleMediaOffer(connection, request);
+    default: return Error("Unsupported signaling message type");
+    }
+}
+
+std::string WebRtcService::AuthorizeMessage(const std::string& connection, const SignalingRequest& request) const
+{
+    const auto member = memberships_.find(connection);
+    if (member == memberships_.end()) return AuthError(auth::AuthError::Unauthenticated);
+    using Type = SignalingRequest::Type;
+    auth::Action action;
+    switch (request.type)
+    {
+    case Type::Tracks: action = auth::Action::ListTracks; break;
+    case Type::Publish: action = auth::Action::Publish; break;
+    case Type::Subscribe: action = auth::Action::Subscribe; break;
+    case Type::Offer:
+    case Type::Answer:
+    case Type::Rollback:
+    case Type::RestartIce:
+    {
+        const auto session = sessions_.find(connection);
+        if (session == sessions_.end()) return Error("Publish or subscribe before negotiating a media session");
+        action = session->second->subscriber ? auth::Action::Subscribe : auth::Action::Publish;
+        break;
+    }
+    default: return Error("Unsupported signaling message type");
+    }
+    const auto decision = auth_.Authorize(member->second->caller, action, RoomResource(member->second->room->Id()));
+    return decision.Allowed() ? std::string{} : AuthError(decision.error);
+}
+
+std::string WebRtcService::HandleAdmission(const std::string& connection, const SignalingRequest& request)
+{
+    const auto& body = request.body;
+    if (!body.contains("token") || !body["token"].is_string())
+        return AuthError(auth::AuthError::Unauthenticated);
+    auto result = auth_.Authenticate(body["token"].get_ref<const std::string&>(), auth::Audience::WebRtc);
+    if (!result.Succeeded()) return AuthError(result.error);
+    if (!body.contains("room_id") || !body["room_id"].is_string()) return Error("Expected room_id");
+    const auto roomId = body["room_id"].get<std::string>();
+    const auto decision = auth_.Authorize(*result.context, auth::Action::JoinRoom, RoomResource(roomId));
+    if (!decision.Allowed()) return AuthError(decision.error);
+    if (request.type == SignalingRequest::Type::Join)
+        return JoinRoom(connection, roomId, std::move(*result.context));
+    if (!body.contains("participant_id") || !body["participant_id"].is_string() ||
+        !body.contains("resume_token") || !body["resume_token"].is_string())
+        return Error("Expected room, participant and resume token");
+    return ResumeRoom(connection, roomId, body["participant_id"].get<std::string>(),
+        body["resume_token"].get<std::string>(), *result.context);
+}
+
+std::string WebRtcService::HandleNegotiationReply(Session& session, const SignalingRequest& request)
+{
+    const auto& body = request.body;
+    if (session.pending_offer_id.empty() || !body.contains("negotiation_id") ||
+        !body["negotiation_id"].is_string() || body["negotiation_id"] != session.pending_offer_id)
+        return Error("Answer or rollback does not match the pending offer");
+    const bool isAnswer = request.type == SignalingRequest::Type::Answer;
+    if (isAnswer)
+    {
+        if (!body.contains("sdp") || !body["sdp"].is_string()) return Error("Expected an SDP answer");
+        const auto& answer = body["sdp"].get_ref<const std::string&>();
+        if (answer.empty() || answer.size() > kMaxSdpBytes) return Error("Invalid SDP answer size");
+        if (!session.rtc->ApplyRemoteAnswer(answer))
+        {
+            const auto error = session.rtc->LastError();
+            if (session.rtc->SignalingState() == sdp::SdpNegotiationState::Stable)
+            {
+                session.pending_offer_id.clear();
+                session.negotiation_deadline_ms = 0;
+            }
+            return Error(error);
+        }
+    }
+    else session.rtc->RollbackNegotiation();
+    const auto id = std::move(session.pending_offer_id);
+    session.pending_offer_id.clear();
+    session.negotiation_deadline_ms = 0;
+    return Json{{"type", isAnswer ? "negotiated" : "rolled_back"},
+        {"session_id", session.id}, {"negotiation_id", id}}.dump();
+}
+
+std::string WebRtcService::HandleMediaOffer(const std::string& connection, const SignalingRequest& request)
+{
+    const auto& body = request.body;
+    if (!body.contains("sdp") || !body["sdp"].is_string()) return Error("Expected an SDP offer");
+    const auto& offer = body["sdp"].get_ref<const std::string&>();
+    if (offer.empty() || offer.size() > kMaxSdpBytes) return Error("SDP must be between 1 and 65536 bytes");
+    if (request.type == SignalingRequest::Type::RestartIce)
+    {
+        auto& session = *sessions_.at(connection);
+        WebRtcSessionDescription answer;
+        if (!session.rtc->RestartIce(offer, answer)) return Error(session.rtc->LastError());
+        return Json{{"type", "answer"}, {"session_id", session.id},
+            {"sdp", sdp::Sdp::Serialize(answer)}}.dump();
+    }
+    if (sessions_.count(connection)) return Error("Leave and rejoin before changing the room media session");
+    if (request.type == SignalingRequest::Type::Publish) return CreateSession(connection, offer);
+    return HandleSubscribe(connection, request, offer);
+}
+
+std::string WebRtcService::HandleSubscribe(const std::string& connection, const SignalingRequest& request,
+                                          const std::string& offer)
+{
+    const auto& body = request.body;
+    if (!body.contains("tracks") || !body["tracks"].is_array() || body["tracks"].empty() || body["tracks"].size() > 8)
+        return Error("Expected 1-8 track/MID bindings");
+    std::vector<Subscription> subscriptions;
+    std::set<std::string> trackIds, mids;
+    for (const auto& binding : body["tracks"])
+    {
+        const auto trackId = binding.at("track_id").get<std::string>();
+        const auto mid = binding.at("mid").get<std::string>();
+        if (mid.empty() || mid.size() > 16 || !trackIds.insert(trackId).second || !mids.insert(mid).second)
+            return Error("Duplicate or invalid track/MID binding");
+        auto media = FindPublishedMedia(connection, trackId);
+        if (!media) return Error("Track is unavailable in this room");
+        Subscription subscription{trackId, std::move(*media)};
+        subscription.media.mid = mid;
+        subscription.media.direction = MediaDirection::SendOnly;
+        subscription.media.ssrcs.clear();
+        subscription.media.ssrcGroups.clear();
+        subscription.media.msids = {"packetia " + trackId};
+        for (auto& extension : subscription.media.headerExtensions) extension.direction = MediaDirection::SendOnly;
+        uint32_t ssrc = 0;
+        do
+        {
+            if (!utils::SecureRandomBytes(reinterpret_cast<uint8_t*>(&ssrc), sizeof(ssrc)))
+                return Error("Could not generate sender SSRC");
+        } while (!ssrc || std::any_of(subscriptions.begin(), subscriptions.end(),
+            [&](const auto& previous) { return previous.media.ssrcs.front().ssrc == ssrc; }));
+        subscription.media.ssrcs.push_back({ssrc, {{"cname", "packetia"}}});
+        subscriptions.push_back(std::move(subscription));
+    }
+    return CreateSession(connection, offer, subscriptions);
+}
+
+std::optional<sdp::SdpMedia> WebRtcService::FindPublishedMedia(const std::string& connection,
+                                                            const std::string& trackId) const
+{
+    const auto& member = *memberships_.at(connection);
+    for (const auto& item : memberships_)
+    {
+        if (item.first == connection || item.second->room != member.room) continue;
+        const auto track = item.second->participant->GetPublishedTrack(trackId);
+        const auto source = sessions_.find(item.first);
+        if (!track || source == sessions_.end() || source->second->subscriber) continue;
+        for (const auto& media : source->second->rtc->LocalDescription().medias)
+            if (media.mid == track->info().mid && media.port && media.direction == MediaDirection::RecvOnly)
+                return media;
+    }
+    return std::nullopt;
 }
 
 std::string WebRtcService::CreateSession(const std::string& connection, const std::string& offerSdp,
@@ -547,12 +661,16 @@ std::string WebRtcService::CreateSession(const std::string& connection, const st
     return Json{{"type", "answer"}, {"session_id", session.id}, {"sdp", sdp::Sdp::Serialize(answer)}}.dump();
 }
 
-std::string WebRtcService::JoinRoom(const std::string& connection, const std::string& roomId)
+std::string WebRtcService::JoinRoom(const std::string& connection, const std::string& roomId,
+    auth::AuthContext caller)
 {
     if (roomId.empty() || roomId.size() > 64 ||
         roomId.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.") != std::string::npos)
         return Error("Invalid room_id");
     if (sessions_.count(connection) || memberships_.count(connection)) return Error("Connection has already joined or negotiated");
+    for (const auto& entry : memberships_)
+        if (entry.second->room->Id() == roomId && entry.second->caller.subject_id == caller.subject_id)
+            return Error("Identity is already in this room; resume the existing participant");
     if (memberships_.size() >= config_.webrtc.max_sessions) return Error("Room participant limit reached");
     std::string id;
     if (!utils::SecureRandomHex(8, id)) return Error("Could not generate participant ID");
@@ -566,16 +684,20 @@ std::string WebRtcService::JoinRoom(const std::string& connection, const std::st
         target = std::make_shared<room::Room>(room::RoomInfo{roomId, roomId}, options);
     }
     auto member = std::make_unique<Membership>();
+    member->caller = std::move(caller);
     member->room = target;
-    member->participant = std::make_shared<room::Participant>(id, id);
+    member->participant = std::make_shared<room::Participant>(room::ParticipantIdentity{
+        id, member->caller.name.empty() ? member->caller.subject_id : member->caller.name, member->caller.subject_id});
     if (!member->participant->BindSignaling(connection)) return Error("Could not bind participant signaling");
     member->binding = member->participant->GetSignaling();
     if (!utils::SecureRandomHex(32, member->resume_token)) return Error("Could not generate resume token");
     const auto resumeToken = member->resume_token;
+    const auto subjectId = member->caller.subject_id;
     if (!target->Join(member->participant)) return Error("Could not join room");
     memberships_.emplace(connection, std::move(member));
     participant_connections_.emplace(id, connection);
     return Json{{"type", "joined"}, {"room_id", roomId}, {"participant_id", id},
+        {"subject_id", subjectId},
         {"resume_token", resumeToken}, {"reconnect_timeout_ms", config_.webrtc.reconnect_timeout_ms}}.dump();
 }
 
@@ -597,7 +719,7 @@ void WebRtcService::OnSignalingClosed(const std::string& connection)
 }
 
 std::string WebRtcService::ResumeRoom(const std::string& connection, const std::string& roomId,
-    const std::string& participantId, const std::string& resumeToken)
+    const std::string& participantId, const std::string& resumeToken, const auth::AuthContext& caller)
 {
     if (memberships_.count(connection) || sessions_.count(connection)) return Error("Connection is already bound");
     const auto index = participant_connections_.find(participantId);
@@ -605,6 +727,13 @@ std::string WebRtcService::ResumeRoom(const std::string& connection, const std::
     const auto found = memberships_.find(index->second);
     if (found == memberships_.end()) return Error("Participant recovery expired");
     auto& member = *found->second;
+    // A fresh admission token proves the same issuer/identity. Permission updates
+    // need an explicit business operation; a resume cannot silently widen or
+    // narrow the rights of an already running media session.
+    if (caller.issuer != member.caller.issuer || caller.subject_id != member.caller.subject_id ||
+        caller.video.room != member.caller.video.room || caller.video.room_join != member.caller.video.room_join ||
+        caller.video.can_publish != member.caller.video.can_publish || caller.video.can_subscribe != member.caller.video.can_subscribe)
+        return AuthError(auth::AuthError::Forbidden);
     if (member.room->Id() != roomId || resumeToken.size() != member.resume_token.size() ||
         CRYPTO_memcmp(resumeToken.data(), member.resume_token.data(), resumeToken.size()) != 0)
         return Error("Invalid participant recovery credentials");
@@ -626,6 +755,7 @@ std::string WebRtcService::ResumeRoom(const std::string& connection, const std::
     auto bindingConnection = connection;
     auto indexedConnection = connection;
     const auto response = Json{{"type", "resumed"}, {"room_id", roomId}, {"participant_id", participantId},
+        {"subject_id", member.caller.subject_id},
         {"resume_token", member.resume_token}, {"signaling_generation", nextBinding.generation},
         {"ice_restart", media != sessions_.end()}}.dump();
     // Reserve both map entries before moving ownership; allocation failure
@@ -675,22 +805,6 @@ void WebRtcService::LeaveRoom(const std::string& connection)
     participant_connections_.erase(membership->participant->Id());
     membership->room->Leave(membership->participant->Id());
     if (membership->room->ParticipantCount() == 0) rooms_.erase(membership->room->Id());
-}
-
-std::string WebRtcService::UpdateSession(Session& session, const std::string& offerSdp)
-{
-    WebRtcSessionDescription offer, answer;
-    std::string error;
-    if (!sdp::Sdp::Parse(offerSdp, sdp::SdpProfile::WebRtc, SdpType::Offer, offer, error))
-        return Error("Invalid SDP offer");
-    if (!session.rtc->ApplyRemoteOffer(offer)) return Error(session.rtc->LastError());
-    if (!session.rtc->CreateLocalAnswer(answer))
-    {
-        const auto failure = session.rtc->LastError();
-        session.rtc->RollbackNegotiation();
-        return Error(failure);
-    }
-    return Json{{"type", "answer"}, {"session_id", session.id}, {"sdp", sdp::Sdp::Serialize(answer)}}.dump();
 }
 
 bool WebRtcService::Renegotiate(uint64_t sessionId, const std::vector<sdp::SdpMedia>& medias, std::string& error)

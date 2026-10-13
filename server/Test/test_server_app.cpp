@@ -95,7 +95,7 @@ protected:
 #ifdef PACKETIA_WITH_LIBWEBSOCKETS
         config.webrtc.enabled = true;
         config.webrtc.public_ip = "127.0.0.1";
-        config.webrtc.token = "server-app-token";
+        config.webrtc.api_keys.emplace("server-app", "server-app-secret-at-least-32-bytes");
 #endif
     }
     uint16_t Reserve(int type, const std::string& ip = "127.0.0.1")
@@ -210,6 +210,26 @@ TEST_F(ServerAppTest, LaterStartupFailureRollsBackTurnListener)
     server::ServerApp app(config);
     EXPECT_FALSE(app.Start());
     Socket released_control(SOCK_DGRAM, "::", config.turn.listen_port);
+}
+
+TEST_F(ServerAppTest, UnimplementedAccountsFailClosedAndRollbackAllowsExistingServicesToStart)
+{
+    config.account.enabled = true;
+    config.http.enabled = true;
+    config.http.listen_port = Reserve(SOCK_STREAM);
+    reservations.clear();
+    server::ServerApp incomplete(config);
+    EXPECT_FALSE(incomplete.Start());
+    EXPECT_FALSE(incomplete.Start());
+    incomplete.Stop();
+    incomplete.Stop();
+    // No account API may listen when its authentication dependencies are unfinished.
+    EXPECT_NO_THROW({ Socket unused_api(SOCK_STREAM, "127.0.0.1", config.http.listen_port); });
+
+    config.account.enabled = config.http.enabled = false;
+    server::ServerApp existing(config);
+    ASSERT_TRUE(existing.Start());
+    existing.Stop();
 }
 
 TEST_F(ServerAppTest, MissingTurnCredentialsFailStartupAndDisabledTurnDoesNotBind)

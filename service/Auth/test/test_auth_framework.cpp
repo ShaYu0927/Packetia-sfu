@@ -68,7 +68,7 @@ TEST(AuthFramework, EmptyCredentialInvalidIdentityAndWrongAudienceAreRejected)
     EXPECT_EQ(auth.Authenticate("token", Audience::WebRtc).error, AuthError::InvalidToken);
 }
 
-TEST(AuthFramework, StoredIdentityExpiresBeforeThePolicyCanAllowAnOperation)
+TEST(AuthFramework, ExpiryGatesAdmissionButDoesNotInterruptAnEstablishedSession)
 {
     int64_t now = 100;
     auto authenticator = std::make_shared<StubAuthenticator>();
@@ -79,8 +79,8 @@ TEST(AuthFramework, StoredIdentityExpiresBeforeThePolicyCanAllowAnOperation)
     const auto result = auth.Authenticate("token", Audience::WebRtc);
     ASSERT_TRUE(result.Succeeded());
     now = 200;
-    EXPECT_EQ(auth.Authorize(*result.context, Action::Publish, {}).error, AuthError::ExpiredToken);
-    EXPECT_EQ(policy->calls, 0u);
+    EXPECT_TRUE(auth.Authorize(*result.context, Action::Publish, {}).Allowed());
+    EXPECT_EQ(policy->calls, 1u);
     EXPECT_EQ(auth.Authenticate("token", Audience::WebRtc).error, AuthError::ExpiredToken);
 }
 

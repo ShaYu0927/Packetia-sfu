@@ -4,6 +4,19 @@
     "rtsp_port": 554,
     "io_threads": 1
   },
+  "account": {
+    "enabled": false,
+    "database_path": "packetia.db",
+    "session_ttl_seconds": 86400,
+    "worker_count": 2,
+    "max_pending_requests": 128
+  },
+  "http": {
+    "enabled": false,
+    "listen_ip": "127.0.0.1",
+    "listen_port": 8081,
+    "max_body_bytes": 8192
+  },
   "services": {
     "recording": true,
     "ai": true,
@@ -12,6 +25,7 @@
   "webrtc": {
     "enabled": false,
     "public_ip": "",
+    "api_keys": {},
     "max_sessions": 128
   },
   "turn": {

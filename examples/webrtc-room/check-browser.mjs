@@ -40,7 +40,8 @@ try {
   await a.waitForFunction(() => document.getElementById('connection').textContent === 'Joined');
   await a.locator('#publish').click();
   await a.waitForFunction(() => document.getElementById('local-status').textContent === 'Publishing', null, {timeout: 30000});
-  await b.locator('#room').fill(room); await b.locator('#relay').check(); await b.locator('#join').click();
+  await b.locator('#room').fill(room); await b.locator('#role').selectOption('viewer');
+  await b.locator('#relay').check(); await b.locator('#join').click();
   await b.waitForFunction(() => !document.getElementById('watch').disabled);
   await b.locator('#watch').click();
   await until(async () => {

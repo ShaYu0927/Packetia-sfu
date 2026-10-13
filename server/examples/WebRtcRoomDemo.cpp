@@ -34,11 +34,14 @@ int main(int argc, char** argv)
     config.webrtc.max_sessions = 16;
     if (!ParsePort(argv[1], config.websocket_port) || !ParsePort(argv[2], config.udp_port) ||
         !ParsePort(argv[3], turnOptions.listen_port)) return 2;
-    const auto token = std::getenv("PACKETIA_WEBRTC_TOKEN");
+    const auto api_key = std::getenv("PACKETIA_WEBRTC_API_KEY");
+    const auto api_secret = std::getenv("PACKETIA_WEBRTC_API_SECRET");
     const auto user = std::getenv("PACKETIA_TURN_USER");
     const auto password = std::getenv("PACKETIA_TURN_PASSWORD");
-    if (!token || !*token || !user || !*user || !password || !*password) return 2;
-    config.webrtc.token = token;
+    if (std::getenv("PACKETIA_WEBRTC_TOKEN") || !api_key || !*api_key || !api_secret ||
+        !user || !*user || !password || !*password) return 2;
+    config.webrtc.api_keys.emplace(api_key, api_secret);
+    try { config.Validate(); } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 2; }
     turnOptions.relay_port_min = turnOptions.relay_port_max = 0;
     // The local demo shares one account across participants and interfaces.
     turnOptions.max_allocations_per_user = config.webrtc.max_sessions * 4;

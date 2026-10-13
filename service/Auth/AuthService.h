@@ -17,10 +17,12 @@ public:
     AuthService(std::shared_ptr<const IAuthenticator> authenticator, std::shared_ptr<const IAccessPolicy> policy, Clock clock = {});
 
     AuthResult Authenticate(std::string_view token, Audience expected_audience) const;
+    // caller must be the verified snapshot bound to this participant at admission.
+    // Token expiry gates join/resume; it does not interrupt an established session.
     AuthDecision Authorize(const AuthContext& caller, Action action, const ResourceContext& resource) const;
 
 private:
-    AuthError ValidateContext(const AuthContext& caller) const;
+    AuthError ValidateContext(const AuthContext& caller, bool check_expiry) const;
 
     const std::shared_ptr<const IAuthenticator> authenticator_;
     const std::shared_ptr<const IAccessPolicy> policy_;

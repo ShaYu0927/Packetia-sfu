@@ -1,6 +1,11 @@
 #include "ServerApp.h"
 #include "ServiceNames.h"
 #include "WorkerSetup.h"
+#include "api/ApiServer.h"
+#include "network/http/LibwebsocketsHttpServer.h"
+#include "service/Account/AccountService.h"
+#include "service/Account/ScryptPasswordHasher.h"
+#include "service/Account/SqliteAccountStore.h"
 
 #include "EventLoop.h"
 #include "RtspServer.h"
@@ -77,9 +82,48 @@ void ServerApp::ConfigureServices()
         },
         [] { MediaSessionManager::Instance().SetFramePublisher(nullptr); });
 
+    // Account resources outlive API callbacks and their business workers.
+    AddAccountServices();
     AddMediaServices();
     AddWorkerPools(launcher_);
     AddNetworkServices();
+    // Keep API registration outside AddNetworkServices: its WebRTC path returns early.
+    AddApiService();
+}
+
+void ServerApp::AddAccountServices()
+{
+    if (!config_.account.enabled) return;
+    auto store = std::make_shared<service::account::SqliteAccountStore>();
+    auto passwords = std::make_shared<service::account::ScryptPasswordHasher>();
+    account_service_ = std::make_shared<service::account::AccountService>(config_.account, store, passwords);
+    const auto accounts = account_service_;
+    launcher_.AddCustomService(SERVICE_ACCOUNT,
+        [accounts] {
+            const auto result = accounts->Start();
+            if (!result.Succeeded())
+                LOG_ERROR("Account service unavailable: error=", static_cast<int>(result.error),
+                          "; implement the account storage and password adapters before enabling it");
+            return result.Succeeded();
+        },
+        [accounts] { accounts->Stop(); });
+}
+
+void ServerApp::AddApiService()
+{
+    if (!config_.http.enabled) return;
+    if (!account_service_)
+        throw std::invalid_argument("HTTP account API requires the account service");
+    auto transport = std::make_shared<network::http::LibwebsocketsHttpServer>();
+    api_server_ = std::make_shared<api::ApiServer>(config_.http, config_.account, account_service_, transport);
+    const auto api = api_server_;
+    launcher_.AddCustomService(SERVICE_API,
+        [api] {
+            if (api->Start()) return true;
+            LOG_ERROR("Account HTTP API unavailable; the HTTP listener adapter must be implemented before enabling it");
+            return false;
+        },
+        [api] { api->Stop(); });
 }
 
 void ServerApp::AddMediaServices()

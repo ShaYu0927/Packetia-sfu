@@ -3,9 +3,11 @@
 
 #include "config/AppConfig.h"
 #include "SdpMode.h"
+#include "service/Auth/AuthService.h"
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 
@@ -39,22 +41,34 @@ private:
     using Session = room::ParticipantSession;
     struct Membership;
     struct Subscription;
+    struct SignalingRequest;
     std::string OnMessage(const std::string& connection, const std::string& message);
+    std::string DispatchMessage(const std::string& connection, const SignalingRequest& request);
+    std::string AuthorizeMessage(const std::string& connection, const SignalingRequest& request) const;
+    std::string HandleAdmission(const std::string& connection, const SignalingRequest& request);
+    std::string HandleNegotiationReply(Session& session, const SignalingRequest& request);
+    std::string HandleMediaOffer(const std::string& connection, const SignalingRequest& request);
+    std::string HandleSubscribe(const std::string& connection, const SignalingRequest& request,
+                                const std::string& offer);
+    std::optional<sdp::SdpMedia> FindPublishedMedia(const std::string& connection,
+                                                 const std::string& trackId) const;
     std::string CreateSession(const std::string& connection, const std::string& offer,
                               const std::vector<Subscription>& subscriptions = {});
-    std::string JoinRoom(const std::string& connection, const std::string& roomId);
+    std::string JoinRoom(const std::string& connection, const std::string& roomId,
+                         service::auth::AuthContext caller);
     std::string ResumeRoom(const std::string& connection, const std::string& roomId,
-                           const std::string& participantId, const std::string& resumeToken);
+                           const std::string& participantId, const std::string& resumeToken,
+                           const service::auth::AuthContext& caller);
     void OnSignalingClosed(const std::string& connection);
     std::string ListTracks(const std::string& connection) const;
     void LeaveRoom(const std::string& connection);
-    std::string UpdateSession(Session& session, const std::string& offer);
     void RemoveSession(const std::string& connection);
     bool Tick();
     void StopOnOwner();
 
     EventLoop* const loop_;
     const config::AppConfig config_;
+    const service::auth::AuthService auth_;
     const std::shared_ptr<media::IEncodedFramePublisher> publisher_;
     std::shared_ptr<TaskScheduler> scheduler_;
     std::shared_ptr<network::UdpServer> udp_;

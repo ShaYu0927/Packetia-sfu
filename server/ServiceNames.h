@@ -5,6 +5,8 @@
 #define SERVICE_LOOP      "EventLoop"
 #define SERVICE_PUBLISHER "FramePublisher"
 #define SERVICE_WORKERS   "WorkerPools"
+#define SERVICE_ACCOUNT   "AccountService"
+#define SERVICE_API       "ApiServer"
 #define SERVICE_RECORD    "RecordingService"
 #define SERVICE_AI        "AIService"
 #define SERVICE_CONFERENCE_MIX "ConferenceMixService"

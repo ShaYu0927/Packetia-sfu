@@ -275,7 +275,7 @@ endif()
 target_link_libraries(Packetia
     PRIVATE
     "$<$<PLATFORM_ID:Linux>:-Wl,--start-group>"
-    server media rtsp rtp sip Rtmp network utils Rtcp LOGGER ROOM_LIB COMMON ICE WebRtc TURN Interleaved service
+    server media rtsp rtp sip Rtmp network utils Rtcp LOGGER ROOM_LIB COMMON ICE WebRtc TURN Interleaved service packetia_auth packetia_account_api
     "$<$<PLATFORM_ID:Linux>:-Wl,--end-group>"
     ${FFMPEG_LIBRARIES}
     pthread

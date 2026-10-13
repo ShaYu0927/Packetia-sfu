@@ -14,7 +14,7 @@ TURN UDP 中继及录像模块。正常运行由一个 `Packetia` 进程统一�
 - [参与者与连接数据结构](#参与者与连接数据结构)：对象归属、信令恢复与 ICE restart。
 - [双浏览器房间与 TURN 示例](#双浏览器房间与-turn-示例)：启动方式与浏览器检查。
 - [WebRTC SDP 协商](#webrtc-sdp-协商)、[RTP 协议规范](#rtp-协议规范)：协商行为与 RFC 支持边界。
-- [鉴权框架（待接入）](#鉴权框架待接入)：认证、权限接口及后续接入。
+- [房间鉴权](#房间鉴权)：JWT 验证、房间权限与参与者身份绑定。
 - [弱网与带宽控制](#弱网与带宽控制)、[发送控制详细说明](media/quality/README.md)：NACK/SRTP 重传、TWCC/RR、OU 时延检测与码率控制。
 - [本轮验证](#本轮验证)、[开发记录](#开发记录)：验证范围与历史变更。
 
@@ -28,7 +28,7 @@ TURN UDP 中继及录像模块。正常运行由一个 `Packetia` 进程统一�
 | TURN/STUN | UDP 长期凭证认证、中继、权限、通道、到期清理、配额/ACL、IPv4/IPv6 | 不支持 TURN TCP/TLS、双地址族 Allocation 或完整 coturn 功能 |
 | TCP/TLS | 有界 TCP 缓冲、所属线程调度、TLS 1.2/1.3 服务端传输组件 | TLS 尚未接入 TURN 或 WSS 监听、应用配置 |
 | 弱网与带宽控制 | NACK 重传、PLI/FIR、TWCC/RR、时延/接收速率/RTT/丢包联合码率控制 | 输出控制建议；实际 Pacer、媒体降码率、分层选择、FEC 与主动探测尚未接入 |
-| 应用鉴权 | 认证和权限框架、JWT 源码实现 | JWT 未加入构建和业务入口；WebRTC 仍使用共享 token |
+| 应用鉴权 | HS256 房间 JWT、API key 查询、发布/订阅权限、参与者身份绑定和恢复校验 | 登录与签发由业务后端负责；暂不包含自动刷新、动态权限更新和撤销列表 |
 
 尚未做系统容量压测，配置中的会话上限不是实际可承载并发数。当前浏览器验证属于本机互通验证，
 公网部署仍需配置可达的媒体/中继地址、端口及安全信令入口。
@@ -252,50 +252,57 @@ TLS 服务端适配已实现，但未接入应用配置或 TURN 监听。下一�
 TLS 负责握手和加解密，TURN 负责 STUN/ChannelData 消息边界和业务状态。
 WebRTC DTLS 保持数据报边界；WebSocket 当前通过 libwebsockets 适配所属调度器。
 
-## 鉴权框架（待接入）
+## 账号与登录框架
 
-`service/Auth` 提供独立的 `packetia_auth` 库，目前构建类型、接口和组合入口。
-`JwtAuthenticator.cpp` 已有 RS256 验证源码，但尚未加入 CMake 目标及 JWT 库依赖，
-也尚未替换 WebRTC 现有共享 token 校验。用户登录及房间权限策略仍待实现。
+`service/Account` 与房间鉴权 `service/Auth` 并列：前者定义用户、登录会话、存储和密码校验接口，
+后者验证入房 JWT、检查媒体操作权限。`server/api` 提供账号路由和独立有界工作队列，
+`network/http` 定义 HTTP 适配与异步回复约定，均由同一个 `ServerApp` 管理生命周期。
 
-| 类型/接口 | 职责 |
-| --- | --- |
-| `AuthContext` | 验证后的身份、用途、Unix 秒有效期及权限列表 |
-| `PermissionGrant` | 资源类型、资源 ID、允许的动作；不隐含通配或管理员权限 |
-| `ResourceContext` | 服务端解析的资源 ID、所属房间/用户，及可选会话/流 ID |
-| `IAuthenticator::Authenticate` | 具体实现验证签名、签发者、用途、有效期和凭证状态 |
-| `IAccessPolicy::Check` | 具体实现检查用途与动作兼容性、授权范围、资源归属；缺少授权时拒绝 |
-| `AuthService` | 构造时注入两个接口；缺少实现默认拒绝，并在认证/授权时检查身份和有效期 |
+**当前是可编译框架，还不能实际登录。** `SqliteAccountStore`、`ScryptPasswordHasher` 和
+`LibwebsocketsHttpServer` 保留明确的实现入口；账号业务返回显式错误，不生成用户或凭据。
+`account.enabled`、`http.enabled` 默认关闭，启用尚未完成的适配器会使启动失败并回滚资源。
+示例配置见 `config/packetia.example.json`。账号 API 的 Bearer 登录会话与房间 JWT 用途不同；
+注册/邀请策略、生产 HTTPS 与浏览器 Cookie/CSRF 处理仍需在对应实现阶段完成。
 
-后续接入顺序：
+下一步按密码校验与存储事务 → 账号业务 → HTTP 监听的顺序实现；随后接会议成员准入与入房凭证签发。
+接口和线程约定见 [账号模块](service/Account/README.md) 与 [账号 API](server/api/README.md)。
 
-1. `JwtAuthenticator : IAuthenticator`：补齐 jwt-cpp 构建依赖并将源码加入目标，验证签名、签发者、用途、有效期及错误处理；成功返回 `AuthResult::Success(context)`。当前实现尚未提取业务权限，需定义可信声明到授权范围的映射。
-2. `RoomAccessPolicy : IAccessPolicy`：检查目标房间、轨道的实际归属，以及 JoinRoom/Publish/Subscribe 等权限；同时拒绝 WebRTC 凭证执行管理操作。
+## 房间鉴权
 
-依赖注入与调用示例（authenticator/policy 为你实现的对象）：
+`service/Auth` 按 LiveKit 的职责划分实现：API key 查询签名密钥、JWT 验证可信声明、
+房间策略检查操作权限、WebRTC 成员保存已验证身份与权限。运行时使用 OpenSSL 的 HS256，
+无需额外 JWT 库；主进程通过配置创建鉴权对象，信令回调中不访问数据库或远程服务。
 
-```cpp
-#include "service/Auth/AuthService.h"
-
-using namespace service::auth;
-AuthService auth(authenticator, policy);
-const auto result = auth.Authenticate(token, Audience::WebRtc);
-if (!result.Succeeded()) { /* 返回认证错误 */ }
-else
-{
-    const auto decision = auth.Authorize(*result.context, Action::JoinRoom, resource);
-    if (!decision.Allowed()) { /* 返回权限错误 */ }
-    else { /* 执行业务操作 */ }
-}
+```text
+业务后端确认登录与房间权限 → 签发房间 JWT → 浏览器 join/resume
+  → iss 查询 API secret → 验证签名/用途/时间 → 检查 roomJoin 与房间
+  → 绑定 Participant.subject_id 与权限 → publish/subscribe 按绑定权限授权
 ```
 
-后续由 ServerApp 创建并注入共享 AuthService，WebRtcService 绑定成功认证的上下文到连接，
-RPC 入口按调用认证；在资源分配或业务变更前执行授权。ResourceContext 的归属信息来自服务端状态，
-不能直接复制客户端提交的房间/用户字段。鉴权组件和注入的时钟可能被并发调用，具体实现需保证线程安全。
+JWT 使用 `iss=API key`、`sub=用户身份`、`aud=packetia-webrtc`、`exp`，以及
+`video: {room, roomJoin, canPublish, canSubscribe}`。仅显式为 `true` 的权限允许执行；
+浏览器不能自报身份或通过更换后续消息里的 token 提升权限。旧的独立 `offer` 入口已关闭，
+须先 `join` 再 `publish/subscribe`；现有房间协商只支持专门的 `restart_ice` 恢复流程。
 
-这里的同步入口不管理连接、定时器或撤销列表：过期断开、媒体清理、凭证刷新和撤销由后续接入实现。
-仅在信令时检查有效期不会自动终止已有媒体转发。JWT 的有效期为绝对 Unix 秒，不能使用单调时钟。
-错误详情留给内部处理，不记录或回显 token。TURN/ICE 凭证保持各自协议边界。
+`join`、`resume` 验证 JWT 有效期；已建立连接持续使用绑定权限，token 到期不会自动断流。
+恢复还需同一签发者、用户、房间、原权限和服务端生成的 `resume_token`，超过恢复窗口则重新入会。
+原 JWT 到期时先向业务签发端获取同身份、同房间、同权限的新 JWT；本版不在 SFU 自动刷新 token，
+也不提供权限热更新或撤销列表。TURN 长期凭据和 ICE 临时凭据各自独立。
+
+服务端配置 `webrtc.api_keys` 或成对设置环境变量；secret 至少 32 字节，永远不发给浏览器。
+旧 `webrtc.token` / `PACKETIA_WEBRTC_TOKEN` 会返回迁移错误。
+
+```sh
+export PACKETIA_WEBRTC_API_KEY=local-dev
+export PACKETIA_WEBRTC_API_SECRET="$(openssl rand -hex 32)"
+python3 tools/create_room_token.py --identity alice --room demo --can-publish
+python3 tools/create_room_token.py --identity bob --room demo --can-subscribe
+```
+
+两次输出分别是发布者和观众的 JWT。签发工具在可信业务后端运行；线上由登录/入会接口
+决定 identity、room 和权限，再通过 HTTPS 返回 token；信令经反向代理配置 WSS，
+当前本地示例仍为 WS，不代表已接入原生 WSS 监听。具体声明、配置、信令格式和限制见
+[鉴权模块说明](service/Auth/README.md)。
 
 ## RTP 协议规范
 
@@ -538,7 +545,8 @@ export PACKETIA_TURN_USER=packetia-test
 export PACKETIA_TURN_PASSWORD=local-test-password
 export PACKETIA_WEBRTC=true
 export PACKETIA_WEBRTC_PUBLIC_IP=127.0.0.1
-export PACKETIA_WEBRTC_TOKEN=local-test-token
+export PACKETIA_WEBRTC_API_KEY=local-dev
+export PACKETIA_WEBRTC_API_SECRET="$(openssl rand -hex 32)"
 build/webrtc-integration/Packetia
 ```
 
@@ -672,37 +680,38 @@ SFU 的双栈监听与双地址 SDP 候选发布尚未在这一功能中实现�
 
 房间参与者的信令意外断开后进入 `Reconnecting`，在恢复窗口内保留参与者及媒体会话；
 主动离开或恢复超时才移除房间成员。当前仍使用单条发布或订阅连接。
-`subject_id` 仅提供存储位置，现有共享 token 校验不会自动填充用户身份或执行房间权限校验。
+`subject_id` 来自已验证 JWT 的 `sub`；显示名称来自签名声明，操作权限由成员绑定的鉴权上下文决定。
 
 ### 信令恢复与 ICE restart
 
 `webrtc.reconnect_timeout_ms` 默认 15000，允许配置 1..120000 毫秒。断开的参与者仍计入
 房间及服务人数限制，定时器到期会统一清理轨道、订阅、端点和 ICE 路由。
-未加入房间的旧式 offer 会话仍在信令断开时立即清理。
+未加入房间的连接不能创建媒体会话。
 
 加入房间的 `joined` 回复增加 `resume_token` 和 `reconnect_timeout_ms`。恢复凭据是服务端生成的
-256 位随机值，只对应当前房间中的当前参与者，不由参与者 ID 推导；客户端须同时提供原共享
-`token`。它保存在客户端内存中，应通过 WSS 传输，不能放在 URL 或日志里。
+256 位随机值，只对应当前房间中的当前参与者，不由参与者 ID 推导；客户端须同时提供仍有效、
+身份和权限与原成员匹配的房间 JWT。凭据保存在客户端内存中，线上经反向代理提供 WSS，
+不放在 URL 或日志里。
 
 新 WebSocket 建连后发送：
 
 ```json
 {
   "type": "resume",
-  "token": "<signaling-token>",
+  "token": "<valid-room-jwt>",
   "room_id": "demo",
   "participant_id": "<original-participant-id>",
   "resume_token": "<resume-token-from-joined>"
 }
 ```
 
-服务端校验房间、凭据、断线状态和截止时间，再把成员及会话索引迁移到新连接，增加信令绑定代数。
+服务端校验 JWT 身份与权限、房间、恢复凭据、断线状态和截止时间，再把成员及会话索引迁移到新连接，增加信令绑定代数。
 `resumed` 回复的 `ice_restart` 表示是否存在需要恢复的媒体连接。仍在线的参与者不能被新连接接管；
 错误凭据、跨房间恢复、主动离开后的恢复和过期恢复都会拒绝。恢复凭据在参与者离开时失效。
 
 有媒体连接时，浏览器保留原 `RTCPeerConnection`、本地轨道和收流对象，调用
 `createOffer({iceRestart: true})` 并等待新一轮 ICE 候选收集完成，再发送
-`{"type":"restart_ice","token":"<signaling-token>","sdp":"<new-offer>"}`。
+`{"type":"restart_ice","sdp":"<new-offer>"}`，此操作使用连接已绑定的权限。
 服务器生成新的本地 ICE ufrag/password，回复 `answer`；浏览器调用 `setRemoteDescription`，
 随后作为 Full ICE 端发起检查和提名。服务器继续使用 ICE-Lite，不主动枚举浏览器的网卡。
 
@@ -734,8 +743,10 @@ npm ci
 npm start
 ```
 
-打开 `http://127.0.0.1:18000`，两个浏览器使用相同房间名，分别发布和订阅。
-启动器生成临时 token/TURN 凭证并启动 C++ 示例；
+打开 `http://127.0.0.1:18000`，两个浏览器使用相同房间名，A 选择 Publisher 后发布，
+B 选择 Viewer 并勾选 Force TURN 后订阅。启动器生成临时 API key/secret 与 TURN 凭证并启动 C++ 示例；
+回环地址的开发签发接口按角色生成各自 JWT，浏览器只在 join/resume 时携带 JWT。
+恢复时开发签发端提供同一身份和权限的新 JWT；生产签发端需要接入登录和房间授权。
 默认 WebSocket 18080、SFU UDP 19000、TURN UDP 13478，均用于本机演示。
 其他构建目录通过 `PACKETIA_ROOM_DEMO_BINARY` 指定二进制。
 示例 TURN 只允许转发至该 SFU 的回环媒体地址。
@@ -781,6 +792,19 @@ SRTP 发送端允许重新保护缓存的原 RTP 序号及 payload，重传重�
 
 ## 本轮验证
 
+2026-10-13 鉴权重构验证：`Packetia` 和 `PacketiaRoomDemo` 构建通过，鉴权库 20 项 GTest 通过，
+`AuthFrameworkUnitTest`、`server_config`、`server_app`、`webrtc_service` 四个 CTest 入口通过。
+真实 Chrome 双浏览器使用不同房间 JWT：发布者直连、观众经 TURN relay，音视频正常接收；
+双方信令断开后重新获取同身份/权限 JWT，原参与者恢复并完成 ICE restart，视频继续增长，退出清理通过。
+
+```sh
+cmake --build build/webrtc-integration --target Packetia PacketiaRoomDemo test_auth_framework test_server_config test_server_app test_webrtc_service --parallel 4
+ctest --test-dir build/webrtc-integration --output-on-failure -R '^(AuthFrameworkUnitTest|server_config|server_app|webrtc_service)$'
+# 运行双浏览器验证前，另一个终端先启动 examples/webrtc-room 的 npm start
+cd examples/webrtc-room
+npm run check
+```
+
 2026-10-12 本轮弱网验证：主程序编译通过，33 项弱网测试、27 项 RTCP/SFU 回归、
 WebRTC 会话与 DTLS/SRTP 测试通过。新增 15 项带宽算法测试覆盖启动约束、反馈频率、RTT、
 丢包与排队交叠、时钟回绕、路径重置及数值边界；真实 TWCC 字节验证降码率和恢复链路。
@@ -813,6 +837,13 @@ build/webrtc-integration/Rtsp/Test/test_rtp_input \
 ## 开发记录
 
 以下记录描述各次修改当时的状态；其中的待实现能力和限制可能已在后续完成，当前状态以上文为准。
+
+### 2026-10-13：房间 JWT 与参与者鉴权
+
+- 按 LiveKit 的职责划分加入 API key provider、HS256 JWT 验证与 room grants 授权。
+- 替换 WebRTC 共享 token，绑定可信用户身份与房间权限，授权后再创建媒体资源。
+- 恢复校验 JWT 身份、原权限和随机恢复凭据，关闭旧独立 offer 的鉴权绕过入口。
+- 迁移配置、签发工具及双浏览器示例，验证观众经 TURN 与双方重新鉴权恢复。
 
 ### 2026-10-12：集成发送侧带宽算法与修复 SRTP 重传
 

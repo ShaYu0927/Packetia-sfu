@@ -9,6 +9,8 @@
 #include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <openssl/evp.h>
+#include <openssl/hmac.h>
 
 #include <algorithm>
 #include <chrono>
@@ -25,6 +27,53 @@ using namespace std::chrono_literals;
 void Require(bool condition, const char* message)
 {
     if (!condition) throw std::runtime_error(message);
+}
+
+constexpr const char* kApiKey = "integration-key";
+constexpr const char* kOtherApiKey = "other-integration-key";
+constexpr const char* kApiSecret = "test-secret-with-at-least-32-bytes";
+
+int64_t UnixNow()
+{
+    return std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+std::string Base64Url(const unsigned char* bytes, size_t size)
+{
+    std::string result(4 * ((size + 2) / 3), '\0');
+    const int written = EVP_EncodeBlock(reinterpret_cast<unsigned char*>(result.data()), bytes,
+        static_cast<int>(size));
+    Require(written >= 0, "base64 encoding failed");
+    result.resize(static_cast<size_t>(written));
+    while (!result.empty() && result.back() == '=') result.pop_back();
+    std::replace(result.begin(), result.end(), '+', '-');
+    std::replace(result.begin(), result.end(), '/', '_');
+    return result;
+}
+
+std::string RoomToken(const std::string& identity, const std::string& room,
+    bool publish = true, bool subscribe = true, int64_t expires = 0,
+    const std::string& issuer = kApiKey, const std::string& secret = kApiSecret)
+{
+    const auto now = UnixNow();
+    const auto expiration = expires ? expires : now + 3600;
+    const auto issued = std::min(now, expiration - 60);
+    const auto header = Json{{"alg", "HS256"}, {"typ", "JWT"}}.dump();
+    const auto claims = Json{{"iss", issuer}, {"sub", identity}, {"aud", "packetia-webrtc"},
+        {"iat", issued}, {"nbf", issued - 1}, {"exp", expiration},
+        {"name", "Display " + identity}, {"video", {{"room", room}, {"roomJoin", true},
+            {"canPublish", publish}, {"canSubscribe", subscribe}}}}.dump();
+    const auto encode = [](const std::string& value) {
+        return Base64Url(reinterpret_cast<const unsigned char*>(value.data()), value.size());
+    };
+    const auto signingInput = encode(header) + "." + encode(claims);
+    unsigned char signature[EVP_MAX_MD_SIZE];
+    unsigned int signatureSize = 0;
+    Require(HMAC(EVP_sha256(), secret.data(), static_cast<int>(secret.size()),
+        reinterpret_cast<const unsigned char*>(signingInput.data()), signingInput.size(),
+        signature, &signatureSize) != nullptr, "test token signing failed");
+    return signingInput + "." + Base64Url(signature, signatureSize);
 }
 
 class Socket
@@ -173,6 +222,16 @@ private:
     Socket socket_;
 };
 
+Json Join(Client& client, const std::string& identity, const std::string& room,
+    bool publish = true, bool subscribe = true, int64_t expires = 0)
+{
+    const auto reply = client.Request({{"type", "join"}, {"room_id", room},
+        {"token", RoomToken(identity, room, publish, subscribe, expires)}});
+    Require(reply.value("type", "") == "joined", reply.dump().c_str());
+    Require(reply.value("subject_id", "") == identity, "join did not bind verified identity");
+    return reply;
+}
+
 void WaitForEndpoints(size_t count)
 {
     const auto deadline = std::chrono::steady_clock::now() + 5s;
@@ -230,231 +289,44 @@ sdp::SdpSession ParseDescription(const Json& message, sdp::SdpType type)
     return description;
 }
 
-sdp::SdpSession BrowserAnswer(const sdp::SdpSession& offer, const sdp::SdpSession& browser, uint64_t version)
-{
-    auto answer = offer;
-    answer.type = sdp::SdpType::Answer;
-    answer.origin = browser.origin;
-    answer.origin.sess_version = std::to_string(version);
-    answer.ice = browser.ice;
-    answer.ice.iceLite = false;
-    answer.ice.candidates = {"1 1 UDP 2130706431 127.0.0.1 50000 typ host"};
-    answer.ice.endOfCandidates = true;
-    answer.dtls = browser.dtls;
-    answer.dtls.setup = sdp::DtlsSetup::Passive;
-    for (auto& media : answer.medias)
-    {
-        media.ice = answer.ice;
-        media.dtls = answer.dtls;
-        media.direction = media.port && media.direction == sdp::MediaDirection::RecvOnly
-            ? sdp::MediaDirection::SendOnly : sdp::MediaDirection::Inactive;
-        media.ssrcs.clear();
-        media.ssrcGroups.clear();
-        if (media.direction == sdp::MediaDirection::SendOnly)
-        {
-            const auto source = std::find_if(browser.medias.begin(), browser.medias.end(),
-                [&](const auto& item) { return item.mid == media.mid; });
-            Require(source != browser.medias.end() && !source->ssrcs.empty(), "browser source not found");
-            media.ssrcs = {source->ssrcs.front()};
-            for (auto& extension : media.headerExtensions) extension.direction = sdp::MediaDirection::SendOnly;
-        }
-        else media.headerExtensions.clear();
-    }
-    return answer;
-}
-
-void RunRenegotiation()
+void RunNegotiationGuards()
 {
     const auto baseline = utils::EndpointManager::Instance().Size();
     EventLoop loop(2);
-    Require(loop.Start(), "renegotiation event loop did not start");
+    Require(loop.Start(), "negotiation guard event loop did not start");
     config::AppConfig config;
     config.listen_ip = config.webrtc.public_ip = "127.0.0.1";
     config.udp_port = AvailablePort(SOCK_DGRAM);
     config.websocket_port = AvailablePort(SOCK_STREAM);
     config.webrtc.enabled = true;
-    config.webrtc.token = "integration-secret";
-    config.webrtc.max_sessions = 1;
+    config.webrtc.api_keys = {{kApiKey, kApiSecret}};
     auto service = std::make_shared<server::WebRtcService>(&loop, config, nullptr);
-    Require(service->Start(), "renegotiation service did not start");
+    Require(service->Start(), "negotiation guard service did not start");
     Client client(config.websocket_port);
-    const Json initial = {{"type", "offer"}, {"token", config.webrtc.token}, {"sdp", Offer()}};
-    const auto first = client.Request(initial);
-    CheckAnswer(first, config.udp_port);
-    const auto sessionId = first.at("session_id").get<uint64_t>();
+    const Json reoffer = {{"type", "offer"}, {"sdp", Offer()}};
+    Require(client.Request(reoffer).value("type", "") == "error", "bare offer created session");
+    Join(client, "guard-publisher", "negotiation");
+    Require(client.Request(reoffer).value("type", "") == "error", "offer bypassed explicit publish admission");
+    const auto initial = client.Request({{"type", "publish"}, {"sdp", Offer()}});
+    CheckAnswer(initial, config.udp_port);
+    const auto sessionId = initial.at("session_id").get<uint64_t>();
     const auto endpoint = std::dynamic_pointer_cast<media::SfuEndpoint>(
         utils::EndpointManager::Instance().Find(sessionId));
-    Require(endpoint != nullptr, "published endpoint not found");
-    ::TrackInfo originalAudio, originalVideo;
-    Require(endpoint->GetPublishedTrack("a", originalAudio) && endpoint->GetPublishedTrack("v", originalVideo),
-        "initial audio/video tracks missing");
-    const auto checkEndpoint = [&](size_t count, int payload)
-    {
-        Require(utils::EndpointManager::Instance().Find(sessionId).get() == endpoint.get(),
-            "renegotiation replaced the published endpoint");
-        Require(utils::EndpointManager::Instance().Size() == baseline + 1, "renegotiation changed session count");
-        Require(endpoint->PublishedTrackCount() == count, "unexpected active track count");
-        ::TrackInfo audio, video;
-        if (count > 0)
-            Require(endpoint->GetPublishedTrack("a", audio) && audio.track_index == originalAudio.track_index &&
-                audio.payload_type == originalAudio.payload_type, "audio track identity changed");
-        if (count > 1)
-            Require(endpoint->GetPublishedTrack("v", video) && video.track_index == originalVideo.track_index &&
-                video.payload_type == payload, "video track parameters or identity changed");
-        else Require(!endpoint->GetPublishedTrack("v", video), "paused video track remained active");
-    };
-    auto local = ParseDescription(first, sdp::SdpType::Answer);
-    const auto localOrigin = local.origin.sess_id;
-    uint64_t localVersion = std::stoull(local.origin.sess_version);
-    const auto checkDescription = [&](const Json& message, sdp::SdpType type)
-    {
-        Require(message.at("session_id").get<uint64_t>() == sessionId, "renegotiation changed session ID");
-        auto description = ParseDescription(message, type);
-        Require(description.origin.sess_id == localOrigin &&
-            std::stoull(description.origin.sess_version) > localVersion, "server SDP origin did not advance");
-        localVersion = std::stoull(description.origin.sess_version);
-        Require(description.medias.size() == 2 && description.medias[0].mid == "a" &&
-            description.medias[1].mid == "v", "renegotiation changed established m-line order");
-        return description;
-    };
-    auto browser = ParseDescription(initial, sdp::SdpType::Offer);
-    uint64_t browserVersion = 1;
-    const auto sendOffer = [&](sdp::SdpSession offer)
-    {
-        offer.origin.sess_version = std::to_string(++browserVersion);
-        return client.Request({{"type", "offer"}, {"token", config.webrtc.token},
-            {"sdp", sdp::Sdp::Serialize(offer)}});
-    };
-
-    // The existing WS, endpoint and MID identities survive browser changes.
-    auto codec = browser.medias[1].codecs.front();
-    codec.payloadType = 105;
-    codec.fmtp = "packetization-mode=1;profile-level-id=42e01e;level-asymmetry-allowed=0";
-    sdp::Sdp::SetCodecs(browser.medias[1], {codec});
-    auto reply = sendOffer(browser);
-    Require(reply.value("type", "") == "answer", reply.dump().c_str());
-    local = checkDescription(reply, sdp::SdpType::Answer);
-    checkEndpoint(2, 105);
-    ::TrackInfo updatedVideo;
-    Require(endpoint->GetPublishedTrack("v", updatedVideo) && updatedVideo.fmtp != originalVideo.fmtp &&
-        updatedVideo.fmtp.find("profile-level-id=42e01e") != std::string::npos,
-        "reoffer did not update negotiated video format");
-    browser.medias[1].direction = sdp::MediaDirection::Inactive;
-    reply = sendOffer(browser);
-    Require(reply.value("type", "") == "answer", reply.dump().c_str());
-    local = checkDescription(reply, sdp::SdpType::Answer);
-    checkEndpoint(1, 105);
-    browser.medias[0].direction = sdp::MediaDirection::Inactive;
-    reply = sendOffer(browser);
-    Require(reply.value("type", "") == "answer", reply.dump().c_str());
-    local = checkDescription(reply, sdp::SdpType::Answer);
-    checkEndpoint(0, 105);
-    for (auto& media : browser.medias) media.direction = sdp::MediaDirection::SendOnly;
-    reply = sendOffer(browser);
-    Require(reply.value("type", "") == "answer", reply.dump().c_str());
-    local = checkDescription(reply, sdp::SdpType::Answer);
-    checkEndpoint(2, 105);
-
-    auto invalidOffer = browser;
-    std::swap(invalidOffer.medias[0], invalidOffer.medias[1]);
-    Require(sendOffer(invalidOffer).value("type", "") == "error", "reordered remote MIDs accepted");
-    invalidOffer = browser;
-    invalidOffer.ice.ufrag = "restart";
-    for (auto& media : invalidOffer.medias) media.ice.ufrag = "restart";
-    Require(sendOffer(invalidOffer).value("type", "") == "error", "remote ICE restart accepted");
-    checkEndpoint(2, 105);
-
-    // Business parameters stay pending until a matching, valid browser answer.
-    auto desired = local.medias;
-    codec = desired[1].codecs.front();
-    codec.payloadType = 106;
-    codec.fmtp = "packetization-mode=1;profile-level-id=42e016;level-asymmetry-allowed=0";
-    sdp::Sdp::SetCodecs(desired[1], {codec});
-    std::reverse(desired.begin(), desired.end());
+    Require(endpoint && endpoint->PublishedTrackCount() == 2, "initial room publication missing");
+    Require(client.Request(reoffer).value("type", "") == "error", "room reoffer changed established routes");
     std::string error;
-    const auto queueOffer = [&](const std::vector<sdp::SdpMedia>& medias)
-    {
-        const bool queued = service->Renegotiate(sessionId, medias, error);
-        Require(queued, error.c_str());
-        const auto message = client.Receive();
-        Require(message.value("type", "") == "offer", message.dump().c_str());
-        return message;
-    };
-    const auto pending = queueOffer(desired);
-    auto offered = checkDescription(pending, sdp::SdpType::Offer);
-    const auto negotiationId = pending.at("negotiation_id").get<std::string>();
-    Require(negotiationId == offered.origin.sess_version, "offer correlation ID does not match origin version");
-    checkEndpoint(2, 105);
-    Require(!service->Renegotiate(sessionId, desired, error), "second pending business offer accepted");
-    Require(sendOffer(browser).value("type", "") == "error", "remote glare offer accepted");
-    auto answer = BrowserAnswer(offered, browser, ++browserVersion);
-    Json answerRequest = {{"type", "answer"}, {"token", config.webrtc.token},
-        {"negotiation_id", negotiationId}, {"sdp", sdp::Sdp::Serialize(answer)}};
-    auto stale = answerRequest;
-    stale["negotiation_id"] = "stale-" + negotiationId;
-    Require(client.Request(stale).value("type", "") == "error", "stale answer correlation ID accepted");
-    auto invalidAnswer = answer;
-    codec = invalidAnswer.medias[1].codecs.front();
-    codec.payloadType = 127;
-    sdp::Sdp::SetCodecs(invalidAnswer.medias[1], {codec});
-    auto invalidRequest = answerRequest;
-    invalidRequest["sdp"] = sdp::Sdp::Serialize(invalidAnswer);
-    Require(client.Request(invalidRequest).value("type", "") == "error", "answer introduced unoffered codec");
-    invalidAnswer = answer;
-    invalidAnswer.ice.ufrag = "restart";
-    for (auto& media : invalidAnswer.medias) media.ice.ufrag = "restart";
-    invalidRequest["sdp"] = sdp::Sdp::Serialize(invalidAnswer);
-    Require(client.Request(invalidRequest).value("type", "") == "error", "answer changed existing ICE credentials");
-    checkEndpoint(2, 105);
-    Require(endpoint->GetPublishedTrack("v", updatedVideo) &&
-        updatedVideo.fmtp.find("profile-level-id=42e01e") != std::string::npos,
-        "rejected negotiation changed active video format");
-    reply = client.Request(answerRequest);
-    Require(reply.value("type", "") == "negotiated" && reply.at("session_id").get<uint64_t>() == sessionId &&
-        reply.at("negotiation_id") == negotiationId, reply.dump().c_str());
-    checkEndpoint(2, 106);
-    Require(endpoint->GetPublishedTrack("v", updatedVideo) &&
-        updatedVideo.fmtp.find("profile-level-id=42e016") != std::string::npos,
-        "business answer did not commit video parameters");
-    Require(client.Request(answerRequest).value("type", "") == "error", "completed answer replay accepted");
-    checkEndpoint(2, 106);
-
-    const auto rollbackOffer = queueOffer({offered.medias[0]});
-    const auto rejected = checkDescription(rollbackOffer, sdp::SdpType::Offer);
-    Require(rejected.medias[1].port != 0 && rejected.medias[1].direction == sdp::MediaDirection::Inactive,
-        "omitted MID must pause without stopping its transceiver");
-    checkEndpoint(2, 106);
-    Json rollback = {{"type", "rollback"}, {"token", config.webrtc.token},
-        {"negotiation_id", "stale"}};
-    Require(client.Request(rollback).value("type", "") == "error", "stale rollback accepted");
-    rollback["negotiation_id"] = rollbackOffer.at("negotiation_id");
-    reply = client.Request(rollback);
-    Require(reply.value("type", "") == "rolled_back" && reply.at("session_id").get<uint64_t>() == sessionId,
-        "rollback response missing");
-    checkEndpoint(2, 106);
-    answerRequest["negotiation_id"] = rollbackOffer.at("negotiation_id");
-    answerRequest["sdp"] = sdp::Sdp::Serialize(BrowserAnswer(rejected, browser, ++browserVersion));
-    Require(client.Request(answerRequest).value("type", "") == "error", "answer committed after rollback");
-    checkEndpoint(2, 106);
-
-    const auto pauseOffer = queueOffer({});
-    const auto paused = checkDescription(pauseOffer, sdp::SdpType::Offer);
-    for (const auto& media : paused.medias)
-        Require(media.port != 0 && media.direction == sdp::MediaDirection::Inactive,
-            "pause must retain live m-lines for browser resume");
-    checkEndpoint(2, 106);
-    answerRequest["negotiation_id"] = pauseOffer.at("negotiation_id");
-    answerRequest["sdp"] = sdp::Sdp::Serialize(BrowserAnswer(paused, browser, ++browserVersion));
-    Require(client.Request(answerRequest).value("type", "") == "negotiated", "business pause failed");
-    checkEndpoint(0, 106);
-    const auto resumeOffer = queueOffer(offered.medias);
-    const auto resumed = checkDescription(resumeOffer, sdp::SdpType::Offer);
-    checkEndpoint(0, 106);
-    answerRequest["negotiation_id"] = resumeOffer.at("negotiation_id");
-    answerRequest["sdp"] = sdp::Sdp::Serialize(BrowserAnswer(resumed, browser, ++browserVersion));
-    Require(client.Request(answerRequest).value("type", "") == "negotiated", "business resume failed");
-    checkEndpoint(2, 106);
-    Require(client.Request({{"type", "close"}}).value("type", "") == "closed", "renegotiation session did not close");
+    const auto description = ParseDescription(initial, sdp::SdpType::Answer);
+    Require(!service->Renegotiate(sessionId, description.medias, error), "unsupported room renegotiation queued");
+    Require(client.Request({{"type", "answer"}, {"negotiation_id", "unsolicited"}, {"sdp", Offer()}})
+        .value("type", "") == "error", "unsolicited answer accepted");
+    Require(client.Request({{"type", "rollback"}, {"negotiation_id", "unsolicited"}})
+        .value("type", "") == "error", "unsolicited rollback accepted");
+    Require(utils::EndpointManager::Instance().Find(sessionId).get() == endpoint.get() &&
+        utils::EndpointManager::Instance().Size() == baseline + 1 && endpoint->PublishedTrackCount() == 2,
+        "rejected room negotiation mutated endpoint");
+    Require(client.Request({{"type", "tracks"}}).at("tracks").size() == 2,
+        "rejected room negotiation mutated advertised tracks");
+    Require(client.Request({{"type", "close"}}).value("type", "") == "closed", "room close failed");
     WaitForEndpoints(baseline);
     service->Stop();
     loop.Stop();
@@ -470,31 +342,26 @@ void RunRoom()
     config.udp_port = AvailablePort(SOCK_DGRAM);
     config.websocket_port = AvailablePort(SOCK_STREAM);
     config.webrtc.enabled = true;
-    config.webrtc.token = "room-secret";
+    config.webrtc.api_keys = {{kApiKey, kApiSecret}, {kOtherApiKey, kApiSecret}};
     config.webrtc.max_sessions = 6;
     config.webrtc.reconnect_timeout_ms = 1200;
     auto service = std::make_shared<server::WebRtcService>(&loop, config, nullptr);
     Require(service->Start(), "room service did not start");
     Client a(config.websocket_port), b(config.websocket_port), outsider(config.websocket_port), secondPublisher(config.websocket_port);
-    const auto join = [&](Client& client, const std::string& room) {
-        const auto reply = client.Request({{"type", "join"}, {"room_id", room}, {"token", config.webrtc.token}});
-        Require(reply.value("type", "") == "joined", reply.dump().c_str());
-        return reply;
-    };
     Require(a.Request({{"type", "join"}, {"room_id", "demo"}, {"token", "wrong"}}).value("type", "") == "error",
         "unauthorized room join accepted");
-    const auto publisherJoin = join(a, "demo");
+    const auto publisherJoin = Join(a, "publisher", "demo");
     const auto publisherId = publisherJoin.at("participant_id").get<std::string>();
-    const auto viewerJoin = join(b, "demo");
-    const auto outsiderJoin = join(outsider, "other");
-    join(secondPublisher, "demo");
-    const auto publication = a.Request({{"type", "publish"}, {"token", config.webrtc.token}, {"sdp", Offer()}});
+    const auto viewerJoin = Join(b, "viewer", "demo", false, true);
+    const auto outsiderJoin = Join(outsider, "outsider", "other");
+    Join(secondPublisher, "second-publisher", "demo");
+    const auto publication = a.Request({{"type", "publish"}, {"sdp", Offer()}});
     CheckAnswer(publication, config.udp_port);
     const auto source = std::dynamic_pointer_cast<media::SfuEndpoint>(utils::EndpointManager::Instance().Find(
         publication.at("session_id").get<uint64_t>()));
     Require(source && source->PublishedTrackCount() == 2, "room source endpoint missing");
     const auto list = [&](Client& client) {
-        return client.Request({{"type", "tracks"}, {"token", config.webrtc.token}}).at("tracks");
+        return client.Request({{"type", "tracks"}}).at("tracks");
     };
     const auto tracks = list(b);
     Require(tracks.size() == 2 && list(outsider).empty(), "room track visibility incorrect");
@@ -512,7 +379,7 @@ void RunRoom()
         sdp::Sdp::SetCodecs(media, {codec});
         bindings.push_back({{"track_id", publisherId + ":" + sourceMid}, {"mid", media.mid}});
     }
-    Json subscription = {{"type", "subscribe"}, {"token", config.webrtc.token},
+    Json subscription = {{"type", "subscribe"},
         {"sdp", sdp::Sdp::Serialize(browser)}, {"tracks", bindings}};
     Require(outsider.Request(subscription).value("type", "") == "error", "cross-room subscription accepted");
     auto duplicate = subscription;
@@ -528,14 +395,14 @@ void RunRoom()
     const auto destination = std::dynamic_pointer_cast<media::SfuEndpoint>(utils::EndpointManager::Instance().Find(
         reply.at("session_id").get<uint64_t>()));
     Require(destination && destination->SubscriptionCount() == 2, "room did not create real forwarding routes");
-    const auto second = secondPublisher.Request({{"type", "publish"}, {"token", config.webrtc.token}, {"sdp", Offer()}});
+    const auto second = secondPublisher.Request({{"type", "publish"}, {"sdp", Offer()}});
     CheckAnswer(second, config.udp_port);
     Require(list(b).size() == 4, "same MIDs from another publisher collided in room");
     Require(b.Request(subscription).value("type", "") == "error", "duplicate room media session accepted");
-    Require(a.Request({{"type", "offer"}, {"token", config.webrtc.token}, {"sdp", Offer()}}).value("type", "") == "error",
+    Require(a.Request({{"type", "offer"}, {"sdp", Offer()}}).value("type", "") == "error",
         "legacy reoffer changed room routes");
     Client resumedPublisher(config.websocket_port);
-    Json resume = {{"type", "resume"}, {"token", config.webrtc.token}, {"room_id", "demo"},
+    Json resume = {{"type", "resume"}, {"token", RoomToken("publisher", "demo")}, {"room_id", "demo"},
         {"participant_id", publisherId}, {"resume_token", publisherJoin.at("resume_token")}};
     Require(resumedPublisher.Request(resume).value("type", "") == "error", "active participant takeover accepted");
     a.Close();
@@ -554,7 +421,7 @@ void RunRoom()
     restartOffer.ice.ufrag = "newpeer";
     restartOffer.ice.pwd = std::string(24, 'n');
     for (auto& media : restartOffer.medias) media.ice = restartOffer.ice;
-    const auto restarted = resumedPublisher.Request({{"type", "restart_ice"}, {"token", config.webrtc.token},
+    const auto restarted = resumedPublisher.Request({{"type", "restart_ice"},
         {"sdp", sdp::Sdp::Serialize(restartOffer)}});
     CheckAnswer(restarted, config.udp_port);
     Require(restarted.at("session_id") == publication.at("session_id"), "ICE restart replaced media endpoint");
@@ -562,19 +429,20 @@ void RunRoom()
     const auto nextIce = ParseDescription(restarted, sdp::SdpType::Answer).medias.front().ice;
     Require(previousIce.ufrag != nextIce.ufrag && previousIce.pwd != nextIce.pwd, "server ICE credentials did not rotate");
     Require(destination->SubscriptionCount() == 2 && list(b).size() == 4, "ICE restart removed forwarding routes");
-    Require(resumedPublisher.Request({{"type", "restart_ice"}, {"token", config.webrtc.token},
+    Require(resumedPublisher.Request({{"type", "restart_ice"},
         {"sdp", sdp::Sdp::Serialize(restartOffer)}}).value("type", "") == "error", "unchanged ICE credentials accepted");
 
     b.Close();
     std::this_thread::sleep_for(50ms);
     Client resumedViewer(config.websocket_port);
-    const auto viewerRecovery = resumedViewer.Request({{"type", "resume"}, {"token", config.webrtc.token},
+    const auto viewerRecovery = resumedViewer.Request({{"type", "resume"},
+        {"token", RoomToken("viewer", "demo", false, true)},
         {"room_id", "demo"}, {"participant_id", viewerJoin.at("participant_id")}, {"resume_token", viewerJoin.at("resume_token")}});
     Require(viewerRecovery.value("type", "") == "resumed", "viewer recovery failed");
     browser.origin.sess_version = "2";
     browser.ice.ufrag = "newviewer"; browser.ice.pwd = std::string(24, 'v');
     for (auto& media : browser.medias) media.ice = browser.ice;
-    const auto viewerRestart = resumedViewer.Request({{"type", "restart_ice"}, {"token", config.webrtc.token},
+    const auto viewerRestart = resumedViewer.Request({{"type", "restart_ice"},
         {"sdp", sdp::Sdp::Serialize(browser)}});
     Require(viewerRestart.value("type", "") == "answer" && viewerRestart.at("session_id") == reply.at("session_id"),
         "viewer ICE restart failed");
@@ -584,7 +452,8 @@ void RunRoom()
     outsider.Close();
     std::this_thread::sleep_for(50ms);
     Client resumedOutsider(config.websocket_port);
-    const auto idleRecovery = resumedOutsider.Request({{"type", "resume"}, {"token", config.webrtc.token},
+    const auto idleRecovery = resumedOutsider.Request({{"type", "resume"},
+        {"token", RoomToken("outsider", "other")},
         {"room_id", "other"}, {"participant_id", outsiderJoin.at("participant_id")},
         {"resume_token", outsiderJoin.at("resume_token")}});
     Require(idleRecovery.value("type", "") == "resumed" && idleRecovery.at("ice_restart") == false &&
@@ -601,12 +470,109 @@ void RunRoom()
     Require(expiredPublisher.Request(resume).value("type", "") == "error", "expired participant recovered");
     Require(resumedViewer.Request({{"type", "leave"}}).value("type", "") == "closed", "explicit leave failed");
     Client departedViewer(config.websocket_port);
-    Require(departedViewer.Request({{"type", "resume"}, {"token", config.webrtc.token},
+    Require(departedViewer.Request({{"type", "resume"}, {"token", RoomToken("viewer", "demo", false, true)},
         {"room_id", "demo"}, {"participant_id", viewerJoin.at("participant_id")},
         {"resume_token", viewerJoin.at("resume_token")}}).value("type", "") == "error", "explicit leave allowed resume");
     secondPublisher.Close(); resumedViewer.Close(); resumedOutsider.Close();
     WaitForEndpoints(baseline);
     service->Stop(); loop.Stop();
+}
+
+void RunAuthorization()
+{
+    const auto baseline = utils::EndpointManager::Instance().Size();
+    EventLoop loop(2);
+    Require(loop.Start(), "authorization event loop did not start");
+    config::AppConfig config;
+    config.listen_ip = config.webrtc.public_ip = "127.0.0.1";
+    config.udp_port = AvailablePort(SOCK_DGRAM);
+    config.websocket_port = AvailablePort(SOCK_STREAM);
+    config.webrtc.enabled = true;
+    config.webrtc.api_keys = {{kApiKey, kApiSecret}, {kOtherApiKey, kApiSecret}};
+    config.webrtc.max_sessions = 8;
+    config.webrtc.reconnect_timeout_ms = 5000;
+    auto service = std::make_shared<server::WebRtcService>(&loop, config, nullptr);
+    Require(service->Start(), "authorization service did not start");
+    Client observer(config.websocket_port), stranger(config.websocket_port);
+    Json admission = {{"type", "join"}, {"room_id", "secure"}};
+    Require(observer.Request(admission).value("type", "") == "error", "missing JWT accepted");
+    admission["token"] = "not.a.jwt";
+    Require(observer.Request(admission).value("type", "") == "error", "malformed JWT accepted");
+    admission["token"] = RoomToken("observer", "secure", false, false, 0, kApiKey, "incorrect signing key");
+    Require(observer.Request(admission).value("type", "") == "error", "forged signature accepted");
+    admission["token"] = RoomToken("observer", "secure", false, false, UnixNow() - 120);
+    Require(observer.Request(admission).value("code", "") == "token_expired", "expired admission token accepted");
+    admission["token"] = RoomToken("observer", "different-room", false, false);
+    Require(observer.Request(admission).value("type", "") == "error", "JWT for another room accepted");
+    Require(stranger.Request({{"type", "offer"}, {"sdp", Offer()},
+        {"token", RoomToken("stranger", "secure")}}).value("type", "") == "error",
+        "valid JWT in bare offer bypassed room admission");
+    Require(stranger.Request({{"type", "tracks"}}).value("type", "") == "error",
+        "unbound connection accessed room tracks");
+    Require(utils::EndpointManager::Instance().Size() == baseline, "denied admissions allocated endpoints");
+
+    admission["token"] = RoomToken("observer", "secure", false, false);
+    admission["subject_id"] = "spoofed-subject";
+    const auto joined = observer.Request(admission);
+    Require(joined.value("type", "") == "joined" && joined.value("subject_id", "") == "observer",
+        "client-supplied identity replaced signed identity");
+    Require(observer.Request({{"type", "tracks"}}).value("type", "") == "tracks",
+        "bound participant cannot list tracks without resending JWT");
+    const Json publication = {{"type", "publish"}, {"sdp", Offer()}};
+    Require(observer.Request(publication).value("code", "") == "forbidden", "read-only participant published");
+    Require(observer.Request({{"type", "subscribe"}, {"sdp", Offer()}, {"tracks", Json::array()}})
+        .value("code", "") == "forbidden", "subscribe permission was not checked before processing the request");
+    Require(observer.Request({{"type", "offer"}, {"sdp", Offer()}}).value("type", "") == "error",
+        "read-only participant bypassed publish permission through offer");
+    auto injected = publication;
+    injected["token"] = RoomToken("privileged-user", "secure");
+    Require(observer.Request(injected).value("code", "") == "forbidden", "per-message token replaced bound permissions");
+    Require(utils::EndpointManager::Instance().Size() == baseline, "denied media action allocated endpoint");
+    Require(stranger.Request({{"type", "join"}, {"room_id", "secure"},
+        {"token", RoomToken("observer", "secure", false, false)}}).value("type", "") == "error",
+        "duplicate room identity admitted");
+    Client otherRoom(config.websocket_port);
+    Join(otherRoom, "observer", "other-secure", false, false);
+
+    observer.Close();
+    std::this_thread::sleep_for(50ms);
+    Require(stranger.Request({{"type", "join"}, {"room_id", "secure"},
+        {"token", RoomToken("observer", "secure", false, false)}}).value("type", "") == "error",
+        "duplicate identity admitted during recovery grace");
+    Json recovery = {{"type", "resume"}, {"room_id", "secure"},
+        {"participant_id", joined.at("participant_id")}, {"resume_token", joined.at("resume_token")}};
+    Require(stranger.Request(recovery).value("type", "") == "error", "resume without JWT accepted");
+    recovery["token"] = RoomToken("other-user", "secure", false, false);
+    Require(stranger.Request(recovery).value("type", "") == "error", "different subject resumed participant");
+    recovery["token"] = RoomToken("observer", "secure", false, false, 0, kOtherApiKey);
+    Require(stranger.Request(recovery).value("type", "") == "error", "different issuer resumed participant");
+    recovery["token"] = RoomToken("observer", "secure", true, false);
+    Require(stranger.Request(recovery).value("type", "") == "error", "resume changed original publish grant");
+    recovery["token"] = RoomToken("observer", "secure", false, true);
+    Require(stranger.Request(recovery).value("type", "") == "error", "resume changed original subscribe grant");
+    recovery["token"] = RoomToken("observer", "secure", false, false, UnixNow() - 120);
+    Require(stranger.Request(recovery).value("code", "") == "token_expired", "expired JWT resumed participant");
+    recovery["token"] = RoomToken("observer", "secure", false, false);
+    const auto resumed = stranger.Request(recovery);
+    Require(resumed.value("type", "") == "resumed" && resumed.value("subject_id", "") == "observer" &&
+        resumed.at("participant_id") == joined.at("participant_id"), "same identity and grants could not resume");
+    Require(stranger.Request(publication).value("code", "") == "forbidden", "resume lost publish restriction");
+
+    // Admission-token expiry does not silently revoke an established participant.
+    Client shortLived(config.websocket_port);
+    const auto expiry = UnixNow() + 2;
+    Join(shortLived, "short-lived", "short-token", true, true, expiry);
+    while (UnixNow() <= expiry) std::this_thread::sleep_for(25ms);
+    Require(shortLived.Request({{"type", "tracks"}}).value("type", "") == "tracks",
+        "admission expiry invalidated a connected participant");
+    CheckAnswer(shortLived.Request(publication), config.udp_port);
+    Require(shortLived.Request({{"type", "leave"}}).value("type", "") == "closed",
+        "expired admission token prevented participant from leaving");
+    Require(stranger.Request({{"type", "leave"}}).value("type", "") == "closed", "observer leave failed");
+    Require(otherRoom.Request({{"type", "leave"}}).value("type", "") == "closed", "other-room leave failed");
+    WaitForEndpoints(baseline);
+    service->Stop();
+    loop.Stop();
 }
 
 void Run()
@@ -628,9 +594,10 @@ void Run()
     config.udp_port = AvailablePort(SOCK_DGRAM);
     config.websocket_port = AvailablePort(SOCK_STREAM);
     config.webrtc.enabled = true;
-    config.webrtc.token = "integration-secret";
+    config.webrtc.api_keys = {{kApiKey, kApiSecret}, {kOtherApiKey, kApiSecret}};
     config.webrtc.max_sessions = 1;
     const auto baseline = utils::EndpointManager::Instance().Size();
+    config.webrtc.reconnect_timeout_ms = 200;
 
     auto invalid = config;
     invalid.webrtc.public_ip = "0.0.0.0";
@@ -638,8 +605,8 @@ void Run()
     invalid.webrtc.public_ip = "::1";
     Require(!std::make_shared<server::WebRtcService>(&loop, invalid, nullptr)->Start(), "address family mismatch accepted");
     invalid = config;
-    invalid.webrtc.token.clear();
-    Require(!std::make_shared<server::WebRtcService>(&loop, invalid, nullptr)->Start(), "empty token accepted");
+    invalid.webrtc.api_keys.clear();
+    Require(!std::make_shared<server::WebRtcService>(&loop, invalid, nullptr)->Start(), "missing API keys accepted");
 
     // A failed WebSocket bind must release the UDP listener opened before it.
     {
@@ -654,31 +621,29 @@ void Run()
     auto service = std::make_shared<server::WebRtcService>(&loop, config, nullptr);
     Require(service->Start() && service->Start(), "service start failed");
     Client first(config.websocket_port), second(config.websocket_port);
-    const Json offer = {{"type", "offer"}, {"token", config.webrtc.token}, {"sdp", Offer()}};
-    auto bad = offer;
-    bad["token"] = "wrong-secret";
+    const Json offer = {{"type", "offer"}, {"sdp", Offer()}};
+    Json bad = {{"type", "join"}, {"room_id", "admission"}, {"token", "wrong-secret"}};
     Require(first.Request(bad).value("type", "") == "error", "wrong token accepted");
+    Require(first.Request(offer).value("type", "") == "error", "bare offer bypassed room admission");
     Require(first.RequestText("{").value("type", "") == "error", "invalid JSON accepted");
-    bad = offer;
+    Join(first, "first", "admission");
+    const Json publication = {{"type", "publish"}, {"sdp", Offer()}};
+    bad = publication;
     bad["sdp"] = "not SDP";
     Require(first.Request(bad).value("type", "") == "error", "invalid SDP accepted");
     bad["sdp"] = std::string(65537, 'x');
     Require(first.Request(bad).value("type", "") == "error", "oversized SDP accepted");
     Require(utils::EndpointManager::Instance().Size() == baseline, "rejected request allocated endpoint");
-    CheckAnswer(first.Request(offer), config.udp_port);
-    Require(utils::EndpointManager::Instance().Size() == baseline + 1, "accepted offer did not register endpoint");
-    Require(first.Request(offer).value("type", "") == "answer", "unchanged offer should retain its SDP version");
-    auto changedOffer = ParseDescription(offer, sdp::SdpType::Offer);
-    changedOffer.medias[1].codecs.back().fmtp = "apt=103";
-    bad = offer;
-    bad["sdp"] = sdp::Sdp::Serialize(changedOffer);
-    Require(first.Request(bad).value("type", "") == "error", "same-version offer changed an unselected codec");
-    Require(second.Request(offer).value("type", "") == "error", "session limit exceeded");
+    CheckAnswer(first.Request(publication), config.udp_port);
+    Require(utils::EndpointManager::Instance().Size() == baseline + 1, "accepted publication did not register endpoint");
+    Require(first.Request(offer).value("type", "") == "error", "room reoffer bypassed negotiation guard");
+    Require(second.Request({{"type", "join"}, {"room_id", "admission"},
+        {"token", RoomToken("second", "admission")}}).value("type", "") == "error", "session limit exceeded");
     Require(first.RequestText("{").value("type", "") == "error", "invalid JSON accepted on active session");
     Require(utils::EndpointManager::Instance().Size() == baseline + 1, "invalid message removed active session");
     Require(first.Request({{"type", "close"}}).value("type", "") == "closed", "close response missing");
     WaitForEndpoints(baseline);
-    CheckAnswer(second.Request(offer), config.udp_port);
+    Join(second, "second", "admission");
     auto shared = ParseDescription(offer, sdp::SdpType::Offer);
     shared.origin.sess_version = "2";
     auto screen = shared.medias[1];
@@ -687,7 +652,7 @@ void Run()
     screen.ssrcGroups.clear();
     shared.medias.push_back(screen);
     shared.bundle.mids.push_back(screen.mid);
-    const auto sharedReply = second.Request({{"type", "offer"}, {"token", config.webrtc.token},
+    const auto sharedReply = second.Request({{"type", "publish"},
         {"sdp", sdp::Sdp::Serialize(shared)}});
     Require(sharedReply.value("type", "") == "answer", sharedReply.dump().c_str());
     const auto sharedAnswer = ParseDescription(sharedReply, sdp::SdpType::Answer);
@@ -705,7 +670,8 @@ void Run()
 
     Require(loop.Start() && service->Start(), "service did not restart with new scheduler");
     Client restarted(config.websocket_port);
-    CheckAnswer(restarted.Request(offer), config.udp_port);
+    Join(restarted, "restarted", "admission");
+    CheckAnswer(restarted.Request(publication), config.udp_port);
     service->Stop();
     WaitForEndpoints(baseline);
     loop.Stop();
@@ -723,9 +689,10 @@ int main()
     try
     {
         Run();
-        RunRenegotiation();
+        RunNegotiationGuards();
         RunRoom();
-        std::cout << "PASS WebRTC service signaling, rooms, subscriptions, renegotiation, admission, cleanup and restart\n";
+        RunAuthorization();
+        std::cout << "PASS WebRTC service JWT authorization, rooms, subscriptions, renegotiation, admission, cleanup and restart\n";
         return 0;
     }
     catch (const std::exception& error)

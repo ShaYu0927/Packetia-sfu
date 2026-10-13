@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 add_subdirectory(Auth)
+add_subdirectory(Account)
 add_subdirectory(RecordService/Index)
 
 add_library(service STATIC

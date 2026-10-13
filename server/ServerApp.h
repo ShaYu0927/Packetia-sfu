@@ -13,12 +13,14 @@
 class EventLoop;
 namespace media { class EncodedFrameRouter; }
 namespace service { class RecordingService; class IRecordingEventSink; }
+namespace service::account { class AccountService; }
 namespace sdp { struct SdpMedia; }
 namespace protocol { class TurnServer; }
 
 namespace server
 {
 class WebRtcService;
+namespace api { class ApiServer; }
 // Owns shared resources and assembles services in dependency order.
 class ServerApp final
 {
@@ -51,6 +53,8 @@ public:
 
 private:
     void ConfigureServices();
+    void AddAccountServices();
+    void AddApiService();
     void AddMediaServices();
     void AddNetworkServices();
     void AddTurnService();
@@ -61,6 +65,8 @@ private:
     std::shared_ptr<service::IRecordingEventSink> recording_events_;
     mutable std::mutex lifecycle_mutex_;
     std::shared_ptr<EventLoop> event_loop_;
+    std::shared_ptr<service::account::AccountService> account_service_;
+    std::shared_ptr<api::ApiServer> api_server_;
     std::shared_ptr<media::EncodedFrameRouter> frame_router_;
     std::shared_ptr<media::EncodedFrameRouter> mix_output_router_;
     std::shared_ptr<service::mix::ConferenceMixService> mix_service_;

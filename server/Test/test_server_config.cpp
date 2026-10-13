@@ -33,6 +33,41 @@ void Check(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
 }
 
+void AccountConfiguration() {
+    const auto defaults = config::AppConfig::FromJson("{}");
+    Check(!defaults.account.enabled && !defaults.http.enabled, "account framework must be opt-in");
+    const auto configured = config::AppConfig::FromJson(R"({
+        "account": {"enabled":true,"database_path":"data/accounts.db","session_ttl_seconds":3600,
+                    "worker_count":3,"max_pending_requests":32},
+        "http": {"enabled":true,"listen_ip":"127.0.0.1","listen_port":18081,"max_body_bytes":4096}
+    })");
+    Check(configured.account.enabled && configured.account.database_path == "data/accounts.db" &&
+          configured.account.session_ttl_seconds == 3600 && configured.account.worker_count == 3 &&
+          configured.account.max_pending_requests == 32 && configured.http.enabled &&
+          configured.http.listen_ip == "127.0.0.1" && configured.http.listen_port == 18081 &&
+          configured.http.max_body_bytes == 4096, "account/HTTP configuration was not applied");
+    for (const char* invalid : {
+        R"({"http":{"enabled":true}})",
+        R"({"account":{"enabled":"true"}})",
+        R"({"account":{"database_path":""}})",
+        R"({"account":{"session_ttl_seconds":0}})",
+        R"({"account":{"worker_count":0}})", R"({"account":{"worker_count":65}})",
+        R"({"account":{"max_pending_requests":-1}})", R"({"account":{"max_pending_requests":65537}})",
+        R"({"account":{"unknown":true}})", R"({"http":{"enabled":1}})",
+        R"({"http":{"listen_port":65536}})", R"({"http":{"max_body_bytes":0}})",
+        R"({"http":{"max_body_bytes":1048577}})", R"({"http":{"listen_ip":""}})",
+        R"({"http":{"unknown":true}})"}) {
+        bool rejected = false;
+        try { config::AppConfig::FromJson(invalid); } catch (const std::exception&) { rejected = true; }
+        Check(rejected, "invalid account/HTTP configuration accepted");
+    }
+    auto invalid = defaults;
+    invalid.http.enabled = true;
+    bool rejected = false;
+    try { invalid.Validate(); } catch (const std::invalid_argument&) { rejected = true; }
+    Check(rejected, "programmatic HTTP configuration must require accounts");
+}
+
 void StreamConfiguration() {
     auto config = config::AppConfig::FromJson(R"({
         "services": {"recording":true,"ai":false,"conference_mix":true},
@@ -77,6 +112,10 @@ void StreamConfiguration() {
         R"({"webrtc":{"enabled":"true"}})", R"({"webrtc":{"max_sessions":0}})",
         R"({"webrtc":{"reconnect_timeout_ms":0}})", R"({"webrtc":{"reconnect_timeout_ms":120001}})",
         R"({"webrtc":{"public_ip":42}})", R"({"webrtc":{"unknown":true}})",
+        R"({"webrtc":{"token":"old-shared-token"}})", R"({"webrtc":{"api_keys":[]}})",
+        R"({"webrtc":{"api_keys":{"key":42}}})", R"({"webrtc":{"api_keys":{"key":"short"}}})",
+        R"({"webrtc":{"api_keys":{"":"01234567890123456789012345678901"}}})",
+        R"({"webrtc":{"api_keys":{"bad key":"01234567890123456789012345678901"}}})",
         R"({"turn":{"enabled":"true"}})", R"({"turn":{"dual_stack":1}})",
         R"({"turn":{"unauthorized_ratelimit":1}})",
         R"({"turn":{"unauthorized_ratelimit_rps":0}})",
@@ -98,10 +137,20 @@ void StreamConfiguration() {
     auto sliced = config::AppConfig::FromJson(R"({"recording":{"segment_ms":1000,"reorder_ms":50,"index_path":"index/recordings.sqlite"}})");
     Check(sliced.recording.segment_ms == 1000 && sliced.recording.reorder_ms == 50 &&
           sliced.recording.index_path == "index/recordings.sqlite", "segment/index configuration was not applied");
-    auto rtc = config::AppConfig::FromJson(R"({"webrtc":{"enabled":true,"public_ip":"192.0.2.1","token":"test-only","max_sessions":12}})");
+    auto rtc = config::AppConfig::FromJson(R"({"webrtc":{"enabled":true,"public_ip":"192.0.2.1","api_keys":{"test-key":"test-only-secret-with-32-bytes-minimum"},"max_sessions":12}})");
     Check(rtc.webrtc.enabled && rtc.webrtc.public_ip == "192.0.2.1" &&
-          rtc.webrtc.token == "test-only" && rtc.webrtc.max_sessions == 12,
+          rtc.webrtc.api_keys.at("test-key") == "test-only-secret-with-32-bytes-minimum" && rtc.webrtc.max_sessions == 12,
           "WebRTC configuration was not applied");
+    for (const auto& keys : {
+        std::map<std::string, std::string>{{std::string(129, 'k'), std::string(32, 's')}},
+        std::map<std::string, std::string>{{"key", std::string(4097, 's')}},
+        std::map<std::string, std::string>{{"key", std::string(31, 's')}}}) {
+        auto invalid = config::AppConfig{};
+        invalid.webrtc.api_keys = keys;
+        rejected = false;
+        try { invalid.Validate(); } catch (const std::invalid_argument&) { rejected = true; }
+        Check(rejected, "invalid API key bounds accepted programmatically");
+    }
     Check(rtc.webrtc.reconnect_timeout_ms == 15000 &&
           config::AppConfig::FromJson(R"({"webrtc":{"reconnect_timeout_ms":5000}})").webrtc.reconnect_timeout_ms == 5000,
           "WebRTC reconnect timeout was not applied");
@@ -148,9 +197,11 @@ void StreamConfiguration() {
 
 int main() {
     try {
+        AccountConfiguration();
         SavedEnvironment recording("PACKETIA_RECORDING"), ai("PACKETIA_AI"),
                          mix("PACKETIA_CONFERENCE_MIX"), directory("PACKETIA_RECORD_DIR"), path("PACKETIA_CONFIG"),
                          rtc("PACKETIA_WEBRTC"), rtc_ip("PACKETIA_WEBRTC_PUBLIC_IP"), rtc_token("PACKETIA_WEBRTC_TOKEN"),
+                         rtc_key("PACKETIA_WEBRTC_API_KEY"), rtc_secret("PACKETIA_WEBRTC_API_SECRET"),
                          turn("PACKETIA_TURN");
         auto config = server::ServerConfig::FromEnvironment();
         Check(config.recording_enabled && config.ai_enabled && !config.conference_mix_enabled, "defaults changed");
@@ -170,10 +221,24 @@ int main() {
         Set("PACKETIA_TURN", nullptr);
         Set("PACKETIA_WEBRTC", "true");
         Set("PACKETIA_WEBRTC_PUBLIC_IP", "192.0.2.2");
-        Set("PACKETIA_WEBRTC_TOKEN", "environment-test-only");
+        Set("PACKETIA_WEBRTC_API_KEY", "environment-key");
+        Set("PACKETIA_WEBRTC_API_SECRET", "environment-test-secret-at-least-32-bytes");
         config = server::ServerConfig::FromEnvironment();
         Check(config.webrtc.enabled && config.webrtc.public_ip == "192.0.2.2" &&
-              config.webrtc.token == "environment-test-only", "WebRTC environment overrides ignored");
+              config.webrtc.api_keys.at("environment-key") == "environment-test-secret-at-least-32-bytes",
+              "WebRTC environment overrides ignored");
+        Set("PACKETIA_WEBRTC_TOKEN", "old-token");
+        bool old_token_rejected = false;
+        try { server::ServerConfig::FromEnvironment(); }
+        catch (const std::invalid_argument&) { old_token_rejected = true; }
+        Check(old_token_rejected, "legacy shared token environment must fail with a migration error");
+        Set("PACKETIA_WEBRTC_TOKEN", nullptr);
+        Set("PACKETIA_WEBRTC_API_SECRET", nullptr);
+        bool partial_key_rejected = false;
+        try { server::ServerConfig::FromEnvironment(); }
+        catch (const std::invalid_argument&) { partial_key_rejected = true; }
+        Check(partial_key_rejected, "an API key without its secret must be rejected");
+        Set("PACKETIA_WEBRTC_API_SECRET", "environment-test-secret-at-least-32-bytes");
         for (const char* disabled : {"0", "false", "OFF", "No"}) {
             Set("PACKETIA_RECORDING", disabled);
             Set("PACKETIA_AI", disabled);
