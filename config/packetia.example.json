@@ -4,6 +4,14 @@
     "rtsp_port": 554,
     "io_threads": 1
   },
+  "workers": {
+    "media_threads": 4,
+    "endpoint_threads": 4,
+    "transcode_threads": 0,
+    "media_queue_len": 4096,
+    "endpoint_queue_len": 4096,
+    "transcode_queue_len": 512
+  },
   "account": {
     "enabled": false,
     "database_path": "packetia.db",
@@ -15,7 +23,14 @@
     "enabled": false,
     "listen_ip": "127.0.0.1",
     "listen_port": 8081,
-    "max_body_bytes": 8192
+    "max_body_bytes": 8192,
+    "max_connections": 1024,
+    "max_header_bytes": 8192,
+    "max_response_bytes": 1048576,
+    "max_total_response_bytes": 16777216,
+    "request_timeout_seconds": 15,
+    "idle_timeout_seconds": 30,
+    "service_interval_ms": 5
   },
   "services": {
     "recording": true,

@@ -65,12 +65,13 @@ void ShardedWorkerPool::shutdown(bool drain)
                 }
             }
             w.cv.notify_one();
+            w.th.RequestStop();
         }
     }
 
     for (auto& up : workers_)
     {
-        if (up->th.joinable()) up->th.join();
+        up->th.Join();
     }
 
     {
@@ -156,9 +157,9 @@ int ShardedWorkerPool::post(WorkJob&& job)
     return 0;
 }
 
-int ShardedWorkerPool::start(std::size_t worker_count, std::shared_ptr<IJobHandler> handler, std::size_t max_queue_len, DropPolicy drop, std::size_t max_queue_bytes)
+int ShardedWorkerPool::start(std::size_t worker_count, std::shared_ptr<IJobHandler> handler, std::size_t max_queue_len, DropPolicy drop, std::size_t max_queue_bytes, std::string name)
 {
-    std::lock_guard<std::mutex> lifecycle_lock(lifecycle_mtx_);
+    std::unique_lock<std::mutex> lifecycle_lock(lifecycle_mtx_);
 
     if (worker_count == 0) return -1;
 
@@ -169,15 +170,35 @@ int ShardedWorkerPool::start(std::size_t worker_count, std::shared_ptr<IJobHandl
     drop_policy_ = drop;
     max_queue_bytes_ = max_queue_bytes;
 
-    workers_.reserve(worker_count);
-
-    for(std::size_t t = 0;t < worker_count; t++)
+    try
     {
-        auto w = std::make_unique<Worker>();
-        w->running.store(true);
-        w->draining.store(false);
-        w->th = std::thread([this, wp = w.get(), t]() { worker_loop(*wp, t); });
-        workers_.push_back(std::move(w));
+        workers_.reserve(worker_count);
+        for(std::size_t t = 0;t < worker_count; t++)
+        {
+            auto w = std::make_unique<Worker>();
+            w->running.store(true);
+            w->draining.store(false);
+            auto* wp = w.get();
+            w->th = utils::ThreadManager::Instance().Start(
+                {name, name + "-" + std::to_string(t), utils::ThreadModel::Worker},
+                [this, wp, t] { worker_loop(*wp, t); },
+                [wp] {
+                    { std::lock_guard<std::mutex> lock(wp->mtx); wp->running.store(false); }
+                    wp->cv.notify_one();
+                });
+            workers_.push_back(std::move(w));
+        }
+    }
+    catch (...)
+    {
+        started_.store(false);
+        for (auto& worker : workers_) worker->th.RequestStop();
+        lifecycle_lock.unlock();
+        for (auto& worker : workers_) worker->th.Join();
+        lifecycle_lock.lock();
+        workers_.clear();
+        handler_.reset();
+        return -1;
     }
     return 0;
 }
@@ -302,7 +323,7 @@ int WorkerService::create_pool(const std::string& name,
     }
 
     auto pool = std::make_shared<ShardedWorkerPool>();
-    const int ret = pool->start(worker_count, std::move(handler), max_queue_len, drop, max_queue_bytes);
+    const int ret = pool->start(worker_count, std::move(handler), max_queue_len, drop, max_queue_bytes, normalized_name);
     if (ret != 0)
     {
         LOG_ERROR("[WorkerService] start pool failed, pool=", normalized_name,
@@ -343,7 +364,8 @@ int WorkerService::create_function_pool(std::string_view name,
     }
 
     auto pool = std::make_shared<ShardedWorkerPool>();
-    const int ret = pool->start(worker_count, nullptr, max_queue_len, drop);
+    const int ret = pool->start(worker_count, nullptr, max_queue_len, drop,
+                              ShardedWorkerPool::kDefaultMaxQueueBytes, normalized_name);
     if (ret != 0)
     {
         return ret;

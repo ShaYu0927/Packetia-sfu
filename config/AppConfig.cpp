@@ -76,12 +76,18 @@ StreamFeatures AppConfig::Resolve(const StreamKey& key) const {
 void AppConfig::Validate() const {
     if (recording.segment_ms > static_cast<uint64_t>(INT64_MAX / 1000) || recording.reorder_ms > 5000)
         throw std::invalid_argument("invalid segment duration or reorder window (0..5000 ms)");
-    if (listen_ip.empty() || !rtsp_port || !sip_port || !rtmp_port || !udp_port || !websocket_port || !io_threads)
+    if (listen_ip.empty() || !rtsp_port || !sip_port || !rtmp_port || !udp_port || !websocket_port || !io_threads || io_threads > 64)
         throw std::invalid_argument("invalid server address, port or thread count");
+    if (!workers.media_threads || workers.media_threads > 64 ||
+        !workers.endpoint_threads || workers.endpoint_threads > 64 || workers.transcode_threads > 64 ||
+        !workers.media_queue_len || workers.media_queue_len > 65536 ||
+        !workers.endpoint_queue_len || workers.endpoint_queue_len > 65536 ||
+        !workers.transcode_queue_len || workers.transcode_queue_len > 65536)
+        throw std::invalid_argument("worker threads must be 1..64 (transcode allows 0=auto); queue lengths must be 1..65536");
     if (!account.IsValid())
         throw std::invalid_argument("invalid account database, session lifetime or worker limits");
-    if (http.listen_ip.empty() || !http.listen_port || !http.max_body_bytes || http.max_body_bytes > 1024 * 1024)
-        throw std::invalid_argument("invalid HTTP address, port or request body limit (1..1048576 bytes)");
+    if (!http.IsValid())
+        throw std::invalid_argument("invalid HTTP address, port, limits or timeouts");
     if (http.enabled && !account.enabled)
         throw std::invalid_argument("http.enabled requires account.enabled");
     if (!webrtc.max_sessions)
@@ -102,7 +108,7 @@ void AppConfig::Validate() const {
         throw std::invalid_argument("invalid TURN listener or realm");
     if (recording.directory.empty() || !recording.max_queue_frames || !recording.max_queue_bytes ||
         !recording.max_streams || !recording.max_pending_bytes || !recording.idle_timeout_ms ||
-        !recording.worker_count || !recording.max_stream_queue_frames || !recording.max_stream_queue_bytes)
+        !recording.worker_count || recording.worker_count > 64 || !recording.max_stream_queue_frames || !recording.max_stream_queue_bytes)
         throw std::invalid_argument("invalid recording directory or resource limits");
     for (const auto& entry : streams)
         if (entry.first.session_id.empty() || entry.first.stream_id.empty())
@@ -110,7 +116,7 @@ void AppConfig::Validate() const {
 }
 AppConfig AppConfig::FromJson(const std::string& text) {
     const auto root = Json::parse(text);
-    Keys(root, {"server", "account", "http", "webrtc", "turn", "services", "recording", "stream_defaults", "streams"});
+    Keys(root, {"server", "workers", "account", "http", "webrtc", "turn", "services", "recording", "stream_defaults", "streams"});
     AppConfig config;
     if (root.contains("server")) {
         const auto& server = root.at("server");
@@ -123,6 +129,17 @@ AppConfig AppConfig::FromJson(const std::string& text) {
         Number(server, "websocket_port", config.websocket_port);
         Number(server, "io_threads", config.io_threads);
     }
+    if (root.contains("workers")) {
+        const auto& workers = root.at("workers");
+        Keys(workers, {"media_threads", "endpoint_threads", "transcode_threads",
+                       "media_queue_len", "endpoint_queue_len", "transcode_queue_len"});
+        Number(workers, "media_threads", config.workers.media_threads);
+        Number(workers, "endpoint_threads", config.workers.endpoint_threads);
+        Number(workers, "transcode_threads", config.workers.transcode_threads, true);
+        Number(workers, "media_queue_len", config.workers.media_queue_len);
+        Number(workers, "endpoint_queue_len", config.workers.endpoint_queue_len);
+        Number(workers, "transcode_queue_len", config.workers.transcode_queue_len);
+    }
     if (root.contains("account")) {
         const auto& account = root.at("account");
         Keys(account, {"enabled", "database_path", "session_ttl_seconds", "worker_count", "max_pending_requests"});
@@ -134,11 +151,20 @@ AppConfig AppConfig::FromJson(const std::string& text) {
     }
     if (root.contains("http")) {
         const auto& http = root.at("http");
-        Keys(http, {"enabled", "listen_ip", "listen_port", "max_body_bytes"});
+        Keys(http, {"enabled", "listen_ip", "listen_port", "max_body_bytes", "max_connections",
+                    "max_header_bytes", "max_response_bytes", "max_total_response_bytes",
+                    "request_timeout_seconds", "idle_timeout_seconds", "service_interval_ms"});
         if (http.contains("enabled")) config.http.enabled = Flag(http.at("enabled"));
         if (http.contains("listen_ip")) config.http.listen_ip = http.at("listen_ip").get<std::string>();
         Number(http, "listen_port", config.http.listen_port);
         Number(http, "max_body_bytes", config.http.max_body_bytes);
+        Number(http, "max_connections", config.http.max_connections);
+        Number(http, "max_header_bytes", config.http.max_header_bytes);
+        Number(http, "max_response_bytes", config.http.max_response_bytes);
+        Number(http, "max_total_response_bytes", config.http.max_total_response_bytes);
+        Number(http, "request_timeout_seconds", config.http.request_timeout_seconds);
+        Number(http, "idle_timeout_seconds", config.http.idle_timeout_seconds);
+        Number(http, "service_interval_ms", config.http.service_interval_ms);
     }
     if (root.contains("webrtc")) {
         const auto& rtc = root.at("webrtc");

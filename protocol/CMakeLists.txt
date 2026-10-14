@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
+add_subdirectory(http)
+
 add_library(sip STATIC
     sip/sip.cpp
     sip/sip.h

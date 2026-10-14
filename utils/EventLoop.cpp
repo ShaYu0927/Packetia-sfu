@@ -4,6 +4,7 @@
 #else
 #include "EpollTaskScheduler.h"
 #endif
+#include <stdexcept>
 
 
 EventLoop::EventLoop(uint32_t num_threads)
@@ -78,29 +79,46 @@ void EventLoop::RemoveChannel(ChannelPtr channel)
 
 bool EventLoop::Start()
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<std::mutex> lock(mutex_);
     if(!task_schedulers_.empty())
     {
         return false;
     }
 
-    for (uint32_t i = 0; i < num_threads_; ++i) 
+    try
     {
-        std::shared_ptr<TaskScheduler> task_scheduler =
+        for (uint32_t i = 0; i < num_threads_; ++i)
+        {
+            std::shared_ptr<TaskScheduler> task_scheduler =
 #if defined(__APPLE__)
-            std::make_shared<KqueueTaskScheduler>(scheduler_id_seed_++);
+                std::make_shared<KqueueTaskScheduler>(scheduler_id_seed_++);
 #else
-            std::make_shared<EpollTaskScheduler>(scheduler_id_seed_++);
+                std::make_shared<EpollTaskScheduler>(scheduler_id_seed_++);
 #endif
-        task_schedulers_.push_back(task_scheduler);
+            task_schedulers_.push_back(task_scheduler);
 
-        std::shared_ptr<std::thread> thread =
-            std::make_shared<std::thread>([task_scheduler]() {
-                task_scheduler->Run();
-            });
+            auto thread = std::make_shared<utils::ManagedThread>(
+                utils::ThreadManager::Instance().Start(
+                    {"io", "io-" + std::to_string(task_scheduler->GetId()), utils::ThreadModel::Io},
+                    [task_scheduler] { task_scheduler->Run(); },
+                    [task_scheduler] { task_scheduler->stop(); }));
 
-        threads_.push_back(thread);
-        while (!task_scheduler->IsStarted()) std::this_thread::yield();
+            threads_.push_back(thread);
+            while (!task_scheduler->IsStarted())
+            {
+                if (thread->Finished()) throw std::runtime_error("I/O scheduler exited during startup");
+                std::this_thread::yield();
+            }
+        }
+    }
+    catch (...)
+    {
+        for (auto& thread : threads_) thread->RequestStop();
+        auto failed_threads = std::move(threads_);
+        task_schedulers_.clear();
+        lock.unlock();
+        for (auto& thread : failed_threads) thread->Join();
+        return false;
     }
 
     started_ = true;
@@ -115,19 +133,19 @@ bool EventLoop::Start()
 		switch (priority) 
 		{
 		case TASK_SCHEDULER_PRIORITY_LOW:
-			SetThreadPriority(iter->native_handle(), THREAD_PRIORITY_BELOW_NORMAL);
+			SetThreadPriority(iter->NativeHandle(), THREAD_PRIORITY_BELOW_NORMAL);
 			break;
 		case TASK_SCHEDULER_PRIORITY_NORMAL:
-			SetThreadPriority(iter->native_handle(), THREAD_PRIORITY_NORMAL);
+			SetThreadPriority(iter->NativeHandle(), THREAD_PRIORITY_NORMAL);
 			break;
 		case TASK_SCHEDULER_PRIORITYO_HIGH:
-			SetThreadPriority(iter->native_handle(), THREAD_PRIORITY_ABOVE_NORMAL);
+			SetThreadPriority(iter->NativeHandle(), THREAD_PRIORITY_ABOVE_NORMAL);
 			break;
 		case TASK_SCHEDULER_PRIORITY_HIGHEST:
-			SetThreadPriority(iter->native_handle(), THREAD_PRIORITY_HIGHEST);
+			SetThreadPriority(iter->NativeHandle(), THREAD_PRIORITY_HIGHEST);
 			break;
 		case TASK_SCHEDULER_PRIORITY_REALTIME:
-			SetThreadPriority(iter->native_handle(), THREAD_PRIORITY_TIME_CRITICAL);
+			SetThreadPriority(iter->NativeHandle(), THREAD_PRIORITY_TIME_CRITICAL);
 			break;
 		}
 #endif
@@ -145,10 +163,11 @@ void EventLoop::Loop()
 
 void EventLoop::Stop()
 {
-    std::vector<std::shared_ptr<std::thread>> threads;
+    std::vector<std::shared_ptr<utils::ManagedThread>> threads;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         for (auto& scheduler : task_schedulers_) scheduler->stop();
+        for (auto& thread : threads_) thread->RequestStop();
         started_ = false;
         // An I/O callback can request stop, but cannot join its own thread.
         // The owning thread/destructor subsequently completes the joins.
@@ -163,9 +182,18 @@ void EventLoop::Stop()
         threads.swap(threads_);
     }
     for (auto& thread : threads)
-        if (thread && thread->joinable()) thread->join();
+        if (thread) thread->Join();
     std::lock_guard<std::mutex> lock(mutex_);
     // Connections and servers retain their old scheduler for final cleanup.
     // A subsequent Start creates new schedulers.
     task_schedulers_.clear();
+}
+
+std::vector<TaskScheduler::Status> EventLoop::Status() const
+{
+    std::vector<std::shared_ptr<TaskScheduler>> schedulers;
+    { std::lock_guard<std::mutex> lock(mutex_); schedulers = task_schedulers_; }
+    std::vector<TaskScheduler::Status> result;
+    for (const auto& scheduler : schedulers) result.push_back(scheduler->GetStatus());
+    return result;
 }

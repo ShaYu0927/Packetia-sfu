@@ -1,5 +1,7 @@
 #include "ApiServer.h"
 #include "AccountController.h"
+#include "ApiResponse.h"
+#include "ApiRouter.h"
 #include "log/logger.h"
 
 #include <atomic>
@@ -13,20 +15,26 @@ namespace
 
 std::atomic<std::uint64_t> next_pool_id{0};
 
-network::http::HttpResponse Unavailable()
+protocol::http::HttpResponse Unavailable()
 {
-    return {503, R"({"error":{"code":"unavailable","message":"Account API unavailable."}})",
-            {{"content-type", "application/json; charset=utf-8"}, {"cache-control", "no-store"}}};
+    return ErrorResponse(503, "unavailable", "Account API unavailable.");
 }
 
-void RespondSafely(const network::http::HttpServer::Respond& respond,
-                   network::http::HttpResponse response) noexcept
+ApiRouter BuildRoutes(std::shared_ptr<service::account::AccountService> accounts, std::size_t body_limit)
+{
+    ApiRouter::Builder builder;
+    AccountController(std::move(accounts)).RegisterRoutes(builder);
+    return builder.Build(body_limit);
+}
+
+void RespondSafely(const protocol::http::IHttpServer::Respond& respond,
+                   protocol::http::HttpResponse response) noexcept
 {
     try { if (respond) respond(std::move(response)); }
     catch (...)
     {
         try { LOG_ERROR("[ApiServer] transport response callback failed"); }
-        catch (...) {} // Logging must not break the no-throw response boundary.
+        catch (...) {} 
     }
 }
 
@@ -36,10 +44,10 @@ struct ApiServer::State
 {
     State(std::shared_ptr<service::account::AccountService> accounts,
           std::size_t body_limit, std::size_t pending_limit, std::string name)
-        : controller(std::move(accounts), body_limit), max_body_bytes(body_limit),
+        : router(BuildRoutes(std::move(accounts), body_limit)), max_body_bytes(body_limit),
           max_pending(pending_limit), pool_name(std::move(name)) {}
 
-    AccountController controller;
+    const ApiRouter router;
     const std::size_t max_body_bytes;
     const std::size_t max_pending;
     const std::string pool_name;
@@ -48,24 +56,18 @@ struct ApiServer::State
     std::size_t pending = 0;
     std::uint64_t next_key = 0;
 
-    static void Dispatch(const std::weak_ptr<State>& weak,
-                         network::http::HttpRequest request,
-                         network::http::HttpServer::Respond respond)
+    static void Dispatch(const std::weak_ptr<State>& weak, protocol::http::HttpRequest request, protocol::http::IHttpServer::Respond respond)
     {
         const auto state = weak.lock();
         if (!state) { RespondSafely(respond, Unavailable()); return; }
         if (request.body.size() > state->max_body_bytes)
         {
-            RespondSafely(respond,
-                {413, R"({"error":{"code":"body_too_large","message":"Request body too large."}})",
-                 {{"content-type", "application/json; charset=utf-8"}, {"cache-control", "no-store"}}});
+            RespondSafely(respond, ErrorResponse(413, "body_too_large", "Request body too large."));
             return;
         }
 
         bool admitted = false;
         {
-            // Serialize admission with Stop; shutdown cannot remove the pool
-            // between checking acceptance and posting the owned request.
             std::lock_guard<std::mutex> lock(state->mutex);
             if (state->accepting && state->pending < state->max_pending)
             {
@@ -86,8 +88,7 @@ struct ApiServer::State
                             } completion{state};
                             try
                             {
-                                // The HTTP adapter returns this to its I/O owner.
-                                RespondSafely(respond, state->controller.Handle(request));
+                                RespondSafely(respond, state->router.Dispatch(request));
                             }
                             catch (...)
                             {
@@ -104,10 +105,10 @@ struct ApiServer::State
     }
 };
 
-ApiServer::ApiServer(network::http::HttpOptions http_options,
+ApiServer::ApiServer(protocol::http::HttpServerOptions http_options,
                      service::account::AccountOptions account_options,
                      std::shared_ptr<service::account::AccountService> accounts,
-                     std::shared_ptr<network::http::HttpServer> transport)
+                     std::shared_ptr<protocol::http::IHttpServer> transport)
     : http_options_(std::move(http_options)), account_options_(std::move(account_options)),
       accounts_(std::move(accounts)), transport_(std::move(transport)),
       pool_name_("account_api_" + std::to_string(next_pool_id.fetch_add(1)))
@@ -126,9 +127,7 @@ bool ApiServer::Start()
 {
     if (started_ || !http_options_.enabled) return true;
     if (!account_options_.enabled || !account_options_.IsValid() || !accounts_ || !transport_ ||
-        http_options_.listen_ip.empty() ||
-        http_options_.listen_port == 0 || http_options_.max_body_bytes == 0 ||
-        http_options_.max_body_bytes > 1024 * 1024)
+        !http_options_.IsValid())
     {
         LOG_ERROR("[ApiServer] invalid or missing account API configuration");
         return false;
@@ -137,8 +136,7 @@ bool ApiServer::Start()
     try
     {
         if (workers_.Start() != 0) return false;
-        state_ = std::make_shared<State>(accounts_, http_options_.max_body_bytes,
-                                          account_options_.max_pending_requests, pool_name_);
+        state_ = std::make_shared<State>(accounts_, http_options_.max_body_bytes, account_options_.max_pending_requests, pool_name_);
         const std::weak_ptr<State> weak = state_;
         if (!transport_->Start(http_options_, [weak](auto request, auto respond)
             {
@@ -146,7 +144,7 @@ bool ApiServer::Start()
                 catch (...)
                 {
                     try { RespondSafely(respond, Unavailable()); }
-                    catch (...) {} // Do not unwind through the network callback.
+                    catch (...) {} 
                 }
             }))
         {

@@ -209,7 +209,41 @@ TEST_F(ServerAppTest, LaterStartupFailureRollsBackTurnListener)
     ASSERT_EQ(listen(occupied.fd, 1), 0);
     server::ServerApp app(config);
     EXPECT_FALSE(app.Start());
+    for (const auto& thread : app.ThreadStatus().threads)
+        EXPECT_EQ(thread.options.model, utils::ThreadModel::Logging);
     Socket released_control(SOCK_DGRAM, "::", config.turn.listen_port);
+}
+
+TEST_F(ServerAppTest, RuntimeReportsConfiguredThreadsAndRemovesThemAcrossRestart)
+{
+    config.io_threads = 2;
+    config.workers.media_threads = 2;
+    config.workers.endpoint_threads = 1;
+    config.workers.transcode_threads = 1;
+    reservations.clear();
+    server::ServerApp app(config);
+    for (int cycle = 0; cycle != 2; ++cycle)
+    {
+        ASSERT_TRUE(app.Start());
+        const auto status = app.ThreadStatus();
+        ASSERT_EQ(status.io.size(), 2u);
+        for (const auto& io : status.io) EXPECT_TRUE(io.started);
+        ASSERT_EQ(status.pools.size(), 3u);
+        size_t io_threads = 0, workers = 0;
+        for (const auto& thread : status.threads)
+        {
+            if (thread.options.model == utils::ThreadModel::Io) ++io_threads;
+            if (thread.options.model == utils::ThreadModel::Worker) ++workers;
+        }
+        EXPECT_EQ(io_threads, 2u);
+        EXPECT_EQ(workers, 4u);
+        app.Stop();
+        const auto stopped = app.ThreadStatus();
+        EXPECT_TRUE(stopped.io.empty());
+        EXPECT_TRUE(stopped.pools.empty());
+        for (const auto& thread : stopped.threads)
+            EXPECT_EQ(thread.options.model, utils::ThreadModel::Logging);
+    }
 }
 
 TEST_F(ServerAppTest, UnimplementedAccountsFailClosedAndRollbackAllowsExistingServicesToStart)

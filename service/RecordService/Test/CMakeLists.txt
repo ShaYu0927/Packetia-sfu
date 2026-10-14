@@ -3,6 +3,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     project(RecordingTests LANGUAGES CXX)
     enable_testing()
     find_package(Threads REQUIRED)
+    include("${CMAKE_CURRENT_LIST_DIR}/../../../utils/threading/ThreadSupport.cmake")
     add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../../config" "${CMAKE_CURRENT_BINARY_DIR}/config")
     add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../../cmake/ffmpeg"
         "${CMAKE_CURRENT_BINARY_DIR}/ffmpeg")
@@ -43,7 +44,7 @@ if(RECORDING_FFMPEG)
     target_compile_features(test_recording PRIVATE cxx_std_17)
     target_include_directories(test_recording PRIVATE
         .. ../../../media/core ../../../log ../../../utils ${FFMPEG_INCLUDE_DIRS})
-    target_link_libraries(test_recording PRIVATE packetia_recording_index ${FFMPEG_LIBRARIES} Threads::Threads)
+    target_link_libraries(test_recording PRIVATE packetia_recording_index ${FFMPEG_LIBRARIES} packetia_threads)
     if(MSVC)
         target_compile_options(test_recording PRIVATE /utf-8)
     endif()
@@ -61,7 +62,7 @@ if(RECORDING_FFMPEG)
     target_include_directories(recording_test_pipeline PUBLIC
         .. ${PACKETIA_RECORD_ROOT} ${PACKETIA_RECORD_ROOT}/service ${PACKETIA_RECORD_ROOT}/media
         ${PACKETIA_RECORD_ROOT}/media/core ${PACKETIA_RECORD_ROOT}/log ${PACKETIA_RECORD_ROOT}/utils)
-    target_link_libraries(recording_test_pipeline PUBLIC packetia_config packetia_recording_index ${FFMPEG_LIBRARIES} Threads::Threads)
+    target_link_libraries(recording_test_pipeline PUBLIC packetia_config packetia_recording_index ${FFMPEG_LIBRARIES} packetia_threads)
     add_executable(test_recording_control test_recording_control.cpp)
     target_link_libraries(test_recording_control PRIVATE recording_test_pipeline)
     add_test(NAME recording_control COMMAND ${Python3_EXECUTABLE}

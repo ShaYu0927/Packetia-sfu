@@ -1,5 +1,6 @@
 #include "WorkerRegistry.h"
 #include "EndpointBase.h"
+#include "ThreadSafeQueue.h"
 #include "server/ServerLauncher.h"
 #include "server/WorkerSetup.h"
 
@@ -291,6 +292,26 @@ void TestFunctionsRestartAndDestructor()
     CHECK(!WorkerService::exists("registry-restart-typed"));
 }
 
+void TestLegacyQueueLifecycle()
+{
+    auto& queue = QueueManager::Instance();
+    CHECK(!queue.TryPost(1, [] {}));
+    std::atomic<int> completed{0};
+    for (int cycle = 0; cycle != 2; ++cycle)
+    {
+        queue.Start(2);
+        queue.Start(2);
+        for (int i = 0; i != 32; ++i)
+            CHECK(queue.TryPost(7, [&] { ++completed; }));
+        queue.Stop();
+        CHECK(completed == (cycle + 1) * 32);
+        CHECK(!queue.TryPost(7, [] {}));
+        for (const auto& thread : utils::ThreadManager::Instance().Snapshot())
+            CHECK(thread.options.group != "legacy_queue");
+        queue.Stop();
+    }
+}
+
 void TestEmptyRegistry()
 {
     WorkerRegistry registry;
@@ -343,13 +364,26 @@ void TestServerWorkerSetup()
     };
     {
         server::ServerLauncher launcher;
-        server::AddWorkerPools(launcher);
+        config::WorkerOptions options;
+        options.media_threads = 2;
+        options.endpoint_threads = 1;
+        options.transcode_threads = 3;
+        server::AddWorkerPools(launcher, options);
         CHECK(launcher.StartAll());
         CHECK(launcher.StartAll());
+        CHECK(WorkerService::get_pool_shared(POOL_MEDIA)->Status().worker_count == 2);
+        CHECK(WorkerService::get_pool_shared(POOL_ENDPOINT)->Status().worker_count == 1);
+        CHECK(WorkerService::get_pool_shared(POOL_TRANSCODE)->Status().worker_count == 3);
+        size_t managed_workers = 0;
+        for (const auto& thread : utils::ThreadManager::Instance().Snapshot())
+            if (thread.options.model == utils::ThreadModel::Worker) ++managed_workers;
+        CHECK(managed_workers == 6);
         post(10);
         launcher.StopAll();
         CHECK(endpoint->rtp == 10 && endpoint->rtcp == 10 && functions == 10);
         CHECK(WorkerService::pool_names().empty());
+        for (const auto& thread : utils::ThreadManager::Instance().Snapshot())
+            CHECK(thread.options.model != utils::ThreadModel::Worker);
         launcher.StopAll();
         CHECK(launcher.StartAll());
         post(3);
@@ -368,6 +402,7 @@ try
     TestStopQueuedJobs(true);
     TestStopQueuedJobs(false);
     TestReverseOrderAndRunningRegistration();
+    TestLegacyQueueLifecycle();
     TestFailedStartRollsBack(false);
     TestFailedStartRollsBack(true);
     TestDuplicateNames("registry-duplicate", "registry-duplicate");

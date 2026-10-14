@@ -13,7 +13,6 @@ struct AccountOptions
     bool enabled = false;
     std::string database_path = "packetia.db";
     uint32_t session_ttl_seconds = 86400;
-    // Consumed by the API execution pool; AccountService does not own threads.
     uint32_t worker_count = 2;
     size_t max_pending_requests = 128;
 

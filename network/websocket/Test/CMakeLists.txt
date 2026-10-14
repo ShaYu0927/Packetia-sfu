@@ -14,6 +14,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     set(CMAKE_CXX_STANDARD_REQUIRED ON)
     find_package(Threads REQUIRED)
     get_filename_component(PACKETIA_SOURCE_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
+    include("${PACKETIA_SOURCE_ROOT}/utils/threading/ThreadSupport.cmake")
     add_library(utils STATIC
         "${PACKETIA_SOURCE_ROOT}/utils/TaskScheduler.cpp"
         "${PACKETIA_SOURCE_ROOT}/utils/MediaLatency.cpp"
@@ -27,7 +28,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
         "${PACKETIA_SOURCE_ROOT}/network"
         "${PACKETIA_SOURCE_ROOT}/log")
     target_compile_features(utils PUBLIC cxx_std_17)
-    target_link_libraries(utils PUBLIC Threads::Threads)
+    target_link_libraries(utils PUBLIC packetia_threads)
     add_subdirectory("${PACKETIA_SOURCE_ROOT}/network/websocket"
         "${CMAKE_CURRENT_BINARY_DIR}/websocket")
 endif()

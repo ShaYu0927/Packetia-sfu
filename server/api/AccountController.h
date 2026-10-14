@@ -1,9 +1,8 @@
 #ifndef PACKETIA_SERVER_API_ACCOUNT_CONTROLLER_H_
 #define PACKETIA_SERVER_API_ACCOUNT_CONTROLLER_H_
 
-#include "network/http/HttpTypes.h"
+#include "ApiRouter.h"
 
-#include <cstddef>
 #include <memory>
 
 namespace service::account { class AccountService; }
@@ -14,16 +13,15 @@ namespace server::api
 class AccountController final
 {
 public:
-    explicit AccountController(std::shared_ptr<service::account::AccountService> accounts,
-                               std::size_t max_body_bytes = 8192);
+    explicit AccountController(std::shared_ptr<service::account::AccountService> accounts);
 
-    // Synchronous business boundary. ApiServer invokes it on its account pool.
-    // It never stores connection objects or room/media authorization state.
-    network::http::HttpResponse Handle(const network::http::HttpRequest& request) const;
+    void RegisterRoutes(ApiRouter::Builder& router) const;
 
 private:
+    protocol::http::HttpResponse RegisterAccount(const ApiRequest& request) const;
+    protocol::http::HttpResponse Login(const ApiRequest& request) const;
+
     const std::shared_ptr<service::account::AccountService> accounts_;
-    const std::size_t max_body_bytes_;
 };
 
 }

@@ -7,6 +7,7 @@ endif()
 
 find_package(Threads REQUIRED)
 get_filename_component(PACKETIA_WORKERS_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
+include("${PACKETIA_WORKERS_ROOT}/utils/threading/ThreadSupport.cmake")
 
 add_executable(test_worker_registry test_worker_registry.cpp
     "${PACKETIA_WORKERS_ROOT}/server/WorkerSetup.cpp")
@@ -25,6 +26,7 @@ else()
     add_library(worker_registry_test_support STATIC
         "${PACKETIA_WORKERS_ROOT}/server/ServerLauncher.cpp"
         "${PACKETIA_WORKERS_ROOT}/utils/WorkerRegistry.cpp"
+        "${PACKETIA_WORKERS_ROOT}/utils/ThreadSafeQueue.cpp"
         "${PACKETIA_WORKERS_ROOT}/utils/ShardedWorkerPool.cpp"
         "${PACKETIA_WORKERS_ROOT}/utils/EndpointBase.cpp"
         "${PACKETIA_WORKERS_ROOT}/utils/MediaLatency.cpp")
@@ -32,7 +34,7 @@ else()
     target_include_directories(worker_registry_test_support PRIVATE
         "${PACKETIA_WORKERS_ROOT}"
         "${PACKETIA_WORKERS_ROOT}/log")
-    target_link_libraries(worker_registry_test_support PUBLIC packetia_memory Threads::Threads)
+    target_link_libraries(worker_registry_test_support PUBLIC packetia_memory packetia_threads)
     target_link_libraries(test_worker_registry PRIVATE worker_registry_test_support)
 endif()
 

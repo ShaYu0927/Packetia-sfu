@@ -2,7 +2,7 @@
 #include "ServiceNames.h"
 #include "WorkerSetup.h"
 #include "api/ApiServer.h"
-#include "network/http/LibwebsocketsHttpServer.h"
+#include "protocol/http/HttpServer.h"
 #include "service/Account/AccountService.h"
 #include "service/Account/ScryptPasswordHasher.h"
 #include "service/Account/SqliteAccountStore.h"
@@ -67,6 +67,11 @@ void ServerApp::Stop() noexcept
     launcher_.StopAll();
 }
 
+ThreadRuntimeStatus ServerApp::ThreadStatus() const
+{
+    return {utils::ThreadManager::Instance().Snapshot(), WorkerService::status(), event_loop_->Status()};
+}
+
 void ServerApp::ConfigureServices()
 {
     // Reverse shutdown keeps I/O and frame consumers alive while workers
@@ -85,7 +90,7 @@ void ServerApp::ConfigureServices()
     // Account resources outlive API callbacks and their business workers.
     AddAccountServices();
     AddMediaServices();
-    AddWorkerPools(launcher_);
+    AddWorkerPools(launcher_, config_.workers);
     AddNetworkServices();
     // Keep API registration outside AddNetworkServices: its WebRTC path returns early.
     AddApiService();
@@ -114,13 +119,13 @@ void ServerApp::AddApiService()
     if (!config_.http.enabled) return;
     if (!account_service_)
         throw std::invalid_argument("HTTP account API requires the account service");
-    auto transport = std::make_shared<network::http::LibwebsocketsHttpServer>();
+    auto transport = std::make_shared<protocol::http::HttpServer>(event_loop_.get());
     api_server_ = std::make_shared<api::ApiServer>(config_.http, config_.account, account_service_, transport);
     const auto api = api_server_;
     launcher_.AddCustomService(SERVICE_API,
         [api] {
             if (api->Start()) return true;
-            LOG_ERROR("Account HTTP API unavailable; the HTTP listener adapter must be implemented before enabling it");
+            LOG_ERROR("Account HTTP API failed to start; check HTTP backend, I/O owner and listen address");
             return false;
         },
         [api] { api->Stop(); });

@@ -1,11 +1,11 @@
-#ifndef PACKETIA_NETWORK_HTTP_TYPES_H_
-#define PACKETIA_NETWORK_HTTP_TYPES_H_
+#ifndef PACKETIA_PROTOCOL_HTTP_MESSAGE_H_
+#define PACKETIA_PROTOCOL_HTTP_MESSAGE_H_
 
 #include <cstdint>
 #include <map>
 #include <string>
 
-namespace network::http
+namespace protocol::http
 {
 
 using Headers = std::map<std::string, std::string, std::less<>>;
@@ -30,4 +30,4 @@ struct HttpResponse
 
 }
 
-#endif // PACKETIA_NETWORK_HTTP_TYPES_H_
+#endif // PACKETIA_PROTOCOL_HTTP_MESSAGE_H_

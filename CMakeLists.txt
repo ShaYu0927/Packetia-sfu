@@ -14,6 +14,7 @@ endif()
 find_package(OpenSSL REQUIRED)
 set(THREADS_PREFER_PTHREAD_FLAG TRUE)
 find_package(Threads REQUIRED)
+add_subdirectory(utils/threading)
 add_subdirectory(config)
 add_subdirectory(Common/memory)
 
@@ -97,7 +98,7 @@ add_library(LOGGER STATIC
 
 # logger.h starts and joins its worker thread in inline code. Consumers such
 # as ICE need the thread dependency as well as LOGGER itself.
-target_link_libraries(LOGGER PUBLIC Threads::Threads)
+target_link_libraries(LOGGER PUBLIC packetia_threads)
 
 add_library(COMMON STATIC
     Common/CallbackEmitter/CallbackEmitter.h
@@ -132,6 +133,8 @@ else()
 endif()
 
 add_library(utils STATIC
+    utils/StringUtil.h
+    utils/HttpUtil.h
     utils/CryptoUtil.cpp
     utils/CryptoUtil.h
     utils/TimeUtil.cpp
@@ -147,6 +150,7 @@ add_library(utils STATIC
     utils/Pip.cpp
     utils/EndpointBase.cpp
     utils/WorkerRegistry.cpp
+    utils/ThreadSafeQueue.cpp
     utils/utils.cpp
 
 )

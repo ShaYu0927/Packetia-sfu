@@ -62,7 +62,13 @@ bool ConferenceMixer::Start() {
             FailLocked("failed to subscribe to input frames");
             return false;
         }
-        worker_ = std::thread(&ConferenceMixer::Run, this);
+        worker_ = utils::ThreadManager::Instance().Start(
+            {"mix", "mix-" + config_.room_id, utils::ThreadModel::Dedicated},
+            [this] { Run(); },
+            [this] {
+                { std::lock_guard<std::mutex> lock(mutex_); stop_requested_ = true; }
+                ready_.notify_all();
+            });
     } catch (const std::exception& error) {
         input_->Unsubscribe(subscription_);
         subscription_ = 0;
@@ -79,7 +85,7 @@ bool ConferenceMixer::Start() {
     if (!started) {
         input_->Unsubscribe(subscription_);
         subscription_ = 0;
-        worker_.join();
+        worker_.Join();
     }
     return started;
 }
@@ -95,7 +101,8 @@ void ConferenceMixer::Stop() {
     if (input_ && subscription_) input_->Unsubscribe(subscription_);
     subscription_ = 0;
     ready_.notify_all();
-    if (worker_.joinable()) worker_.join();
+    worker_.RequestStop();
+    worker_.Join();
 }
 
 bool ConferenceMixer::Matches(const media::EncodedFrameEvent& event) const {

@@ -1,18 +1,19 @@
 #include "server/api/AccountController.h"
 #include "server/api/ApiServer.h"
-#include "network/http/LibwebsocketsHttpServer.h"
+#include "protocol/http/HttpServer.h"
 #include "service/Account/AccountService.h"
 
 #include <gtest/gtest.h>
 #include <chrono>
 #include <future>
 #include <thread>
+#include <vector>
 
 namespace
 {
 
-using network::http::HttpRequest;
-using network::http::HttpResponse;
+using protocol::http::HttpRequest;
+using protocol::http::HttpResponse;
 using namespace std::chrono_literals;
 
 HttpRequest Login(std::string body)
@@ -26,10 +27,18 @@ std::shared_ptr<service::account::AccountService> UnconfiguredAccounts()
         service::account::AccountOptions{}, nullptr, nullptr);
 }
 
-class FakeHttpServer final : public network::http::HttpServer
+
+server::api::ApiRouter AccountRoutes(std::size_t max_body_bytes = 8192)
+{
+    server::api::ApiRouter::Builder builder;
+    server::api::AccountController(UnconfiguredAccounts()).RegisterRoutes(builder);
+    return builder.Build(max_body_bytes);
+}
+
+class FakeHttpServer final : public protocol::http::IHttpServer
 {
 public:
-    bool Start(const network::http::HttpOptions&, RequestHandler callback) override
+    bool Start(const protocol::http::HttpServerOptions&, RequestHandler callback) override
     {
         ++starts;
         handler = std::move(callback);
@@ -44,45 +53,45 @@ public:
 
 TEST(AccountApiFramework, RejectsAmbiguousAndPrivilegeBearingLoginInput)
 {
-    server::api::AccountController controller(UnconfiguredAccounts(), 256);
-    EXPECT_EQ(controller.Handle(Login(R"({"login":"alice","password":"secret","role":"admin"})")).status, 400);
-    EXPECT_EQ(controller.Handle(Login(R"({"login":"alice","login":"admin","password":"secret"})")).status, 400);
-    EXPECT_EQ(controller.Handle(Login(R"({"login":"alice","password":true})")).status, 400);
-    EXPECT_EQ(controller.Handle(Login("[")).status, 400);
-    EXPECT_EQ(controller.Handle(Login(std::string(257, 'x'))).status, 413);
+    const auto router = AccountRoutes(256);
+    EXPECT_EQ(router.Dispatch(Login(R"({"login":"alice","password":"secret","role":"admin"})")).status, 400);
+    EXPECT_EQ(router.Dispatch(Login(R"({"login":"alice","login":"admin","password":"secret"})")).status, 400);
+    EXPECT_EQ(router.Dispatch(Login(R"({"login":"alice","password":true})")).status, 400);
+    EXPECT_EQ(router.Dispatch(Login("[")).status, 400);
+    EXPECT_EQ(router.Dispatch(Login(std::string(257, 'x'))).status, 413);
     auto wrong_type = Login(R"({"login":"alice","password":"secret"})");
     wrong_type.headers.clear();
-    EXPECT_EQ(controller.Handle(wrong_type).status, 415);
+    EXPECT_EQ(router.Dispatch(wrong_type).status, 415);
 }
 
 TEST(AccountApiFramework, NeverAuthenticatesOrRegistersThroughUnconfiguredDependencies)
 {
-    server::api::AccountController controller(UnconfiguredAccounts());
+    const auto router = AccountRoutes();
     auto login = Login(R"({"login":"alice","password":"secret"})");
-    const auto response = controller.Handle(login);
+    const auto response = router.Dispatch(login);
     EXPECT_EQ(response.status, 503);
     EXPECT_EQ(response.headers.at("cache-control"), "no-store");
     EXPECT_EQ(response.body.find("session_token"), std::string::npos);
 
     login.path = "/api/v1/accounts";
-    EXPECT_EQ(controller.Handle(login).status, 501);
-    EXPECT_EQ(controller.Handle({"GET", "/api/v1/me", {}, {}}).status, 401);
-    EXPECT_EQ(controller.Handle({"GET", "/api/v1/me", {}, {{"authorization", "Bearer test"}}}).status, 503);
-    EXPECT_EQ(controller.Handle({"GET", "/api/v1/me", {}, {{"authorization", "Bearer test extra"}}}).status, 401);
-    const auto method = controller.Handle({"POST", "/api/v1/me", {}, {}});
+    EXPECT_EQ(router.Dispatch(login).status, 501);
+    EXPECT_EQ(router.Dispatch({"GET", "/api/v1/me", {}, {}}).status, 401);
+    EXPECT_EQ(router.Dispatch({"GET", "/api/v1/me", {}, {{"authorization", "Bearer test"}}}).status, 503);
+    EXPECT_EQ(router.Dispatch({"GET", "/api/v1/me", {}, {{"authorization", "Bearer test extra"}}}).status, 401);
+    const auto method = router.Dispatch({"POST", "/api/v1/me", {}, {}});
     EXPECT_EQ(method.status, 405);
     EXPECT_EQ(method.headers.at("allow"), "GET");
 }
 
-TEST(AccountApiFramework, UnimplementedListenerRollsBackWorkerPool)
+TEST(AccountApiFramework, MissingIoOwnerRollsBackWorkerPool)
 {
     const auto previous_pools = WorkerService::pool_names();
-    network::http::HttpOptions http;
+    protocol::http::HttpServerOptions http;
     http.enabled = true;
     service::account::AccountOptions account;
     account.enabled = true;
     server::api::ApiServer api(http, account, UnconfiguredAccounts(),
-                               std::make_shared<network::http::LibwebsocketsHttpServer>());
+                               std::make_shared<protocol::http::HttpServer>());
     EXPECT_FALSE(api.Start());
     EXPECT_EQ(WorkerService::pool_names(), previous_pools);
     api.Stop();
@@ -91,7 +100,7 @@ TEST(AccountApiFramework, UnimplementedListenerRollsBackWorkerPool)
 
 TEST(AccountApiFramework, RunsOnWorkerAndRejectsRetiredConnectionCallbacks)
 {
-    network::http::HttpOptions http;
+    protocol::http::HttpServerOptions http;
     http.enabled = true;
     service::account::AccountOptions account;
     account.enabled = true;
@@ -122,9 +131,44 @@ TEST(AccountApiFramework, RunsOnWorkerAndRejectsRetiredConnectionCallbacks)
     api.Stop();
 }
 
+TEST(AccountApiFramework, DispatchesRegisteredAccountRoutesThroughWorkers)
+{
+    protocol::http::HttpServerOptions http;
+    http.enabled = true;
+    service::account::AccountOptions account;
+    account.enabled = true;
+    const auto transport = std::make_shared<FakeHttpServer>();
+    server::api::ApiServer api(http, account, UnconfiguredAccounts(), transport);
+    ASSERT_TRUE(api.Start());
+    const std::vector<std::pair<HttpRequest, std::uint16_t>> cases{
+        {Login(R"({"login":"alice","password":"secret"})"), 503},
+        {{"POST", "/api/v1/accounts", R"({"login":"alice","password":"secret"})",
+          {{"content-type", "application/json"}}}, 501},
+        {{"GET", "/api/v1/me", {}, {}}, 401},
+        {{"POST", "/api/v1/sessions/renew", {}, {}}, 401},
+        {{"DELETE", "/api/v1/sessions/current", {}, {}}, 401},
+        {{"GET", "/api/v1/sessions", {}, {}}, 405}
+    };
+    const auto caller = std::this_thread::get_id();
+    for (const auto& item : cases)
+    {
+        auto result = std::make_shared<std::promise<std::pair<HttpResponse, std::thread::id>>>();
+        auto future = result->get_future();
+        transport->handler(item.first, [result](HttpResponse response) {
+            result->set_value({std::move(response), std::this_thread::get_id()});
+        });
+        ASSERT_EQ(future.wait_for(2s), std::future_status::ready);
+        const auto response = future.get();
+        EXPECT_EQ(response.first.status, item.second) << item.first.method << ' ' << item.first.path;
+        EXPECT_EQ(response.first.headers.at("content-type"), "application/json; charset=utf-8");
+        EXPECT_NE(response.second, caller);
+    }
+    api.Stop();
+}
+
 TEST(AccountApiFramework, AppliesOneAdmissionBudgetAcrossAllWorkerShards)
 {
-    network::http::HttpOptions http;
+    protocol::http::HttpServerOptions http;
     http.enabled = true;
     service::account::AccountOptions account;
     account.enabled = true;

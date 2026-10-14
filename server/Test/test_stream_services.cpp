@@ -127,6 +127,10 @@ void AIPolicies() {
     auto processor = std::make_shared<Processor>();
     service::ai::AIService ai(std::make_shared<service::ai::UnavailableModelProvider>(), router, processor, 128, settings);
     Check(ai.Init() && ai.Start(), "AI startup");
+    size_t registered = 0;
+    for (const auto& thread : utils::ThreadManager::Instance().Snapshot())
+        if (thread.options.group == "ai" && thread.options.model == utils::ThreadModel::Dedicated) ++registered;
+    Check(registered == 1, "AI thread must use the unified runtime");
     Check(router->Publish(Frame("alice")) == 1 && router->Publish(Frame("bob")) == 0, "AI per-stream admission");
     Check(processor->Wait(1), "AI selected stream not processed");
     settings->SetStreamConfig({"bob", "camera"}, {{}, true, {}});
@@ -134,6 +138,8 @@ void AIPolicies() {
     settings->SetServiceEnabled(config::Feature::AI, false);
     Check(router->Publish(Frame("alice")) == 0 && router->Publish(Frame("bob")) == 0, "AI global gate bypassed");
     ai.Stop();
+    for (const auto& thread : utils::ThreadManager::Instance().Snapshot())
+        Check(thread.options.group != "ai", "AI thread must be joined and unregistered");
 }
 }
 int main() {

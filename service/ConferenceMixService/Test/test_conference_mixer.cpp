@@ -135,6 +135,10 @@ struct Fixture {
 void LifecycleAndRouting() {
     Fixture f;
     Check(f.mixer->Start(), "start");
+    size_t registered = 0;
+    for (const auto& thread : utils::ThreadManager::Instance().Snapshot())
+        if (thread.options.group == "mix" && thread.options.model == utils::ThreadModel::Dedicated) ++registered;
+    Check(registered == 1, "mix thread must use the unified runtime");
     Check(f.probe->Wait(false), "idle timer must run without incoming frames");
     Check(f.input->Publish(Frame(3)) == 0, "reject unrelated endpoint");
     auto mismatch = Frame();
@@ -145,6 +149,8 @@ void LifecycleAndRouting() {
     f.mixer->Stop();
     f.mixer->Stop();
     Check(f.mixer->State() == MixState::Stopped, "stop state");
+    for (const auto& thread : utils::ThreadManager::Instance().Snapshot())
+        Check(thread.options.group != "mix", "mix thread must be joined and unregistered");
     Check(f.probe->starts == 1 && f.probe->inputs == 2 && f.probe->stops == 1, "drain and flush once");
     Check(f.probe->same_thread && f.probe->worker != std::this_thread::get_id(), "worker confinement");
     Check(f.sink->frames.size() == 3, "two outputs and one flush");

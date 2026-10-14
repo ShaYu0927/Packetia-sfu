@@ -60,6 +60,7 @@ add_test(
 )
 
 add_subdirectory(workers)
+add_subdirectory(threading)
 if(APPLE)
     add_subdirectory(scheduler)
 endif()

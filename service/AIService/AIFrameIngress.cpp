@@ -56,7 +56,13 @@ bool AIFrameIngress::Start()
 
     try
     {
-        worker_ = std::thread(&AIFrameIngress::Run, this);
+        worker_ = utils::ThreadManager::Instance().Start(
+            {"ai", "ai-frames", utils::ThreadModel::Dedicated},
+            [this] { Run(); },
+            [this] {
+                { std::lock_guard<std::mutex> lock(mutex_); running_ = false; }
+                ready_.notify_all();
+            });
     }
     catch (...)
     {
@@ -84,10 +90,8 @@ void AIFrameIngress::Stop()
         router_->Unsubscribe(subscription_id);
     }
     ready_.notify_all();
-    if (worker_.joinable())
-    {
-        worker_.join();
-    }
+    worker_.RequestStop();
+    worker_.Join();
 
     std::lock_guard<std::mutex> lock(mutex_);
     dropped_.fetch_add(queue_.size());

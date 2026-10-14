@@ -2,7 +2,7 @@
 
 #include "service/RecordService/RecordingOptions.h"
 #include "service/Account/AccountOptions.h"
-#include "network/http/HttpOptions.h"
+#include "protocol/http/HttpServerOptions.h"
 #include "protocol/turn/TurnConstants.h"
 #include <cstddef>
 #include <cstdint>
@@ -74,14 +74,26 @@ struct TurnOptions
 };
 
 
-struct AppConfig 
+struct WorkerOptions
+{
+    uint32_t media_threads = 4;
+    uint32_t endpoint_threads = 4;
+    // Zero selects min(max(hardware_concurrency / 2, 1), 4).
+    uint32_t transcode_threads = 0;
+    size_t media_queue_len = 4096;
+    size_t endpoint_queue_len = 4096;
+    size_t transcode_queue_len = 512;
+};
+
+struct AppConfig
 {
     std::string listen_ip = "0.0.0.0";
     uint16_t rtsp_port = 554, sip_port = 5060, rtmp_port = 1935;
     uint16_t udp_port = 9000, websocket_port = 8080;
     uint32_t io_threads = 1;
+    WorkerOptions workers;
     service::account::AccountOptions account;
-    network::http::HttpOptions http;
+    protocol::http::HttpServerOptions http;
     WebRtcOptions webrtc;
     TurnOptions turn;
     bool recording_enabled = true;

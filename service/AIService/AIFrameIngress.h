@@ -11,7 +11,7 @@
 #include <deque>
 #include <memory>
 #include <mutex>
-#include <thread>
+#include "utils/ThreadManager.h"
 
 namespace service
 {
@@ -58,7 +58,7 @@ private:
     mutable std::mutex mutex_;
     std::condition_variable ready_;
     std::deque<media::EncodedFrameEvent> queue_;
-    std::thread worker_;
+    utils::ManagedThread worker_;
     bool running_ = false;
     media::EncodedFrameRouter::SubscriptionId subscription_id_ = 0;
     std::atomic<uint64_t> accepted_{0};

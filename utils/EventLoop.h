@@ -8,6 +8,7 @@
 #include "TaskScheduler.h"
 #include "TimeUtil.h"
 #include "Channel.h"
+#include "ThreadManager.h"
 
 class Channel;
 class EpollTaskScheduler;
@@ -43,13 +44,14 @@ public:
     bool Start();
     void Loop();
     void Stop();
+    std::vector<TaskScheduler::Status> Status() const;
 
 private:
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
     std::mutex join_mutex_;
 	uint32_t index_ = 1;
 	std::vector<std::shared_ptr<TaskScheduler>> task_schedulers_;
-	std::vector<std::shared_ptr<std::thread>> threads_;
+	std::vector<std::shared_ptr<utils::ManagedThread>> threads_;
 
     uint32_t num_threads_{1};
     uint32_t scheduler_id_seed_{0};

@@ -3,6 +3,7 @@
 
 #include "ServerConfig.h"
 #include "ServerLauncher.h"
+#include "ThreadRuntimeStatus.h"
 #include "service/ConferenceMixService/ConferenceMixService.h"
 #include "service/RecordService/RecordingRecords.h"
 
@@ -33,6 +34,7 @@ public:
     bool Start();
     void Run();
     void Stop() noexcept;
+    ThreadRuntimeStatus ThreadStatus() const;
 
     bool SetServiceEnabled(service::ServiceType type, bool enabled);
     bool ServiceEnabled(service::ServiceType type) const;

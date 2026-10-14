@@ -84,6 +84,13 @@ void TasksTimersAndRestart()
     bool invoked = false;
     scheduler->Invoke([&] { invoked = scheduler->IsCurrentThread(); });
     CHECK(invoked);
+    const auto status = scheduler->GetStatus();
+    CHECK(status.started && !status.stopping && status.executed_tasks >= 1);
+    CHECK(loop.Status().size() == 1);
+    bool registered = false;
+    for (const auto& thread : utils::ThreadManager::Instance().Snapshot())
+        if (thread.options.model == utils::ThreadModel::Io) registered = true;
+    CHECK(registered);
 
     std::promise<bool> timer;
     auto timer_result = timer.get_future();
@@ -101,12 +108,36 @@ void TasksTimersAndRestart()
 
     loop.Stop();
     CHECK(!scheduler->Post([] {}));
+    CHECK(scheduler->GetStatus().rejected_tasks == 1);
+    CHECK(loop.Status().empty());
+    for (const auto& thread : utils::ThreadManager::Instance().Snapshot())
+        CHECK(thread.options.model != utils::ThreadModel::Io);
     bool inline_cleanup = false;
     scheduler->Invoke([&] { inline_cleanup = !scheduler->IsCurrentThread(); });
     CHECK(inline_cleanup);
     CHECK(loop.Start());
     CHECK(loop.GetTaskScheduler() != scheduler);
     loop.Stop();
+}
+
+void FailedSchedulerAllowsOwnerCleanup()
+{
+    EventLoop loop(1);
+    CHECK(loop.Start());
+    auto scheduler = loop.GetTaskScheduler();
+    scheduler->AddTimer([]() -> bool { throw std::runtime_error("test timer failure"); }, 1);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (scheduler->IsStarted())
+    {
+        CHECK(std::chrono::steady_clock::now() < deadline);
+        std::this_thread::yield();
+    }
+    bool cleaned = false;
+    scheduler->Invoke([&] { cleaned = !scheduler->IsCurrentThread(); });
+    CHECK(cleaned && scheduler->GetStatus().stopping);
+    CHECK(!scheduler->Post([] {}));
+    loop.Stop();
+    CHECK(loop.Status().empty());
 }
 
 void ReadWriteAndHalfClose()
@@ -332,6 +363,7 @@ int main()
 {
     const std::pair<const char*, void (*)()> tests[] = {
         {"tasks, timers, stop and restart", TasksTimersAndRestart},
+        {"failed scheduler allows owner cleanup", FailedSchedulerAllowsOwnerCleanup},
         {"simultaneous readiness and half-close", ReadWriteAndHalfClose},
         {"re-registration skips old write event", ReRegistrationSkipsOldWrite},
         {"callback removes another ready channel", CallbackCanRemoveAnotherReadyChannel},

@@ -17,6 +17,7 @@
 #include <atomic>
 #include <deque>
 #include <thread>
+#include "../utils/ThreadManager.h"
 
 
 
@@ -146,7 +147,7 @@ class AsyncFileLogger : public BaseLogger
     std::mutex mtx_;
     std::condition_variable cv_;
     std::deque<std::string> q_;
-    std::thread worker_;
+    utils::ManagedThread worker_;
     std::atomic<bool> stop_{false};
     size_t max_queue_ = 100000;
     bool to_console_ = true;
@@ -190,14 +191,18 @@ public:
     {
         of_.open(logfile.c_str(), std::ios_base::out | std::ios_base::app);
         assert(of_.is_open());
-        worker_ = std::thread([this]{ worker_loop(); });
+        worker_ = utils::ThreadManager::Instance().Start(
+            {"logging", "logger", utils::ThreadModel::Logging},
+            [this] { worker_loop(); },
+            [this] { stop_.store(true); cv_.notify_all(); });
     }
 
     ~AsyncFileLogger() override 
     {
         stop_.store(true);
         cv_.notify_all();
-        if (worker_.joinable()) worker_.join();
+        worker_.RequestStop();
+        worker_.Join();
         if (of_.is_open()) of_.close();
     }
 
@@ -233,5 +238,4 @@ inline BaseLogger& GlobalLogger()
 
 
 #endif // LOGGER_H_
-
 

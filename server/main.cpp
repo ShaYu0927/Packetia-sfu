@@ -5,6 +5,8 @@
 int main()
 {
     try {
+        auto main_thread = utils::ThreadManager::Instance().TrackCurrent(
+            {"main", "main", utils::ThreadModel::Main});
         server::ServerApp app(server::ServerConfig::FromEnvironment());
         if (!app.Start())
         {

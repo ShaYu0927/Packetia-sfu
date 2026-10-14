@@ -7,7 +7,7 @@
 #include <deque>
 #include <memory>
 #include <mutex>
-#include <thread>
+#include "utils/ThreadManager.h"
 
 namespace service::mix {
 
@@ -54,7 +54,7 @@ private:
     mutable std::mutex mutex_;
     std::condition_variable ready_;
     std::deque<media::EncodedFrameEvent> queue_;
-    std::thread worker_;
+    utils::ManagedThread worker_;
     media::EncodedFrameRouter::SubscriptionId subscription_ = 0;
     MixState state_ = MixState::Created;
     MixStats stats_;

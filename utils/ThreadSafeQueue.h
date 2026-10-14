@@ -11,6 +11,8 @@
 #include <condition_variable>
 #include <memory>
 #include <thread>
+#include "WorkerRegistry.h"
+#include <atomic>
 
 template<typename T>
 class ThreadSafeQueue
@@ -130,23 +132,16 @@ public:
     }
 
     void Start(size_t worker_num);
+    void Stop();
     void Post(size_t key, Task task);
+    bool TryPost(size_t key, Task task);
+    ~QueueManager() { Stop(); }
 
 private:
-    std::vector<ThreadSafeQueue<Task>> queues;
-    std::vector<std::thread> workers;
-
-    void WorkerLoop(size_t idx)
-    {
-        auto& q = queues[idx];
-
-        while (true)
-        {
-            Task task;
-            q.waitAndPop(task);
-            task();
-        }
-    }
+    QueueManager() = default;
+    std::mutex lifecycle_mutex_;
+    std::atomic<bool> started_{false};
+    std::unique_ptr<WorkerRegistry> workers_;
 };
 
 

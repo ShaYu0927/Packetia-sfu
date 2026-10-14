@@ -15,6 +15,15 @@ class TaskScheduler : public std::enable_shared_from_this<TaskScheduler>
 {
 public:
     using Task = std::function<void()>;
+    struct Status
+    {
+        int id = 0;
+        bool started = false;
+        bool stopping = false;
+        size_t pending_tasks = 0;
+        uint64_t executed_tasks = 0;
+        uint64_t rejected_tasks = 0;
+    };
 
     TaskScheduler(int id = 1);
     virtual ~TaskScheduler();
@@ -36,6 +45,7 @@ public:
     bool AddTriggerEvent(TriggerEvent callback);
 
     bool Post(Task task);
+    Status GetStatus() const;
     // Run owns all I/O callbacks. Invoke waits for completion; after Run has
     // stopped, it executes cleanup inline. Never wait while holding a lock
     // needed by an I/O callback.
@@ -60,7 +70,9 @@ protected:
     std::atomic<bool> started_{false};
     std::atomic<bool> shutdown_{false};
 
-    std::mutex task_mutex_;
+    mutable std::mutex task_mutex_;
+    std::atomic<uint64_t> executed_tasks_{0};
+    std::atomic<uint64_t> rejected_tasks_{0};
     std::vector<Task> pending_tasks_;
     inline static thread_local TaskScheduler* current_ = nullptr;
 

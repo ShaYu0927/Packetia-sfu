@@ -1,5 +1,6 @@
 #include "TaskScheduler.h"
 #include "MediaLatency.h"
+#include "logger.h"
 #include <future>
 #include <signal.h>
 
@@ -63,22 +64,39 @@ void TaskScheduler::Run()
         std::lock_guard<std::mutex> lock(task_mutex_);
         started_.store(true);
     }
-    for (;;)
+    try
     {
-        const auto timer_wait = timer_queue_.GetTimeRemain();
-        const int timeout = timer_wait < 0 || timer_wait > 100 ? 100 : static_cast<int>(timer_wait);
-        HandleEvent(timeout);
-        HandlePendingTasks();
-        if (!shutdown_) timer_queue_.HandleTimerEvent();
-        media_latency::ReportIfDue();
-        std::lock_guard<std::mutex> lock(task_mutex_);
-        if (shutdown_ && pending_tasks_.empty())
+        for (;;)
         {
-            started_.store(false);
-            break;
+            const auto timer_wait = timer_queue_.GetTimeRemain();
+            const int timeout = timer_wait < 0 || timer_wait > 100 ? 100 : static_cast<int>(timer_wait);
+            HandleEvent(timeout);
+            HandlePendingTasks();
+            if (!shutdown_) timer_queue_.HandleTimerEvent();
+            media_latency::ReportIfDue();
+            std::lock_guard<std::mutex> lock(task_mutex_);
+            if (shutdown_ && pending_tasks_.empty())
+            {
+                started_.store(false);
+                break;
+            }
         }
+        media_latency::ReportIfDue(true);
     }
-    media_latency::ReportIfDue(true);
+    catch (...)
+    {
+        // A failed event/timer callback must not leave Invoke waiting on a
+        // scheduler whose native thread has already exited.
+        stop();
+        for (;;)
+        {
+            HandlePendingTasks();
+            std::lock_guard<std::mutex> lock(task_mutex_);
+            if (pending_tasks_.empty()) { started_ = false; break; }
+        }
+        current_ = nullptr;
+        throw;
+    }
     current_ = nullptr;
 }
 
@@ -157,7 +175,10 @@ void TaskScheduler::HandlePendingTasks()
     {
         if (task)
         {
-            task();
+            try { task(); }
+            catch (const std::exception& error) { LOG_ERROR("I/O task failed, scheduler=", id_, " error=", error.what()); }
+            catch (...) { LOG_ERROR("I/O task failed, scheduler=", id_, " error=unknown"); }
+            ++executed_tasks_;
         }
     }
 }
@@ -176,6 +197,7 @@ bool TaskScheduler::Post(Task task)
 {
     if (!task)
     {
+        ++rejected_tasks_;
         return false;
     }
 
@@ -183,6 +205,7 @@ bool TaskScheduler::Post(Task task)
         std::lock_guard<std::mutex> lock(task_mutex_);
         if (shutdown_ || !wakeup_pipe_ || pending_tasks_.size() >= kMaxTriggetEvents)
         {
+            ++rejected_tasks_;
             return false;
         }
         pending_tasks_.push_back(std::move(task));
@@ -193,4 +216,11 @@ bool TaskScheduler::Post(Task task)
     // A full nonblocking wakeup pipe is already readable. The task was
     // accepted and must not be reported as failed (callers might retry it).
     return true;
+}
+
+TaskScheduler::Status TaskScheduler::GetStatus() const
+{
+    std::lock_guard<std::mutex> lock(task_mutex_);
+    return {id_, started_.load(), shutdown_.load(), pending_tasks_.size(),
+            executed_tasks_.load(), rejected_tasks_.load()};
 }

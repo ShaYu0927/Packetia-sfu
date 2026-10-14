@@ -15,6 +15,7 @@ TURN UDP 中继及录像模块。正常运行由一个 `Packetia` 进程统一�
 - [双浏览器房间与 TURN 示例](#双浏览器房间与-turn-示例)：启动方式与浏览器检查。
 - [WebRTC SDP 协商](#webrtc-sdp-协商)、[RTP 协议规范](#rtp-协议规范)：协商行为与 RFC 支持边界。
 - [房间鉴权](#房间鉴权)：JWT 验证、房间权限与参与者身份绑定。
+- [账号与登录框架](#账号与登录框架)、[HTTP 业务接口](#http-业务接口)：账号路由、请求格式、返回契约与实现状态。
 - [弱网与带宽控制](#弱网与带宽控制)、[发送控制详细说明](media/quality/README.md)：NACK/SRTP 重传、TWCC/RR、OU 时延检测与码率控制。
 - [本轮验证](#本轮验证)、[开发记录](#开发记录)：验证范围与历史变更。
 
@@ -29,6 +30,7 @@ TURN UDP 中继及录像模块。正常运行由一个 `Packetia` 进程统一�
 | TCP/TLS | 有界 TCP 缓冲、所属线程调度、TLS 1.2/1.3 服务端传输组件 | TLS 尚未接入 TURN 或 WSS 监听、应用配置 |
 | 弱网与带宽控制 | NACK 重传、PLI/FIR、TWCC/RR、时延/接收速率/RTT/丢包联合码率控制 | 输出控制建议；实际 Pacer、媒体降码率、分层选择、FEC 与主动探测尚未接入 |
 | 应用鉴权 | HS256 房间 JWT、API key 查询、发布/订阅权限、参与者身份绑定和恢复校验 | 登录与签发由业务后端负责；暂不包含自动刷新、动态权限更新和撤销列表 |
+| HTTP/账号 API | libwebsockets HTTP 接入、路由注册、有界业务队列、5 个账号接口入口 | 账号存储、密码校验及登录会话业务尚未实现，默认关闭，不能实际注册登录 |
 
 尚未做系统容量压测，配置中的会话上限不是实际可承载并发数。当前浏览器验证属于本机互通验证，
 公网部署仍需配置可达的媒体/中继地址、端口及安全信令入口。
@@ -139,6 +141,48 @@ Apple Silicon 建议使用原生 arm64 Homebrew，避免混用 Rosetta 的 x86_6
 | 协议 | TURN、RTSP、SIP、RTMP、WebRTC | 拆包、认证、会话、权限和媒体路由 |
 
 ### 线程归属
+
+线程创建统一经过 [`utils::ThreadManager`](utils/ThreadManager.h)，由 `ManagedThread` 持有线程、
+发出协作停止请求并等待退出。I/O、命名工作线程池、AI 帧处理、会议混流和异步日志均已接入；
+主线程通过 `TrackCurrent` 登记。线程状态包括模型、分组、名称、原生线程 ID、启动时间和未捕获异常。
+已退出但尚未回收的线程仍可查询，`Join` 完成后移除登记。FFmpeg 等第三方库内部线程由对应库管理。
+
+```text
+ServerApp / ServerLauncher（按依赖顺序启停）
+  ├─ EventLoop → I/O 事件循环
+  ├─ WorkerRegistry → media / endpoint / transcode / API / recording
+  └─ AI / mix / logging → 专用循环
+                  ↓
+        ThreadManager / ManagedThread（统一创建、命名、停止请求、回收、状态登记）
+```
+
+`ServerApp::ThreadStatus()` 返回进程内已登记线程、命名池的线程数/队列深度/字节数/丢弃数，
+以及本应用 I/O 调度器的运行状态、等待任务数、执行数和拒绝数。这些是并发采样值，
+不是整个进程同一时刻的原子快照；I/O 任务计数只统计 `Post`/排队 `Invoke`，不代表网络包数量。
+
+启动配置保留 `server.io_threads`、`account.worker_count`、`recording.worker_count`，
+新增 `workers` 配置媒体、Endpoint、转码池的线程数和每个分片的队列长度：
+
+```json
+"workers": {
+  "media_threads": 4,
+  "endpoint_threads": 4,
+  "transcode_threads": 0,
+  "media_queue_len": 4096,
+  "endpoint_queue_len": 4096,
+  "transcode_queue_len": 512
+}
+```
+
+线程数支持 1～64，转码的 `0` 表示按 CPU 数自动选择 1～4；配置在启动时生效，
+不支持运行中直接修改分片数量。各用途仍使用独立队列，媒体和 Endpoint 保留丢弃最旧任务策略，
+API/转码使用拒绝新任务策略。旧 `QueueManager` 已复用有界命名池，新增 `Stop` 和可检查拒绝的 `TryPost`。
+
+整机停机使用 `ServerApp::Stop()`：先关闭接入，再排空工作队列和帧消费者，最后回收 I/O 线程。
+单个服务的停机使用其 `Stop`；`ThreadManager::RequestStop(id)` 只是底层协作请求，
+不会关闭监听器、清理房间或完成服务状态迁移。专用循环必须提供停止及唤醒回调，
+并由控制线程完成 `Join`；在自身线程上请求停止后，仍需保留句柄让控制线程回收。
+日志线程保持到日志器析构，以记录业务与网络停机过程。
 
 - `EventLoop::GetTaskScheduler()` 是轮询分配入口，应在创建或启动对象时选择并保存结果。
   `EventLoop` 的任务、定时器和 Channel 便捷接口固定操作第一个调度器，不代表当前对象的归属。
@@ -256,16 +300,135 @@ WebRTC DTLS 保持数据报边界；WebSocket 当前通过 libwebsockets 适配�
 
 `service/Account` 与房间鉴权 `service/Auth` 并列：前者定义用户、登录会话、存储和密码校验接口，
 后者验证入房 JWT、检查媒体操作权限。`server/api` 提供账号路由和独立有界工作队列，
-`network/http` 定义 HTTP 适配与异步回复约定，均由同一个 `ServerApp` 管理生命周期。
+`protocol/http` 定义 HTTP 适配与异步回复约定，均由同一个 `ServerApp` 管理生命周期。
+HTTP 协议层独立构建为 `packetia_http`，底层 socket/TLS 传输仍位于 `network`。
+适配器复用项目已有的第三方库 libwebsockets，由库处理 HTTP 协议，
+`server/api` 负责业务路由与调度。HTTP 已支持监听、分段请求体、Keep-Alive、HEAD、
+工作线程异步回复、连接/请求/响应缓冲限制和超时；所有库操作固定在所属 I/O 调度器执行。
+停止监听会清理连接并使迟到回复失效，停止或 EventLoop 重启后可重新启动。
+目前面向 Content-Length 请求的 HTTP/1.1 API，拒绝 Transfer-Encoding 和协议升级；
+HTTPS 证书配置、CORS 和性能压测尚未完成。实现入口见 [HttpServer](protocol/http/HttpServer.h)，
+服务接口见 [IHttpServer](protocol/http/IHttpServer.h)。
 
-**当前是可编译框架，还不能实际登录。** `SqliteAccountStore`、`ScryptPasswordHasher` 和
-`LibwebsocketsHttpServer` 保留明确的实现入口；账号业务返回显式错误，不生成用户或凭据。
+API 采用 ZLMediaKit `WebApi.cpp` 的路由注册、参数适配和统一回复思路。
+[ApiRouter](server/api/ApiRouter.h) 按 HTTP 方法与路径精确匹配；各业务模块通过
+`RegisterRoutes` 注册独立处理函数，再由 `ApiServer` 在启动时构建只读路由快照。
+新增接口在所属模块注册，新增业务模块在 `ApiServer.cpp` 的 `BuildRoutes` 装配。
+当前账号注册入口见 [AccountController](server/api/AccountController.cpp)：
+
+```cpp
+router.PostJson("/api/v1/sessions", [controller](const ApiRequest& request) {
+    return controller.Login(request);
+});
+router.Get("/api/v1/me", SessionRoute(accounts_, GetCurrentUser));
+```
+
+`PostJson` 统一检查 Content-Type、请求体上限、JSON 对象、重复键和嵌套深度；
+处理函数直接读取 `request.json`，字段和权限由所属业务模块验证。
+公共 JSON/错误响应位于 `ApiResponse`，路由层统一处理 404、405（含 Allow）和未捕获异常。
+会话保护路由共用 `SessionRoute` 凭据检查，注册策略仍返回 501。
+重复注册同一方法与路径会报错；运行期间只读查表，处理函数在现有有界业务线程池执行，
+HTTP 异步回复仍返回所属 I/O owner。当前路由处理函数同步返回结果，原生异步业务处理器、
+动态路径参数和查询参数解析尚未扩展。注册方式参考
+[ZLM WebApi.cpp](https://github.com/ZLMediaKit/ZLMediaKit/blob/master/server/WebApi.cpp)。
+
+**账号模块仍是框架，还不能实际登录。** `SqliteAccountStore` 和 `ScryptPasswordHasher`
+尚未实现；账号业务返回显式错误，不生成用户或凭据。
 `account.enabled`、`http.enabled` 默认关闭，启用尚未完成的适配器会使启动失败并回滚资源。
 示例配置见 `config/packetia.example.json`。账号 API 的 Bearer 登录会话与房间 JWT 用途不同；
 注册/邀请策略、生产 HTTPS 与浏览器 Cookie/CSRF 处理仍需在对应实现阶段完成。
 
-下一步按密码校验与存储事务 → 账号业务 → HTTP 监听的顺序实现；随后接会议成员准入与入房凭证签发。
-接口和线程约定见 [账号模块](service/Account/README.md) 与 [账号 API](server/api/README.md)。
+### HTTP 业务接口
+
+当前仅注册以下 5 个账号接口，入口为
+[`AccountController::RegisterRoutes`](server/api/AccountController.cpp)。
+表中的成功结果是业务完成后的返回契约：现阶段注册策略返回 `501`，
+登录、会话查询、续期和退出在 `AccountService` 中仍为待实现代码。
+主程序使用的密码校验与 SQLite 适配器尚未就绪，直接开启账号/API 服务会启动失败，HTTP 端口不会正常开放。
+
+| 方法 | 路径 | 用途 | 请求内容 | 成功结果 |
+| --- | --- | --- | --- | --- |
+| `POST` | `/api/v1/accounts` | 注册账号 | JSON：`login`、`password`，可选 `display_name` | 尚未定义注册成功响应；有效请求当前返回 `501 registration_not_implemented` |
+| `POST` | `/api/v1/sessions` | 登录并获取会话凭据 | JSON：`login`、`password` | `200`：用户身份、`session_token`、过期时间 |
+| `GET` | `/api/v1/me` | 查询当前登录用户 | Bearer 凭据，无请求体 | `200`：`user_id`、`session_id`、`display_name` |
+| `POST` | `/api/v1/sessions/renew` | 续期并轮换登录凭据 | Bearer 凭据，无请求体 | `200`：用户身份、新凭据和过期时间 |
+| `DELETE` | `/api/v1/sessions/current` | 注销当前登录会话 | Bearer 凭据，无请求体 | `204`，无响应体 |
+
+注册与登录要求 `Content-Type: application/json`，请求体必须是 JSON 对象，
+不接受重复键、未知业务字段或超出 8 层的 JSON 嵌套。
+`login` 为非空字符串，最多 256 字节；`password` 为非空字符串，最多 4096 字节；
+`display_name` 可省略，提供时为字符串，最多 256 字节。以上字符串均不接受内嵌 NUL。
+整个请求体还受 `http.max_body_bytes` 限制，默认 8192 字节。
+
+完成账号业务后，可按以下格式联调。默认 HTTP 地址为 `127.0.0.1:8081`；
+下列命令描述请求格式，当前未完成的账号实现不会返回示例中的成功结果。
+
+```sh
+# 注册
+curl -i http://127.0.0.1:8081/api/v1/accounts \
+  -H 'Content-Type: application/json' \
+  --data '{"login":"zhangsan","password":"example-password","display_name":"张三"}'
+
+# 登录
+curl -i http://127.0.0.1:8081/api/v1/sessions \
+  -H 'Content-Type: application/json' \
+  --data '{"login":"zhangsan","password":"example-password"}'
+
+# 将 <session_token> 替换为登录返回的凭据
+curl -i http://127.0.0.1:8081/api/v1/me \
+  -H 'Authorization: Bearer <session_token>'
+curl -i -X POST http://127.0.0.1:8081/api/v1/sessions/renew \
+  -H 'Authorization: Bearer <session_token>'
+curl -i -X DELETE http://127.0.0.1:8081/api/v1/sessions/current \
+  -H 'Authorization: Bearer <session_token>'
+```
+
+登录与续期成功响应结构如下；过期时间为 Unix 秒。续期业务需要实现事务轮换，
+成功后客户端应保存新凭据，旧凭据应失效。
+
+```json
+{
+  "identity": {
+    "user_id": "user-123",
+    "session_id": "session-456",
+    "display_name": "张三"
+  },
+  "session_token": "<session_token>",
+  "expires_at_unix_seconds": 1800000000
+}
+```
+
+`GET /api/v1/me` 成功时直接返回上述 `identity` 对象，不包含凭据。
+JSON 响应带 `Cache-Control: no-store`；错误统一使用以下结构：
+
+```json
+{
+  "error": {
+    "code": "unauthenticated",
+    "message": "Authentication required or credentials invalid."
+  }
+}
+```
+
+| HTTP 状态码 | 当前处理含义 |
+| --- | --- |
+| `400` | JSON、字段类型、字段内容或空请求体要求不符合接口约定 |
+| `401` | 缺少或无效的 Bearer 凭据；账号业务也将凭据错误、禁用、过期或撤销统一映射到此状态 |
+| `404` | 路径没有注册 |
+| `405` | 路径存在但方法不匹配，响应带 `Allow` |
+| `409` | 账号冲突的预留错误映射 |
+| `413` | 请求体超过上限 |
+| `415` | JSON 接口未使用 `application/json` |
+| `500` | 业务内部错误或处理函数异常 |
+| `501` | 注册策略或账号业务尚未实现 |
+| `503` | 账号服务不可用、API 停止接入或业务队列超过限额 |
+
+`401` 响应同时带 `WWW-Authenticate: Bearer`。登录会话凭据与 WebRTC 房间 JWT
+各自用于对应入口：当前没有 HTTP 房间创建、入房 JWT 签发、成员查询或会议管理接口，
+入房 JWT 仍通过可信后端或现有签发工具生成。线程状态当前通过 C++ 的
+`ServerApp::ThreadStatus()` 查询，尚未注册 HTTP 监控接口。
+
+下一步实现密码校验与存储事务、账号业务；随后接会议成员准入与入房凭证签发。
 
 ## 房间鉴权
 
@@ -792,6 +955,26 @@ SRTP 发送端允许重新保护缓存的原 RTP 序号及 payload，重传重�
 
 ## 本轮验证
 
+2026-10-14 HTTP 接入、API 路由与线程管理重构验证（macOS）：
+`Packetia` 在 libwebsockets 开启、关闭两种构建配置下均编译通过。
+以下 11 个 CTest 入口通过，覆盖真实 TCP HTTP 请求、账号 API 框架、线程停止与回收、
+工作队列排空/丢弃、I/O 异常清理、配置校验、AI/混流线程登记和服务失败回滚、重复启停。
+独立构建的 `WorkerRegistryTest` 也通过。
+
+```sh
+cmake --build build/webrtc-integration --parallel 4 --target \
+  Packetia test_server_app test_http_server test_account_api \
+  test_thread_manager test_worker_registry test_kqueue_scheduler \
+  test_sharded_worker_pool test_sharded_worker_lifecycle \
+  test_server_config test_stream_services conference_mix_tests
+ctest --test-dir build/webrtc-integration --output-on-failure \
+  -R '^(server_app|HttpServerIntegrationTest|AccountApiFrameworkUnitTest|ThreadManagerTest|WorkerRegistryTest|KqueueSchedulerTest|ShardedWorkerPoolUnitTest|ShardedWorkerLifecycleTest|server_config|stream_services|ConferenceMixFramework)$'
+cmake --build build/webrtc-disabled --target Packetia --parallel 4
+```
+
+上述目录沿用已有 CMake 配置。账号 API 测试使用替代存储/密码适配器，
+验证框架调用与错误处理；账号生产实现仍未完成，本轮没有实际注册登录、浏览器弱网或容量压测验收。
+
 2026-10-13 鉴权重构验证：`Packetia` 和 `PacketiaRoomDemo` 构建通过，鉴权库 20 项 GTest 通过，
 `AuthFrameworkUnitTest`、`server_config`、`server_app`、`webrtc_service` 四个 CTest 入口通过。
 真实 Chrome 双浏览器使用不同房间 JWT：发布者直连、观众经 TURN relay，音视频正常接收；
@@ -837,6 +1020,31 @@ build/webrtc-integration/Rtsp/Test/test_rtp_input \
 ## 开发记录
 
 以下记录描述各次修改当时的状态；其中的待实现能力和限制可能已在后续完成，当前状态以上文为准。
+
+### 2026-10-14：HTTP 接入、API 路由与统一线程管理
+
+- 将 HTTP 协议模块从 `network/http` 迁移到 `protocol/http`，独立构建为 `packetia_http`；
+  规范文件与接口命名为 `HttpServer`、`IHttpServer`、`HttpServerOptions`、`HttpMessage`，
+  同步更新引用和 CMake 依赖，公共字符串/HTTP 头校验工具移入 `utils`。
+- 实现基于 libwebsockets 的 HTTP 监听、请求体分段接收、连接复用与异步回复，复用现有 I/O 调度器；
+  增加请求/响应缓冲上限、连接限额和超时，工作线程的回复回到所属线程发送，关闭后迟到回复失效。
+- 参照 ZLMediaKit 的接口注册方式提取 `ApiRouter`、`ApiResponse`，按方法与路径注册独立处理函数；
+  启动时构建只读路由快照，统一 JSON 检查、错误响应、404/405 与异常处理，新增接口无需扩展集中判断分支。
+- `AccountController` 注册账号、登录、当前用户查询、会话续期和退出共 5 个 HTTP 入口，
+  受保护路由复用 Bearer 凭据检查；`ApiServer` 使用独立有界业务队列，超过准入限额返回 `503`。
+  账号存储、密码校验与会话业务保留待实现状态，默认关闭并在依赖未就绪时拒绝启动。
+- 新增 `ThreadManager` 和 `ManagedThread`，统一项目后台线程的创建、命名、状态登记、协作停止及回收；
+  接入 I/O、媒体/Endpoint/转码/API/录制工作池、AI、混流和异步日志，主线程通过 `TrackCurrent` 登记。
+  保留事件循环、按键分片的工作队列和专用循环各自的调度方式，由服务层按依赖顺序启停。
+- 新增 `ServerApp::ThreadStatus()` 与 `ThreadRuntimeStatus`，汇总线程模型/状态/异常、命名池队列与丢弃统计、
+  I/O 调度器等待任务数、执行数和拒绝数；`workers` 配置接管媒体、Endpoint、转码池的线程数和队列长度。
+- 补齐线程启动失败的回滚及 I/O 异常退出清理，避免调用方等待已退出调度器的 `Invoke`；
+  旧 `QueueManager` 改用有界命名池，增加 `Stop` 和 `TryPost`，支持排空和重新启动。
+- 更新示例配置、HTTP 接口说明及线程管理文档，补充线程回收、并发停止、服务重启和框架回归测试；
+  本轮 11 个相关 CTest 入口通过，主程序在 libwebsockets 开启/关闭两种配置下编译通过。
+
+当前仍未实现 HTTP 房间管理/入房凭据签发、原生 HTTPS/CORS、线程运行时扩缩容和 WebRTC/TURN 会话分片；
+第三方编解码库内部线程通过各库接口管理。测试范围与复现命令见[本轮验证](#本轮验证)。
 
 ### 2026-10-13：房间 JWT 与参与者鉴权
 

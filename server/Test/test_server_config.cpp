@@ -33,19 +33,51 @@ void Check(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
 }
 
+void WorkerConfiguration() {
+    const auto configured = config::AppConfig::FromJson(R"({
+        "server":{"io_threads":3},
+        "workers":{"media_threads":2,"endpoint_threads":1,"transcode_threads":3,
+                   "media_queue_len":128,"endpoint_queue_len":64,"transcode_queue_len":16}
+    })");
+    Check(configured.io_threads == 3 && configured.workers.media_threads == 2 &&
+          configured.workers.endpoint_threads == 1 && configured.workers.transcode_threads == 3 &&
+          configured.workers.media_queue_len == 128 && configured.workers.endpoint_queue_len == 64 &&
+          configured.workers.transcode_queue_len == 16, "worker configuration ignored");
+    Check(config::AppConfig::FromJson(R"({"workers":{"transcode_threads":0}})").workers.transcode_threads == 0,
+          "automatic transcode thread count must remain supported");
+    for (const char* invalid : {
+        R"({"server":{"io_threads":65}})", R"({"workers":{"media_threads":0}})",
+        R"({"workers":{"endpoint_threads":65}})", R"({"workers":{"transcode_threads":-1}})",
+        R"({"workers":{"transcode_threads":65}})", R"({"workers":{"media_threads":1.5}})",
+        R"({"workers":{"media_queue_len":0}})", R"({"workers":{"endpoint_queue_len":65537}})",
+        R"({"workers":{"transcode_queue_len":-1}})", R"({"workers":{"unknown":1}})",
+        R"({"recording":{"worker_count":65}})"}) {
+        bool rejected = false;
+        try { config::AppConfig::FromJson(invalid); } catch (const std::exception&) { rejected = true; }
+        Check(rejected, "invalid worker configuration accepted");
+    }
+}
+
 void AccountConfiguration() {
     const auto defaults = config::AppConfig::FromJson("{}");
     Check(!defaults.account.enabled && !defaults.http.enabled, "account framework must be opt-in");
     const auto configured = config::AppConfig::FromJson(R"({
         "account": {"enabled":true,"database_path":"data/accounts.db","session_ttl_seconds":3600,
                     "worker_count":3,"max_pending_requests":32},
-        "http": {"enabled":true,"listen_ip":"127.0.0.1","listen_port":18081,"max_body_bytes":4096}
+        "http": {"enabled":true,"listen_ip":"127.0.0.1","listen_port":18081,"max_body_bytes":4096,
+                 "max_connections":64,"max_header_bytes":4096,"max_response_bytes":8192,
+                 "max_total_response_bytes":32768,"request_timeout_seconds":10,
+                 "idle_timeout_seconds":20,"service_interval_ms":2}
     })");
     Check(configured.account.enabled && configured.account.database_path == "data/accounts.db" &&
           configured.account.session_ttl_seconds == 3600 && configured.account.worker_count == 3 &&
           configured.account.max_pending_requests == 32 && configured.http.enabled &&
           configured.http.listen_ip == "127.0.0.1" && configured.http.listen_port == 18081 &&
-          configured.http.max_body_bytes == 4096, "account/HTTP configuration was not applied");
+          configured.http.max_body_bytes == 4096 && configured.http.max_connections == 64 &&
+          configured.http.max_header_bytes == 4096 && configured.http.max_response_bytes == 8192 &&
+          configured.http.max_total_response_bytes == 32768 && configured.http.request_timeout_seconds == 10 &&
+          configured.http.idle_timeout_seconds == 20 && configured.http.service_interval_ms == 2,
+          "account/HTTP configuration was not applied");
     for (const char* invalid : {
         R"({"http":{"enabled":true}})",
         R"({"account":{"enabled":"true"}})",
@@ -56,7 +88,10 @@ void AccountConfiguration() {
         R"({"account":{"unknown":true}})", R"({"http":{"enabled":1}})",
         R"({"http":{"listen_port":65536}})", R"({"http":{"max_body_bytes":0}})",
         R"({"http":{"max_body_bytes":1048577}})", R"({"http":{"listen_ip":""}})",
-        R"({"http":{"unknown":true}})"}) {
+        R"({"http":{"max_connections":0}})", R"({"http":{"max_header_bytes":0}})",
+        R"({"http":{"max_response_bytes":0}})", R"({"http":{"max_total_response_bytes":1024}})",
+        R"({"http":{"request_timeout_seconds":0}})", R"({"http":{"idle_timeout_seconds":3601}})",
+        R"({"http":{"service_interval_ms":0}})", R"({"http":{"unknown":true}})"}) {
         bool rejected = false;
         try { config::AppConfig::FromJson(invalid); } catch (const std::exception&) { rejected = true; }
         Check(rejected, "invalid account/HTTP configuration accepted");
@@ -266,6 +301,7 @@ int main() {
         catch (const std::invalid_argument&) { rejected = true; }
         Check(rejected, "invalid flags must not silently enable a feature");
         StreamConfiguration();
+        WorkerConfiguration();
         const auto file = std::filesystem::temp_directory_path() / "packetia-test-config.json";
         { std::ofstream output(file); output << R"({"services":{"recording":false,"ai":true},"streams":[{"session_id":"a","stream_id":"b","recording":true}]})"; }
         Set("PACKETIA_CONFIG", file.string().c_str());

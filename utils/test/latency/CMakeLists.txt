@@ -6,6 +6,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 endif()
 find_package(Threads REQUIRED)
 get_filename_component(PACKETIA_LATENCY_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
+include("${PACKETIA_LATENCY_ROOT}/utils/threading/ThreadSupport.cmake")
 if(NOT TARGET packetia_memory)
     add_subdirectory("${PACKETIA_LATENCY_ROOT}/Common/memory" memory-library)
 endif()
@@ -15,7 +16,7 @@ target_compile_features(latency_test_support PUBLIC cxx_std_17)
 target_include_directories(latency_test_support PUBLIC
     "${PACKETIA_LATENCY_ROOT}" "${PACKETIA_LATENCY_ROOT}/utils"
     "${PACKETIA_LATENCY_ROOT}/log" "${PACKETIA_LATENCY_ROOT}/media/transport")
-target_link_libraries(latency_test_support PUBLIC Threads::Threads)
+target_link_libraries(latency_test_support PUBLIC packetia_threads)
 
 add_executable(test_media_latency test_media_latency.cpp)
 target_link_libraries(test_media_latency PRIVATE latency_test_support)

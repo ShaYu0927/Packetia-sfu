@@ -12,10 +12,6 @@
 namespace service::account
 {
 
-// Synchronous business boundary: call from account workers, not media/I/O loops.
-// Owns the store lifecycle. Business calls may run concurrently. Start/Stop take
-// exclusive ownership and wait for in-flight calls; drain the API execution pool
-// before stopping or destroying this service.
 class AccountService
 {
 public:

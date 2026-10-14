@@ -7,6 +7,7 @@
 #include <vector>
 #include <deque>
 #include <thread>
+#include "ThreadManager.h"
 #include <mutex>
 #include <condition_variable>
 #include <atomic>
@@ -161,7 +162,8 @@ public:
                std::shared_ptr<IJobHandler> handler,
                std::size_t max_queue_len = 4096,
                DropPolicy drop = DropPolicy::DropHead,
-               std::size_t max_queue_bytes = kDefaultMaxQueueBytes);
+               std::size_t max_queue_bytes = kDefaultMaxQueueBytes,
+               std::string name = "worker");
 
 
     ThreadStats Status() const
@@ -191,7 +193,7 @@ private:
         std::mutex mtx;
         std::condition_variable cv;
         std::deque<WorkJob> q;
-        std::thread th;
+        utils::ManagedThread th;
 
         std::atomic<bool> running{false};
         std::atomic<bool> draining{false};

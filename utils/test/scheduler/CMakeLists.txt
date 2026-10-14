@@ -10,6 +10,7 @@ endif()
 
 find_package(Threads REQUIRED)
 get_filename_component(PACKETIA_SCHEDULER_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
+include("${PACKETIA_SCHEDULER_ROOT}/utils/threading/ThreadSupport.cmake")
 add_executable(test_kqueue_scheduler test_kqueue_scheduler.cpp)
 target_compile_features(test_kqueue_scheduler PRIVATE cxx_std_17)
 target_include_directories(test_kqueue_scheduler PRIVATE
@@ -27,7 +28,7 @@ else()
         "${PACKETIA_SCHEDULER_ROOT}/utils/TimeUtil.cpp"
         "${PACKETIA_SCHEDULER_ROOT}/utils/MediaLatency.cpp")
 endif()
-target_link_libraries(test_kqueue_scheduler PRIVATE Threads::Threads)
+target_link_libraries(test_kqueue_scheduler PRIVATE packetia_threads)
 add_test(NAME KqueueSchedulerTest COMMAND test_kqueue_scheduler)
 set_tests_properties(KqueueSchedulerTest PROPERTIES
     ENVIRONMENT "PACKETIA_MEDIA_LATENCY_SAMPLE_EVERY=0"

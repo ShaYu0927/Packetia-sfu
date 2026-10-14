@@ -5,6 +5,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     enable_testing()
     find_package(Threads REQUIRED)
     get_filename_component(PACKETIA_SERVER_ROOT "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
+    include("${PACKETIA_SERVER_ROOT}/utils/threading/ThreadSupport.cmake")
     add_subdirectory("${PACKETIA_SERVER_ROOT}/config" "${CMAKE_CURRENT_BINARY_DIR}/config")
     add_library(server_test_support STATIC
         "${PACKETIA_SERVER_ROOT}/server/ServerLauncher.cpp"
@@ -13,7 +14,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
         "${PACKETIA_SERVER_ROOT}"
         "${PACKETIA_SERVER_ROOT}/log")
     target_compile_features(server_test_support PUBLIC cxx_std_17)
-    target_link_libraries(server_test_support PUBLIC Threads::Threads packetia_config)
+    target_link_libraries(server_test_support PUBLIC packetia_threads packetia_config)
     set(PACKETIA_SERVER_TEST_LIBRARY server_test_support)
 else()
     set(PACKETIA_SERVER_TEST_LIBRARY server)
@@ -50,7 +51,7 @@ target_include_directories(test_stream_services PRIVATE
 if(NOT TARGET packetia_recording_index)
     add_subdirectory("${PACKETIA_SERVER_ROOT}/service/RecordService/Index" recording-index)
 endif()
-target_link_libraries(test_stream_services PRIVATE packetia_config packetia_recording_index Threads::Threads)
+target_link_libraries(test_stream_services PRIVATE packetia_config packetia_recording_index packetia_threads)
 add_test(NAME stream_services COMMAND test_stream_services)
 set_tests_properties(stream_services PROPERTIES TIMEOUT 30)
 
