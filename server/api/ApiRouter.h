@@ -12,12 +12,11 @@
 namespace server::api
 {
 
-// References are valid only during a synchronous handler call on a business
-// worker. Copy required data before handing it to an external asynchronous API.
+
 struct ApiRequest
 {
     const protocol::http::HttpRequest& http;
-    const nlohmann::json& json; // Object for Json routes; null for other routes.
+    const nlohmann::json& json; 
 };
 
 class ApiRouter final
@@ -36,8 +35,6 @@ private:
     using Routes = std::map<std::string, Methods, std::less<>>;
 
 public:
-    // Registration happens during startup. Build copies an independent,
-    // immutable snapshot; dispatch needs no registration mutex.
     class Builder
     {
     public:

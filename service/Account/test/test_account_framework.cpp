@@ -46,7 +46,7 @@ class ReadyHasher final : public PasswordHasher
 public:
     bool IsReady() const noexcept override { return true; }
     AccountResult<std::string> Hash(std::string_view) const override
-    { return AccountResult<std::string>::Failure(AccountError::NotImplemented); }
+    { return AccountResult<std::string>::Success("test-only-dummy-hash"); }
     AccountStatus Verify(std::string_view, std::string_view) const override
     { return AccountStatus::Failure(AccountError::NotImplemented); }
 };
@@ -71,20 +71,32 @@ TEST(AccountFramework, DisabledAndMissingDependenciesNeverOpenStorage)
     EXPECT_EQ(store->open_calls, 0);
 }
 
-TEST(AccountFramework, PlaceholderAdaptersCannotEnableAuthentication)
+class UnavailableHasher final : public PasswordHasher
+{
+public:
+    bool IsReady() const noexcept override { return false; }
+    AccountResult<std::string> Hash(std::string_view) const override
+    { return AccountResult<std::string>::Failure(AccountError::Unavailable); }
+    AccountStatus Verify(std::string_view, std::string_view) const override
+    { return AccountStatus::Failure(AccountError::Unavailable); }
+};
+
+TEST(AccountFramework, UnavailablePasswordProviderCannotEnableAuthentication)
 {
     const auto store = std::make_shared<LifecycleStore>();
-    const auto hasher = std::make_shared<ScryptPasswordHasher>();
+    const auto hasher = std::make_shared<UnavailableHasher>();
     AccountService service(EnabledOptions(), store, hasher);
-    EXPECT_EQ(service.Start().error, AccountError::NotImplemented);
+    EXPECT_EQ(service.Start().error, AccountError::Unavailable);
     EXPECT_EQ(store->open_calls, 0);
     EXPECT_FALSE(hasher->Verify("password", "password").Succeeded());
     EXPECT_FALSE(service.Login({"alice", "password"}).Succeeded());
     EXPECT_FALSE(service.ResolveSession("token").Succeeded());
 
-    AccountService sqlite_service(EnabledOptions(), std::make_shared<SqliteAccountStore>(),
+    auto invalid = EnabledOptions();
+    invalid.database_path = "/dev/null/accounts.db";
+    AccountService sqlite_service(invalid, std::make_shared<SqliteAccountStore>(),
                                   std::make_shared<ReadyHasher>());
-    EXPECT_EQ(sqlite_service.Start().error, AccountError::NotImplemented);
+    EXPECT_EQ(sqlite_service.Start().error, AccountError::StorageError);
     EXPECT_FALSE(sqlite_service.ResolveSession("token").Succeeded());
 }
 
@@ -113,7 +125,7 @@ TEST(AccountFramework, ReadyDependenciesStillCannotIssueFakeAccountsOrCredential
         AccountService service(EnabledOptions(), store, std::make_shared<ReadyHasher>());
         ASSERT_TRUE(service.Start().Succeeded());
         const auto created = service.CreateAccount({"alice", "password", "Alice"});
-        EXPECT_EQ(created.error, AccountError::NotImplemented);
+        EXPECT_EQ(created.error, AccountError::RegistrationDisabled);
         EXPECT_FALSE(created.value.has_value());
         const auto login = service.Login({"alice", "password"});
         EXPECT_EQ(login.error, AccountError::NotImplemented);

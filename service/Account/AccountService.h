@@ -6,6 +6,7 @@
 #include "PasswordHasher.h"
 
 #include <memory>
+#include <functional>
 #include <shared_mutex>
 #include <string_view>
 
@@ -15,8 +16,9 @@ namespace service::account
 class AccountService
 {
 public:
+    using Clock = std::function<int64_t()>; // Unix seconds; safe for concurrent callers.
     AccountService(AccountOptions options, std::shared_ptr<AccountStore> store,
-                   std::shared_ptr<PasswordHasher> password_hasher);
+                   std::shared_ptr<PasswordHasher> password_hasher, Clock clock = {});
     ~AccountService();
 
     AccountStatus Start();
@@ -34,6 +36,8 @@ private:
     const AccountOptions options_;
     const std::shared_ptr<AccountStore> store_;
     const std::shared_ptr<PasswordHasher> password_hasher_;
+    const Clock clock_;
+    std::string dummy_password_hash_;
     std::shared_mutex mutex_;
     bool started_ = false;
 };

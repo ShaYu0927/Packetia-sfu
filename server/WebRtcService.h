@@ -28,7 +28,8 @@ class WebRtcService final : public std::enable_shared_from_this<WebRtcService>
 {
 public:
     WebRtcService(EventLoop* loop, config::AppConfig config,
-                  std::shared_ptr<media::IEncodedFramePublisher> publisher);
+                  std::shared_ptr<media::IEncodedFramePublisher> publisher,
+                  std::function<bool(const service::auth::AuthContext&)> admission_guard = {});
     ~WebRtcService();
     WebRtcService(const WebRtcService&) = delete;
     WebRtcService& operator=(const WebRtcService&) = delete;
@@ -36,6 +37,7 @@ public:
     bool Start();
     void Stop();
     bool Renegotiate(uint64_t sessionId, const std::vector<sdp::SdpMedia>& medias, std::string& error);
+    std::size_t ParticipantCount();
 
 private:
     using Session = room::ParticipantSession;
@@ -70,6 +72,7 @@ private:
     const config::AppConfig config_;
     const service::auth::AuthService auth_;
     const std::shared_ptr<media::IEncodedFramePublisher> publisher_;
+    const std::function<bool(const service::auth::AuthContext&)> admission_guard_;
     std::shared_ptr<TaskScheduler> scheduler_;
     std::shared_ptr<network::UdpServer> udp_;
     std::shared_ptr<network::websocket::WsServer> ws_;

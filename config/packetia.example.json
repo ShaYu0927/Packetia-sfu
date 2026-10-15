@@ -14,6 +14,7 @@
   },
   "account": {
     "enabled": false,
+    "registration_enabled": false,
     "database_path": "packetia.db",
     "session_ttl_seconds": 86400,
     "worker_count": 2,

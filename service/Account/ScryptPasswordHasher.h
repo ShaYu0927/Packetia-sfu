@@ -6,7 +6,7 @@
 namespace service::account
 {
 
-// Framework placeholder. No password algorithm is implemented yet.
+// OpenSSL scrypt, random 128-bit salt and bounded, self-describing parameters.
 class ScryptPasswordHasher final : public PasswordHasher
 {
 public:

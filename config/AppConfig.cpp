@@ -142,8 +142,9 @@ AppConfig AppConfig::FromJson(const std::string& text) {
     }
     if (root.contains("account")) {
         const auto& account = root.at("account");
-        Keys(account, {"enabled", "database_path", "session_ttl_seconds", "worker_count", "max_pending_requests"});
+        Keys(account, {"enabled", "registration_enabled", "database_path", "session_ttl_seconds", "worker_count", "max_pending_requests"});
         if (account.contains("enabled")) config.account.enabled = Flag(account.at("enabled"));
+        if (account.contains("registration_enabled")) config.account.registration_enabled = Flag(account.at("registration_enabled"));
         if (account.contains("database_path")) config.account.database_path = account.at("database_path").get<std::string>();
         Number(account, "session_ttl_seconds", config.account.session_ttl_seconds);
         Number(account, "worker_count", config.account.worker_count);

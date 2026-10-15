@@ -1,0 +1,54 @@
+x-jwt-environment: &jwt-environment
+  PACKETIA_JWT_ISSUER: ${PACKETIA_JWT_ISSUER:?Set PACKETIA_JWT_ISSUER in .env}
+  PACKETIA_JWT_SECRET: ${PACKETIA_JWT_SECRET:?Set PACKETIA_JWT_SECRET in .env}
+
+services:
+  control:
+    image: packetia-cluster:local
+    build:
+      context: ../..
+      dockerfile: deploy/cluster/Dockerfile
+    command: ["PacketiaControl", "/etc/packetia/control.json"]
+    environment:
+      <<: *jwt-environment
+      PACKETIA_NODE_SECRETS: '{"sfu-a":"${PACKETIA_NODE_A_SECRET:?Set node A secret}","sfu-b":"${PACKETIA_NODE_B_SECRET:?Set node B secret}"}'
+    ports:
+      - "18082:18082/tcp"
+    volumes:
+      - ./control.json:/etc/packetia/control.json:ro
+      - control-data:/data
+    restart: unless-stopped
+    stop_grace_period: 10s
+
+  sfu-a:
+    image: packetia-cluster:local
+    command: ["PacketiaSfu", "/etc/packetia/sfu.json"]
+    environment:
+      <<: *jwt-environment
+      PACKETIA_NODE_SECRET: ${PACKETIA_NODE_A_SECRET:?Set node A secret}
+    ports:
+      - "18180:18180/tcp"
+      - "19100:19100/udp"
+    volumes:
+      - ./sfu-a.json:/etc/packetia/sfu.json:ro
+    depends_on: [control]
+    restart: unless-stopped
+    stop_grace_period: 10s
+
+  sfu-b:
+    image: packetia-cluster:local
+    command: ["PacketiaSfu", "/etc/packetia/sfu.json"]
+    environment:
+      <<: *jwt-environment
+      PACKETIA_NODE_SECRET: ${PACKETIA_NODE_B_SECRET:?Set node B secret}
+    ports:
+      - "18181:18181/tcp"
+      - "19101:19101/udp"
+    volumes:
+      - ./sfu-b.json:/etc/packetia/sfu.json:ro
+    depends_on: [control]
+    restart: unless-stopped
+    stop_grace_period: 10s
+
+volumes:
+  control-data:

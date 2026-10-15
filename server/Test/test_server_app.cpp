@@ -246,9 +246,10 @@ TEST_F(ServerAppTest, RuntimeReportsConfiguredThreadsAndRemovesThemAcrossRestart
     }
 }
 
-TEST_F(ServerAppTest, UnimplementedAccountsFailClosedAndRollbackAllowsExistingServicesToStart)
+TEST_F(ServerAppTest, AccountStorageFailureRollsBackAndAllowsExistingServicesToStart)
 {
     config.account.enabled = true;
+    config.account.database_path = "/dev/null/accounts.db";
     config.http.enabled = true;
     config.http.listen_port = Reserve(SOCK_STREAM);
     reservations.clear();
@@ -257,13 +258,27 @@ TEST_F(ServerAppTest, UnimplementedAccountsFailClosedAndRollbackAllowsExistingSe
     EXPECT_FALSE(incomplete.Start());
     incomplete.Stop();
     incomplete.Stop();
-    // No account API may listen when its authentication dependencies are unfinished.
+    // No account API may listen when its storage failed to initialize.
     EXPECT_NO_THROW({ Socket unused_api(SOCK_STREAM, "127.0.0.1", config.http.listen_port); });
 
     config.account.enabled = config.http.enabled = false;
     server::ServerApp existing(config);
     ASSERT_TRUE(existing.Start());
     existing.Stop();
+}
+
+TEST_F(ServerAppTest, AccountApiStartsWithRealPasswordAndStorageProviders)
+{
+    config.account.enabled = true;
+    config.account.database_path = ":memory:";
+    config.http.enabled = true;
+    config.http.listen_port = Reserve(SOCK_STREAM);
+    reservations.clear();
+    server::ServerApp app(config);
+    ASSERT_TRUE(app.Start());
+    EXPECT_THROW({ Socket occupied(SOCK_STREAM, "127.0.0.1", config.http.listen_port); }, std::runtime_error);
+    app.Stop();
+    EXPECT_NO_THROW({ Socket available(SOCK_STREAM, "127.0.0.1", config.http.listen_port); });
 }
 
 TEST_F(ServerAppTest, MissingTurnCredentialsFailStartupAndDisabledTurnDoesNotBind)

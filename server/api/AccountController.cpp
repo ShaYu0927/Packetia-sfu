@@ -27,6 +27,8 @@ HttpResponse AccountFailure(AccountError error)
     {
     case AccountError::InvalidArgument:
         return ErrorResponse(400, "invalid_request", "Invalid request.");
+    case AccountError::RegistrationDisabled:
+        return ErrorResponse(403, "registration_disabled", "Account registration is disabled.");
     case AccountError::Unauthenticated:
     case AccountError::InvalidCredentials:
     case AccountError::NotFound:
@@ -170,8 +172,13 @@ HttpResponse AccountController::RegisterAccount(const ApiRequest& request) const
         !OnlyFields(request.json, {"login", "password", "display_name"}) ||
         !ReadString(request.json, "display_name", 256, input.display_name, false))
         return AccountFailure(AccountError::InvalidArgument);
-    // Registration remains unavailable until its admission policy is defined.
-    return ErrorResponse(501, "registration_not_implemented", "Account registration policy is not implemented.");
+    if (!accounts_) return AccountFailure(AccountError::NotConfigured);
+    const auto result = accounts_->CreateAccount(input);
+    if (!result.Succeeded()) return AccountFailure(result.error);
+    const auto& user = *result.value;
+    return JsonResponse(201, {{"user", {{"id", user.id}, {"login", user.login},
+        {"display_name", user.display_name}, {"status", "active"},
+        {"created_at_unix_seconds", user.created_at_unix_seconds}}}});
 }
 
 HttpResponse AccountController::Login(const ApiRequest& request) const

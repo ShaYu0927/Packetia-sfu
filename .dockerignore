@@ -1,0 +1,13 @@
+.git
+.idea
+.vscode
+build
+cmake-build-*
+.codex*
+recordings
+**/__pycache__
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/*.log
+**/.env

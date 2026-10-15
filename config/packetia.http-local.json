@@ -1,0 +1,35 @@
+{
+  "server": {
+    "listen_ip": "127.0.0.1",
+    "rtsp_port": 18554,
+    "sip_port": 15060,
+    "rtmp_port": 11935,
+    "websocket_port": 28080,
+    "udp_port": 29000,
+    "io_threads": 1
+  },
+  "account": {
+    "enabled": true,
+    "registration_enabled": true,
+    "database_path": "build/http-local/accounts.db",
+    "session_ttl_seconds": 86400,
+    "worker_count": 2,
+    "max_pending_requests": 128
+  },
+  "http": {
+    "enabled": true,
+    "listen_ip": "127.0.0.1",
+    "listen_port": 8081
+  },
+  "services": {
+    "recording": false,
+    "ai": false,
+    "conference_mix": false
+  },
+  "webrtc": {
+    "enabled": false
+  },
+  "turn": {
+    "enabled": false
+  }
+}

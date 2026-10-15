@@ -150,11 +150,12 @@ struct WebRtcService::SignalingRequest
 };
 
 WebRtcService::WebRtcService(EventLoop* loop, config::AppConfig config,
-                             std::shared_ptr<media::IEncodedFramePublisher> publisher)
+                             std::shared_ptr<media::IEncodedFramePublisher> publisher,
+                             std::function<bool(const auth::AuthContext&)> admission_guard)
     : loop_(loop), config_(std::move(config)),
       auth_(std::make_shared<auth::JwtAuthenticator>(std::make_shared<auth::StaticKeyProvider>(config_.webrtc.api_keys)),
             std::make_shared<auth::RoomAccessPolicy>()),
-      publisher_(std::move(publisher))
+      publisher_(std::move(publisher)), admission_guard_(std::move(admission_guard))
 {
 }
 
@@ -263,6 +264,13 @@ void WebRtcService::Stop()
     if (scheduler_) scheduler_->Invoke([this] { StopOnOwner(); });
     else StopOnOwner();
     scheduler_.reset();
+}
+
+std::size_t WebRtcService::ParticipantCount()
+{
+    std::size_t count = 0;
+    if (scheduler_) scheduler_->Invoke([&] { count = memberships_.size(); });
+    return count;
 }
 
 void WebRtcService::StopOnOwner()
@@ -378,6 +386,8 @@ std::string WebRtcService::HandleAdmission(const std::string& connection, const 
         return AuthError(auth::AuthError::Unauthenticated);
     auto result = auth_.Authenticate(body["token"].get_ref<const std::string&>(), auth::Audience::WebRtc);
     if (!result.Succeeded()) return AuthError(result.error);
+    if (admission_guard_ && !admission_guard_(*result.context))
+        return AuthError(auth::AuthError::Forbidden);
     if (!body.contains("room_id") || !body["room_id"].is_string()) return Error("Expected room_id");
     const auto roomId = body["room_id"].get<std::string>();
     const auto decision = auth_.Authorize(*result.context, auth::Action::JoinRoom, RoomResource(roomId));
@@ -661,8 +671,7 @@ std::string WebRtcService::CreateSession(const std::string& connection, const st
     return Json{{"type", "answer"}, {"session_id", session.id}, {"sdp", sdp::Sdp::Serialize(answer)}}.dump();
 }
 
-std::string WebRtcService::JoinRoom(const std::string& connection, const std::string& roomId,
-    auth::AuthContext caller)
+std::string WebRtcService::JoinRoom(const std::string& connection, const std::string& roomId, auth::AuthContext caller)
 {
     if (roomId.empty() || roomId.size() > 64 ||
         roomId.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.") != std::string::npos)

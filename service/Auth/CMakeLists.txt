@@ -1,4 +1,5 @@
 add_library(packetia_auth STATIC
+    JoinToken.cpp
     AuthTypes.h
     Authenticator.h
     AuthAccessPolicy.h

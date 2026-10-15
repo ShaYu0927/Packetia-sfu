@@ -11,6 +11,8 @@ namespace service::account
 struct AccountOptions
 {
     bool enabled = false;
+    // Explicit admission policy: enabling the service does not open registration.
+    bool registration_enabled = false;
     std::string database_path = "packetia.db";
     uint32_t session_ttl_seconds = 86400;
     uint32_t worker_count = 2;

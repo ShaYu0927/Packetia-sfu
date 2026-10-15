@@ -108,7 +108,7 @@ void ServerApp::AddAccountServices()
             const auto result = accounts->Start();
             if (!result.Succeeded())
                 LOG_ERROR("Account service unavailable: error=", static_cast<int>(result.error),
-                          "; implement the account storage and password adapters before enabling it");
+                          "; check the account database path and password provider");
             return result.Succeeded();
         },
         [accounts] { accounts->Stop(); });

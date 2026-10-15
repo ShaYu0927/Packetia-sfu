@@ -1,0 +1,9 @@
+{
+  "listen_ip": "0.0.0.0",
+  "http_port": 18082,
+  "internal_listen_ip": "0.0.0.0",
+  "internal_http_port": 18083,
+  "account_database": "/data/accounts.db",
+  "cluster_database": "/data/cluster.db",
+  "registration_enabled": false
+}

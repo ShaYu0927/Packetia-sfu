@@ -2,6 +2,8 @@
 #include "server/api/ApiServer.h"
 #include "protocol/http/HttpServer.h"
 #include "service/Account/AccountService.h"
+#include "service/Account/ScryptPasswordHasher.h"
+#include "service/Account/SqliteAccountStore.h"
 
 #include <gtest/gtest.h>
 #include <chrono>
@@ -74,7 +76,7 @@ TEST(AccountApiFramework, NeverAuthenticatesOrRegistersThroughUnconfiguredDepend
     EXPECT_EQ(response.body.find("session_token"), std::string::npos);
 
     login.path = "/api/v1/accounts";
-    EXPECT_EQ(router.Dispatch(login).status, 501);
+    EXPECT_EQ(router.Dispatch(login).status, 503);
     EXPECT_EQ(router.Dispatch({"GET", "/api/v1/me", {}, {}}).status, 401);
     EXPECT_EQ(router.Dispatch({"GET", "/api/v1/me", {}, {{"authorization", "Bearer test"}}}).status, 503);
     EXPECT_EQ(router.Dispatch({"GET", "/api/v1/me", {}, {{"authorization", "Bearer test extra"}}}).status, 401);
@@ -143,7 +145,7 @@ TEST(AccountApiFramework, DispatchesRegisteredAccountRoutesThroughWorkers)
     const std::vector<std::pair<HttpRequest, std::uint16_t>> cases{
         {Login(R"({"login":"alice","password":"secret"})"), 503},
         {{"POST", "/api/v1/accounts", R"({"login":"alice","password":"secret"})",
-          {{"content-type", "application/json"}}}, 501},
+          {{"content-type", "application/json"}}}, 503},
         {{"GET", "/api/v1/me", {}, {}}, 401},
         {{"POST", "/api/v1/sessions/renew", {}, {}}, 401},
         {{"DELETE", "/api/v1/sessions/current", {}, {}}, 401},
@@ -198,6 +200,81 @@ TEST(AccountApiFramework, AppliesOneAdmissionBudgetAcrossAllWorkerShards)
     EXPECT_EQ(overflow, 503);
     release.set_value();
     api.Stop();
+}
+
+TEST(AccountApi, CompletesRegistrationLoginRotationAndLogoutThroughWorkers)
+{
+    service::account::AccountOptions options;
+    options.enabled = options.registration_enabled = true;
+    options.database_path = ":memory:";
+    const auto accounts = std::make_shared<service::account::AccountService>(options,
+        std::make_shared<service::account::SqliteAccountStore>(),
+        std::make_shared<service::account::ScryptPasswordHasher>());
+    ASSERT_TRUE(accounts->Start().Succeeded());
+    protocol::http::HttpServerOptions http;
+    http.enabled = true;
+    const auto transport = std::make_shared<FakeHttpServer>();
+    server::api::ApiServer api(http, options, accounts, transport);
+    ASSERT_TRUE(api.Start());
+    auto dispatch = [&](HttpRequest request) {
+        auto response = std::make_shared<std::promise<HttpResponse>>();
+        auto future = response->get_future();
+        transport->handler(std::move(request), [response](HttpResponse result) { response->set_value(std::move(result)); });
+        if (future.wait_for(5s) != std::future_status::ready) return HttpResponse{599, {}, {}};
+        return future.get();
+    };
+    const std::string body = R"({"login":"Alice","password":"correct horse battery staple","display_name":"小明"})";
+    auto registration = Login(body); registration.path = "/api/v1/accounts";
+    const auto created = dispatch(registration);
+    ASSERT_EQ(created.status, 201);
+    EXPECT_EQ(created.headers.at("cache-control"), "no-store");
+    const auto user = nlohmann::json::parse(created.body).at("user");
+    EXPECT_EQ(user.at("login"), "alice");
+    EXPECT_FALSE(user.contains("password_hash"));
+    EXPECT_EQ(created.body.find("session_token"), std::string::npos);
+    EXPECT_EQ(dispatch(registration).status, 409);
+    const auto bad = dispatch(Login(R"({"login":"alice","password":"incorrect password"})"));
+    EXPECT_EQ(bad.status, 401);
+    EXPECT_EQ(bad.body, dispatch(Login(R"({"login":"missing","password":"incorrect password"})")).body);
+    auto login_request = Login(R"({"login":"ALICE","password":"correct horse battery staple"})");
+    const auto login = dispatch(login_request);
+    ASSERT_EQ(login.status, 200);
+    const auto session = nlohmann::json::parse(login.body);
+    EXPECT_EQ(session.at("identity").at("user_id"), user.at("id"));
+    const auto token = session.at("session_token").get<std::string>();
+    const protocol::http::Headers auth{{"authorization", "Bearer " + token}};
+    const auto me = dispatch({"GET", "/api/v1/me", {}, auth});
+    ASSERT_EQ(me.status, 200);
+    EXPECT_EQ(nlohmann::json::parse(me.body).at("display_name"), "小明");
+    const auto renew = dispatch({"POST", "/api/v1/sessions/renew", {}, auth});
+    ASSERT_EQ(renew.status, 200);
+    const auto renewed_token = nlohmann::json::parse(renew.body).at("session_token").get<std::string>();
+    EXPECT_NE(token, renewed_token);
+    EXPECT_EQ(dispatch({"GET", "/api/v1/me", {}, auth}).status, 401);
+    const protocol::http::Headers renewed_auth{{"authorization", "Bearer " + renewed_token}};
+    EXPECT_EQ(dispatch({"GET", "/api/v1/me", {}, renewed_auth}).status, 200);
+    EXPECT_EQ(dispatch({"DELETE", "/api/v1/sessions/current", {}, renewed_auth}).status, 204);
+    EXPECT_EQ(dispatch({"DELETE", "/api/v1/sessions/current", {}, renewed_auth}).status, 204);
+    EXPECT_EQ(dispatch({"GET", "/api/v1/me", {}, renewed_auth}).status, 401);
+    api.Stop();
+    accounts->Stop();
+}
+
+TEST(AccountApi, ReturnsForbiddenWhenRegistrationPolicyIsDisabled)
+{
+    service::account::AccountOptions options;
+    options.enabled = true; options.database_path = ":memory:";
+    const auto accounts = std::make_shared<service::account::AccountService>(options,
+        std::make_shared<service::account::SqliteAccountStore>(),
+        std::make_shared<service::account::ScryptPasswordHasher>());
+    ASSERT_TRUE(accounts->Start().Succeeded());
+    server::api::ApiRouter::Builder builder;
+    server::api::AccountController(accounts).RegisterRoutes(builder);
+    auto request = Login(R"({"login":"alice","password":"correct horse battery staple"})");
+    request.path = "/api/v1/accounts";
+    const auto response = builder.Build().Dispatch(request);
+    EXPECT_EQ(response.status, 403);
+    EXPECT_EQ(nlohmann::json::parse(response.body).at("error").at("code"), "registration_disabled");
 }
 
 }

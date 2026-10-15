@@ -4,6 +4,7 @@
 #include "protocol/http/IHttpServer.h"
 #include "service/Account/AccountOptions.h"
 #include "utils/WorkerRegistry.h"
+#include "ApiRouter.h"
 
 #include <memory>
 
@@ -16,6 +17,9 @@ namespace server::api
 class ApiServer final
 {
 public:
+    ApiServer(protocol::http::HttpServerOptions http_options, ApiRouter router,
+              std::shared_ptr<protocol::http::IHttpServer> transport,
+              uint32_t worker_count = 2, std::size_t max_pending_requests = 128);
     ApiServer(protocol::http::HttpServerOptions http_options,
               service::account::AccountOptions account_options,
               std::shared_ptr<service::account::AccountService> accounts,
@@ -38,6 +42,7 @@ private:
     const std::string pool_name_;
     WorkerRegistry workers_;
     std::shared_ptr<State> state_;
+    std::shared_ptr<const ApiRouter> routes_;
     bool started_ = false;
 };
 

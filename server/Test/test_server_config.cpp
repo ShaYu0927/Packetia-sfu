@@ -60,16 +60,17 @@ void WorkerConfiguration() {
 
 void AccountConfiguration() {
     const auto defaults = config::AppConfig::FromJson("{}");
-    Check(!defaults.account.enabled && !defaults.http.enabled, "account framework must be opt-in");
+    Check(!defaults.account.enabled && !defaults.account.registration_enabled && !defaults.http.enabled,
+          "account API and self-registration must be opt-in");
     const auto configured = config::AppConfig::FromJson(R"({
-        "account": {"enabled":true,"database_path":"data/accounts.db","session_ttl_seconds":3600,
+        "account": {"enabled":true,"registration_enabled":true,"database_path":"data/accounts.db","session_ttl_seconds":3600,
                     "worker_count":3,"max_pending_requests":32},
         "http": {"enabled":true,"listen_ip":"127.0.0.1","listen_port":18081,"max_body_bytes":4096,
                  "max_connections":64,"max_header_bytes":4096,"max_response_bytes":8192,
                  "max_total_response_bytes":32768,"request_timeout_seconds":10,
                  "idle_timeout_seconds":20,"service_interval_ms":2}
     })");
-    Check(configured.account.enabled && configured.account.database_path == "data/accounts.db" &&
+    Check(configured.account.enabled && configured.account.registration_enabled && configured.account.database_path == "data/accounts.db" &&
           configured.account.session_ttl_seconds == 3600 && configured.account.worker_count == 3 &&
           configured.account.max_pending_requests == 32 && configured.http.enabled &&
           configured.http.listen_ip == "127.0.0.1" && configured.http.listen_port == 18081 &&
@@ -81,6 +82,7 @@ void AccountConfiguration() {
     for (const char* invalid : {
         R"({"http":{"enabled":true}})",
         R"({"account":{"enabled":"true"}})",
+        R"({"account":{"registration_enabled":"true"}})",
         R"({"account":{"database_path":""}})",
         R"({"account":{"session_ttl_seconds":0}})",
         R"({"account":{"worker_count":0}})", R"({"account":{"worker_count":65}})",

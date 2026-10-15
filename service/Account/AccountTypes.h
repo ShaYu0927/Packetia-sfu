@@ -13,6 +13,7 @@ enum class AccountError
 {
     None,
     InvalidArgument,
+    RegistrationDisabled,
     Unauthenticated,
     InvalidCredentials,
     AlreadyExists,

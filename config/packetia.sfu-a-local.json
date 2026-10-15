@@ -1,0 +1,11 @@
+{
+  "node_id": "sfu-a",
+  "control_url": "http://127.0.0.1:18083",
+  "signaling_url": "ws://127.0.0.1:18180/webrtc",
+  "max_rooms": 100,
+  "listen_ip": "127.0.0.1",
+  "public_ip": "127.0.0.1",
+  "websocket_port": 18180,
+  "udp_port": 19100,
+  "max_participants": 128
+}

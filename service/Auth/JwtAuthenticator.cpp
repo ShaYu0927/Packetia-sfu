@@ -187,6 +187,8 @@ AuthResult JwtAuthenticator::Authenticate(std::string_view token, Audience expec
         if (!ReadString(claims, "sub", context.subject_id, true) ||
             !ReadString(claims, "jti", context.token_id, false) ||
             !ReadString(claims, "name", context.name, false) ||
+            !ReadString(claims, "node_id", context.node_id, false) ||
+            !ReadString(claims, "instance_id", context.instance_id, false) ||
             !ReadTimestamp(claims, "exp", context.expires_at_unix_seconds, true) ||
             context.expires_at_unix_seconds == 0)
             return AuthResult::Failure(AuthError::InvalidToken);

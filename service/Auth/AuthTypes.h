@@ -46,6 +46,8 @@ struct AuthContext
     std::string token_id;
     int64_t expires_at_unix_seconds = 0;  /* 到期时间：Unix 时间戳，单位秒*/
     RoomGrant video;                /* 音视频房间权限 */
+    std::string node_id;
+    std::string instance_id;
 };
 
 struct ResourceContext
