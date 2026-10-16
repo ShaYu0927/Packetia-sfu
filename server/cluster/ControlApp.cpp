@@ -1,12 +1,12 @@
 #include "ControlApp.h"
 #include "ClusterController.h"
 #include "RuntimeConfig.h"
-#include "server/api/AccountController.h"
-#include "server/api/ApiServer.h"
-#include "protocol/http/HttpServer.h"
-#include "service/Account/SqliteAccountStore.h"
-#include "service/Account/ScryptPasswordHasher.h"
-#include "utils/EventLoop.h"
+#include "AccountController.h"
+#include "ApiServer.h"
+#include "HttpServer.h"
+#include "SqliteAccountStore.h"
+#include "ScryptPasswordHasher.h"
+#include "EventLoop.h"
 
 namespace server::cluster
 {

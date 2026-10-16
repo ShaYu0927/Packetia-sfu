@@ -10,6 +10,7 @@ if(NOT TARGET packetia_memory)
     add_subdirectory(.. memory-library)
 endif()
 get_filename_component(PACKETIA_MEMORY_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
+include("${PACKETIA_MEMORY_ROOT}/utils/threading/ThreadSupport.cmake")
 
 add_executable(test_memory_model
     test_memory_model.cpp
@@ -33,10 +34,12 @@ target_include_directories(test_memory_model PRIVATE
     "${PACKETIA_MEMORY_ROOT}/Rtsp/Rtp"
     "${PACKETIA_MEMORY_ROOT}/protocol/Rtcp"
     "${PACKETIA_MEMORY_ROOT}/media/transport"
+    "${PACKETIA_MEMORY_ROOT}/media/core"
+    "${PACKETIA_MEMORY_ROOT}/media/quality"
     "${PACKETIA_MEMORY_ROOT}/log"
     "${PACKETIA_MEMORY_ROOT}/Common/Depacketizer"
     "${PACKETIA_MEMORY_ROOT}/media/MediaFrame")
-target_link_libraries(test_memory_model PRIVATE Threads::Threads packetia_memory)
+target_link_libraries(test_memory_model PRIVATE packetia_threads packetia_memory)
 
 add_test(NAME memory_model COMMAND test_memory_model)
 set_tests_properties(memory_model PROPERTIES TIMEOUT 30)

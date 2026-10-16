@@ -1,6 +1,6 @@
 #include "ClusterController.h"
-#include "server/api/ApiResponse.h"
-#include "service/Auth/JoinToken.h"
+#include "ApiResponse.h"
+#include "JoinToken.h"
 #include <openssl/crypto.h>
 #include <algorithm>
 #include <cctype>

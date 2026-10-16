@@ -1,5 +1,7 @@
 #include "Room.h"
-#include "media/endpoint/MediaEndpoint.h"
+#include "Participant.h"
+#include "MediaEndpoint.h"
+#include "MediaTrack.h"
 #include <utility>
 #include "TimeUtil.h"
 
@@ -247,7 +249,9 @@ bool Room::PublishTrack(const std::string& participant_id, const media::MediaTra
             return false;
         }
 
-        if (auto endpoint = participant_it->second->GetEndpoint()) {
+        const auto endpoint = participant_it->second->GetPublishEndpoint();
+        if (!endpoint && participant_it->second->HasMediaBinding()) return false;
+        if (endpoint) {
             ::TrackInfo info;
             if (!endpoint->IsRunning() || !endpoint->GetPublishedTrack(endpoint_track_id, info) ||
                 info.payload_type != payload_type || (ssrc && !endpoint->BindSsrc(endpoint_track_id, ssrc))) return false;
@@ -329,7 +333,7 @@ bool Room::UnpublishTrack(const std::string& track_id)
 
     if (publisher)
     {
-        if (auto endpoint = publisher->GetEndpoint()) endpoint->RemovePublishedTrack(source_track_id);
+        if (auto endpoint = publisher->GetPublishEndpoint()) endpoint->RemovePublishedTrack(source_track_id);
         publisher->RemovePublishedTrack(track_id);
     }
 
@@ -543,11 +547,11 @@ bool Room::SubscribeTrackLocked(const std::string& subscriber_id, const std::str
     if (track_subscribers.count(subscriber_id)) return false;
     const auto publisher_it = participants_.find(track_it->second.publisher_id);
     if (publisher_it == participants_.end()) return false;
-    auto destination = subscriber_it->second->GetEndpoint();
-    auto source = publisher_it->second->GetEndpoint();
+    auto destination = subscriber_it->second->GetSubscribeEndpoint();
+    auto source = publisher_it->second->GetPublishEndpoint();
     // Preserve metadata-only rooms; media-backed subscriptions must establish
     // a real route using previously negotiated downstream parameters.
-    if (source || destination) {
+    if (publisher_it->second->HasMediaBinding() || subscriber_it->second->HasMediaBinding()) {
         if (!source || !destination || !destination->Subscribe(track_id, source, track_it->second.source_track_id)) return false;
     }
     auto inserted = track_subscribers.insert(subscriber_id);
@@ -586,7 +590,7 @@ void Room::UnsubscribeTrackLocked(const std::string& subscriber_id, const std::s
     auto subscriber_it = participants_.find(subscriber_id);
     if (subscriber_it != participants_.end())
     {
-        if (auto endpoint = subscriber_it->second->GetEndpoint()) endpoint->Unsubscribe(track_id);
+        if (auto endpoint = subscriber_it->second->GetSubscribeEndpoint()) endpoint->Unsubscribe(track_id);
         subscriber_it->second->UnsubscribeTrack(track_id);
     }
 }

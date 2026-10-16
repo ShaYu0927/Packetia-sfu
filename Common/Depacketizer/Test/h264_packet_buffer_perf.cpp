@@ -91,7 +91,11 @@ std::vector<uint8_t> FuA(std::size_t index, std::size_t packet_count,
     std::vector<uint8_t> payload(payload_size, 0x5A);
     payload[0] = 0x7C;
     payload[1] = 0x05;
-    if (index == 0) payload[1] |= 0x80;
+    if (index == 0)
+    {
+        payload[1] |= 0x80;
+        payload[2] = 0x80; // first_mb_in_slice = 0, unlike subsequent slices.
+    }
     if (index + 1 == packet_count) payload[1] |= 0x40;
     return payload;
 }
@@ -136,7 +140,7 @@ void ValidateStapA()
     media::H264PacketBuffer buffer;
     const std::vector<uint8_t> payload = {
         0x78, 0x00, 0x02, 0x67, 0x11, 0x00, 0x02, 0x68, 0x22,
-        0x00, 0x03, 0x65, 0x33, 0x44};
+        0x00, 0x03, 0x65, 0x83, 0x44};
     auto result = buffer.InsertPacket(Parse(parser, 20, 2000, true, payload));
     Require(result.frames.size() == 1, "STAP-A did not produce one frame");
     Require(result.frames[0].nalus.size() == 3, "STAP-A NALU count differs");

@@ -2,7 +2,7 @@
 #define _UDPSESSION_H_
 
 #include "UdpServer.h"
-#include "transport/DatagramProtocolClassifier.h"
+#include "DatagramProtocolClassifier.h"
 #include "EndpointBase.h"
 #include "IceAgent.h"
 #include <functional>

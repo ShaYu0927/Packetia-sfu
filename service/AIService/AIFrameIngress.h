@@ -2,7 +2,7 @@
 #define _AI_FRAME_INGRESS_H_
 
 #include "EncodedFrameRouter.h"
-#include "config/ConfigStore.h"
+#include "ConfigStore.h"
 
 #include <atomic>
 #include <condition_variable>
@@ -11,7 +11,7 @@
 #include <deque>
 #include <memory>
 #include <mutex>
-#include "utils/ThreadManager.h"
+#include "ThreadManager.h"
 
 namespace service
 {

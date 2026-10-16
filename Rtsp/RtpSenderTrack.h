@@ -1,8 +1,8 @@
 #ifndef _RTP_SENDER_TRACKER_H_
 #define _RTP_SENDER_TRACKER_H_
 
-#include "../Common/memory/SharedBuffer.h"
-#include "../Common/memory/PoolAllocator.h"
+#include "SharedBuffer.h"
+#include "PoolAllocator.h"
 
 #include <cstdint>
 #include <cstddef>
@@ -14,7 +14,7 @@
 #include <string>
 #include "IMediaTransport.h"
 #include "Rtp.h"
-#include "../media/quality/TransportSequenceAllocator.h"
+#include "TransportSequenceAllocator.h"
 
 namespace rtsp
 {

@@ -1,5 +1,5 @@
-#include "websocket/WsSession.h"
-#include "websocket/WsSessionManager.h"
+#include "WsSession.h"
+#include "WsSessionManager.h"
 
 #include <atomic>
 #include <cstdlib>

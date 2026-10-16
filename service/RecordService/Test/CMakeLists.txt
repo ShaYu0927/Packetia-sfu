@@ -43,7 +43,8 @@ if(RECORDING_FFMPEG)
         ../Mp4Recorder.cpp ../Mp4Writer.cpp ../LocalFileIO.cpp)
     target_compile_features(test_recording PRIVATE cxx_std_17)
     target_include_directories(test_recording PRIVATE
-        .. ../../../media/core ../../../log ../../../utils ${FFMPEG_INCLUDE_DIRS})
+        .. ../../../media/core ../../../media/MediaFrame ../../../Common/memory
+        ../../../log ../../../utils ${FFMPEG_INCLUDE_DIRS})
     target_link_libraries(test_recording PRIVATE packetia_recording_index ${FFMPEG_LIBRARIES} packetia_threads)
     if(MSVC)
         target_compile_options(test_recording PRIVATE /utf-8)
@@ -61,7 +62,10 @@ if(RECORDING_FFMPEG)
         ${PACKETIA_RECORD_ROOT}/utils/MediaLatency.cpp)
     target_include_directories(recording_test_pipeline PUBLIC
         .. ${PACKETIA_RECORD_ROOT} ${PACKETIA_RECORD_ROOT}/service ${PACKETIA_RECORD_ROOT}/media
-        ${PACKETIA_RECORD_ROOT}/media/core ${PACKETIA_RECORD_ROOT}/log ${PACKETIA_RECORD_ROOT}/utils)
+        ${PACKETIA_RECORD_ROOT}/media/core ${PACKETIA_RECORD_ROOT}/log ${PACKETIA_RECORD_ROOT}/utils
+        ${PACKETIA_RECORD_ROOT}/service/core
+        ${PACKETIA_RECORD_ROOT}/media/MediaFrame
+        ${PACKETIA_RECORD_ROOT}/Common/memory)
     target_link_libraries(recording_test_pipeline PUBLIC packetia_config packetia_recording_index ${FFMPEG_LIBRARIES} packetia_threads)
     add_executable(test_recording_control test_recording_control.cpp)
     target_link_libraries(test_recording_control PRIVATE recording_test_pipeline)

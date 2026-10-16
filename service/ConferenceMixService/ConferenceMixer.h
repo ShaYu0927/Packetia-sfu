@@ -1,13 +1,13 @@
 #pragma once
 
 #include "IMixBackend.h"
-#include "config/ConfigStore.h"
+#include "ConfigStore.h"
 
 #include <condition_variable>
 #include <deque>
 #include <memory>
 #include <mutex>
-#include "utils/ThreadManager.h"
+#include "ThreadManager.h"
 
 namespace service::mix {
 

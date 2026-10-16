@@ -1,5 +1,5 @@
 #include "ThreadManager.h"
-#include "../../../log/logger.h"
+#include "logger.h"
 
 #include <atomic>
 #include <condition_variable>

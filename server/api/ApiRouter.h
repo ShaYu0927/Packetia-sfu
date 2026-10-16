@@ -1,7 +1,7 @@
 #ifndef PACKETIA_SERVER_API_ROUTER_H_
 #define PACKETIA_SERVER_API_ROUTER_H_
 
-#include "protocol/http/HttpMessage.h"
+#include "HttpMessage.h"
 #include "third/nlohmann/json.hpp"
 
 #include <cstddef>

@@ -17,7 +17,7 @@
 #include "RtcpReciver.h"
 #include "TrackClock.h"
 #include "RtpSenderTrack.h"
-#include "H264Depacketizer.h"
+#include "VideoRtpDepacketizer.h"
 #include "logger.h"
 #include "AudioDepacketizer.h"
 #include "AudioRtpDepacketizerFactory.h"
@@ -517,37 +517,12 @@ class RtpVideoTracker : public RtpReceiverTrack
 public:
     using Ptr = std::shared_ptr<RtpVideoTracker>;
 
-    explicit RtpVideoTracker(const TrackInfo& info)
-        : RtpReceiverTrack(info)
-        , _depacketizer(std::make_unique<H264Depacketizer>(info.fmtp))
-        , _nack_receiver(std::make_unique<NackRequester>(NackRequester::Config{}))
-    {
-        _nack_receiver->SetNackCallback([this](const std::vector<uint16_t> &lost_seq){
-            /* notify nack request*/
-            if(lost_seq.empty())
-            {
-                return;
-            }
-
-            CountNack(lost_seq.size());
-
-            if (_on_send_nack) 
-            {
-                _on_send_nack(getSSRC(), lost_seq);
-            }
-        });
-        _nack_receiver->SetRecoveryFailureCallback(
-            [this](const std::vector<uint16_t>& abandoned_seq) {
-                if (_on_nack_recovery_failure && !abandoned_seq.empty())
-                {
-                    _on_nack_recovery_failure(getSSRC(), abandoned_seq);
-                }
-            });
-    }
+    explicit RtpVideoTracker(const TrackInfo& info);
 
     ~RtpVideoTracker() override = default;
 
 public:
+    bool IsReady() const { return static_cast<bool>(depacketizer_); }
     RtpPacket::Ptr inputRtp(const uint8_t* ptr, size_t len) override;
 
     void TickNack(uint64_t now_ms)
@@ -590,7 +565,7 @@ protected:
 private:
 
 
-    std::unique_ptr<H264Depacketizer> _depacketizer;
+    std::unique_ptr<media::IVideoRtpDepacketizer> depacketizer_;
     std::unique_ptr<NackRequester> _nack_receiver;
 };
 

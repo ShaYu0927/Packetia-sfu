@@ -1,7 +1,7 @@
 #ifndef _AUDIO_DEPACKETIZER_H_
 #define _AUDIO_DEPACKETIZER_H_
 
-#include "../memory/PoolAllocator.h"
+#include "PoolAllocator.h"
 #include "Depacketizer.h"
 #include "MediaFrame.h"
 #include <deque>

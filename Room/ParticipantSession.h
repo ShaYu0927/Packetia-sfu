@@ -3,41 +3,34 @@
 
 #include <cstdint>
 #include <memory>
-#include <string>
+#include <utility>
 
-namespace protocol::webrtc { class WebRtcSession; }
-namespace media
-{
-class SfuEndpoint;
-namespace transport
-{
-class WebRtcMediaTransport;
-class MediaEndpointIngress;
-}
-}
+namespace media { class SfuEndpoint; }
 
 namespace room
 {
 
-// Mutated only on the service's owner scheduler. Initialize ID and object
-// handles before binding; keep them stable while attached to a participant.
-// The service executes shutdown and registry cleanup on that same scheduler.
-struct ParticipantSession
+enum class ParticipantSessionRole { Publish, Subscribe };
+
+// Stable, protocol-independent room binding. The service owns negotiation,
+// encryption, transport shutdown and registry cleanup separately.
+class ParticipantSession final
 {
+public:
     using Ptr = std::shared_ptr<ParticipantSession>;
 
-    uint64_t id = 0;
-    std::string ufrag;
-    std::shared_ptr<protocol::webrtc::WebRtcSession> rtc;
-    std::shared_ptr<media::transport::WebRtcMediaTransport> transport;
-    std::shared_ptr<media::transport::MediaEndpointIngress> ingress;
-    std::shared_ptr<media::SfuEndpoint> endpoint;
+    ParticipantSession(uint64_t id, ParticipantSessionRole role,
+                       std::shared_ptr<media::SfuEndpoint> endpoint)
+        : id_(id), role_(role), endpoint_(std::move(endpoint)) {}
 
-    std::string pending_offer_id;
-    uint64_t negotiation_deadline_ms = 0;
-    bool endpoint_registered = false;
-    bool room_managed = false;
-    bool subscriber = false;
+    uint64_t Id() const noexcept { return id_; }
+    ParticipantSessionRole Role() const noexcept { return role_; }
+    const std::shared_ptr<media::SfuEndpoint>& Endpoint() const noexcept { return endpoint_; }
+
+private:
+    const uint64_t id_;
+    const ParticipantSessionRole role_;
+    const std::shared_ptr<media::SfuEndpoint> endpoint_;
 };
 
 } // namespace room

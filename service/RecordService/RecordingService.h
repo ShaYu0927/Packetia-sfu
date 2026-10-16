@@ -1,11 +1,11 @@
 #ifndef PACKETIA_SERVICE_RECORDSERVICE_RECORDINGSERVICE_H_
 #define PACKETIA_SERVICE_RECORDSERVICE_RECORDINGSERVICE_H_
 
-#include "core/IService.h"
+#include "IService.h"
 #include "RecordingOptions.h"
 #include "RecordingTypes.h"
-#include "core/EncodedFrameRouter.h"
-#include "config/ConfigStore.h"
+#include "EncodedFrameRouter.h"
+#include "ConfigStore.h"
 #include <atomic>
 #include <mutex>
 

@@ -1,5 +1,5 @@
 #include "BufferWrite.h"
-#include "../Common/memory/MemoryPool.h"
+#include "MemoryPool.h"
 #include "SocketUtil.h"
 #include <cstring>
 #include <utility>

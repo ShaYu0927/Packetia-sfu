@@ -1,6 +1,6 @@
 #include "AccountController.h"
 #include "ApiResponse.h"
-#include "service/Account/AccountService.h"
+#include "AccountService.h"
 #include "third/nlohmann/json.hpp"
 
 #include <algorithm>

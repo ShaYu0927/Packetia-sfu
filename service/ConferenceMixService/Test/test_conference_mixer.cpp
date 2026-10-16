@@ -1,6 +1,6 @@
-#include "service/ConferenceMixService/ConferenceMixer.h"
-#include "service/ConferenceMixService/ConferenceMixService.h"
-#include "server/ServerLauncher.h"
+#include "ConferenceMixer.h"
+#include "ConferenceMixService.h"
+#include "ServerLauncher.h"
 
 #include <chrono>
 #include <iostream>

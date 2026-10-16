@@ -1,7 +1,7 @@
 #ifndef PACKETIA_SERVER_API_RESPONSE_H_
 #define PACKETIA_SERVER_API_RESPONSE_H_
 
-#include "protocol/http/HttpMessage.h"
+#include "HttpMessage.h"
 #include "third/nlohmann/json.hpp"
 
 namespace server::api

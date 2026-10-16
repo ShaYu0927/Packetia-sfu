@@ -3,7 +3,7 @@
 
 #include "AIOrchestrator.h"
 #include "AIFrameIngress.h"
-#include "core/IService.h"
+#include "IService.h"
 
 #include <atomic>
 #include <memory>

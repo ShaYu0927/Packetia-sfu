@@ -40,6 +40,11 @@ TURN UDP 中继及录像模块。支持原有 `Packetia` 单进程入口，以�
 
 ## 构建与依赖
 
+项目自身的头文件统一使用文件名引用，例如 `#include "SharedBuffer.h"`。
+搜索目录由 CMake 配置；新增跨模块引用时，需要在相应目标的
+`target_include_directories` 中声明头文件目录。系统库和第三方库保留标准路径，
+例如 `<sys/socket.h>`、`<openssl/ssl.h>` 和 `"nlohmann/json.hpp"`。
+
 ### Linux 与 FFmpeg 依赖
 
 主程序和录像测试通过 `pkg-config` 查找系统安装的 libavformat、libavcodec 和 libavutil
@@ -833,23 +838,31 @@ SFU 的双栈监听与双地址 SDP 候选发布尚未在这一功能中实现�
 | --- | --- |
 | `ParticipantIdentity` | 房间参与者 ID、显示名称、经鉴权确认的用户 `subject_id` |
 | `SignalingBinding` | 当前信令连接 ID 和绑定代数 |
-| `ParticipantInfo` | 身份、参会状态、信令绑定、媒体会话 ID 和轨道数量的值快照 |
-| `ParticipantSession` | WebRTC 会话、媒体传输、入口、SFU 端点、协商状态和资源登记状态 |
+| `ParticipantInfo` | 身份、参会状态、信令绑定、发布/订阅会话 ID 和轨道数量的值快照 |
+| `ParticipantSession` | 不可变的会话 ID、发布/订阅角色和媒体端点句柄，不含 WebRTC 协议资源 |
+| `WebRtcSessionContext` | 服务层私有的 WebRTC 会话、媒体传输、入口、ICE 路由、协商和资源登记状态 |
 
 `ParticipantTypes.h` 不依赖网络或协议实现。参与者 ID 和信令连接 ID 独立，
 `BindSignaling` 每次绑定都会增加代数；`UnbindSignaling` 同时匹配连接 ID 和代数，
 避免旧连接的迟到关闭通知清除新绑定。解绑信令不等于离开房间。
 
-`ParticipantSession` 从原 `WebRtcService::Session` 提取。房间媒体创建成功后，
-`Participant::BindMediaSession` 持有该会话并关联其端点；当前每个参与者只绑定一个媒体会话，
-不允许直接覆盖已有会话或不同的端点。原 `BindSession(MediaSession)` 和单独的端点接口保留兼容。
-发布、订阅关系仍由 `Room` 的接口协调更新。
+`RoomTypes.h`、`RoomCommand.h`、`ParticipantTypes.h` 和 `media/track/TrackTypes.h`
+分别定义房间描述、业务命令、参与者描述和轨道元数据；对象接口通过前置声明引用实现。
+`MediaTrack.h` 定义轨道对象，原 `TrackeInfo.h` 保留为兼容包含入口。详细边界见
+[房间模型与资源归属](Room/README.md)。
 
-`GetInfo()` 在参与者锁内生成值快照，适合状态查询；`GetMediaSession()` 返回的是活对象，
-其 ID 和对象句柄须在绑定前初始化、绑定后保持稳定，协商和协议操作仍须在所属 I/O 调度器执行。
+媒体创建成功后，服务层创建 `ParticipantSession` 绑定，并通过 `BindPublishSession` 或
+`BindSubscribeSession` 交给参与者。两个角色分别持有端点，同一角色不允许覆盖；房间发布和
+订阅操作分别选取对应角色端点。`BindEndpoint` 保留给共享双向端点的适配器。
+`BindMediaSession` 按角色转发；`GetMediaSession` 在同时绑定两个角色时返回空，
+`GetEndpoint` 在存在两个不同角色端点时返回空，调用方应使用明确角色的接口。
+
+`GetInfo()` 在参与者锁内生成值快照，适合状态查询；兼容字段 `media_session_id` 仅在
+存在单一媒体会话时有效，双角色调用方使用 `publish_session_id` 和 `subscribe_session_id`。
+角色查询返回不可变的绑定，协商和协议操作由服务层在所属 I/O 调度器执行。
 `Leave()` 清空信令、会话、轨道和订阅绑定，锁外停止端点、释放会话引用并通知上层；
 `WebRtcService::RemoveSession` 继续负责关闭 WebRTC/媒体传输、移除 UDP mux 路由和端点登记。
-服务里的会话表作为信令路由索引，与参与者引用同一个会话对象。
+服务里的会话表保存运行时上下文，上下文持有与参与者共享的房间绑定。
 
 房间参与者的信令意外断开后进入 `Reconnecting`，在恢复窗口内保留参与者及媒体会话；
 主动离开或恢复超时才移除房间成员。当前仍使用单条发布或订阅连接。

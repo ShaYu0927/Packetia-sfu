@@ -1,9 +1,9 @@
 #ifndef PACKETIA_SERVER_WEBRTC_SERVICE_H_
 #define PACKETIA_SERVER_WEBRTC_SERVICE_H_
 
-#include "config/AppConfig.h"
+#include "AppConfig.h"
 #include "SdpMode.h"
-#include "service/Auth/AuthService.h"
+#include "AuthService.h"
 
 #include <cstdint>
 #include <memory>
@@ -20,10 +20,11 @@ namespace websocket { class WsServer; }
 }
 namespace media { class IEncodedFramePublisher; }
 namespace protocol::webrtc { class WebRtcUdpMux; }
-namespace room { class Room; struct ParticipantSession; }
+namespace room { class Room; }
 
 namespace server
 {
+struct WebRtcSessionContext;
 class WebRtcService final : public std::enable_shared_from_this<WebRtcService>
 {
 public:
@@ -40,7 +41,7 @@ public:
     std::size_t ParticipantCount();
 
 private:
-    using Session = room::ParticipantSession;
+    using Session = WebRtcSessionContext;
     struct Membership;
     struct Subscription;
     struct SignalingRequest;

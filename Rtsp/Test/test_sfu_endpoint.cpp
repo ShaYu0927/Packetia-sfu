@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 #include "MediaEndpoint.h"
 #include "Room.h"
+#include "Participant.h"
+#include "MediaTrack.h"
 #include "SdpTrackBinding.h"
 #include "MediaStreamAffinity.h"
 #include "WorkerRegistry.h"
@@ -460,6 +462,202 @@ TEST_F(SfuConference, RoomTrackIdentityCanDifferFromPublisherMid)
     EXPECT_EQ(destination->SubscriptionCount(), 0U);
     EXPECT_FALSE(a->GetPublishedTrack("a:0"));
     conference.Close();
+}
+
+TEST_F(SfuConference, RoomKeepsPublishAndSubscribeEndpointsIsolatedDuringRoutingAndCleanup)
+{
+    room::RoomOptions options;
+    options.auto_subscribe = false;
+    room::Room conference({"dual-session", "dual-session"}, options);
+    auto a = std::make_shared<room::Participant>("a", "A");
+    auto b = std::make_shared<room::Participant>("b", "B");
+    auto a_publish = std::make_shared<media::SfuEndpoint>(1301);
+    auto a_subscribe = std::make_shared<media::SfuEndpoint>(1302);
+    auto b_publish = std::make_shared<media::SfuEndpoint>(1303);
+    auto b_subscribe = std::make_shared<media::SfuEndpoint>(1304);
+    ASSERT_TRUE(a_publish->AddPublishedTrack("camera", Description(0, false, 102)));
+    ASSERT_TRUE(a_publish->AddPublishedTrack("mic", Description(1, true, 111)));
+    ASSERT_TRUE(b_publish->AddPublishedTrack("camera", Description(0, false, 103)));
+    for (const auto& endpoint : {a_publish, a_subscribe, b_publish, b_subscribe})
+        ASSERT_TRUE(endpoint->Start());
+    ASSERT_TRUE(a->BindPublishSession(std::make_shared<room::ParticipantSession>(
+        1301, room::ParticipantSessionRole::Publish, a_publish)));
+    ASSERT_TRUE(a->BindSubscribeSession(std::make_shared<room::ParticipantSession>(
+        1302, room::ParticipantSessionRole::Subscribe, a_subscribe)));
+    // The binding order must not determine which endpoint a room operation uses.
+    ASSERT_TRUE(b->BindSubscribeSession(std::make_shared<room::ParticipantSession>(
+        1304, room::ParticipantSessionRole::Subscribe, b_subscribe)));
+    ASSERT_TRUE(b->BindPublishSession(std::make_shared<room::ParticipantSession>(
+        1303, room::ParticipantSessionRole::Publish, b_publish)));
+    ASSERT_TRUE(conference.Join(a));
+    ASSERT_TRUE(conference.Join(b));
+    for (const auto& id : {"a:camera", "a:mic", "b:camera"})
+    {
+        media::TrackInfo info;
+        info.sid = id;
+        const bool microphone = info.sid == "a:mic";
+        const bool from_a = info.sid.front() == 'a';
+        info.type = microphone ? media::TrackType::Audio : media::TrackType::Video;
+        ASSERT_TRUE(conference.PublishTrack(from_a ? "a" : "b",
+            std::make_shared<media::MediaTrack>(info), microphone ? 22 : (from_a ? 11 : 33),
+            microphone ? 111 : (from_a ? 102 : 103), microphone ? "mic" : "camera"));
+    }
+    auto to_a = std::make_shared<CaptureTransport>();
+    auto to_b = std::make_shared<CaptureTransport>();
+    Configure(a_subscribe, "b:camera", to_a, false, 777, 96);
+    Configure(b_subscribe, "a:camera", to_b, false, 778, 97);
+    Configure(b_subscribe, "a:mic", to_b, true, 779, 109);
+    ASSERT_TRUE(conference.SubscribeTrack("a", "b:camera"));
+    ASSERT_TRUE(conference.SubscribeTrack("b", "a:camera"));
+    ASSERT_TRUE(conference.SubscribeTrack("b", "a:mic"));
+    EXPECT_EQ(a_publish->SubscriptionCount(), 0U);
+    EXPECT_EQ(b_publish->SubscriptionCount(), 0U);
+    EXPECT_EQ(a_subscribe->PublishedTrackCount(), 0U);
+    EXPECT_EQ(b_subscribe->PublishedTrackCount(), 0U);
+
+    Input(a_publish, Packet(11, 102));
+    Input(a_publish, Packet(22, 111));
+    Input(b_publish, Packet(33, 103));
+    Drain(media_affinity::MakeStreamKey(a_subscribe->Id(), 777));
+    Drain(media_affinity::MakeStreamKey(b_subscribe->Id(), 778));
+    Drain(media_affinity::MakeStreamKey(b_subscribe->Id(), 779));
+    ASSERT_EQ(to_a->Count(), 1U);
+    ASSERT_EQ(to_b->Count(), 2U);
+    EXPECT_EQ(media_affinity::ReadUint32BE(to_a->Last().data() + 8), 777U);
+    EXPECT_EQ(to_a->Last()[1] & 127, 96);
+
+    ASSERT_TRUE(conference.UnsubscribeTrack("a", "b:camera"));
+    EXPECT_EQ(a_subscribe->SubscriptionCount(), 0U);
+    EXPECT_EQ(b_subscribe->SubscriptionCount(), 2U);
+    EXPECT_EQ(a_publish->PublishedTrackCount(), 2U);
+    Input(a_publish, Packet(11, 102, 2));
+    Input(a_publish, Packet(22, 111, 2));
+    Input(b_publish, Packet(33, 103, 2));
+    Drain(media_affinity::MakeStreamKey(a_subscribe->Id(), 777));
+    Drain(media_affinity::MakeStreamKey(b_subscribe->Id(), 778));
+    Drain(media_affinity::MakeStreamKey(b_subscribe->Id(), 779));
+    EXPECT_EQ(to_a->Count(), 1U);
+    EXPECT_EQ(to_b->Count(), 4U);
+
+    ASSERT_TRUE(conference.SubscribeTrack("a", "b:camera"));
+    ASSERT_TRUE(conference.UnpublishTrack("a:camera"));
+    EXPECT_EQ(a_publish->PublishedTrackCount(), 1U);
+    EXPECT_EQ(b_subscribe->SubscriptionCount(), 1U);
+    EXPECT_EQ(a_subscribe->SubscriptionCount(), 1U);
+    EXPECT_EQ(b_publish->PublishedTrackCount(), 1U);
+    EXPECT_FALSE(b->HasSubscribedTrack("a:camera"));
+    EXPECT_TRUE(b->HasSubscribedTrack("a:mic"));
+    Input(a_publish, Packet(11, 102, 3));
+    Input(a_publish, Packet(22, 111, 3));
+    Input(b_publish, Packet(33, 103, 3));
+    Drain(media_affinity::MakeStreamKey(a_subscribe->Id(), 777));
+    Drain(media_affinity::MakeStreamKey(b_subscribe->Id(), 778));
+    Drain(media_affinity::MakeStreamKey(b_subscribe->Id(), 779));
+    EXPECT_EQ(to_a->Count(), 2U);
+    EXPECT_EQ(to_b->Count(), 5U);
+
+    ASSERT_TRUE(conference.Leave("a"));
+    EXPECT_FALSE(a_publish->IsRunning());
+    EXPECT_FALSE(a_subscribe->IsRunning());
+    EXPECT_FALSE(a->HasMediaBinding());
+    EXPECT_EQ(b_subscribe->SubscriptionCount(), 0U);
+    EXPECT_TRUE(b->GetSubscribedTrackIds().empty());
+    EXPECT_TRUE(conference.GetSubscriptionsByTrack("a:mic").empty());
+    EXPECT_TRUE(conference.GetSubscriptionsByTrack("b:camera").empty());
+    EXPECT_TRUE(b_publish->IsRunning());
+    EXPECT_TRUE(b_subscribe->IsRunning());
+    EXPECT_EQ(b_publish->PublishedTrackCount(), 1U);
+    EXPECT_EQ(b->GetPublishEndpoint(), b_publish);
+    EXPECT_EQ(b->GetSubscribeEndpoint(), b_subscribe);
+    Input(b_publish, Packet(33, 103, 4));
+    Drain(media_affinity::MakeStreamKey(a_subscribe->Id(), 777));
+    EXPECT_EQ(to_a->Count(), 2U);
+    conference.Close();
+    EXPECT_FALSE(b_publish->IsRunning());
+    EXPECT_FALSE(b_subscribe->IsRunning());
+}
+
+TEST_F(SfuConference, MissingPublishRoleDoesNotFallBackToMetadataOnlyRoom)
+{
+    room::RoomOptions options;
+    options.auto_subscribe = false;
+    room::Room conference({"missing-publish", "missing-publish"}, options);
+    auto a = std::make_shared<room::Participant>("a", "A");
+    auto b = std::make_shared<room::Participant>("b", "B");
+    ASSERT_TRUE(conference.Join(a));
+    ASSERT_TRUE(conference.Join(b));
+    media::TrackInfo info;
+    info.sid = "metadata-camera";
+    ASSERT_TRUE(conference.PublishTrack("a", std::make_shared<media::MediaTrack>(info), 11, 102));
+
+    auto subscribe = std::make_shared<media::SfuEndpoint>(1311);
+    // Even a matching physical track cannot substitute for the missing role.
+    ASSERT_TRUE(subscribe->AddPublishedTrack("camera", Description(0, false, 102)));
+    ASSERT_TRUE(subscribe->Start());
+    ASSERT_TRUE(a->BindSubscribeSession(std::make_shared<room::ParticipantSession>(
+        1311, room::ParticipantSessionRole::Subscribe, subscribe)));
+    ASSERT_TRUE(a->HasMediaBinding());
+    EXPECT_FALSE(a->GetPublishEndpoint());
+    EXPECT_EQ(a->GetSubscribeEndpoint(), subscribe);
+    info.sid = "camera";
+    EXPECT_FALSE(conference.PublishTrack("a", std::make_shared<media::MediaTrack>(info), 11, 102));
+    EXPECT_FALSE(a->GetPublishedTrack("camera"));
+    // Both selected endpoints are null, but the source has a media binding.
+    EXPECT_FALSE(conference.SubscribeTrack("b", "metadata-camera"));
+    EXPECT_FALSE(b->HasSubscribedTrack("metadata-camera"));
+    EXPECT_TRUE(conference.GetSubscriptionsByTrack("metadata-camera").empty());
+    conference.Close();
+    EXPECT_FALSE(subscribe->IsRunning());
+}
+
+TEST_F(SfuConference, MissingSubscribeRoleDoesNotFallBackToMetadataOnlyRoom)
+{
+    room::RoomOptions options;
+    options.auto_subscribe = false;
+    room::Room conference({"missing-subscribe", "missing-subscribe"}, options);
+    auto a = std::make_shared<room::Participant>("a", "A");
+    auto b = std::make_shared<room::Participant>("b", "B");
+    auto publish = std::make_shared<media::SfuEndpoint>(1312);
+    ASSERT_TRUE(publish->Start());
+    ASSERT_TRUE(b->BindPublishSession(std::make_shared<room::ParticipantSession>(
+        1312, room::ParticipantSessionRole::Publish, publish)));
+    ASSERT_TRUE(conference.Join(a));
+    ASSERT_TRUE(conference.Join(b));
+    media::TrackInfo info;
+    info.sid = "camera";
+    ASSERT_TRUE(conference.PublishTrack("a", std::make_shared<media::MediaTrack>(info), 11, 102));
+    ASSERT_TRUE(b->HasMediaBinding());
+    EXPECT_EQ(b->GetPublishEndpoint(), publish);
+    EXPECT_FALSE(b->GetSubscribeEndpoint());
+    EXPECT_FALSE(conference.SubscribeTrack("b", "camera"));
+    EXPECT_FALSE(b->HasSubscribedTrack("camera"));
+    EXPECT_EQ(publish->SubscriptionCount(), 0U);
+    EXPECT_TRUE(conference.GetSubscriptionsBySubscriber("b").empty());
+    conference.Close();
+    EXPECT_FALSE(publish->IsRunning());
+}
+
+TEST(SfuRoomCommands, MetadataOnlyRoomStillPublishesAndSubscribesWithoutMediaBindings)
+{
+    room::RoomOptions options;
+    options.auto_subscribe = false;
+    room::Room conference({"metadata-only", "metadata-only"}, options);
+    auto a = std::make_shared<room::Participant>("a", "A");
+    auto b = std::make_shared<room::Participant>("b", "B");
+    ASSERT_TRUE(conference.Join(a));
+    ASSERT_TRUE(conference.Join(b));
+    EXPECT_FALSE(a->HasMediaBinding());
+    EXPECT_FALSE(b->HasMediaBinding());
+    media::TrackInfo info;
+    info.sid = "camera";
+    auto track = std::make_shared<media::MediaTrack>(info);
+    ASSERT_TRUE(conference.PublishTrack("a", track, 11, 102));
+    ASSERT_TRUE(conference.SubscribeTrack("b", "camera"));
+    EXPECT_EQ(conference.ResolveTrackForSubscriber("b", "camera"), track);
+    EXPECT_TRUE(b->HasSubscribedTrack("camera"));
+    ASSERT_TRUE(conference.UnpublishTrack("camera"));
+    EXPECT_FALSE(a->GetPublishedTrack("camera"));
+    EXPECT_TRUE(b->GetSubscribedTrackIds().empty());
 }
 
 TEST_F(SfuConference, QueuedPacketsDoNotOutliveSubscription)

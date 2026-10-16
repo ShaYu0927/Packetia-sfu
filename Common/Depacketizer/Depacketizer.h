@@ -1,7 +1,7 @@
 #ifndef _DEPACKETIZER_H__
 #define _DEPACKETIZER_H__
 
-#include "../memory/PoolAllocator.h"
+#include "PoolAllocator.h"
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -14,6 +14,7 @@ struct RtpView
     const uint8_t* payload = nullptr;
     size_t payload_len = 0;
     uint32_t ssrc = 0;
+    int64_t receive_time_ms = 0;
     bool valid() const { return payload && payload_len; }
 };
 

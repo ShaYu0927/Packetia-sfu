@@ -1,4 +1,4 @@
-#include "service/Auth/AuthService.h"
+#include "AuthService.h"
 #include <gtest/gtest.h>
 
 namespace service::auth

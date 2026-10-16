@@ -1,17 +1,10 @@
 #include "H26xPacketBuffer.h"
 
+#include <algorithm>
 #include <utility>
 
 namespace media
 {
-namespace
-{
-bool TimestampAheadOrAt(uint32_t lhs, uint32_t rhs)
-{
-    return static_cast<int32_t>(lhs - rhs) >= 0;
-}
-}
-
 void RtpSequenceNumberUnwrapper::Reset()
 {
     initialized_ = false;
@@ -58,6 +51,10 @@ void H264PacketBuffer::ClearInternal()
     for (auto& packet : buffer_)
         packet.reset();
     last_continuous_unwrapped_seq_.reset();
+    last_continuous_timestamp_.reset();
+    current_frame_start_.reset();
+    current_frame_timestamp_ = 0;
+    discarding_frame_ = false;
     buffered_packet_count_ = 0;
 }
 
@@ -80,12 +77,16 @@ const H264PacketBuffer::BufferedPacket* H264PacketBuffer::GetPacket(int64_t seq)
 
 bool H264PacketBuffer::BeginningOfStream(const H264ParsedPacket& packet) const
 {
-    if (packet.has_sps)
-        return true;
-    return config_.idr_only_keyframes_allowed && packet.has_idr &&
-           !packet.units.empty() &&
-           (packet.units.front().unit_type != H264PayloadUnitType::FuAFragment ||
-            packet.units.front().fu_start);
+    for (const auto& unit : packet.units)
+    {
+        if (unit.unit_type == H264PayloadUnitType::FuAFragment && !unit.fu_start)
+            continue;
+        if (unit.is_sps)
+            return true;
+        if (config_.idr_only_keyframes_allowed && unit.is_idr && unit.first_slice)
+            return true;
+    }
+    return false;
 }
 
 bool H264PacketBuffer::CanAdvanceFrom(int64_t inserted_seq, const H264ParsedPacket& packet)
@@ -100,6 +101,10 @@ bool H264PacketBuffer::CanAdvanceFrom(int64_t inserted_seq, const H264ParsedPack
         {
             return true;
         }
+        // Another IDR slice/FU start within this AU is not a recovery point.
+        // Wait for the missing sequence rather than emitting only its suffix.
+        if (last_continuous_timestamp_ == packet.timestamp)
+            return false;
     }
 
     if (!BeginningOfStream(packet))
@@ -107,33 +112,13 @@ bool H264PacketBuffer::CanAdvanceFrom(int64_t inserted_seq, const H264ParsedPack
         return false;
     }
 
-    // A keyframe start is a valid resynchronization point after a sequence gap.
+    // Recovery commits to a verified first IDR slice (or SPS prefix).
+    // Packets from the abandoned AU can no longer be repaired after this point.
+    RemovePacketsBefore(inserted_seq);
+    current_frame_start_.reset();
+    discarding_frame_ = false;
     last_continuous_unwrapped_seq_ = inserted_seq - 1;
     return true;
-}
-
-int64_t H264PacketBuffer::FindFrameStart(int64_t end_seq) const
-{
-    const auto* end = GetPacket(end_seq);
-    if (!end)
-    {
-        return end_seq;
-    }
-
-    const int64_t earliest = end_seq - static_cast<int64_t>(config_.max_frame_packets) + 1;
-    int64_t start_seq = end_seq;
-    while (start_seq > earliest)
-    {
-        const auto* previous = GetPacket(start_seq - 1);
-        if (!previous ||
-            previous->packet.timestamp != end->packet.timestamp ||
-            previous->packet.ssrc != end->packet.ssrc)
-        {
-            break;
-        }
-        --start_seq;
-    }
-    return start_seq;
 }
 
 H264PacketBuffer::InsertResult H264PacketBuffer::InsertPacket(H264ParsedPacket packet)
@@ -157,7 +142,9 @@ H264PacketBuffer::InsertResult H264PacketBuffer::InsertPacket(H264ParsedPacket p
             result.duplicate = true;
             return result;
         }
-        if (TimestampAheadOrAt(slot->packet.timestamp, packet.timestamp))
+        // RTP timestamps are presentation times and can move backwards with
+        // B pictures. Ring ownership is determined only by extended sequence.
+        if (slot->unwrapped_seq > unwrapped_seq)
         {
             result.late = true;
             return result;
@@ -196,17 +183,38 @@ void H264PacketBuffer::FindFrames(int64_t inserted_seq, InsertResult& result)
         }
 
         last_continuous_unwrapped_seq_ = seq;
-        if (!packet->packet.marker)
+        last_continuous_timestamp_ = packet->packet.timestamp;
+        if (current_frame_start_ && current_frame_timestamp_ != packet->packet.timestamp)
         {
-            continue;
+            // A timestamp boundary without a marker abandons the previous AU.
+            DropCurrentFrame(seq - 1);
+        }
+        if (!current_frame_start_)
+        {
+            current_frame_start_ = seq;
+            current_frame_timestamp_ = packet->packet.timestamp;
         }
 
-        H264AccessUnit frame;
-        if (!MaybeAssembleFrame(FindFrameStart(seq), seq, frame))
+        const bool marker = packet->packet.marker;
+        if (static_cast<uint64_t>(seq - *current_frame_start_ + 1) > config_.max_frame_packets)
         {
-            return;
+            if (!discarding_frame_)
+                RemovePackets(*current_frame_start_, seq);
+            else
+                RemovePackets(seq, seq);
+            // Retain the AU identity until its marker/timestamp boundary, so
+            // packets after the limit cannot become a separate complete suffix.
+            discarding_frame_ = true;
         }
-        result.frames.emplace_back(std::move(frame));
+        if (!marker) continue;
+
+        if (!discarding_frame_)
+        {
+            H264AccessUnit frame;
+            if (MaybeAssembleFrame(*current_frame_start_, seq, frame))
+                result.frames.emplace_back(std::move(frame));
+        }
+        DropCurrentFrame(seq);
     }
 }
 
@@ -225,7 +233,8 @@ bool H264PacketBuffer::MaybeAssembleFrame(int64_t start_seq, int64_t end_seq, H2
     frame.last_seq = static_cast<uint16_t>(end_seq);
     frame.marker = true;
 
-    bool validating_fu = false;
+    std::optional<uint8_t> validating_fu;
+    bool saw_vcl = false;
     size_t unit_count = 0;
     size_t payload_bytes = 0;
     for (int64_t seq = start_seq; seq <= end_seq; ++seq)
@@ -234,6 +243,8 @@ bool H264PacketBuffer::MaybeAssembleFrame(int64_t start_seq, int64_t end_seq, H2
         if (!buffered || buffered->packet.ssrc != frame.ssrc ||
             buffered->packet.timestamp != frame.timestamp)
             return false;
+        frame.receive_time_ms = std::max(frame.receive_time_ms,
+                                         buffered->packet.receive_time_ms);
         frame.keyframe = frame.keyframe || buffered->packet.has_key_nalu;
         frame.has_sps = frame.has_sps || buffered->packet.has_sps;
         frame.has_pps = frame.has_pps || buffered->packet.has_pps;
@@ -242,6 +253,12 @@ bool H264PacketBuffer::MaybeAssembleFrame(int64_t start_seq, int64_t end_seq, H2
         for (const auto& unit : buffered->packet.units)
         {
             payload_bytes += unit.data.size();
+            if (!saw_vcl && (unit.nal_type == 1 || unit.nal_type == 5))
+            {
+                // Prefix NALs do not prove that the first picture slice arrived.
+                if (!unit.first_slice) return false;
+                saw_vcl = true;
+            }
         }
         if (!ValidatePacketUnits(buffered->packet, validating_fu))
         {
@@ -282,6 +299,18 @@ bool H264PacketBuffer::MaybeAssembleFrame(int64_t start_seq, int64_t end_seq, H2
 
 void H264PacketBuffer::RemovePackets(int64_t start_seq, int64_t end_seq)
 {
+    if (end_seq - start_seq >= static_cast<int64_t>(kBufferSize))
+    {
+        for (auto& packet : buffer_)
+        {
+            if (packet && packet->unwrapped_seq >= start_seq && packet->unwrapped_seq <= end_seq)
+            {
+                packet.reset();
+                --buffered_packet_count_;
+            }
+        }
+        return;
+    }
     for (int64_t seq = start_seq; seq <= end_seq; ++seq)
     {
         auto& packet = buffer_[BufferIndex(seq)];
@@ -293,15 +322,34 @@ void H264PacketBuffer::RemovePackets(int64_t start_seq, int64_t end_seq)
     }
 }
 
+void H264PacketBuffer::RemovePacketsBefore(int64_t seq)
+{
+    for (auto& packet : buffer_)
+    {
+        if (packet && packet->unwrapped_seq < seq)
+        {
+            packet.reset();
+            --buffered_packet_count_;
+        }
+    }
+}
+
+void H264PacketBuffer::DropCurrentFrame(int64_t end_seq)
+{
+    if (current_frame_start_) RemovePackets(*current_frame_start_, end_seq);
+    current_frame_start_.reset();
+    discarding_frame_ = false;
+}
+
 bool H264PacketBuffer::ValidatePacketUnits(const H264ParsedPacket& packet,
-                                           bool& fu_active) const
+                                           std::optional<uint8_t>& fu_header) const
 {
     for (const auto& unit : packet.units)
     {
         if (unit.unit_type == H264PayloadUnitType::SingleNalu ||
             unit.unit_type == H264PayloadUnitType::StapANalu)
         {
-            if (fu_active || unit.data.empty())
+            if (fu_header || unit.data.empty())
                 return false;
             continue;
         }
@@ -309,14 +357,16 @@ bool H264PacketBuffer::ValidatePacketUnits(const H264ParsedPacket& packet,
             return false;
         if (unit.fu_start)
         {
-            if (fu_active)
+            if (fu_header)
                 return false;
-            fu_active = true;
+            fu_header = unit.reconstructed_nal_header;
         }
-        else if (!fu_active)
+        else if (!fu_header)
+            return false;
+        if (*fu_header != unit.reconstructed_nal_header)
             return false;
         if (unit.fu_end)
-            fu_active = false;
+            fu_header.reset();
     }
     return true;
 }
@@ -346,6 +396,8 @@ bool H264PacketBuffer::AppendPacketUnits(H264ParsedPacket& packet, bool& fu_acti
             fu_nalu.push_back(unit.reconstructed_nal_header);
         }
         else if (!fu_active)
+            return false;
+        if (fu_nalu.front() != unit.reconstructed_nal_header)
             return false;
         fu_nalu.insert(fu_nalu.end(), unit.data.begin(), unit.data.end());
         if (unit.fu_end)

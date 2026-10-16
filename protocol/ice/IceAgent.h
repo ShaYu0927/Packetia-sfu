@@ -3,7 +3,7 @@
 
 #include "IceContext.h"
 #include "UdpSocket.h"
-#include "stun/Stun.h"
+#include "Stun.h"
 #include "StateController.h"
 
 #include <cstdint>

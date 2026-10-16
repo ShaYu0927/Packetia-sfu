@@ -1,10 +1,10 @@
 #include "SfuApp.h"
 #include "NodeClient.h"
 #include "RuntimeConfig.h"
-#include "server/WebRtcService.h"
-#include "utils/EventLoop.h"
-#include "utils/EndpointBase.h"
-#include "utils/WorkerRegistry.h"
+#include "WebRtcService.h"
+#include "EventLoop.h"
+#include "EndpointBase.h"
+#include "WorkerRegistry.h"
 
 namespace server::cluster
 {

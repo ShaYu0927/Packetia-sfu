@@ -42,9 +42,13 @@ endif()
 
 include_directories(
     ${FFMPEG_INCLUDE_DIRS}
+    # Project headers use their file names; list module search paths explicitly.
+    ${CMAKE_SOURCE_DIR}/config
     ${CMAKE_SOURCE_DIR}/utils
     ${CMAKE_SOURCE_DIR}/log
     ${CMAKE_SOURCE_DIR}/network
+    ${CMAKE_SOURCE_DIR}/network/transport
+    ${CMAKE_SOURCE_DIR}/network/websocket
     ${CMAKE_SOURCE_DIR}/Rtsp
     ${CMAKE_SOURCE_DIR}/Rtsp/Rtp
     ${CMAKE_SOURCE_DIR}/Common
@@ -53,6 +57,9 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/protocol/Rtcp
     ${CMAKE_SOURCE_DIR}/protocol/ice
     ${CMAKE_SOURCE_DIR}/protocol/ice/stun
+    ${CMAKE_SOURCE_DIR}/protocol/WebRtc
+    ${CMAKE_SOURCE_DIR}/protocol/http
+    ${CMAKE_SOURCE_DIR}/protocol/turn
     ${CMAKE_SOURCE_DIR}/src/interleaved
     ${CMAKE_SOURCE_DIR}/src/net
     ${CMAKE_SOURCE_DIR}/src/sdp
@@ -65,6 +72,19 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/media/track
     ${CMAKE_SOURCE_DIR}/media/MediaFrame
     ${CMAKE_SOURCE_DIR}/media/transport
+    ${CMAKE_SOURCE_DIR}/media/quality
+    ${CMAKE_SOURCE_DIR}/media/quality/bwe
+    ${CMAKE_SOURCE_DIR}/media/stats
+    ${CMAKE_SOURCE_DIR}/service/core
+    ${CMAKE_SOURCE_DIR}/service/AIService
+    ${CMAKE_SOURCE_DIR}/service/Account
+    ${CMAKE_SOURCE_DIR}/service/Auth
+    ${CMAKE_SOURCE_DIR}/service/Cluster
+    ${CMAKE_SOURCE_DIR}/service/ConferenceMixService
+    ${CMAKE_SOURCE_DIR}/service/RecordService
+    ${CMAKE_SOURCE_DIR}/server
+    ${CMAKE_SOURCE_DIR}/server/api
+    ${CMAKE_SOURCE_DIR}/server/cluster
     ${CMAKE_SOURCE_DIR}/server/Moudle
     ${CMAKE_SOURCE_DIR}/third
 )
@@ -109,6 +129,11 @@ add_library(COMMON STATIC
     Common/Depacketizer/Depacketizer.h
     Common/Depacketizer/H264Depacketizer.h
     Common/Depacketizer/H264Depacketizer.cpp
+    Common/Depacketizer/VideoRtpDepacketizer.h
+    Common/Depacketizer/VideoRtpDepacketizerFactory.h
+    Common/Depacketizer/VideoRtpDepacketizerFactory.cpp
+    Common/Depacketizer/H264RtpDepacketizer.h
+    Common/Depacketizer/H264RtpDepacketizer.cpp
 
     Common/Depacketizer/H264Payload.h
     Common/Depacketizer/H264RtpPayloadParser.h

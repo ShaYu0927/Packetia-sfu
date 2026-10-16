@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <utility>
 #include <vector>
-#include "../../Common/memory/SharedBuffer.h"
+#include "SharedBuffer.h"
 
 enum class MediaPacketType
 {

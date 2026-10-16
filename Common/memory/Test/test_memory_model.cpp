@@ -1,13 +1,13 @@
-#include "Common/memory/SharedBuffer.h"
-#include "Common/Depacketizer/AudioDepacketizer.h"
-#include "Common/Depacketizer/H264Depacketizer.h"
-#include "Rtsp/Rtp.h"
-#include "Rtsp/RtpReceiver.h"
-#include "media/core/EncodedFrameRouter.h"
-#include "media/transport/MediaEndpointIngress.h"
-#include "utils/EndpointBase.h"
-#include "utils/MediaStreamAffinity.h"
-#include "utils/ShardedWorkerPool.h"
+#include "SharedBuffer.h"
+#include "AudioDepacketizer.h"
+#include "H264Depacketizer.h"
+#include "Rtp.h"
+#include "RtpReceiver.h"
+#include "EncodedFrameRouter.h"
+#include "MediaEndpointIngress.h"
+#include "EndpointBase.h"
+#include "MediaStreamAffinity.h"
+#include "ShardedWorkerPool.h"
 
 #include <atomic>
 #include <chrono>
@@ -342,7 +342,7 @@ void MediaAllocationPressureAndRecovery()
     auto& pool = common::MemoryPool::Default();
     const auto limits = pool.Options();
     CHECK(pool.SetLimits({0, 0}));
-    uint8_t rtp[] = {0x80, 96, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0x65, 1, 2};
+    uint8_t rtp[] = {0x80, 96, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0x65, 0x80, 2};
     ReceivedMediaPacket rejected(MediaPacketType::Rtp, 1, 1, rtp, sizeof(rtp));
     CHECK(!rejected.IsValid());
     RtpPacket parsed;
@@ -376,7 +376,7 @@ void MediaAllocationPressureAndRecovery()
     CHECK(audio.Input(view) && audio.HasFrame());
     CHECK(video.input(view) && video.hasFrame());
     auto annexb = video.popFrame();
-    CHECK(annexb == (common::ByteVector{0, 0, 0, 1, 0x65, 1, 2}));
+    CHECK(annexb == (common::ByteVector{0, 0, 0, 1, 0x65, 0x80, 2}));
 }
 
 } // namespace

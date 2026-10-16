@@ -1,7 +1,7 @@
 #ifndef _H264_PARAMETER_SET_TRACKER_H_
 #define _H264_PARAMETER_SET_TRACKER_H_
 
-#include "../memory/PoolAllocator.h"
+#include "PoolAllocator.h"
 #include <cstddef>
 #include <cstdint>
 #include <unordered_map>

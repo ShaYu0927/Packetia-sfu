@@ -4,8 +4,8 @@
 #include "ServerConfig.h"
 #include "ServerLauncher.h"
 #include "ThreadRuntimeStatus.h"
-#include "service/ConferenceMixService/ConferenceMixService.h"
-#include "service/RecordService/RecordingRecords.h"
+#include "ConferenceMixService.h"
+#include "RecordingRecords.h"
 
 #include <memory>
 #include <mutex>

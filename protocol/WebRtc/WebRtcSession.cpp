@@ -2,7 +2,8 @@
 #include "WebRtcCodec.h"
 #include "Sdp.h"
 #include "CryptoUtil.h"
-#include "../../Rtsp/Rtp/RtpHeaderExtensions.h"
+#include "RtpHeaderExtensions.h"
+#include "transport/DatagramProtocolClassifier.h"
 
 #include <algorithm>
 #include <atomic>

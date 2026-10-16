@@ -1,6 +1,6 @@
-#include "service/Account/AccountService.h"
-#include "service/Account/ScryptPasswordHasher.h"
-#include "service/Account/SqliteAccountStore.h"
+#include "AccountService.h"
+#include "ScryptPasswordHasher.h"
+#include "SqliteAccountStore.h"
 
 #include <gtest/gtest.h>
 #include <stdexcept>

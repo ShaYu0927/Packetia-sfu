@@ -10,11 +10,10 @@
 #include <unordered_set>
 #include <vector>
 
-#include "TrackeInfo.h"
+#include "MediaTrackFwd.h"
 #include "ParticipantTypes.h"
 #include "ParticipantSession.h"
 
-class MediaSession;
 namespace media { class SfuEndpoint; }
 
 namespace room
@@ -48,8 +47,9 @@ public:
     bool UnbindSignaling(const SignalingBinding& expected);
     SignalingBinding GetSignaling() const;
 
+    // Compatibility for callers with one media session; dispatches by role.
     bool BindMediaSession(ParticipantSession::Ptr session);
-    // Protocol access through this handle still requires the owner scheduler.
+    // Returns null when both roles are bound. Use the explicit role accessors.
     ParticipantSession::Ptr GetMediaSession() const;
 
     /**
@@ -67,20 +67,13 @@ public:
      */
     void SetName(const std::string& name);
 
-    /**
-     * @brief 绑定媒体会话。
-     *
-     * MediaSession 表示该用户的一次连接会话
-     * 一个 Participant 可以绑定一个当前有效的 MediaSession。
-     */
-    void BindSession(std::shared_ptr<MediaSession> session);
-
-    /**
-     * @brief 获取当前绑定的 MediaSession。
-     */
-    std::shared_ptr<MediaSession> GetSession() const;
+    // Endpoint-only adapters may share one endpoint for both directions.
     bool BindEndpoint(std::shared_ptr<media::SfuEndpoint> endpoint);
+    // Returns null for two distinct role endpoints; prefer explicit accessors.
     std::shared_ptr<media::SfuEndpoint> GetEndpoint() const;
+    std::shared_ptr<media::SfuEndpoint> GetPublishEndpoint() const;
+    std::shared_ptr<media::SfuEndpoint> GetSubscribeEndpoint() const;
+    bool HasMediaBinding() const;
 
     /**
      * @brief 设置参会人状态。
@@ -172,6 +165,12 @@ public:
      */
     void OnLeave(LeaveCallback cb);
 
+    bool BindPublishSession(ParticipantSession::Ptr session);
+    bool BindSubscribeSession(ParticipantSession::Ptr session);
+
+    ParticipantSession::Ptr GetPublishSession() const;
+    ParticipantSession::Ptr GetSubscribeSession() const;
+
 private:
     friend class Room;
     void NotifyTrackPublished(const media::MediaTrackPtr& track);
@@ -179,6 +178,7 @@ private:
     TrackCallback GetOnTrackUnpublished() const;
     StateCallback GetOnStateChanged() const;
     LeaveCallback GetOnLeave() const;
+    bool BindRoleSession(ParticipantSession::Ptr session, ParticipantSessionRole role);
 
 private:
     mutable std::mutex mutex_;
@@ -188,12 +188,14 @@ private:
 
     ParticipantState state_ = ParticipantState::Joining;
 
-    std::shared_ptr<MediaSession> session_;
-    ParticipantSession::Ptr media_session_;
-    std::shared_ptr<media::SfuEndpoint> endpoint_;
+    // Explicit compatibility binding for endpoint-only (non-WebRTC) adapters.
+    std::shared_ptr<media::SfuEndpoint> legacy_endpoint_;
 
     std::unordered_map<std::string, media::MediaTrackPtr> published_tracks_;
     std::unordered_set<std::string> subscribed_track_ids_;
+
+    ParticipantSession::Ptr publish_session_;
+    ParticipantSession::Ptr subscribe_session_;
 
     TrackCallback on_track_published_;
     TrackCallback on_track_unpublished_;

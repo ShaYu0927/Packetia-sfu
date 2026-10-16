@@ -1,7 +1,7 @@
 #ifndef _H26X_PACKET_BUFFER_H_
 #define _H26X_PACKET_BUFFER_H_
 
-#include "../memory/PoolAllocator.h"
+#include "PoolAllocator.h"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -60,18 +60,24 @@ private:
     const BufferedPacket* GetPacket(int64_t unwrapped_seq) const;
     bool BeginningOfStream(const H264ParsedPacket& packet) const;
     bool CanAdvanceFrom(int64_t inserted_seq, const H264ParsedPacket& packet);
-    int64_t FindFrameStart(int64_t end_seq) const;
     void FindFrames(int64_t inserted_seq, InsertResult& result);
     bool MaybeAssembleFrame(int64_t start_seq, int64_t end_seq, H264AccessUnit& frame);
-    bool ValidatePacketUnits(const H264ParsedPacket& packet,bool& fu_active) const;
+    bool ValidatePacketUnits(const H264ParsedPacket& packet,
+                             std::optional<uint8_t>& fu_header) const;
     bool AppendPacketUnits(H264ParsedPacket& packet, bool& fu_active, common::ByteVector& fu_nalu, H264AccessUnit& frame);
     void RemovePackets(int64_t start_seq, int64_t end_seq);
+    void RemovePacketsBefore(int64_t seq);
+    void DropCurrentFrame(int64_t end_seq);
     void ClearInternal();
 
     Config config_;
     std::array<std::unique_ptr<BufferedPacket>, kBufferSize> buffer_{};
     RtpSequenceNumberUnwrapper seq_unwrapper_;
     std::optional<int64_t> last_continuous_unwrapped_seq_;
+    std::optional<uint32_t> last_continuous_timestamp_;
+    std::optional<int64_t> current_frame_start_;
+    uint32_t current_frame_timestamp_ = 0;
+    bool discarding_frame_ = false;
     size_t buffered_packet_count_ = 0;
 };
 } // namespace media

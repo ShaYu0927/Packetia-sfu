@@ -18,7 +18,7 @@
 #include <string_view>
 #include <unordered_map>
 
-#include "../Common/memory/SharedBuffer.h"
+#include "SharedBuffer.h"
 #include "MediaLatency.h"
 
 // Shared names for worker pool registration, submission and shutdown.

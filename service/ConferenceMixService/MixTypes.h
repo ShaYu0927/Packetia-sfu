@@ -1,6 +1,6 @@
 #pragma once
 
-#include "media/core/EncodedFrameRouter.h"
+#include "EncodedFrameRouter.h"
 
 #include <cstddef>
 #include <cstdint>

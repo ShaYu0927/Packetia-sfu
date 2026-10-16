@@ -2,7 +2,7 @@
 #include "EventLoop.h"
 #include "EndpointBase.h"
 #include "WorkerRegistry.h"
-#include "protocol/turn/TurnServer.h"
+#include "TurnServer.h"
 
 #include <charconv>
 #include <csignal>

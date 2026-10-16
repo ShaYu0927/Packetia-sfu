@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <string>
 
-#include "stats/MediaStatsTypes.h"
+#include "MediaStatsTypes.h"
 
 namespace media 
 {

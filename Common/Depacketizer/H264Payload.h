@@ -1,7 +1,7 @@
 #ifndef _H264_PAYLOAD_H_
 #define _H264_PAYLOAD_H_
 
-#include "../memory/PoolAllocator.h"
+#include "PoolAllocator.h"
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -32,6 +32,9 @@ struct H264PayloadUnit
     bool fu_start = false;
     bool fu_end = false;
     uint8_t reconstructed_nal_header = 0;
+    // For ordinary type 1/5 slices, ue(v) first_mb_in_slice == 0 starts
+    // with a one bit. A FU start is only a NAL start, not necessarily an AU start.
+    bool first_slice = false;
     bool is_sps = false;
     bool is_pps = false;
     bool is_idr = false;
@@ -45,6 +48,7 @@ struct H264ParsedPacket
     uint32_t ssrc = 0;
     uint16_t seq = 0;
     uint32_t timestamp = 0;
+    int64_t receive_time_ms = 0;
     bool marker = false;
     bool begins_frame = false;
     bool ends_frame = false;
@@ -60,6 +64,7 @@ struct H264AccessUnit
 {
     uint32_t ssrc = 0;
     uint32_t timestamp = 0;
+    int64_t receive_time_ms = 0;
     uint16_t first_seq = 0;
     uint16_t last_seq = 0;
     bool complete = false;

@@ -1,8 +1,8 @@
 #ifndef PACKETIA_PROTOCOL_WEBRTC_TRANSPORT_H_
 #define PACKETIA_PROTOCOL_WEBRTC_TRANSPORT_H_
 
-#include "transport/DatagramProtocolClassifier.h"
-#include "transport/IDatagramTransport.h"
+#include "DatagramProtocolClassifier.h"
+#include "IDatagramTransport.h"
 
 #include <atomic>
 #include <memory>

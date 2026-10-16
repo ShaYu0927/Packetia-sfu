@@ -1,5 +1,5 @@
-#include "protocol/http/HttpServer.h"
-#include "utils/EventLoop.h"
+#include "HttpServer.h"
+#include "EventLoop.h"
 #include <gtest/gtest.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>

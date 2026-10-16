@@ -1,11 +1,11 @@
 #include "ServerApp.h"
 #include "ServiceNames.h"
 #include "WorkerSetup.h"
-#include "api/ApiServer.h"
-#include "protocol/http/HttpServer.h"
-#include "service/Account/AccountService.h"
-#include "service/Account/ScryptPasswordHasher.h"
-#include "service/Account/SqliteAccountStore.h"
+#include "ApiServer.h"
+#include "HttpServer.h"
+#include "AccountService.h"
+#include "ScryptPasswordHasher.h"
+#include "SqliteAccountStore.h"
 
 #include "EventLoop.h"
 #include "RtspServer.h"
@@ -16,14 +16,14 @@
 #include "UdpSession.h"
 #include "TurnServer.h"
 #include "StringUtil.h"
-#include "AIService/AIService.h"
-#include "AIService/UnavailableModelProvider.h"
-#include "RecordService/RecordingService.h"
-#include "core/EncodedFrameRouter.h"
+#include "AIService.h"
+#include "UnavailableModelProvider.h"
+#include "RecordingService.h"
+#include "EncodedFrameRouter.h"
 #include "logger.h"
 
 #ifdef PACKETIA_WITH_LIBWEBSOCKETS
-#include "websocket/WsServer.h"
+#include "WsServer.h"
 #include "WebRtcService.h"
 #endif
 

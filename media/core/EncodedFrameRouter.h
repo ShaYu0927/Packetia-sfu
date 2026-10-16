@@ -1,7 +1,7 @@
 #ifndef _ENCODED_FRAME_ROUTER_H_
 #define _ENCODED_FRAME_ROUTER_H_
 
-#include "../MediaFrame/MediaFrame.h"
+#include "MediaFrame.h"
 
 #include <atomic>
 #include <cstdint>

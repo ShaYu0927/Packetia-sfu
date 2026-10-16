@@ -11,7 +11,7 @@
 #include "RtpTypes.h"
 #include "Sdp.h"
 #include "StreamContext.h"
-#include "../media/core/EncodedFrameRouter.h"
+#include "EncodedFrameRouter.h"
 
 
 #define MAX_TRACKS 5

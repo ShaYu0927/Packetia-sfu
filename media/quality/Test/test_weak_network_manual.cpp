@@ -6,9 +6,9 @@
 #include "NetworkController.h"
 #include "PacketHistory.h"
 #include "TransportFeedbackAdapter.h"
-#include "bwe/loss_based_controller.h"
-#include "bwe/remote_bitrate_controller.h"
-#include "bwe/transport_bwe_controller.h"
+#include "loss_based_controller.h"
+#include "remote_bitrate_controller.h"
+#include "transport_bwe_controller.h"
 
 namespace
 {

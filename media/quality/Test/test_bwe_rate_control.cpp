@@ -5,9 +5,9 @@
 #include "utils.h"
 #include "GoogCcNetworkController.h"
 #include "SendSideController.h"
-#include "bwe/remote_bitrate_controller.h"
-#include "bwe/ou_trend_detect.h"
-#include "bwe/incoming_bitrate_estimator.h"
+#include "remote_bitrate_controller.h"
+#include "ou_trend_detect.h"
+#include "incoming_bitrate_estimator.h"
 
 namespace
 {

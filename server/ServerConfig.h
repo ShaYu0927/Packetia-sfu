@@ -1,5 +1,5 @@
 #pragma once
-#include "config/AppConfig.h"
+#include "AppConfig.h"
 
 namespace server 
 {

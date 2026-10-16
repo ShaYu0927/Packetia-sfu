@@ -9,6 +9,7 @@ void H264RtpPayloadParser::FillCommon(const RtpView& view, H264ParsedPacket& out
     out.seq = view.seq;
     out.timestamp = view.ts;
     out.marker = view.marker;
+    out.receive_time_ms = view.receive_time_ms;
 }
 
 void H264RtpPayloadParser::UpdateKeyInfo(H264ParsedPacket& out, H264PayloadUnit& unit)
@@ -36,6 +37,11 @@ bool H264RtpPayloadParser::Parse(const RtpView& view, H264ParsedPacket& out)
     }
 
     const uint8_t nal_header = view.payload[0];
+    if (nal_header & 0x80)
+    {
+        out.malformed = true;
+        return false;
+    }
     const uint8_t nal_type = H264GetNalType(nal_header);
 
     if (nal_type >= 1 && nal_type <= 23)
@@ -62,6 +68,13 @@ bool H264RtpPayloadParser::ParseSingleNalu(const RtpView& view, H264ParsedPacket
     H264PayloadUnit unit;
     unit.unit_type = H264PayloadUnitType::SingleNalu;
     unit.nal_type = H264GetNalType(view.payload[0]);
+    if ((unit.nal_type == 1 || unit.nal_type == 5) && view.payload_len < 2)
+    {
+        out.malformed = true;
+        return false;
+    }
+    unit.first_slice = (unit.nal_type == 1 || unit.nal_type == 5) &&
+                       (view.payload[1] & 0x80);
     unit.data.assign(view.payload, view.payload + view.payload_len);
 
     UpdateKeyInfo(out, unit);
@@ -94,12 +107,15 @@ bool H264RtpPayloadParser::ParseStapA(const RtpView& view, H264ParsedPacket& out
         H264PayloadUnit unit;
         unit.unit_type = H264PayloadUnitType::StapANalu;
         unit.nal_type = H264GetNalType(view.payload[offset]);
-        if (unit.nal_type == 0 || unit.nal_type >= 24)
+        if ((view.payload[offset] & 0x80) || unit.nal_type == 0 || unit.nal_type >= 24 ||
+            ((unit.nal_type == 1 || unit.nal_type == 5) && nalu_size < 2))
         {
             out.malformed = true;
             return false;
         }
         unit.data.assign(view.payload + offset, view.payload + offset + nalu_size);
+        unit.first_slice = (unit.nal_type == 1 || unit.nal_type == 5) &&
+                           (view.payload[offset + 1] & 0x80);
         UpdateKeyInfo(out, unit);
         out.units.emplace_back(std::move(unit));
         offset += nalu_size;
@@ -140,6 +156,8 @@ bool H264RtpPayloadParser::ParseFuA(const RtpView& view, H264ParsedPacket& out)
     unit.fu_start = start;
     unit.fu_end = end;
     unit.reconstructed_nal_header = (indicator & 0xE0) | nal_type;
+    unit.first_slice = start && (nal_type == 1 || nal_type == 5) &&
+                       (view.payload[2] & 0x80);
     unit.data.assign(view.payload + 2, view.payload + view.payload_len);
     UpdateKeyInfo(out, unit);
     out.units.emplace_back(std::move(unit));

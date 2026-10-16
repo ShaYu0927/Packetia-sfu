@@ -1,6 +1,6 @@
-#include "service/RecordService/RecordingService.h"
-#include "service/AIService/AIService.h"
-#include "service/AIService/UnavailableModelProvider.h"
+#include "RecordingService.h"
+#include "AIService.h"
+#include "UnavailableModelProvider.h"
 #include <chrono>
 #include <condition_variable>
 #include <filesystem>

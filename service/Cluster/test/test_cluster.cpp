@@ -1,9 +1,9 @@
-#include "service/Cluster/Coordinator.h"
-#include "service/Cluster/NodeLease.h"
-#include "service/Auth/JoinToken.h"
-#include "service/Auth/JwtAuthenticator.h"
-#include "service/Auth/KeyProvider.h"
-#include "service/Auth/RoomAccessPolicy.h"
+#include "Coordinator.h"
+#include "NodeLease.h"
+#include "JoinToken.h"
+#include "JwtAuthenticator.h"
+#include "KeyProvider.h"
+#include "RoomAccessPolicy.h"
 #include <gtest/gtest.h>
 #include <filesystem>
 #include <future>

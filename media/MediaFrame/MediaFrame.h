@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include <vector>
-#include "../../Common/memory/SharedBuffer.h"
+#include "SharedBuffer.h"
 
 namespace media
 {

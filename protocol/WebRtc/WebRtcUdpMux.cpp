@@ -1,7 +1,7 @@
 #include "WebRtcUdpMux.h"
 
 #include "Stun.h"
-#include "transport/DatagramProtocolClassifier.h"
+#include "DatagramProtocolClassifier.h"
 
 #include <utility>
 

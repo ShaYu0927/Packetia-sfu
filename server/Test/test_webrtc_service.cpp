@@ -1,8 +1,8 @@
-#include "server/WebRtcService.h"
+#include "WebRtcService.h"
 #include "EventLoop.h"
 #include "EndpointBase.h"
 #include "Sdp.h"
-#include "media/endpoint/MediaEndpoint.h"
+#include "MediaEndpoint.h"
 #include "third/nlohmann/json.hpp"
 
 #include <arpa/inet.h>

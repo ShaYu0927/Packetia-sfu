@@ -87,6 +87,18 @@ TEST(RtpReceiverTrackTest, FactoryCreatesOnlyImplementedReceiverCodecs)
 
     video.codec_id = CodecId::H265;
     EXPECT_EQ(rtsp::RtpReceiverTrack::Create(video), nullptr);
+
+    video.codec_id = CodecId::H264;
+    video.codec_name = "H265";
+    EXPECT_EQ(rtsp::RtpReceiverTrack::Create(video), nullptr);
+
+    // Direct construction must also refuse input for an unsupported codec.
+    video.codec_id = CodecId::H265;
+    rtsp::RtpVideoTracker unsupported(video);
+    EXPECT_FALSE(unsupported.IsReady());
+    const uint8_t packet[] = {0x80, 0xE0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0x65, 0xAA};
+    EXPECT_EQ(unsupported.inputRtp(packet, sizeof(packet)), nullptr);
+    EXPECT_EQ(unsupported.getStats().received_packets, 0U);
 }
 
 TEST(RtpReceiverTrackTest, RejectsPacketOutsideNegotiatedIdentity)
@@ -146,6 +158,11 @@ TEST(RtpPacketPoolTest, RejectsOversizedPacketBeforeAllocation)
     std::array<uint8_t, RtpPacket::kRtpMaxSize + 1> oversized{};
     oversized[0] = 0x80;
     oversized[1] = 111;
+    // Match the track identity so the packet reaches the size check.
+    oversized[8] = 0x01;
+    oversized[9] = 0x02;
+    oversized[10] = 0x03;
+    oversized[11] = 0x04;
 
     EXPECT_EQ(nullptr, tracker->inputRtp(oversized.data(), oversized.size()));
     EXPECT_EQ(1u, tracker->getStats().oversized_packets);

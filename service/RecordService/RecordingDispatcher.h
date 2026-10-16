@@ -3,7 +3,7 @@
 
 #include "RecordingSession.h"
 #include "WorkerRegistry.h"
-#include "config/ConfigStore.h"
+#include "ConfigStore.h"
 #include <atomic>
 #include <map>
 #include <memory>

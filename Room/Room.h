@@ -1,85 +1,23 @@
 #ifndef _ROOM_H_
 #define _ROOM_H_
 
+#include <cstddef>
+#include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
-#include <functional>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
-#include "TrackeInfo.h"
-#include "Participant.h"
+#include "RoomCommand.h"
+#include "RoomTypes.h"
 
 namespace room 
 {
-enum class RoomState
-{
-    Created = 0,
-    Active,
-    Empty,
-    Closed,
-};
-
-struct RoomOptions
-{
-    uint32_t max_participants = 0;
-    uint32_t empty_timeout_sec = 60;
-    uint32_t departure_timeout_sec = 30;
-    bool auto_subscribe = true;
-};
-
-struct RoomInfo
-{
-    std::string room_id;
-    std::string room_name;
-    uint64_t created_at_ms = 0;
-    uint64_t first_joined_at_ms = 0;
-    uint64_t last_left_at_ms = 0;
-    uint32_t participant_count = 0;
-    RoomState state = RoomState::Created;
-};
-
-struct PublishedTrackInfo
-{
-    std::string publisher_id;
-    std::string source_track_id;
-    media::MediaTrackPtr track;
-    uint32_t ssrc = 0;
-    uint8_t payload_type = 0;
-};
-
-struct SubscriptionInfo
-{
-    std::string subscriber_id;
-    std::string publisher_id;
-    std::string track_id;
-};
-
-enum class RoomCommandType 
-{
-    Join,
-    Leave,
-    Publish,
-    Subscribe,
-    Unpublish,
-    Unsubscribe,
-    Close,
-};
-
-struct RoomCommand 
-{
-    RoomCommandType type;
-    std::string room_id;
-    std::string room_name;
-    std::string conn_id;
-    std::string participant_id;
-    std::string track_id;
-    media::MediaTrackPtr track;
-    uint32_t ssrc = 0;
-    uint8_t payload_type = 0;
-};
+class Participant;
 
 class Room : public std::enable_shared_from_this<Room>
 {
@@ -98,12 +36,12 @@ public:
 
     bool IsClosed() const;
 
-    bool Join(const Participant::Ptr& participant);
+    bool Join(const std::shared_ptr<Participant>& participant);
     bool Leave(const std::string& participant_id);
 
-    Participant::Ptr GetParticipant(const std::string& participant_id) const;
-    std::vector<Participant::Ptr> GetParticipants() const;
-    size_t ParticipantCount() const;
+    std::shared_ptr<Participant> GetParticipant(const std::string& participant_id) const;
+    std::vector<std::shared_ptr<Participant>> GetParticipants() const;
+    std::size_t ParticipantCount() const;
 
     // Room IDs may be global while an endpoint's source track ID is a local MID.
     bool PublishTrack(const std::string& participant_id, const media::MediaTrackPtr& track, uint32_t ssrc,
@@ -117,17 +55,17 @@ public:
 
     std::vector<SubscriptionInfo> GetSubscriptionsByTrack(const std::string& track_id) const;
     std::vector<SubscriptionInfo> GetSubscriptionsBySubscriber(const std::string& subscriber_id) const;
-    std::vector<Participant::Ptr> GetSubscribers(const std::string& track_id) const;
+    std::vector<std::shared_ptr<Participant>> GetSubscribers(const std::string& track_id) const;
 
     media::MediaTrackPtr ResolveTrackForSubscriber(const std::string& subscriber_id, const std::string& track_id);
 
     void Close();
 
-    void SetOnParticipantChanged(std::function<void(Participant::Ptr)> cb);
+    void SetOnParticipantChanged(std::function<void(std::shared_ptr<Participant>)> cb);
     void SetOnRoomClosed(std::function<void(const std::string& room_id)> cb);
 
 private:
-    bool CanJoinLocked(const Participant::Ptr& participant) const;
+    bool CanJoinLocked(const std::shared_ptr<Participant>& participant) const;
     void UpdateStateLocked();
     bool SubscribeTrackLocked(const std::string& subscriber_id, const std::string& track_id);
     void UnsubscribeTrackLocked(const std::string& subscriber_id, const std::string& track_id);
@@ -138,12 +76,12 @@ private:
     RoomInfo info_;
     RoomOptions options_;
 
-    std::unordered_map<std::string, Participant::Ptr> participants_;
+    std::unordered_map<std::string, std::shared_ptr<Participant>> participants_;
     std::unordered_map<std::string, PublishedTrackInfo> published_tracks_;
     std::unordered_map<std::string, std::unordered_set<std::string>> track_subscribers_;
     std::unordered_map<std::string, std::unordered_set<std::string>> participant_subscriptions_;
 
-    std::function<void(Participant::Ptr)> on_participant_changed_;
+    std::function<void(std::shared_ptr<Participant>)> on_participant_changed_;
     std::function<void(const std::string& room_id)> on_room_closed_;
 };
 

@@ -41,6 +41,8 @@ struct ParticipantInfo
     uint64_t media_session_id = 0;
     size_t published_track_count = 0;
     size_t subscribed_track_count = 0;
+    uint64_t publish_session_id = 0;
+    uint64_t subscribe_session_id = 0;
 };
 
 } // namespace room

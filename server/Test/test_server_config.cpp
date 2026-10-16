@@ -1,5 +1,5 @@
-#include "server/ServerConfig.h"
-#include "config/ConfigStore.h"
+#include "ServerConfig.h"
+#include "ConfigStore.h"
 
 #include <cstdlib>
 #include <iostream>

@@ -2,7 +2,7 @@
 #define PACKETIA_NETWORK_TLS_TRANSPORT_H
 
 #include "TlsContext.h"
-#include "../TcpConnection.h"
+#include "TcpConnection.h"
 
 #include <atomic>
 #include <functional>

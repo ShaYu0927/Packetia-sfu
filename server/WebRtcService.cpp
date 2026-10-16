@@ -1,22 +1,25 @@
 #include "WebRtcService.h"
+#include "WebRtcSessionContext.h"
 
 #include "CryptoUtil.h"
 #include "Room.h"
+#include "Participant.h"
 #include "EventLoop.h"
 #include "EndpointBase.h"
 #include "Sdp.h"
 #include "SdpCodec.h"
 #include "logger.h"
-#include "media/endpoint/MediaEndpoint.h"
-#include "media/transport/MediaEndpointIngress.h"
-#include "media/transport/WebRtcMediaTransport.h"
-#include "network/UdpServer.h"
-#include "network/websocket/WsServer.h"
-#include "protocol/WebRtc/WebRtcCodec.h"
-#include "protocol/WebRtc/WebRtcUdpMux.h"
-#include "service/Auth/JwtAuthenticator.h"
-#include "service/Auth/KeyProvider.h"
-#include "service/Auth/RoomAccessPolicy.h"
+#include "MediaEndpoint.h"
+#include "MediaTrack.h"
+#include "MediaEndpointIngress.h"
+#include "WebRtcMediaTransport.h"
+#include "UdpServer.h"
+#include "WsServer.h"
+#include "WebRtcCodec.h"
+#include "WebRtcUdpMux.h"
+#include "JwtAuthenticator.h"
+#include "KeyProvider.h"
+#include "RoomAccessPolicy.h"
 #include "third/nlohmann/json.hpp"
 
 #include <openssl/crypto.h>
@@ -24,6 +27,7 @@
 #include <algorithm>
 #include <set>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 #include <utility>
 
@@ -632,7 +636,10 @@ std::string WebRtcService::CreateSession(const std::string& connection, const st
     if (member != memberships_.end())
     {
         auto& membership = *member->second;
-        if (!membership.participant->BindMediaSession(sessions_.at(connection)))
+        session.room_binding = std::make_shared<room::ParticipantSession>(session.id,
+            session.subscriber ? room::ParticipantSessionRole::Subscribe : room::ParticipantSessionRole::Publish,
+            session.endpoint);
+        if (!membership.participant->BindMediaSession(session.room_binding))
             return fail("Could not bind participant media session");
         if (subscriptions.empty())
         {

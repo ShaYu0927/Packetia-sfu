@@ -4,13 +4,19 @@
 #include <cctype>
 
 H264Depacketizer::H264Depacketizer(const std::string& fmtp)
+    : fmtp_(fmtp)
+{
+    LoadParameterSets();
+}
+
+void H264Depacketizer::LoadParameterSets()
 {
     auto trim = [](const std::string& text) {
         const auto begin = text.find_first_not_of(" \t\r\n");
         return begin == std::string::npos ? std::string{} :
             text.substr(begin, text.find_last_not_of(" \t\r\n") - begin + 1);
     };
-    std::istringstream parameters(fmtp);
+    std::istringstream parameters(fmtp_);
     std::string parameter;
     while (std::getline(parameters, parameter, ';')) {
         const auto equal = parameter.find('=');
@@ -69,7 +75,6 @@ try
     auto result = packet_buffer_.InsertPacket(std::move(parsed));
     for (auto& frame : result.frames)
     {
-        parameter_sets_.UpdateAccessUnit(frame);
         ready_frames_.emplace_back(std::move(frame));
     }
 
@@ -91,12 +96,8 @@ bool H264Depacketizer::hasFrame() const
 
 common::ByteVector H264Depacketizer::popFrame()
 {
-    if (ready_frames_.empty())
-    {
-        return {};
-    }
-    media::H264AccessUnit au = std::move(ready_frames_.front());
-    ready_frames_.pop_front();
+    media::H264AccessUnit au;
+    if (!popAccessUnit(au)) return {};
     return au.ToAnnexB();
 }
 
@@ -106,5 +107,16 @@ bool H264Depacketizer::popAccessUnit(media::H264AccessUnit& out)
         return false;
     out = std::move(ready_frames_.front());
     ready_frames_.pop_front();
+    // One input can unlock several AUs. Apply configuration in output order
+    // so an earlier frame cannot use a later frame's parameter sets.
+    parameter_sets_.UpdateAccessUnit(out);
     return true;
+}
+
+void H264Depacketizer::Reset()
+{
+    packet_buffer_.Reset();
+    ready_frames_.clear();
+    parameter_sets_.Reset();
+    LoadParameterSets();
 }

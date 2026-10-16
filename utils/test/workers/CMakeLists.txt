@@ -13,7 +13,13 @@ add_executable(test_worker_registry test_worker_registry.cpp
     "${PACKETIA_WORKERS_ROOT}/server/WorkerSetup.cpp")
 target_compile_features(test_worker_registry PRIVATE cxx_std_17)
 target_include_directories(test_worker_registry PRIVATE
-    "${PACKETIA_WORKERS_ROOT}" "${PACKETIA_WORKERS_ROOT}/utils")
+    "${PACKETIA_WORKERS_ROOT}" "${PACKETIA_WORKERS_ROOT}/utils"
+    "${PACKETIA_WORKERS_ROOT}/server"
+    "${PACKETIA_WORKERS_ROOT}/config"
+    "${PACKETIA_WORKERS_ROOT}/service/RecordService"
+    "${PACKETIA_WORKERS_ROOT}/service/Account"
+    "${PACKETIA_WORKERS_ROOT}/protocol/http"
+    "${PACKETIA_WORKERS_ROOT}/protocol/turn")
 
 if(TARGET utils)
     target_link_libraries(test_worker_registry PRIVATE utils server)
@@ -33,6 +39,7 @@ else()
     target_compile_features(worker_registry_test_support PUBLIC cxx_std_17)
     target_include_directories(worker_registry_test_support PRIVATE
         "${PACKETIA_WORKERS_ROOT}"
+        "${PACKETIA_WORKERS_ROOT}/service/core"
         "${PACKETIA_WORKERS_ROOT}/log")
     target_link_libraries(worker_registry_test_support PUBLIC packetia_memory packetia_threads)
     target_link_libraries(test_worker_registry PRIVATE worker_registry_test_support)

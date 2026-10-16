@@ -4,8 +4,8 @@
 #include "EndpointBase.h"
 #include "RtpReceiver.h"
 #include "RtcpContext.h"
-#include "core/EncodedFrameRouter.h"
-#include "quality/WeakNetController.h"
+#include "EncodedFrameRouter.h"
+#include "WeakNetController.h"
 #include <functional>
 #include <atomic>
 #include <mutex>

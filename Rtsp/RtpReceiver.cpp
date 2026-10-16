@@ -1,8 +1,7 @@
 #include "RtpReceiver.h"
-#include "../Common/memory/MutableBuffer.h"
+#include "VideoRtpDepacketizerFactory.h"
 #include "logger.h"
 
-#include <algorithm>
 #include <chrono>
 
 namespace rtsp 
@@ -10,18 +9,6 @@ namespace rtsp
 
 namespace
 {
-const uint8_t kAnnexBStartCode[] = {0, 0, 0, 1};
-
-void AppendAnnexBNalu(common::MutableBuffer& out, const common::ByteVector& nalu)
-{
-    if (nalu.empty())
-    {
-        return;
-    }
-    out.Append(common::BufferView(kAnnexBStartCode, sizeof(kAnnexBStartCode)));
-    out.Append(common::BufferView(nalu.data(), nalu.size()));
-}
-
 uint64_t NowMs()
 {
     using namespace std::chrono;
@@ -49,9 +36,10 @@ RtpReceiverTrack::Ptr RtpReceiverTrack::Create(const TrackInfo& info)
     switch (info.type)
     {
     case TrackVideo:
-        return info.codec_id == CodecId::H264
-                   ? std::make_shared<RtpVideoTracker>(info)
-                   : nullptr;
+    {
+        auto receiver = std::make_shared<RtpVideoTracker>(info);
+        return receiver->IsReady() ? receiver : nullptr;
+    }
     case TrackAudio:
         switch (info.codec_id)
         {
@@ -69,8 +57,42 @@ RtpReceiverTrack::Ptr RtpReceiverTrack::Create(const TrackInfo& info)
 }
 
 
+RtpVideoTracker::RtpVideoTracker(const TrackInfo& info)
+    : RtpReceiverTrack(info)
+    , _nack_receiver(std::make_unique<NackRequester>(NackRequester::Config{}))
+{
+    media::CodecType codec = media::CodecType::Unknown;
+    switch (info.codec_id)
+    {
+    case CodecId::H264: codec = media::CodecType::H264; break;
+    case CodecId::H265: codec = media::CodecType::H265; break;
+    default: break;
+    }
+    depacketizer_ = media::VideoRtpDepacketizerFactory::Create(
+        codec, info.codec_name, info.clock_rate, info.fmtp);
+    if (!depacketizer_)
+    {
+        LOG_ERROR("[RtpVideoTracker] unsupported video RTP configuration",
+                  " codec=", info.codec_name,
+                  " clock_rate=", info.clock_rate);
+    }
+
+    _nack_receiver->SetNackCallback([this](const std::vector<uint16_t>& lost_seq) {
+        if (lost_seq.empty()) return;
+        CountNack(lost_seq.size());
+        if (_on_send_nack) _on_send_nack(getSSRC(), lost_seq);
+    });
+    _nack_receiver->SetRecoveryFailureCallback(
+        [this](const std::vector<uint16_t>& abandoned_seq) {
+            if (_on_nack_recovery_failure && !abandoned_seq.empty())
+                _on_nack_recovery_failure(getSSRC(), abandoned_seq);
+        });
+}
+
 RtpPacket::Ptr RtpVideoTracker::inputRtp(const uint8_t *ptr, size_t len)
 {
+    if (!depacketizer_) return nullptr;
+
     if (!ptr || len < RtpHeader::kSize)
     {
         LOG_ERROR("inputRtp invalid param, ptr=", (void*)ptr, " len=", len);
@@ -173,127 +195,27 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(const uint8_t *ptr, size_t len)
 }
 
 
-void RtpVideoTracker::onRtpSorted(const RtpPacket::Ptr &pkt)
+void RtpVideoTracker::onRtpSorted(const RtpPacket::Ptr& pkt)
 {
-    if (!pkt) 
-    {
-        return;
-    }
-
-    if (!_depacketizer) 
-    {
-        return;
-    }
-
-    const uint8_t *payload = pkt->getPayload();
-    size_t payload_size = pkt->getPayloadSize();
-
-    if (!payload || payload_size == 0) 
-    {
-        return;
-    }
+    // Video packets arrive unordered; the codec's packet buffer owns ordering.
+    if (!pkt || !depacketizer_) return;
 
     RtpView view;
     view.ssrc = pkt->getSSRC();
     view.seq = pkt->getSeq();
     view.ts = pkt->getStamp();
     view.marker = pkt->getMarker();
-    view.payload = payload;
-    view.payload_len = payload_size;
+    view.payload = pkt->getPayload();
+    view.payload_len = pkt->getPayloadSize();
+    view.receive_time_ms = pkt->getRecvTimeMs();
+    if (!depacketizer_->Input(view)) return;
 
-    if (!_depacketizer->input(view)) 
+    media::EncodedFrame completed;
+    while (depacketizer_->PopFrame(completed))
     {
-        return;
-    }
-
-    media::H264AccessUnit au;
-    while (_depacketizer->popAccessUnit(au))
-    {
-        auto frame = std::make_shared<media::EncodedFrame>();
-        frame->info.track_id = _info.track_index >= 0 ? static_cast<media::TrackId>(_info.track_index) : 0;
-        frame->info.media_type = media::MediaType::Video;
-        frame->info.codec = media::CodecType::H264;
-        frame->info.timestamp.dts = au.timestamp;
-        frame->info.timestamp.pts = au.timestamp;
-        frame->info.timestamp.time_base_num = 1;
-        frame->info.timestamp.time_base_den = pkt->getSampleRate() > 0 ? pkt->getSampleRate() : 90000;
-        frame->info.timestamp.receive_time_ms = pkt->getRecvTimeMs();
-        frame->info.integrity = au.broken
-                                    ? media::FrameIntegrity::Corrupted
-                                    : (au.complete ? media::FrameIntegrity::Complete
-                                                   : media::FrameIntegrity::Incomplete);
-
-        frame->rtp.ssrc              = au.ssrc;
-        frame->rtp.rtp_timestamp     = au.timestamp;
-        frame->rtp.first_sequence    = au.first_seq;
-        frame->rtp.last_sequence     = au.last_seq;
-        frame->rtp.packet_count      = static_cast<uint16_t>(au.last_seq - au.first_seq) + 1;
-
-        frame->video.is_idr          = au.has_idr;
-        frame->video.has_sps         = au.has_sps;
-        frame->video.has_pps         = au.has_pps;
-        if (const auto* sps = _depacketizer->parameterSets().LatestSps())
-        {
-            frame->video.width = sps->width;
-            frame->video.height = sps->height;
-        }
-
-        const bool config_only = !au.has_idr && (au.has_sps || au.has_pps) &&
-            std::all_of(au.nalus.begin(), au.nalus.end(), [](const common::ByteVector& nalu) {
-                if (nalu.empty()) return false;
-                const uint8_t type = media::H264GetNalType(nalu[0]);
-                return type == static_cast<uint8_t>(media::H264NalType::Sps) ||
-                       type == static_cast<uint8_t>(media::H264NalType::Pps);
-            });
-        frame->frame_type = config_only
-                                ? media::EncodedFrameType::Config
-                                : (au.has_idr ? media::EncodedFrameType::Key
-                                              : media::EncodedFrameType::Delta);
-        frame->sample_rate           = pkt->getSampleRate();
-
-        size_t annexb_size = 0;
-        for (const auto& nalu : au.nalus)
-            annexb_size += sizeof(kAnnexBStartCode) + nalu.size();
-        if (au.has_idr && !au.has_sps)
-        {
-            if (const auto* sps = _depacketizer->parameterSets().LatestSps())
-                annexb_size += sizeof(kAnnexBStartCode) + sps->payload.size();
-        }
-        if (au.has_idr && !au.has_pps)
-        {
-            if (const auto* pps = _depacketizer->parameterSets().LatestPps())
-                annexb_size += sizeof(kAnnexBStartCode) + pps->payload.size();
-        }
-        auto buffer = common::MutableBuffer::Allocate(annexb_size);
-        buffer.Resize(0);
-        if (au.has_idr)
-        {
-            if (!au.has_sps)
-            {
-                if (const auto* sps = _depacketizer->parameterSets().LatestSps())
-                {
-                    AppendAnnexBNalu(buffer, sps->payload);
-                    frame->video.has_sps = true;
-                    frame->video.parameter_sets_injected = true;
-                }
-            }
-            if (!au.has_pps)
-            {
-                if (const auto* pps = _depacketizer->parameterSets().LatestPps())
-                {
-                    AppendAnnexBNalu(buffer, pps->payload);
-                    frame->video.has_pps = true;
-                    frame->video.parameter_sets_injected = true;
-                }
-            }
-        }
-        for (const auto& nalu : au.nalus)
-        {
-            AppendAnnexBNalu(buffer, nalu);
-        }
-        frame->buffer = std::move(buffer).Freeze();
-
-        emitEncodedFrame(frame);
+        completed.info.track_id = _info.track_index >= 0
+            ? static_cast<media::TrackId>(_info.track_index) : 0;
+        emitEncodedFrame(std::make_shared<media::EncodedFrame>(std::move(completed)));
     }
 }
 

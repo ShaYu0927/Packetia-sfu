@@ -12,6 +12,8 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
         "${PACKETIA_SERVER_ROOT}/server/ServerConfig.cpp")
     target_include_directories(server_test_support PUBLIC
         "${PACKETIA_SERVER_ROOT}"
+        "${PACKETIA_SERVER_ROOT}/server"
+        "${PACKETIA_SERVER_ROOT}/service/core"
         "${PACKETIA_SERVER_ROOT}/log")
     target_compile_features(server_test_support PUBLIC cxx_std_17)
     target_link_libraries(server_test_support PUBLIC packetia_threads packetia_config)
@@ -48,6 +50,11 @@ add_executable(test_stream_services
 target_include_directories(test_stream_services PRIVATE
     ${PACKETIA_SERVER_ROOT} ${PACKETIA_SERVER_ROOT}/service ${PACKETIA_SERVER_ROOT}/media
     ${PACKETIA_SERVER_ROOT}/media/core ${PACKETIA_SERVER_ROOT}/utils ${PACKETIA_SERVER_ROOT}/log)
+target_include_directories(test_stream_services PRIVATE
+    ${PACKETIA_SERVER_ROOT}/service/core
+    ${PACKETIA_SERVER_ROOT}/service/AIService
+    ${PACKETIA_SERVER_ROOT}/media/MediaFrame
+    ${PACKETIA_SERVER_ROOT}/Common/memory)
 if(NOT TARGET packetia_recording_index)
     add_subdirectory("${PACKETIA_SERVER_ROOT}/service/RecordService/Index" recording-index)
 endif()

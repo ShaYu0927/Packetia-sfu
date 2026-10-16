@@ -1,7 +1,7 @@
 #ifndef _H264DEPACKETIZER_H_
 #define _H264DEPACKETIZER_H_
 
-#include "../memory/PoolAllocator.h"
+#include "PoolAllocator.h"
 #include "Depacketizer.h"
 
 #include <vector>
@@ -21,9 +21,13 @@ public:
     bool hasFrame() const override;
     common::ByteVector popFrame() override;
     bool popAccessUnit(media::H264AccessUnit& out);
+    void Reset();
+    // Negotiated parameters plus updates through the last popped access unit.
     const media::H264ParameterSetTracker& parameterSets() const { return parameter_sets_; }
 
 private:
+    void LoadParameterSets();
+    std::string fmtp_;
     media::H264RtpPayloadParser parser_;
     media::H264PacketBuffer packet_buffer_;
     media::H264ParameterSetTracker parameter_sets_;

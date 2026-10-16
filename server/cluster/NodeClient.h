@@ -1,7 +1,7 @@
 #pragma once
-#include "service/Cluster/Coordinator.h"
-#include "service/Cluster/NodeLease.h"
-#include "utils/ThreadManager.h"
+#include "Coordinator.h"
+#include "NodeLease.h"
+#include "ThreadManager.h"
 #include <condition_variable>
 #include <functional>
 #include <mutex>

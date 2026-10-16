@@ -1,9 +1,9 @@
-#include "server/api/AccountController.h"
-#include "server/api/ApiServer.h"
-#include "protocol/http/HttpServer.h"
-#include "service/Account/AccountService.h"
-#include "service/Account/ScryptPasswordHasher.h"
-#include "service/Account/SqliteAccountStore.h"
+#include "AccountController.h"
+#include "ApiServer.h"
+#include "HttpServer.h"
+#include "AccountService.h"
+#include "ScryptPasswordHasher.h"
+#include "SqliteAccountStore.h"
 
 #include <gtest/gtest.h>
 #include <chrono>

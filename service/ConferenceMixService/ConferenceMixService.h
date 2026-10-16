@@ -1,7 +1,7 @@
 #pragma once
 
 #include "ConferenceMixer.h"
-#include "service/core/IService.h"
+#include "IService.h"
 
 #include <atomic>
 #include <unordered_map>

@@ -1,9 +1,9 @@
 #pragma once
 
-#include "service/RecordService/RecordingOptions.h"
-#include "service/Account/AccountOptions.h"
-#include "protocol/http/HttpServerOptions.h"
-#include "protocol/turn/TurnConstants.h"
+#include "RecordingOptions.h"
+#include "AccountOptions.h"
+#include "HttpServerOptions.h"
+#include "TurnConstants.h"
 #include <cstddef>
 #include <cstdint>
 #include <map>

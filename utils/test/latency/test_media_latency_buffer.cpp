@@ -1,5 +1,5 @@
-#include "network/BufferWrite.h"
-#include "utils/MediaLatency.h"
+#include "BufferWrite.h"
+#include "MediaLatency.h"
 
 #include <algorithm>
 #include <cerrno>

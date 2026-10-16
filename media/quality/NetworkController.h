@@ -4,7 +4,7 @@
 #include <memory>
 #include <vector>
 #include "WeakNetController.h"
-#include "bwe/transport_bwe_controller.h"
+#include "transport_bwe_controller.h"
 
 namespace media
 {

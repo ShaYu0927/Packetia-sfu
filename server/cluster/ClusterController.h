@@ -1,7 +1,7 @@
 #pragma once
-#include "server/api/ApiRouter.h"
-#include "service/Account/AccountService.h"
-#include "service/Cluster/Coordinator.h"
+#include "ApiRouter.h"
+#include "AccountService.h"
+#include "Coordinator.h"
 #include <map>
 #include <memory>
 

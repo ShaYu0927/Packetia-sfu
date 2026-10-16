@@ -1,10 +1,10 @@
-#include "server/cluster/ClusterController.h"
-#include "server/api/ApiServer.h"
-#include "server/api/ApiResponse.h"
-#include "service/Account/ScryptPasswordHasher.h"
-#include "service/Account/SqliteAccountStore.h"
-#include "service/Auth/JwtAuthenticator.h"
-#include "service/Auth/KeyProvider.h"
+#include "ClusterController.h"
+#include "ApiServer.h"
+#include "ApiResponse.h"
+#include "ScryptPasswordHasher.h"
+#include "SqliteAccountStore.h"
+#include "JwtAuthenticator.h"
+#include "KeyProvider.h"
 #include <gtest/gtest.h>
 #include <future>
 

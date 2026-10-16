@@ -1,6 +1,6 @@
-#include "utils/MediaLatency.h"
-#include "utils/ShardedWorkerPool.h"
-#include "media/transport/MediaEndpointIngress.h"
+#include "MediaLatency.h"
+#include "ShardedWorkerPool.h"
+#include "MediaEndpointIngress.h"
 
 #include <future>
 #include <iostream>

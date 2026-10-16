@@ -733,7 +733,7 @@ TEST(RtcpChainTest, H264PacketBufferHandlesSequenceWrap)
     });
 
     uint8_t start[] = {0x80, 0x60, 0xFF, 0xFF, 0, 0, 0, 2,
-                       1, 2, 3, 4, 0x7C, 0x85, 0x11};
+                       1, 2, 3, 4, 0x7C, 0x85, 0x81};
     uint8_t end[] = {0x80, 0xE0, 0x00, 0x00, 0, 0, 0, 2,
                      1, 2, 3, 4, 0x7C, 0x45, 0x22};
 
@@ -743,7 +743,7 @@ TEST(RtcpChainTest, H264PacketBufferHandlesSequenceWrap)
     EXPECT_EQ(output->rtp.first_sequence, 65535U);
     EXPECT_EQ(output->rtp.last_sequence, 0U);
     EXPECT_EQ(output->buffer.ToVector(),
-              (std::vector<uint8_t>{0, 0, 0, 1, 0x65, 0x11, 0x22}));
+              (std::vector<uint8_t>{0, 0, 0, 1, 0x65, 0x81, 0x22}));
 }
 
 TEST(RtcpChainTest, H264PacketBufferReplacesOlderRingWindow)

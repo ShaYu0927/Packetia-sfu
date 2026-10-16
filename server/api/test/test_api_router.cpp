@@ -1,5 +1,5 @@
-#include "server/api/ApiRouter.h"
-#include "server/api/ApiResponse.h"
+#include "ApiRouter.h"
+#include "ApiResponse.h"
 
 #include <gtest/gtest.h>
 #include <future>

@@ -3,6 +3,7 @@ add_executable(test_rtp_input
     test_sdp_track_binding.cpp
     test_rtcp_chain.cpp
     test_audio_depacketizer.cpp
+    test_video_depacketizer.cpp
     test_sfu_endpoint.cpp
     test_participant.cpp
     test_webrtc_media_adapter.cpp

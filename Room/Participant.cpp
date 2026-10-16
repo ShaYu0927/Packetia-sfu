@@ -1,5 +1,6 @@
 #include "Participant.h"
-#include "media/endpoint/MediaEndpoint.h"
+#include "MediaEndpoint.h"
+#include "MediaTrack.h"
 
 #include <limits>
 #include <utility>
@@ -22,8 +23,18 @@ Participant::~Participant() = default;
 ParticipantInfo Participant::GetInfo() const
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    return {identity_, state_, signaling_, media_session_ ? media_session_->id : 0,
-            published_tracks_.size(), subscribed_track_ids_.size()};
+    ParticipantInfo info;
+    info.identity = identity_;
+    info.state = state_;
+    info.signaling = signaling_;
+    info.publish_session_id = publish_session_ ? publish_session_->Id() : 0;
+    info.subscribe_session_id = subscribe_session_ ? subscribe_session_->Id() : 0;
+    // The legacy field describes an unambiguous single-session participant.
+    if (!publish_session_ || !subscribe_session_)
+        info.media_session_id = info.publish_session_id ? info.publish_session_id : info.subscribe_session_id;
+    info.published_track_count = published_tracks_.size();
+    info.subscribed_track_count = subscribed_track_ids_.size();
+    return info;
 }
 
 bool Participant::BindSignaling(std::string connection_id)
@@ -53,34 +64,55 @@ SignalingBinding Participant::GetSignaling() const
 
 bool Participant::BindMediaSession(ParticipantSession::Ptr session)
 {
-    if (!session || !session->id || !session->endpoint || !session->endpoint->IsRunning()) return false;
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (state_ == ParticipantState::Disconnected || (media_session_ && media_session_ != session) ||
-        (endpoint_ && endpoint_ != session->endpoint)) return false;
-    endpoint_ = session->endpoint;
-    media_session_ = std::move(session);
-    return true;
+    if (!session) return false;
+    const auto role = session->Role();
+    return BindRoleSession(std::move(session), role);
 }
 
 ParticipantSession::Ptr Participant::GetMediaSession() const
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    return media_session_;
+    if (publish_session_ && subscribe_session_) return {};
+    return publish_session_ ? publish_session_ : subscribe_session_;
 }
 
 bool Participant::BindEndpoint(std::shared_ptr<media::SfuEndpoint> endpoint)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!endpoint || !endpoint->IsRunning() || state_ == ParticipantState::Disconnected ||
-        (endpoint_ && endpoint_ != endpoint)) return false;
-    endpoint_ = std::move(endpoint);
+        (legacy_endpoint_ && legacy_endpoint_ != endpoint) ||
+        (publish_session_ && publish_session_->Endpoint() != endpoint) ||
+        (subscribe_session_ && subscribe_session_->Endpoint() != endpoint)) return false;
+    legacy_endpoint_ = std::move(endpoint);
     return true;
 }
 
 std::shared_ptr<media::SfuEndpoint> Participant::GetEndpoint() const
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    return endpoint_;
+    if (legacy_endpoint_) return legacy_endpoint_;
+    const auto published = publish_session_ ? publish_session_->Endpoint() : nullptr;
+    const auto subscribed = subscribe_session_ ? subscribe_session_->Endpoint() : nullptr;
+    if (published && subscribed && published != subscribed) return {};
+    return published ? published : subscribed;
+}
+
+std::shared_ptr<media::SfuEndpoint> Participant::GetPublishEndpoint() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return publish_session_ ? publish_session_->Endpoint() : legacy_endpoint_;
+}
+
+std::shared_ptr<media::SfuEndpoint> Participant::GetSubscribeEndpoint() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return subscribe_session_ ? subscribe_session_->Endpoint() : legacy_endpoint_;
+}
+
+bool Participant::HasMediaBinding() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return legacy_endpoint_ || publish_session_ || subscribe_session_;
 }
 
 std::string Participant::Id() const
@@ -99,18 +131,6 @@ void Participant::SetName(const std::string& name)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     identity_.name = name;
-}
-
-void Participant::BindSession(std::shared_ptr<MediaSession> session)
-{
-    std::lock_guard<std::mutex> lock(mutex_);
-    session_ = std::move(session);
-}
-
-std::shared_ptr<MediaSession> Participant::GetSession() const
-{
-    std::lock_guard<std::mutex> lock(mutex_);
-    return session_;
 }
 
 void Participant::SetState(ParticipantState state)
@@ -293,9 +313,8 @@ std::vector<std::string> Participant::GetSubscribedTrackIds() const
 void Participant::Leave()
 {
     LeaveCallback cb;
-    std::shared_ptr<media::SfuEndpoint> endpoint;
-    std::shared_ptr<MediaSession> legacy_session;
-    ParticipantSession::Ptr media_session;
+    std::shared_ptr<media::SfuEndpoint> legacy_endpoint;
+    ParticipantSession::Ptr publication, subscription;
 
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -307,17 +326,22 @@ void Participant::Leave()
 
         state_ = ParticipantState::Disconnected;
         signaling_.connection_id.clear();
-        endpoint = std::move(endpoint_);
+        legacy_endpoint = std::move(legacy_endpoint_);
         published_tracks_.clear();
         subscribed_track_ids_.clear();
-        legacy_session = std::move(session_);
-        media_session = std::move(media_session_);
+        publication = std::move(publish_session_);
+        subscription = std::move(subscribe_session_);
         cb = on_leave_;
     }
 
-    if (endpoint) endpoint->Stop();
-    legacy_session.reset();
-    media_session.reset();
+    const auto published = publication ? publication->Endpoint() : nullptr;
+    const auto subscribed = subscription ? subscription->Endpoint() : nullptr;
+    if (published) published->Stop();
+    if (subscribed && subscribed != published) subscribed->Stop();
+    if (legacy_endpoint && legacy_endpoint != published && legacy_endpoint != subscribed)
+        legacy_endpoint->Stop();
+    publication.reset();
+    subscription.reset();
     if (cb) 
     {
         cb(shared_from_this());
@@ -370,6 +394,43 @@ Participant::LeaveCallback Participant::GetOnLeave() const
 {
     std::lock_guard<std::mutex> lock(mutex_);
     return on_leave_;
+}
+
+bool Participant::BindPublishSession(ParticipantSession::Ptr session)
+{
+    return BindRoleSession(std::move(session), ParticipantSessionRole::Publish);
+}
+
+bool Participant::BindSubscribeSession(ParticipantSession::Ptr session)
+{
+    return BindRoleSession(std::move(session), ParticipantSessionRole::Subscribe);
+}
+
+bool Participant::BindRoleSession(ParticipantSession::Ptr session, ParticipantSessionRole role)
+{
+    if (!session || session->Role() != role || !session->Id() ||
+        !session->Endpoint() || !session->Endpoint()->IsRunning()) return false;
+    if (role != ParticipantSessionRole::Publish && role != ParticipantSessionRole::Subscribe) return false;
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto& current = role == ParticipantSessionRole::Publish ? publish_session_ : subscribe_session_;
+    const auto& other = role == ParticipantSessionRole::Publish ? subscribe_session_ : publish_session_;
+    if (state_ == ParticipantState::Disconnected || (current && current != session) ||
+        (other && other->Id() == session->Id()) ||
+        (legacy_endpoint_ && legacy_endpoint_ != session->Endpoint())) return false;
+    current = std::move(session);
+    return true;
+}
+
+ParticipantSession::Ptr Participant::GetPublishSession() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return publish_session_;
+}
+
+ParticipantSession::Ptr Participant::GetSubscribeSession() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return subscribe_session_;
 }
 
 } // namespace room

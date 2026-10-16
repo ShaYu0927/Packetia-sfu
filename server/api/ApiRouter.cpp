@@ -1,6 +1,6 @@
 #include "ApiRouter.h"
 #include "ApiResponse.h"
-#include "utils/StringUtil.h"
+#include "StringUtil.h"
 
 #include <set>
 #include <stdexcept>

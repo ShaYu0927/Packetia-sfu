@@ -1,5 +1,5 @@
 #include "TlsTransport.h"
-#include "../../Common/memory/SharedBuffer.h"
+#include "SharedBuffer.h"
 
 #include <openssl/err.h>
 #include <openssl/ssl.h>

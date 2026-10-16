@@ -13,7 +13,7 @@
 #include <utility>
 #
 
-#include "stats/MediaStatsTypes.h"
+#include "MediaStatsTypes.h"
 #include "coreEvent.h"
 
 namespace media

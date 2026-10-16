@@ -6,7 +6,7 @@
 #include "EndpointBase.h"
 #include "MediaEndpoint.h"
 #include <unordered_set>
-#include "core/EncodedFrameRouter.h"
+#include "EncodedFrameRouter.h"
 
 #include <array>
 #include <condition_variable>

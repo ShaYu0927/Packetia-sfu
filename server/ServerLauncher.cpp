@@ -1,6 +1,6 @@
 #include "ServerLauncher.h"
-#include "log/logger.h"
-#include "service/core/IService.h"
+#include "logger.h"
+#include "IService.h"
 
 #include <algorithm>
 #include <exception>

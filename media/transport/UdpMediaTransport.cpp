@@ -1,6 +1,6 @@
 #include "UdpMediaTransport.h"
-#include "network/transport/UdpDatagramTransport.h"
-#include "network/transport/DatagramProtocolClassifier.h"
+#include "UdpDatagramTransport.h"
+#include "DatagramProtocolClassifier.h"
 
 #include <functional>
 #include <utility>

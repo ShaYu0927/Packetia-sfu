@@ -1,6 +1,6 @@
 #pragma once
 #include "third/nlohmann/json.hpp"
-#include "service/Cluster/Coordinator.h"
+#include "Coordinator.h"
 #include <fstream>
 #include <cstdlib>
 #include <set>

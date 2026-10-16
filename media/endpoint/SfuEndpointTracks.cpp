@@ -1,7 +1,7 @@
 #include "MediaEndpoint.h"
 #include "MediaStreamAffinity.h"
 #include "SdpTrackBinding.h"
-#include "../../Rtsp/Rtp/RtpHeaderExtensions.h"
+#include "RtpHeaderExtensions.h"
 
 #include <algorithm>
 #include <limits>

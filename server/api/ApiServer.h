@@ -1,9 +1,9 @@
 #ifndef PACKETIA_SERVER_API_SERVER_H_
 #define PACKETIA_SERVER_API_SERVER_H_
 
-#include "protocol/http/IHttpServer.h"
-#include "service/Account/AccountOptions.h"
-#include "utils/WorkerRegistry.h"
+#include "IHttpServer.h"
+#include "AccountOptions.h"
+#include "WorkerRegistry.h"
 #include "ApiRouter.h"
 
 #include <memory>

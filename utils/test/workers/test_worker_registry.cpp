@@ -1,8 +1,8 @@
 #include "WorkerRegistry.h"
 #include "EndpointBase.h"
 #include "ThreadSafeQueue.h"
-#include "server/ServerLauncher.h"
-#include "server/WorkerSetup.h"
+#include "ServerLauncher.h"
+#include "WorkerSetup.h"
 
 #include <atomic>
 #include <chrono>

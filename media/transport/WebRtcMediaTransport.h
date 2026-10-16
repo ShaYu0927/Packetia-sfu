@@ -2,8 +2,8 @@
 #define PACKETIA_WEBRTC_MEDIA_TRANSPORT_H
 
 #include "IMediaTransport.h"
-#include "protocol/WebRtc/WebRtcSession.h"
-#include "quality/SendSideController.h"
+#include "WebRtcSession.h"
+#include "SendSideController.h"
 #include <functional>
 #include <mutex>
 

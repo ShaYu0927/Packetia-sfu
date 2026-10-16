@@ -2,7 +2,7 @@
 #define _NETWORK_TRANSPORT_DATAGRAM_PACKET_H_
 
 #include "UdpSocket.h"
-#include "../../Common/memory/SharedBuffer.h"
+#include "SharedBuffer.h"
 
 #include <cstddef>
 #include <cstdint>

@@ -1,5 +1,5 @@
 #pragma once
-#include "service/Auth/AuthTypes.h"
+#include "AuthTypes.h"
 #include <atomic>
 #include <chrono>
 #include <string>

@@ -1,6 +1,6 @@
 // Test-only persistence substitute. The real RecordingService, dispatcher,
 // worker pool and session lifecycle run unchanged; no FFmpeg/muxing is tested.
-#include "service/RecordService/RecordingInstance.h"
+#include "RecordingInstance.h"
 
 namespace service {
 RecordingInstance::RecordingInstance(RecordingContext&, RecordingInstanceId id) : id_(std::move(id)) {}

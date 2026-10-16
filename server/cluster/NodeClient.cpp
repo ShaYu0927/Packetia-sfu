@@ -1,6 +1,6 @@
 #include "NodeClient.h"
 #include "third/nlohmann/json.hpp"
-#include "log/logger.h"
+#include "logger.h"
 #include <curl/curl.h>
 #include <stdexcept>
 

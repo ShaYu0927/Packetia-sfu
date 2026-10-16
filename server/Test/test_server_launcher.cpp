@@ -1,5 +1,5 @@
-#include "server/ServerLauncher.h"
-#include "service/core/IService.h"
+#include "ServerLauncher.h"
+#include "IService.h"
 
 #include <cstdint>
 #include <functional>

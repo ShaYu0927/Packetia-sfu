@@ -3,7 +3,7 @@
 #else
 #include "SfuApp.h"
 #endif
-#include "utils/ThreadManager.h"
+#include "ThreadManager.h"
 #include <csignal>
 #include <chrono>
 #include <iostream>

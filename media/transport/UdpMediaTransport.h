@@ -2,7 +2,7 @@
 #define _UDP_MEDIA_TRANSPORT_H_
 
 #include "MediaTransportBase.h"
-#include "transport/IDatagramTransport.h"
+#include "IDatagramTransport.h"
 #include "UdpServer.h"
 
 #include <array>

@@ -3,7 +3,7 @@
 
 #include "PacketHistory.h"
 #include "TransportFeedbackAdapter.h"
-#include "bwe/transport_bwe_controller.h"
+#include "transport_bwe_controller.h"
 
 namespace media
 {

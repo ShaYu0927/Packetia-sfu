@@ -1,6 +1,6 @@
-#include "service/Auth/AuthService.h"
-#include "service/Auth/JwtAuthenticator.h"
-#include "service/Auth/RoomAccessPolicy.h"
+#include "AuthService.h"
+#include "JwtAuthenticator.h"
+#include "RoomAccessPolicy.h"
 #include "third/nlohmann/json.hpp"
 #include <gtest/gtest.h>
 #include <openssl/evp.h>

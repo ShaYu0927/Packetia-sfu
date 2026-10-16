@@ -1,6 +1,6 @@
 #include "RtpSenderTrack.h"
-#include "../utils/MediaLatency.h"
-#include "../media/quality/SendSideController.h"
+#include "MediaLatency.h"
+#include "SendSideController.h"
 
 #include <algorithm>
 #include <chrono>

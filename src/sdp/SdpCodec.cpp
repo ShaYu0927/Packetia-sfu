@@ -1,5 +1,5 @@
 #include "SdpCodec.h"
-#include "../../utils/StringUtil.h"
+#include "StringUtil.h"
 
 #include <algorithm>
 #include <array>
