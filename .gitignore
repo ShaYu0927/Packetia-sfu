@@ -1,5 +1,6 @@
 .idea/
 .vscode/
+__pycache__/
 build/
 cmake-build-debug/
 .clangd/
@@ -16,6 +17,7 @@ cmake_install.cmake
 Makefile
 CTestTestfile.cmake
 *.cmake
+!/utils/threading/ThreadSupport.cmake
 
 test_rtp_input
 

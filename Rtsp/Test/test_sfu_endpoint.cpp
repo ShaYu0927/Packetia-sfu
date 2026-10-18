@@ -9,6 +9,7 @@
 #include "RtcpNack.h"
 #include "RtcpFeedback.h"
 #include <future>
+#include <thread>
 
 namespace
 {
@@ -136,6 +137,54 @@ TEST_F(SfuConference, SharedPayloadNeedsMidOrExplicitBindingAndCannotChangeTrack
     endpoint->Stop();
     Input(endpoint, Packet(22, 96, 3), "audio");
     EXPECT_EQ(frames.size(), 3U);
+}
+
+TEST_F(SfuConference, KeyFrameRequestsFromManySubscribersShareThePublishedTrackBudget)
+{
+    auto endpoint = std::make_shared<media::SfuEndpoint>(1110);
+    ASSERT_TRUE(endpoint->AddPublishedTrack("camera", Description(0, false, 102)));
+    ASSERT_TRUE(endpoint->AddPublishedTrack("screen", Description(1, false, 102)));
+    ASSERT_TRUE(endpoint->BindSsrc("camera", 11));
+    ASSERT_TRUE(endpoint->BindSsrc("screen", 22));
+    ASSERT_TRUE(endpoint->Start());
+    size_t camera_requests = 0, screen_requests = 0;
+    endpoint->SetTrackRtcpSendCallback("camera", [&](const uint8_t*, size_t) {
+        ++camera_requests; return true;
+    });
+    endpoint->SetTrackRtcpSendCallback("screen", [&](const uint8_t*, size_t) {
+        ++screen_requests; return true;
+    });
+    for (int subscriber = 0; subscriber < 100; ++subscriber) endpoint->OnTrackPli(11);
+    endpoint->OnTrackPli(22);
+    EXPECT_EQ(camera_requests, 1U);
+    EXPECT_EQ(screen_requests, 1U);
+}
+
+TEST_F(SfuConference, PeriodicRecoveryCanSendNackAfterRtpStops)
+{
+    auto endpoint = std::make_shared<media::SfuEndpoint>(1111);
+    ASSERT_TRUE(endpoint->AddPublishedTrack("camera", Description(0, false, 102)));
+    ASSERT_TRUE(endpoint->BindSsrc("camera", 11));
+    ASSERT_TRUE(endpoint->Start());
+    std::vector<uint8_t> feedback;
+    endpoint->SetTrackRtcpSendCallback("camera", [&](const uint8_t* data, size_t size) {
+        feedback.assign(data, data + size); return true;
+    });
+    Input(endpoint, Packet(11, 102, 100));
+    Input(endpoint, Packet(11, 102, 102));
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    ASSERT_TRUE(endpoint->ScheduleRecoveryTick());
+    Drain(media_affinity::MakeStreamKey(endpoint->Id(), 0));
+    uint32_t sender = 0, source = 0;
+    std::vector<uint16_t> missing;
+    ASSERT_TRUE(rtcpx::RtRtcpNack::Parse(feedback.data(), feedback.size(), &sender, &source, &missing));
+    EXPECT_EQ(source, 11U);
+    EXPECT_EQ(missing, (std::vector<uint16_t>{101}));
+    endpoint->Stop();
+    EXPECT_FALSE(endpoint->ScheduleRecoveryTick());
+    feedback.clear();
+    endpoint->TickRecovery();
+    EXPECT_TRUE(feedback.empty());
 }
 
 TEST_F(SfuConference, ReplacePublishedTracksPausesAndResumesMidWithOriginalIndexAndRtcpCallback)

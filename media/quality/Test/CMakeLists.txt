@@ -2,6 +2,7 @@ add_executable(test_weak_network_manual
     test_weak_network_manual.cpp
     test_send_side_transport.cpp
     test_bwe_rate_control.cpp
+    test_loss_recovery.cpp
 )
 
 target_link_libraries(test_weak_network_manual

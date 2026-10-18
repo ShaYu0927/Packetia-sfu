@@ -13,17 +13,15 @@ NetworkController::NetworkController()
 
 void NetworkController::SetBitrateConstraints(const BitrateConstraints& constraints)
 {
-    if (!constraints.min_bitrate_bps || constraints.min_bitrate_bps > constraints.start_bitrate_bps ||
-        constraints.start_bitrate_bps > constraints.max_bitrate_bps)
+    if (!constraints.min_bitrate_bps || constraints.min_bitrate_bps > constraints.start_bitrate_bps || constraints.start_bitrate_bps > constraints.max_bitrate_bps)
         throw std::invalid_argument("invalid network bitrate constraints");
     bitrate_ = constraints;
     if (!has_feedback_)
         fallback_target_bitrate_bps_ = stable_target_bitrate_bps_ = bitrate_.start_bitrate_bps;
-    else {
-        fallback_target_bitrate_bps_ = std::clamp(fallback_target_bitrate_bps_,
-            bitrate_.min_bitrate_bps, bitrate_.max_bitrate_bps);
-        stable_target_bitrate_bps_ = std::clamp(stable_target_bitrate_bps_,
-            bitrate_.min_bitrate_bps, bitrate_.max_bitrate_bps);
+    else 
+    {
+        fallback_target_bitrate_bps_ = std::clamp(fallback_target_bitrate_bps_, bitrate_.min_bitrate_bps, bitrate_.max_bitrate_bps);
+        stable_target_bitrate_bps_ = std::clamp(stable_target_bitrate_bps_, bitrate_.min_bitrate_bps, bitrate_.max_bitrate_bps);
     }
 }
 

@@ -2,6 +2,7 @@
 
 extern "C" {
 #include <libavformat/avformat.h>
+#include <libavformat/version.h>
 #include <libavutil/error.h>
 #include <libavutil/mem.h>
 }
@@ -59,7 +60,12 @@ bool Mp4Reader::Open(std::unique_ptr<ISeekableFile> file)
     context_->pb = io_context_;
     context_->flags |= AVFMT_FLAG_CUSTOM_IO;
 
-    const auto* format = av_find_input_format("mov");
+    // FFmpeg 5.0 made input format descriptors const on all platforms.
+#if LIBAVFORMAT_VERSION_MAJOR >= 59
+    const AVInputFormat* format = av_find_input_format("mov");
+#else
+    AVInputFormat* format = av_find_input_format("mov");
+#endif
     if (!format)
         return fail("find MP4 demuxer", AVERROR_DEMUXER_NOT_FOUND);
     result = avformat_open_input(&context_, nullptr, format, nullptr);

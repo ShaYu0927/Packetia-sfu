@@ -169,8 +169,6 @@ struct NetworkEstimate
 
     uint32_t send_bitrate_bps = 0;
     uint32_t recv_bitrate_bps = 0;
-
-    // 估算出来的可用带宽
     uint32_t bandwidth_bps = 0;
 
     uint32_t rtt_ms = 0;

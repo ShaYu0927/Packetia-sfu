@@ -18,7 +18,7 @@ TURN UDP 中继及录像模块。支持原有 `Packetia` 单进程入口，以�
 - [WebRTC SDP 协商](#webrtc-sdp-协商)、[RTP 协议规范](#rtp-协议规范)：协商行为与 RFC 支持边界。
 - [房间鉴权](#房间鉴权)：JWT 验证、房间权限与参与者身份绑定。
 - [账号与登录框架](#账号与登录框架)、[HTTP 业务接口](#http-业务接口)：账号路由、请求格式、返回契约与实现状态。
-- [弱网与带宽控制](#弱网与带宽控制)、[发送控制详细说明](media/quality/README.md)：NACK/SRTP 重传、TWCC/RR、OU 时延检测与码率控制。
+- [弱网与带宽控制](#弱网与带宽控制)、[丢包恢复说明](docs/weak-network.md)：NACK/SRTP 重传、TWCC/RR、OU 时延检测与码率控制。
 - [本轮验证](#本轮验证)、[开发记录](#开发记录)：验证范围与历史变更。
 
 ### 当前能力与限制
@@ -32,7 +32,7 @@ TURN UDP 中继及录像模块。支持原有 `Packetia` 单进程入口，以�
 | TCP/TLS | 有界 TCP 缓冲、所属线程调度、TLS 1.2/1.3 服务端传输组件 | TLS 尚未接入 TURN 或 WSS 监听、应用配置 |
 | 弱网与带宽控制 | NACK 重传、PLI/FIR、TWCC/RR、时延/接收速率/RTT/丢包联合码率控制 | 输出控制建议；实际 Pacer、媒体降码率、分层选择、FEC 与主动探测尚未接入 |
 | 应用鉴权 | HS256 房间 JWT、API key 查询、发布/订阅权限、参与者身份绑定和恢复校验 | 登录与签发由业务后端负责；暂不包含自动刷新、动态权限更新和撤销列表 |
-| HTTP/账号 API | libwebsockets HTTP 接入、有界业务队列、SQLite 账号与会话、scrypt 密码校验、5 个账号接口 | 原入口服务与自助注册默认关闭；控制入口另含房间、成员和入房凭证接口 |
+| HTTP/账号 API | libwebsockets HTTP 接入、有界业务队列、SQLite 账号与会话、scrypt 密码校验、5 个账号接口 | 单进程开发配置启用本机 API 与注册；控制入口另含房间、成员和入房凭证接口 |
 | 多进程部署 | 独立控制进程、多 SFU、节点注册/心跳、持久化房间绑定、节点/实例 JWT 校验 | 单控制服务；SFU 故障后需新建房间，尚无迁移和房间回收 |
 
 尚未做系统容量压测，配置中的会话上限不是实际可承载并发数。当前浏览器验证属于本机互通验证，
@@ -65,6 +65,42 @@ cmake --build build --target Packetia -j"$(nproc)"
 
 库必须与目标操作系统和 CPU 架构一致。可通过
 `pkg-config --modversion libavformat libavcodec libavutil` 检查检测到的版本。
+
+### 单进程启动
+
+日常开发可以直接运行单进程入口，无需启动控制服务和多个 SFU：
+
+```sh
+./build/Packetia
+```
+
+CMake 首次配置会把 `config/packetia.json` 复制为 `build/packetia.json`；后续配置和编译
+保留已有文件中的修改。默认配置启用账号服务、本机 HTTP API 和本机自助注册，
+地址为 `http://127.0.0.1:8081`，RTSP 使用无需特权的 `8554` 端口。
+程序会打印实际配置路径、HTTP 地址和数据库路径；Ctrl+C 会依次停止服务。
+账号数据库的父目录由服务自动创建。
+日志默认输出到终端和滚动文件，集群脚本会按节点统一收集日志；配置与保留策略见[日志说明](log/README.md)。
+
+```sh
+# 修改配置后重启即可；也可以显式指定其他配置
+./build/Packetia --config config/packetia.http-local.json
+
+# 只检查配置，不启动监听或创建数据库
+./build/Packetia --check-config
+./build/Packetia --help
+
+# 在另一个终端检查 HTTP；未登录时预期返回 401
+curl -i http://127.0.0.1:8081/api/v1/me
+```
+
+配置查找顺序为 `--config`、`PACKETIA_CONFIG`、可执行文件同目录的 `packetia.json`、
+当前目录的 `packetia.json`、当前目录的 `config/packetia.json`；均未指定或找到时使用内置默认值
+（HTTP 关闭）。指定的文件缺失或内容错误会直接报错。原有功能环境变量继续覆盖文件中的对应字段。
+数据库、录像等相对数据路径仍相对于启动时的工作目录；从项目根目录运行可保持数据位置一致。
+本机注册配置用于开发，部署时可修改 HTTP 地址和注册开关。
+
+单进程入口提供账号 API、媒体接入及已配置的本地服务；房间创建、成员管理和入房 JWT 签发
+目前属于 `PacketiaControl`。需要这些控制接口或多节点部署时，再使用[多进程启动方式](docs/distributed-services.md)。
 
 WebSocket 默认启用，需要 libwebsockets；WebRTC 媒体运行需要 libsrtp2。
 缺少 libsrtp2 时部分协议目标仍能编译，但 WebRTC 服务不能正常启用，浏览器示例和相关测试也不可用。
@@ -346,7 +382,8 @@ HTTP 异步回复仍返回所属 I/O owner。当前路由处理函数同步返�
 在 C++ 中实现，不依赖独立 Kratos 服务，也不兼容其 self-service flow API。
 `SqliteAccountStore` 分表保存用户、密码凭据与会话；`ScryptPasswordHasher` 使用 OpenSSL scrypt，
 会话使用随机 Bearer token，仅保存 SHA-256 摘要。续期通过事务撤销旧 token 并创建新会话。
-`account.enabled`、`http.enabled`、`account.registration_enabled` 默认关闭。
+内置默认值及 `packetia.example.json` 中的 `account.enabled`、`http.enabled`、
+`account.registration_enabled` 均关闭；直接启动时自动加载的 `packetia.json` 为本机开发启用这三个开关。
 示例配置见 `config/packetia.example.json`；多进程账号、成员和入房流程见[控制服务与 SFU 节点](docs/distributed-services.md)。
 账号 API 的登录会话与房间 JWT 用途不同；邀请注册、密码找回、MFA、登录限流及 Cookie/CSRF 流程尚未提供。
 当前 HTTP 接入未实现原生 HTTPS，公网部署需要在 TLS 反向代理后运行。
@@ -375,7 +412,8 @@ HTTP 异步回复仍返回所属 I/O owner。当前路由处理函数同步返�
 整个请求体还受 `http.max_body_bytes` 限制，默认 8192 字节。
 
 本地联调时，在配置文件中设置 `account.enabled=true`、`account.registration_enabled=true`、
-`http.enabled=true`，然后通过 `PACKETIA_CONFIG=/path/to/config.json` 启动程序。
+`http.enabled=true`，然后通过 `Packetia --config /path/to/config.json` 启动程序；
+直接运行 `./build/Packetia` 使用自动加载的本机开发配置时，这些开关已启用。
 默认 HTTP 地址为 `127.0.0.1:8081`，可以用以下命令完成注册和登录。
 
 ```sh
@@ -973,8 +1011,12 @@ RtpSenderTrack 发送成功 → SendSideController 记录发送历史
 SRTP 发送端允许重新保护缓存的原 RTP 序号及 payload，重传重新分配 TWCC 序号；
 接收端继续执行认证和防重放。当前协商的保护配置为 `SRTP_AES128_CM_SHA1_80`。
 
+视频 NACK 在乱序等待后发起，按 RTT 重试；最后一次请求仍保留响应时间，超过恢复期限则
+回退到 PLI。下行重传默认限制原包年龄为 500 ms，发布轨道合并不同订阅者的 PLI 请求。
+WebRTC 会话的 100 ms 定时器向媒体池投递恢复任务，停止收包后仍能推进重试与超时。
+
 业务可通过 `SetUpdateCallback` 消费控制输出。目前还没有实际 Pacer 和媒体码率策略执行，
-带宽算法测试通过不代表真实浏览器弱网质量已经验收。详见[弱网与发送控制说明](media/quality/README.md)。
+带宽算法测试通过不代表真实浏览器弱网质量已经验收。详见[丢包恢复说明](docs/weak-network.md)。
 
 ## 本轮验证
 

@@ -21,7 +21,7 @@ public:
         std::size_t max_batch_size      = 50;               // Maximum number of sequence numbers per NACK batch.
         uint16_t max_sequence_gap       = 100;              // Reset instead of NACKing an implausibly large jump.
         uint32_t min_retry_interval_ms  = 20;
-        uint32_t max_retry_interval_ms  = 200;
+        uint32_t max_retry_interval_ms  = 200;              // Bounds the fallback interval, not a measured RTT.
         uint32_t failure_callback_interval_ms = 500;        // Rate-limit recovery failure notifications.
     };
 
@@ -90,6 +90,7 @@ private:
 
     uint32_t rtt_ms_ = 0;
     uint64_t last_failure_callback_ms_ = 0;
+    bool has_failure_callback_time_ = false;
     Stats stats_;
     NackCallback nack_callback_;
     RecoveryFailureCallback recovery_failure_callback_;

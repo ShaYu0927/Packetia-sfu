@@ -77,8 +77,9 @@ size_t RtpPayloadOffset(const common::ByteVector& packet)
 }
 
 RtpSenderTrack::RtpSenderTrack(const RtpSenderTrackConfig& config,
-                               std::shared_ptr<IMediaTransport> transport)
+                               std::shared_ptr<IMediaTransport> transport, Clock clock)
     : _config(config),
+      _clock(clock ? std::move(clock) : Clock{NowMs}),
       _transport(std::move(transport))
 {
     if (auto bound_transport = _transport.lock())
@@ -160,7 +161,7 @@ try
         return;
     }
 
-    const uint64_t now_ms = NowMs();
+    const uint64_t now_ms = _clock();
 
     for (uint16_t seq : lost_seqs)
     {
@@ -171,12 +172,18 @@ try
         }
 
         CachedRtpPacket& cached = it->second;
+        if (now_ms < cached.first_send_ms ||
+            (_config.max_retransmit_age_ms != 0 &&
+             now_ms - cached.first_send_ms >= _config.max_retransmit_age_ms))
+        {
+            continue;
+        }
         if (_config.max_retransmit_count > 0 && cached.retransmit_count >= _config.max_retransmit_count)
         {
             continue;
         }
 
-        if (cached.last_retransmit_ms != 0 &&
+        if (cached.retransmit_count != 0 &&
             now_ms >= cached.last_retransmit_ms &&
             now_ms - cached.last_retransmit_ms < _config.min_retransmit_interval_ms)
         {
@@ -220,7 +227,7 @@ void RtpSenderTrack::OnRtcpReceiverReport(uint32_t reporter_ssrc, uint32_t media
 
 void RtpSenderTrack::OnRtcpPli()
 {
-    const uint64_t now_ms = NowMs();
+    const uint64_t now_ms = _clock();
     if (_last_pli_ms != 0 && now_ms >= _last_pli_ms && now_ms - _last_pli_ms < _pli_interval_ms)
     {
         return;
@@ -476,7 +483,7 @@ void RtpSenderTrack::NotifyPacketSent(const media::TransportSequenceNumber& sequ
 {
     // No transport sequence exists unless the downstream negotiated TWCC.
     if (_config.transport_cc_extension_id == 0) return;
-    const uint64_t sent_at_ms = NowMs();
+    const uint64_t sent_at_ms = _clock();
     if (_send_controller && sequence.extended_sequence >= 0)
     {
         media::PacketSendInfo packet;
@@ -542,6 +549,7 @@ void RtpSenderTrack::CacheRtpPacket(uint16_t out_seq, const common::ByteVector& 
 
     CachedRtpPacket cached;
     cached.packet = std::move(bytes);
+    cached.first_send_ms = _clock();
     _rtp_cache[out_seq] = std::move(cached);
 
     while (_rtp_cache.size() > _config.rtp_cache_size && !_cache_order.empty())

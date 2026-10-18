@@ -6,6 +6,7 @@
 #include "RtcpContext.h"
 #include "EncodedFrameRouter.h"
 #include "WeakNetController.h"
+#include "KeyFrameRequestLimiter.h"
 #include <functional>
 #include <atomic>
 #include <mutex>
@@ -114,6 +115,9 @@ public:
 
     void OnTrackNack(uint32_t media_ssrc, const std::vector<uint16_t>& lost_seqs);
     void OnTrackPli(uint32_t media_ssrc);
+    // Run on the media pool; also drives loss recovery while RTP is silent.
+    void TickRecovery();
+    bool ScheduleRecoveryTick();
     void SetRtcpSendCallback(SendRtcpCallback cb);
     FrameSubscriptionId AddEncodedFrameCallback(EncodedFrameCallback cb);
     void RemoveEncodedFrameCallback(FrameSubscriptionId id);
@@ -133,6 +137,7 @@ private:
         uint8_t mid_extension_id = 0;
         SendRtcpCallback send_rtcp;
         std::vector<std::weak_ptr<Subscription>> subscribers;
+        KeyFrameRequestLimiter keyframe_requests;
     };
     struct Subscription
     {
@@ -191,6 +196,7 @@ private:
     std::mutex rtcp_send_mutex_;
     SendRtcpCallback send_rtcp_cb_;
     uint32_t local_rtcp_ssrc_ = 0;
+    KeyFrameRequestLimiter unbound_keyframe_requests_;
     std::mutex frame_callbacks_mutex_;
     std::unordered_map<FrameSubscriptionId, EncodedFrameCallback> frame_callbacks_;
     std::atomic<FrameSubscriptionId> next_frame_subscription_id_{1};

@@ -256,10 +256,11 @@ AppConfig AppConfig::FromFile(const std::string& path) {
     if (file.bad()) throw std::invalid_argument("cannot read configuration file: " + path);
     return FromJson(text.str());
 }
-AppConfig AppConfig::FromEnvironment() 
+AppConfig AppConfig::FromEnvironment(const std::string& config_path)
 {
     AppConfig config;
-    if (const char* path = std::getenv("PACKETIA_CONFIG")) config = FromFile(path);
+    if (!config_path.empty()) config = FromFile(config_path);
+    else if (const char* path = std::getenv("PACKETIA_CONFIG")) config = FromFile(path);
     config.recording_enabled = EnvironmentFlag("PACKETIA_RECORDING", config.recording_enabled);
     config.ai_enabled = EnvironmentFlag("PACKETIA_AI", config.ai_enabled);
     config.conference_mix_enabled = EnvironmentFlag("PACKETIA_CONFERENCE_MIX", config.conference_mix_enabled);

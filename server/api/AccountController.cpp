@@ -35,7 +35,6 @@ HttpResponse AccountFailure(AccountError error)
     case AccountError::UserDisabled:
     case AccountError::SessionExpired:
     case AccountError::SessionRevoked:
-        // Do not reveal whether an account exists, is disabled or has sessions.
         return ErrorResponse(401, "unauthenticated", "Authentication required or credentials invalid.");
     case AccountError::AlreadyExists:
         return ErrorResponse(409, "already_exists", "Account cannot be created.");
@@ -110,8 +109,6 @@ HttpResponse SessionResponse(const service::account::LoginResult& result)
 }
 
 
-// This decorator owns its service dependency and performs the common login-
-// session credential checks for every protected account route.
 ApiRouter::Handler SessionRoute(std::shared_ptr<service::account::AccountService> accounts,
     std::function<HttpResponse(service::account::AccountService&, std::string_view)> handler)
 {

@@ -102,12 +102,17 @@ struct RtpSenderTrackConfig
      * 本字段仅作为自定义 Transport 未提供控制器时的依赖注入入口。
      */
     std::shared_ptr<media::TransportSequenceAllocator> transport_sequence_allocator;
+
+    // Maximum age since the original send was accepted. 0 disables expiry;
+    // tune together with the receiver's recovery budget, not the cache size.
+    uint64_t max_retransmit_age_ms = 500;
 };
 
 class RtpSenderTrack
 {
 public:
     using Ptr = std::shared_ptr<RtpSenderTrack>;
+    using Clock = std::function<uint64_t()>;
     using KeyFrameRequestCallback = std::function<void()>;
     using PacketSentCallback = std::function<void(int64_t extended_transport_sequence,
                                                   uint16_t wire_transport_sequence,
@@ -117,7 +122,8 @@ public:
                                                   uint32_t size_bytes)>;
 
 public:
-    RtpSenderTrack(const RtpSenderTrackConfig& config, std::shared_ptr<IMediaTransport> transport);
+    RtpSenderTrack(const RtpSenderTrackConfig& config, std::shared_ptr<IMediaTransport> transport,
+                   Clock clock = {});
 
     ~RtpSenderTrack();
     RtpSenderTrack(const RtpSenderTrack&) = delete;
@@ -193,6 +199,7 @@ private:
     struct CachedRtpPacket
     {
         common::SharedBuffer packet;
+        uint64_t first_send_ms = 0;
         uint64_t last_retransmit_ms = 0;
         uint32_t retransmit_count = 0;
     };
@@ -204,6 +211,7 @@ private:
      * RTP clock rate, retransmission cache size, and the source track info.
      */
     RtpSenderTrackConfig _config;
+    Clock _clock;
 
     /*
      * Underlying media transport.

@@ -46,8 +46,7 @@ public:
 
     // Names must be nonempty and unique, and both callbacks must be supplied.
     // Stop must tolerate a partially completed or failed start attempt.
-    void AddCustomService(const std::string& name,
-        std::function<bool()> start, std::function<void()> stop, bool enabled = true);
+    void AddCustomService(const std::string& name,std::function<bool()> start, std::function<void()> stop, bool enabled = true);
 
     // Before startup, changes the desired configuration only. While running,
     // starts/stops just this service. Caller must preserve service dependencies.

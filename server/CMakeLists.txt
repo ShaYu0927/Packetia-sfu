@@ -5,6 +5,7 @@ add_subdirectory(api)
 add_library(server STATIC
     ServerLauncher.cpp
     ServerConfig.cpp
+    StartupConfig.cpp
 )
 
 target_include_directories(server
@@ -45,6 +46,9 @@ if(PACKETIA_WITH_LIBWEBSOCKETS)
         if(BUILD_TESTING)
             find_package(Python3 COMPONENTS Interpreter)
             if(Python3_Interpreter_FOUND)
+                add_test(NAME ClusterLauncherUnitTest COMMAND ${Python3_EXECUTABLE}
+                    ${PROJECT_SOURCE_DIR}/scripts/test_cluster_launcher.py)
+                set_tests_properties(ClusterLauncherUnitTest PROPERTIES TIMEOUT 30)
                 add_test(NAME ClusterProcessIntegrationTest COMMAND ${Python3_EXECUTABLE}
                     ${PROJECT_SOURCE_DIR}/scripts/test_cluster.py
                     --control $<TARGET_FILE:PacketiaControl> --sfu $<TARGET_FILE:PacketiaSfu>)

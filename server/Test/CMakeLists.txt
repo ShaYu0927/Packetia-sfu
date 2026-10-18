@@ -9,7 +9,8 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     add_subdirectory("${PACKETIA_SERVER_ROOT}/config" "${CMAKE_CURRENT_BINARY_DIR}/config")
     add_library(server_test_support STATIC
         "${PACKETIA_SERVER_ROOT}/server/ServerLauncher.cpp"
-        "${PACKETIA_SERVER_ROOT}/server/ServerConfig.cpp")
+        "${PACKETIA_SERVER_ROOT}/server/ServerConfig.cpp"
+        "${PACKETIA_SERVER_ROOT}/server/StartupConfig.cpp")
     target_include_directories(server_test_support PUBLIC
         "${PACKETIA_SERVER_ROOT}"
         "${PACKETIA_SERVER_ROOT}/server"
@@ -30,6 +31,10 @@ set_tests_properties(server_launcher PROPERTIES TIMEOUT 20)
 add_executable(test_server_config test_server_config.cpp)
 target_link_libraries(test_server_config PRIVATE ${PACKETIA_SERVER_TEST_LIBRARY})
 add_test(NAME server_config COMMAND test_server_config)
+
+add_executable(test_startup_config test_startup_config.cpp)
+target_link_libraries(test_startup_config PRIVATE ${PACKETIA_SERVER_TEST_LIBRARY})
+add_test(NAME startup_config COMMAND test_startup_config "${CMAKE_CURRENT_LIST_DIR}/../../config/packetia.json")
 
 # Exercise real ingress/worker/session control with a fake persistence layer.
 get_filename_component(PACKETIA_SERVER_ROOT "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)

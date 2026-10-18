@@ -445,10 +445,50 @@ void SfuEndpoint::OnTrackPli(uint32_t media_ssrc)
         return;
     }
 
+    const auto binding = ssrc_bindings_.find(media_ssrc);
+    auto* limiter = &unbound_keyframe_requests_;
+    if (binding != ssrc_bindings_.end())
+    {
+        auto track = published_tracks_.find(binding->second);
+        if (track == published_tracks_.end()) return;
+        limiter = &track->second.keyframe_requests;
+    }
+    if (!limiter->Allow(SteadyNowMs())) return;
+
     const auto packet = rtcpx::RtcpFeedback::BuildPli(local_rtcp_ssrc_, media_ssrc);
     if (!send(packet.data(), packet.size()))
     {
         LOG_ERROR("[RTCP][PLI] send failed", " media_ssrc=", media_ssrc);
+    }
+}
+
+bool SfuEndpoint::ScheduleRecoveryTick()
+{
+    if (!IsRunning()) return false;
+    const auto weak = weak_from_this();
+    if (weak.expired()) return false;
+    return media_affinity::PostToMediaStream(Id(), 0, [weak] {
+        if (auto endpoint = weak.lock()) endpoint->TickRecovery();
+    }) == 0;
+}
+
+void SfuEndpoint::TickRecovery()
+{
+    std::lock_guard<std::recursive_mutex> guard(runtime_mutex_);
+    if (!IsRunning()) return;
+    const auto now_ms = SteadyNowMs();
+    std::vector<rtsp::RtpVideoTracker::Ptr> videos;
+    {
+        std::lock_guard<std::mutex> lock(track_mtx_);
+        for (const auto& entry : ssrc_to_track_)
+            if (auto video = std::dynamic_pointer_cast<rtsp::RtpVideoTracker>(entry.second))
+                videos.push_back(std::move(video));
+    }
+    // Callbacks can request a PLI; do not hold track_mtx_ across them.
+    for (const auto& video : videos)
+    {
+        video->UpdateNackRtt(video->GetRttMs());
+        video->TickNack(now_ms);
     }
 }
 

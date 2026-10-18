@@ -108,6 +108,6 @@ struct AppConfig
     void Validate() const;
     static AppConfig FromJson(const std::string& text);
     static AppConfig FromFile(const std::string& path);
-    static AppConfig FromEnvironment();
+    static AppConfig FromEnvironment(const std::string& config_path = {});
 };
 } // namespace config

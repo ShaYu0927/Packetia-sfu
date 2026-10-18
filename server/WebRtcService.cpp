@@ -909,6 +909,8 @@ bool WebRtcService::Tick()
     {
         auto& session = *item.second;
         if (!session.rtc->Tick(now)) { expired.push_back(item.first); continue; }
+        if (session.endpoint && session.rtc->State() == protocol::webrtc::WebRtcSessionState::Connected)
+            session.endpoint->ScheduleRecoveryTick();
         if (session.negotiation_deadline_ms && now >= session.negotiation_deadline_ms)
         {
             session.rtc->RollbackNegotiation();

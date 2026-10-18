@@ -1,0 +1,21 @@
+{
+  "server": {
+    "listen_ip": "0.0.0.0",
+    "rtsp_port": 8554,
+    "sip_port": 15060,
+    "rtmp_port": 11935,
+    "websocket_port": 8080,
+    "udp_port": 9000,
+    "io_threads": 1
+  },
+  "account": {
+    "enabled": true,
+    "registration_enabled": true,
+    "database_path": "data/accounts.db"
+  },
+  "http": {
+    "enabled": true,
+    "listen_ip": "127.0.0.1",
+    "listen_port": 8081
+  }
+}

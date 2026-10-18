@@ -254,6 +254,7 @@ add_subdirectory(server)
 
 option(PACKETIA_BUILD_RECORDING_TESTS "Build FFmpeg recording integration tests" OFF)
 if(BUILD_TESTING)
+    add_subdirectory(log/Test)
     add_subdirectory(Common/memory/Test)
     add_subdirectory(service/ConferenceMixService/Test)
     add_subdirectory(Common/CallbackEmitter/Test)
@@ -296,6 +297,11 @@ add_executable(Packetia
     server/ServerApp.cpp
     server/WorkerSetup.cpp
 )
+
+# Seed the runtime configuration once; rebuilding preserves local edits.
+if(NOT EXISTS "${CMAKE_CURRENT_BINARY_DIR}/packetia.json")
+    configure_file(config/packetia.json packetia.json COPYONLY)
+endif()
 
 if(PACKETIA_WITH_LIBWEBSOCKETS)
     target_sources(Packetia PRIVATE server/WebRtcService.cpp)
