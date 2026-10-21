@@ -7,11 +7,17 @@ TURN UDP 中继及录像模块。支持原有 `Packetia` 单进程入口，以�
 当前已验证：两个浏览器加入同一房间，A 发布、B 观看，B 强制经过 TURN UDP；
 双方信令意外断开后恢复原参与者，通过 ICE restart 建立新路径并继续传输媒体。
 
+媒体计算层已接入 H264、H265、VP8、VP9、AV1 的软件编解码，支持一路完整编码帧解码一次后生成多档输出；
+接收侧补齐 RTP 排序、回绕、缺包等待期限及长断流前向重同步。计算层支持的格式与协议接入范围分别说明，见下文。
+
 ### 阅读导航
 
 - [构建与依赖](#构建与依赖)：Linux/macOS 构建、测试依赖。
 - [控制服务与 SFU 节点](docs/distributed-services.md)：一控两节点、本地启动、房间接口与 Docker Compose。
 - [网络层边界与线程约定](#网络层边界与线程约定)：调度归属、TCP 缓冲、TLS 传输。
+- [视频转码与多编码适配](#视频转码与多编码适配)：默认 720p/360p 输出、任务接口、实现选择与验证命令。
+- [多编码适配设计](docs/media-codec-adaptation.md)、[业务格式兼容方案](docs/media-format-plan.md)：已实现能力与后续协议、容器、播放接入规划。
+- [RTP 接收排序与弱网恢复](#rtp-接收排序与弱网恢复)：等待预算、前向重同步、本机实测与复现。
 - [TURN UDP 中继](#turn-udp-中继)：认证、资源管理、STUN 地址发现与双栈。
 - [参与者与连接数据结构](#参与者与连接数据结构)：对象归属、信令恢复与 ICE restart。
 - [双浏览器房间与 TURN 示例](#双浏览器房间与-turn-示例)：启动方式与浏览器检查。
@@ -31,6 +37,9 @@ TURN UDP 中继及录像模块。支持原有 `Packetia` 单进程入口，以�
 | TURN/STUN | UDP 长期凭证认证、中继、权限、通道、到期清理、配额/ACL、IPv4/IPv6 | 不支持 TURN TCP/TLS、双地址族 Allocation 或完整 coturn 功能 |
 | TCP/TLS | 有界 TCP 缓冲、所属线程调度、TLS 1.2/1.3 服务端传输组件 | TLS 尚未接入 TURN 或 WSS 监听、应用配置 |
 | 弱网与带宽控制 | NACK 重传、PLI/FIR、TWCC/RR、时延/接收速率/RTT/丢包联合码率控制 | 输出控制建议；实际 Pacer、媒体降码率、分层选择、FEC 与主动探测尚未接入 |
+| RTP 接收排序 | 按 SSRC 隔离、乱序/回绕处理、有界缓存与等待、连续包验证后的前向重同步；H264 独立组帧期限 | 等待预算受 worker 调度影响；不保证端到端时延；后退重启和半周期歧义需会话重置 |
+| 视频编解码 | FFmpeg 软件适配 H264/H265/VP8/VP9/AV1，按格式、方向、参数和实现偏好创建实例 | 取决于本机 FFmpeg 实现；当前输出 SDR 8-bit I420；硬件、音频转码尚未接入 |
+| 多档转码 | 一次解码、多档缩放编码；默认 H264 → 720p/360p H264；有界输入队列、任务启停与状态统计 | 原 `Packetia` 入口集成；独立 `PacketiaSfu` 尚未接入；缺少任务 HTTP API、派生流 RTP 输出及浏览器播放闭环 |
 | 应用鉴权 | HS256 房间 JWT、API key 查询、发布/订阅权限、参与者身份绑定和恢复校验 | 登录与签发由业务后端负责；暂不包含自动刷新、动态权限更新和撤销列表 |
 | HTTP/账号 API | libwebsockets HTTP 接入、有界业务队列、SQLite 账号与会话、scrypt 密码校验、5 个账号接口 | 单进程开发配置启用本机 API 与注册；控制入口另含房间、成员和入房凭证接口 |
 | 多进程部署 | 独立控制进程、多 SFU、节点注册/心跳、持久化房间绑定、节点/实例 JWT 校验 | 单控制服务；SFU 故障后需新建房间，尚无迁移和房间回收 |
@@ -47,7 +56,7 @@ TURN UDP 中继及录像模块。支持原有 `Packetia` 单进程入口，以�
 
 ### Linux 与 FFmpeg 依赖
 
-主程序和录像测试通过 `pkg-config` 查找系统安装的 libavformat、libavcodec 和 libavutil
+主程序、录像和转码模块通过 `pkg-config` 查找系统安装的 libavformat、libavcodec、libavutil 和 libswscale
 开发包。无需编译 `third/ffmpeg` 下的源码，原有 `PACKETIA_FFMPEG_ROOT` 配置不再使用。
 仅安装 `ffmpeg` 命令行程序不够，构建还需要对应的开发头文件和库。
 
@@ -56,7 +65,7 @@ Ubuntu 上安装依赖并构建主程序：
 ```sh
 sudo apt update
 sudo apt install build-essential cmake pkg-config libssl-dev \
-  libavformat-dev libavcodec-dev libavutil-dev libsqlite3-dev \
+  libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libsqlite3-dev \
   libwebsockets-dev libsrtp2-dev libcurl4-openssl-dev
 
 cmake -S . -B build -DBUILD_TESTING=OFF
@@ -64,7 +73,10 @@ cmake --build build --target Packetia -j"$(nproc)"
 ```
 
 库必须与目标操作系统和 CPU 架构一致。可通过
-`pkg-config --modversion libavformat libavcodec libavutil` 检查检测到的版本。
+`pkg-config --modversion libavformat libavcodec libavutil libswscale` 检查检测到的版本。
+
+转码还要求 FFmpeg 构建包含所选编解码实现。可用 `ffmpeg -encoders`、`ffmpeg -decoders` 辅助检查，
+应用以 `VideoCodecFactory::Capabilities()` 和实际初始化结果为准；开发库可链接不代表五种格式都可运行。
 
 ### 单进程启动
 
@@ -123,6 +135,68 @@ ctest --test-dir build --output-on-failure
 cmake -S service/RecordService/Test -B build/recording-tests
 cmake --build build/recording-tests --parallel
 ctest --test-dir build/recording-tests --output-on-failure
+```
+
+## 视频转码与多编码适配
+
+转码以完整编码帧为输入和输出，当前调用链如下：
+
+```text
+RTP 接收 / 解包 → 完整编码帧 → EncodedFrameRouter
+  → TranscodeSession 有界队列 → 任务 worker
+  → VideoTranscoder：解码一次 → 每档缩放、编码
+  → TranscodedFrameRouter → 应用消费者
+```
+
+现有 RTP 视频组帧路径为 H264。其他格式可从完整编码帧接口接入计算层，
+仍需分别补齐对应的 RTP 解包、封包、会话协商和容器适配，才能用于相应业务。
+
+| 格式 | FFmpeg 解码候选 | FFmpeg 编码候选 |
+| --- | --- | --- |
+| H264 | `h264` | `libx264` |
+| H265 | `hevc` | `libx265` |
+| VP8 | `vp8`、`libvpx` | `libvpx` |
+| VP9 | `vp9`、`libvpx-vp9` | `libvpx-vp9` |
+| AV1 | `libdav1d`、`libaom-av1` | `libsvtav1`、`libaom-av1` |
+
+每档可指定格式、分辨率、bps 和实现偏好。工厂支持 `Auto`、`Prefer`、`Require`：
+自动选择、优先指定实现、必须使用指定实现；回退仅限同一编码格式，失败返回具体候选及原因。
+本机已验证 x264、x265、libvpx、SVT-AV1 和 dav1d 路径，libaom 候选尚未实测。
+缩放保持显示宽高比并补黑边；硬件后端、10-bit/HDR 和 SVC 不在当前交付范围。
+
+已启动的 `ServerApp` 可以用下面的 C++ 调用创建默认任务。身份值需要替换成实际输入来源及独立输出身份：
+
+```cpp
+service::transcode::TranscodeTaskConfig task;
+task.task_id = "camera-720p-360p";
+task.input = {10, 42};                       // 实际 endpoint_id、track_id
+task.output = {20, "session", "camera"};     // 与输入不同的输出身份
+// 默认 H264 输入，输出 1280×720 / 2 Mbps 和 640×360 / 600 kbps 两档 H264。
+// 默认任务按原始 90 kHz RTP32 时间戳处理；已展开的媒体时间须改为 MediaTime。
+if (!app.StartTranscode(task)) {
+    auto error = app.TranscodeLastError();
+    // 将 error 交给应用的错误处理入口。
+}
+// app.TranscodeStatus(task.task_id)：状态、队列、处理/丢弃/恢复计数。
+// app.TranscodedFrameRouter()：由应用订阅输出，流名为 camera/720p、camera/360p。
+// app.StopTranscode(task.task_id)：停止并回收任务。
+```
+
+输入回调只向默认 32 帧、16 MiB 的有界队列提交帧。每个活动任务由一个 `ManagedThread`
+串行执行编解码；溢出后等待随机访问关键帧并重建解码状态。没有任务时不创建转码 worker。
+这些是容量限制，目前尚无转码输入帧的等待期限，也未将带宽估计接入运行时编码码率控制。
+
+当前服务在原 `Packetia` 入口注册；独立 `PacketiaSfu` 尚未集成。
+应用需显式订阅输出，尚无转码任务 HTTP API 或派生流 WebRTC 发布闭环。
+更多参数、所有权、线程契约和格式边界见[多编码适配设计](docs/media-codec-adaptation.md)，
+各业务的透传、换封装和转码规划见[业务格式兼容方案](docs/media-format-plan.md)。
+
+使用已配置 `BUILD_TESTING=ON` 的构建目录运行转码测试：
+
+```sh
+cmake --build build --target test_transcode_domain test_video_transcoder test_multicodec -j4
+ctest --test-dir build --output-on-failure \
+  -R '^(transcode_domain|video_transcoder|multicodec)$'
 ```
 
 ## 各路独立录像切片
@@ -187,7 +261,7 @@ Apple Silicon 建议使用原生 arm64 Homebrew，避免混用 Rosetta 的 x86_6
 ### 线程归属
 
 线程创建统一经过 [`utils::ThreadManager`](utils/ThreadManager.h)，由 `ManagedThread` 持有线程、
-发出协作停止请求并等待退出。I/O、命名工作线程池、AI 帧处理、会议混流和异步日志均已接入；
+发出协作停止请求并等待退出。I/O、命名工作线程池、转码任务、AI 帧处理、会议混流和异步日志均已接入；
 主线程通过 `TrackCurrent` 登记。线程状态包括模型、分组、名称、原生线程 ID、启动时间和未捕获异常。
 已退出但尚未回收的线程仍可查询，`Join` 完成后移除登记。FFmpeg 等第三方库内部线程由对应库管理。
 
@@ -195,6 +269,7 @@ Apple Silicon 建议使用原生 arm64 Homebrew，避免混用 Rosetta 的 x86_6
 ServerApp / ServerLauncher（按依赖顺序启停）
   ├─ EventLoop → I/O 事件循环
   ├─ WorkerRegistry → media / endpoint / transcode / API / recording
+  ├─ TranscodeService → 每个活动任务一个 worker
   └─ AI / mix / logging → 专用循环
                   ↓
         ThreadManager / ManagedThread（统一创建、命名、停止请求、回收、状态登记）
@@ -221,6 +296,10 @@ ServerApp / ServerLauncher（按依赖顺序启停）
 线程数支持 1～64，转码的 `0` 表示按 CPU 数自动选择 1～4；配置在启动时生效，
 不支持运行中直接修改分片数量。各用途仍使用独立队列，媒体和 Endpoint 保留丢弃最旧任务策略，
 API/转码使用拒绝新任务策略。旧 `QueueManager` 已复用有界命名池，新增 `Stop` 和可检查拒绝的 `TryPost`。
+
+这里的 `workers.transcode_threads` 和 `transcode_queue_len` 配置命名转码池，
+新 `TranscodeService` 的任务 worker 使用独立线程与帧队列，不受这两个字段控制。
+接收流的约 10 ms 超时检查复用所属媒体 worker，不为每条流创建线程。
 
 整机停机使用 `ServerApp::Stop()`：先关闭接入，再排空工作队列和帧消费者，最后回收 I/O 线程。
 单个服务的停机使用其 `Stop`；`ThreadManager::RequestStop(id)` 只是底层协作请求，
@@ -989,6 +1068,53 @@ BUNDLE、ICE、DTLS、SSRC 与 m-line。Offer/Answer 状态通过提交和回滚
 普通 re-offer 不允许直接更换 ICE 凭据；同会话换路径使用上述 `restart_ice` 入口。
 当前 restart 保持有效协商的媒体参数及 DTLS 身份不变，不同时进行增删轨道等媒体变更。
 
+## RTP 接收排序与弱网恢复
+
+音频等通用接收路径使用 [RtpPacketReorderQueue](Rtsp/RtpPacketReorderQueue.h)，按展开后的序号排序，
+处理 `65535 → 0` 回绕、重复包、迟到包、容量推进和缺包等待超时。
+默认向前窗口为 1000，缓存最多 50 包、等待 100 ms；正常连续包立即输出。
+期限从被阻塞包的本机单调时钟到达时间起算，新包不会延长旧缺口的期限。
+
+前向超窗恢复要求正常输出停滞至少 500 ms、旧队列为空，且在严格小于 100 ms 内确认三个连续候选包。
+前两包丢弃，第三包起向前推进，保留累计统计。后退重启或恰好半周期的歧义序号不能据此恢复，
+需要会话层重置；包进入队列前仍需验证源身份、SSRC、PT 及适用的鉴权。
+
+H264 直接使用独立帧缓冲处理帧内乱序，不在它之前叠加通用排序器。
+默认组帧等待 100 ms，超时丢弃不可用的依赖链，保留参数集并等待恢复关键帧；
+停止旧缺口 NACK 重试并请求关键帧。现有媒体 worker 约每 10 ms 检查已登记流，停包后也会检查。
+这些缓冲作用于接收组帧，原始 SFU RTP 转发继续收到即转发。
+
+**100 ms 是缓冲等待预算，实际延迟还受 worker 排队、回调阻塞和 socket 积压影响。**
+Apple M5 / macOS 26.5.1 上完成修改前后各 72 次试验，包含确定性故障模拟和真实回环 UDP：
+
+| 注入场景 | 测量结果 |
+| --- | --- |
+| 1000 包/秒、10–90 ms 延迟、3% 丢包、2% 重复 | 默认配置输出率 97.14%，未额外丢弃唯一源包 |
+| 1000 包/秒、20–200 ms 延迟、10% 丢包、5% 重复 | 基线默认配置输出率 59.10%；改为 128 包/200 ms 后 90.08%，等待增加 |
+| 5000 包/秒、10–50 ms 延迟、1% 丢包 | 基线容量 50→256，输出率 71.05%→98.97%；排队 P95 26.51→63.46 ms |
+| 接收 owner 阻塞 250 ms | 排队最高 270.65 ms，包数上限不能约束线程阻塞造成的延迟 |
+| 连续丢失 1200 包 | 基线 3/3 未恢复；前向重同步后 3/3 恢复，每轮输出 800→1798 包，仅额外丢两个探测包 |
+
+输出率包含注入的网络丢包。上述故障参数用于边界验证，尚未按真实业务网络分布校准；
+试验使用合成 RTP 数据，未测量视频冻结、完整转码/SFU 播放链路、公网表现或并发容量。
+策略与统计口径见[排序队列设计](docs/rtp-reorder-queue.md)，原始数据见
+[基线报告](docs/benchmarks/rtp-reorder-macos-2026-10-21/report.md)与
+[重同步后报告](docs/benchmarks/rtp-reorder-resync-macos-2026-10-21/report.md)。
+
+在已配置 `BUILD_TESTING=ON` 的 macOS/Linux 构建目录复现：
+
+```sh
+cmake --build build --target test_rtp_reorder_queue rtp_weaknet_bench -j4
+ctest --test-dir build --output-on-failure \
+  -R '^(rtp_reorder_queue|rtp_weaknet_smoke|rtp_resync_smoke)$'
+python3 Rtsp/Test/run_rtp_weaknet_bench.py \
+  --binary build/Rtsp/Test/rtp_weaknet_bench \
+  --output build/rtp-weaknet-results
+```
+
+脚本默认运行 72 次试验并写出环境、逐次统计和采样数据，不修改系统网络配置；
+真实 UDP 部分仅向本机回环发送。
+
 ## 弱网与带宽控制
 
 下行音视频和重传共用每条 Transport 的 `SendSideController`，独立维护 TWCC 序号、
@@ -1019,6 +1145,21 @@ WebRTC 会话的 100 ms 定时器向媒体池投递恢复任务，停止收包�
 带宽算法测试通过不代表真实浏览器弱网质量已经验收。详见[丢包恢复说明](docs/weak-network.md)。
 
 ## 本轮验证
+
+2026-10-21 多编码与接收恢复验证（Apple M5 / macOS 26.5.1）：完整构建成功，
+现有 `build/webrtc-integration` 配置下 **54/54 组 CTest 通过，无跳过**。
+包含 2 个任务领域、18 个视频转码、19 个多编码和 24 个排序队列用例；
+多编码测试覆盖五种输入各生成五种输出的 25 种组合。
+24 个队列用例和 23 个 H264 组帧/期限用例另有 ASan/UBSan 验证。
+本机 FFmpeg 未提供 libaom，相应候选尚未实测；软件计算验证不代表五种格式的浏览器互通或时延验收。
+完整改动与两轮弱网报告入口见[当天变更说明](docs/changes/2026-10-21.md)。
+
+```sh
+cmake --build build/webrtc-integration -j4
+ctest --test-dir build/webrtc-integration --output-on-failure --timeout 120
+```
+
+以下保留各日期当时的验证结果和限制。
 
 2026-10-15 控制服务与 SFU 拆分验证（macOS）：`PacketiaControl`、`PacketiaSfu` 和原 `Packetia`
 均编译通过；13 个相关 CTest 入口通过，包含一控两 SFU 的真实进程故障测试及原有账号、鉴权、
@@ -1096,6 +1237,16 @@ build/webrtc-integration/Rtsp/Test/test_rtp_input \
 ## 开发记录
 
 以下记录描述各次修改当时的状态；其中的待实现能力和限制可能已在后续完成，当前状态以上文为准。
+
+### 2026-10-21：多编码转码与 RTP 弱网恢复
+
+- 新增五种视频格式的软件适配、公共配置与接口、实现工厂；分开格式、具体库、码流表示和传输 PT。
+- 接通完整编码帧输入、一次解码、多档缩放编码和独立输出路由，提供任务启停、状态、准入及过载恢复。
+- 重构通用 RTP 排序队列，补齐 H264 组帧期限、媒体 worker 空闲检查和长断流前向重同步。
+- 完成修改前后各 72 次本机弱网试验，保留 CSV、JSONL、缓存采样及环境；完整构建和 54 组 CTest 通过。
+- 整理格式兼容规划、实际适配边界与验证数据；下一步优先打通转码输出的协议适配和播放链路。
+
+详细清单及实测结论见[2026-10-21 变更说明](docs/changes/2026-10-21.md)。
 
 ### 2026-10-14：HTTP 接入、API 路由与统一线程管理
 
