@@ -220,6 +220,32 @@ TEST(RtcpChainTest, NackRequesterReportsRecoveryAndFailure)
     EXPECT_EQ(requester.GetStats().abandoned_packets, 1U);
 }
 
+TEST(RtcpChainTest, FrameDeadlineAbandonsNacksWithoutResettingHistory)
+{
+    rtsp::NackRequester::Config config;
+    config.reorder_wait_ms = 0;
+    rtsp::NackRequester requester(config);
+    std::vector<uint16_t> requested;
+    requester.SetNackCallback([&](const auto& packets) {
+        requested.insert(requested.end(), packets.begin(), packets.end());
+    });
+    requester.OnReceivedPacket(65534, 0);
+    requester.OnReceivedPacket(0, 1);
+    requester.Process(1);
+    EXPECT_EQ(requested, (std::vector<uint16_t>{65535}));
+    requester.AbandonPending();
+    requester.Process(100);
+    EXPECT_EQ(requested.size(), 1U);
+    EXPECT_EQ(requester.GetStats().missing_packets, 1U);
+    EXPECT_EQ(requester.GetStats().abandoned_packets, 1U);
+    EXPECT_EQ(requester.GetStats().nack_requests, 1U);
+    EXPECT_FALSE(requester.OnReceivedPacket(65535, 101).was_missing);
+    requester.OnReceivedPacket(2, 102);
+    requester.Process(102);
+    EXPECT_EQ(requested, (std::vector<uint16_t>{65535, 1}));
+    EXPECT_EQ(requester.GetStats().missing_packets, 2U);
+}
+
 TEST(RtcpChainTest, ReceiverReportUsesSigned24BitCumulativeLoss)
 {
     uint8_t rr[32] = {};

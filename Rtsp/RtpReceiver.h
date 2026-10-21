@@ -309,6 +309,9 @@ public:
      */
     virtual RtpPacket::Ptr inputRtp(const uint8_t *ptr, size_t len) = 0;
 
+    // Same owner as inputRtp; a periodic call also handles an idle source.
+    virtual void TickReceive(uint64_t /*now_ms*/) { flushExpired(); }
+
     virtual void OnRtcpSenderReport(uint32_t sender_ssrc, uint64_t ntp, uint32_t rtp_ts, uint32_t packet_count, uint32_t octet_count)
     {
         track_clock_.UpdateSenderReport(ntp, rtp_ts);
@@ -471,6 +474,7 @@ protected:
 
 public:
     void setSendNackCallback(SendNackCallback cb) { _on_send_nack = std::move(cb);}
+    void setRequestKeyFrameCallback(PliCallback cb) { _on_request_keyframe = std::move(cb); }
     void setNackRecoveryFailureCallback(NackRecoveryFailureCallback cb) { _on_nack_recovery_failure = std::move(cb); }
 
 protected:
@@ -508,6 +512,7 @@ protected:
 
     SendNackCallback _on_send_nack;
     NackRecoveryFailureCallback _on_nack_recovery_failure;
+    PliCallback _on_request_keyframe;
     media::TrackClock track_clock_;
 };
 
@@ -524,6 +529,8 @@ public:
 public:
     bool IsReady() const { return static_cast<bool>(depacketizer_); }
     RtpPacket::Ptr inputRtp(const uint8_t* ptr, size_t len) override;
+
+    void TickReceive(uint64_t now_ms) override;
 
     void TickNack(uint64_t now_ms)
     {

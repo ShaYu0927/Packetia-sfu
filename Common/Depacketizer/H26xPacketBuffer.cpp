@@ -50,12 +50,44 @@ void H264PacketBuffer::ClearInternal()
 {
     for (auto& packet : buffer_)
         packet.reset();
+    arrivals_.clear();
     last_continuous_unwrapped_seq_.reset();
     last_continuous_timestamp_.reset();
     current_frame_start_.reset();
     current_frame_timestamp_ = 0;
     discarding_frame_ = false;
+    waiting_for_recovery_ = false;
     buffered_packet_count_ = 0;
+}
+
+void H264PacketBuffer::ErasePacket(std::unique_ptr<BufferedPacket>& packet)
+{
+    arrivals_.erase(packet->arrival);
+    packet.reset();
+    --buffered_packet_count_;
+}
+
+size_t H264PacketBuffer::FlushExpired(TimePoint now)
+{
+    if (arrivals_.empty() || now < arrivals_.begin()->first ||
+        now - arrivals_.begin()->first < std::chrono::milliseconds(config_.max_wait_ms))
+        return 0;
+    const size_t discarded = buffered_packet_count_;
+    // Retain a sequence floor across recovery so a late retransmission cannot
+    // revive an abandoned AU. Reset(), in contrast, starts a new stream.
+    auto floor = last_continuous_unwrapped_seq_;
+    auto timestamp = last_continuous_timestamp_;
+    for (const auto& entry : arrivals_) {
+        if (!floor || entry.second >= *floor) {
+            floor = entry.second;
+            timestamp = GetPacket(entry.second)->packet.timestamp;
+        }
+    }
+    ClearInternal();
+    last_continuous_unwrapped_seq_ = floor;
+    last_continuous_timestamp_ = timestamp;
+    waiting_for_recovery_ = true;
+    return discarded;
 }
 
 size_t H264PacketBuffer::BufferIndex(int64_t unwrapped_seq)
@@ -97,7 +129,7 @@ bool H264PacketBuffer::CanAdvanceFrom(int64_t inserted_seq, const H264ParsedPack
         {
             return false;
         }
-        if (inserted_seq == *last_continuous_unwrapped_seq_ + 1)
+        if (!waiting_for_recovery_ && inserted_seq == *last_continuous_unwrapped_seq_ + 1)
         {
             return true;
         }
@@ -118,14 +150,17 @@ bool H264PacketBuffer::CanAdvanceFrom(int64_t inserted_seq, const H264ParsedPack
     current_frame_start_.reset();
     discarding_frame_ = false;
     last_continuous_unwrapped_seq_ = inserted_seq - 1;
+    waiting_for_recovery_ = false;
     return true;
 }
 
-H264PacketBuffer::InsertResult H264PacketBuffer::InsertPacket(H264ParsedPacket packet)
+H264PacketBuffer::InsertResult H264PacketBuffer::InsertPacket(H264ParsedPacket packet, TimePoint now)
 {
     InsertResult result;
     if (!packet.valid || packet.malformed)
         return result;
+
+    result.expired_packets = FlushExpired(now);
 
     const int64_t unwrapped_seq = seq_unwrapper_.Unwrap(packet.seq);
     if (last_continuous_unwrapped_seq_ && unwrapped_seq <= *last_continuous_unwrapped_seq_)
@@ -151,13 +186,13 @@ H264PacketBuffer::InsertResult H264PacketBuffer::InsertPacket(H264ParsedPacket p
         }
 
         result.buffer_collision = true;
-        slot.reset();
-        --buffered_packet_count_;
+        ErasePacket(slot);
     }
 
     auto stored = std::make_unique<BufferedPacket>();
     stored->unwrapped_seq = unwrapped_seq;
     stored->packet = std::move(packet);
+    stored->arrival = arrivals_.emplace(now, unwrapped_seq);
     buffer_[BufferIndex(unwrapped_seq)] = std::move(stored);
     ++buffered_packet_count_;
     result.inserted = true;
@@ -305,8 +340,7 @@ void H264PacketBuffer::RemovePackets(int64_t start_seq, int64_t end_seq)
         {
             if (packet && packet->unwrapped_seq >= start_seq && packet->unwrapped_seq <= end_seq)
             {
-                packet.reset();
-                --buffered_packet_count_;
+                ErasePacket(packet);
             }
         }
         return;
@@ -316,8 +350,7 @@ void H264PacketBuffer::RemovePackets(int64_t start_seq, int64_t end_seq)
         auto& packet = buffer_[BufferIndex(seq)];
         if (packet && packet->unwrapped_seq == seq)
         {
-            packet.reset();
-            --buffered_packet_count_;
+            ErasePacket(packet);
         }
     }
 }
@@ -328,8 +361,7 @@ void H264PacketBuffer::RemovePacketsBefore(int64_t seq)
     {
         if (packet && packet->unwrapped_seq < seq)
         {
-            packet.reset();
-            --buffered_packet_count_;
+            ErasePacket(packet);
         }
     }
 }

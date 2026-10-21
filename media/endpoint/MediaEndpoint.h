@@ -109,6 +109,7 @@ public:
 
     bool Start() override;
     void Stop() override;
+    bool PollMedia(uint64_t stream_key, uint64_t now_ms) override;
 
     // Receive-stream removal retains the negotiated logical track.
     int RemoveMediaStream(uint32_t source_ssrc);
@@ -190,6 +191,7 @@ private:
 private:
     std::mutex track_mtx_;
     std::unordered_map<uint32_t, rtsp::RtpReceiverTrack::Ptr> ssrc_to_track_;
+    std::unordered_map<uint64_t, std::weak_ptr<rtsp::RtpReceiverTrack>> receiver_tick_keys_;
     std::vector<media::EncodedFrame::Ptr> pending_frames_;
     std::unique_ptr<rtsp::RtcpDispatcher> rtcp_dispatcher_;
     std::unique_ptr<rtcpx::IRtcpReceiver> rtcp_receiver_;

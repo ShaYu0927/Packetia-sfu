@@ -108,6 +108,43 @@ protected:
     std::vector<std::unique_ptr<Socket>> reservations;
 };
 
+TEST_F(ServerAppTest, TranscodeTasksCanStartStopAndFollowServiceToggle)
+{
+    config.turn.enabled = false;
+    reservations.clear();
+    server::ServerApp app(config);
+    service::transcode::TranscodeTaskConfig task;
+    task.task_id = "app-transcode";
+    task.input.endpoint_id = 10;
+    task.input.track_id = 42;
+    task.output.endpoint_id = 20;
+    task.output.session_id = "room";
+    task.output.stream_id = "camera";
+    EXPECT_FALSE(app.StartTranscode(task));
+    EXPECT_FALSE(app.TranscodeLastError().empty());
+    ASSERT_TRUE(app.Start());
+    ASSERT_TRUE(app.ServiceEnabled(service::ServiceType::Transcode));
+    ASSERT_TRUE(app.TranscodedFrameRouter());
+    EXPECT_NE(app.TranscodedFrameRouter(), app.MixedFrameRouter());
+    ASSERT_TRUE(app.StartTranscode(task));
+    auto status = app.TranscodeStatus(task.task_id);
+    ASSERT_TRUE(status);
+    EXPECT_EQ(status->state, service::transcode::TranscodeTaskState::Running);
+    EXPECT_TRUE(status->waiting_for_idr);
+    ASSERT_TRUE(app.SetServiceEnabled(service::ServiceType::Transcode, false));
+    EXPECT_FALSE(app.TranscodeStatus(task.task_id));
+    EXPECT_FALSE(app.StartTranscode(task));
+    ASSERT_TRUE(app.SetServiceEnabled(service::ServiceType::Transcode, true));
+    ASSERT_TRUE(app.StartTranscode(task));
+    service::transcode::TranscodeTaskStatus final;
+    ASSERT_TRUE(app.StopTranscode(task.task_id, &final));
+    EXPECT_EQ(final.state, service::transcode::TranscodeTaskState::Stopped);
+    EXPECT_EQ(final.stats.published, 0u);
+    ASSERT_TRUE(app.StartTranscode(task));
+    app.Stop();
+    EXPECT_FALSE(app.TranscodeStatus(task.task_id));
+}
+
 TEST_F(ServerAppTest, SingleAppStartsTurnAndWebRtcRelaysAndReleasesResources)
 {
     using namespace protocol;

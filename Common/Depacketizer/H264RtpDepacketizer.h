@@ -16,6 +16,7 @@ public:
     bool HasFrame() const override;
     bool PopFrame(EncodedFrame& frame) override;
     void Reset() override;
+    bool FlushExpired() override { return depacketizer_.FlushExpired(); }
 
 private:
     H264Depacketizer depacketizer_;

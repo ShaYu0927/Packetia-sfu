@@ -22,6 +22,7 @@ public:
     common::ByteVector popFrame() override;
     bool popAccessUnit(media::H264AccessUnit& out);
     void Reset();
+    bool FlushExpired() { return packet_buffer_.FlushExpired() != 0; }
     // Negotiated parameters plus updates through the last popped access unit.
     const media::H264ParameterSetTracker& parameterSets() const { return parameter_sets_; }
 

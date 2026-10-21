@@ -43,6 +43,91 @@ TEST(VideoDepacketizerTest, FactoryRejectsUnimplementedOrMismatchedConfiguration
     EXPECT_EQ(VideoRtpDepacketizerFactory::Create(CodecType::H264, "H264", 48000), nullptr);
 }
 
+namespace {
+media::H264ParsedPacket Parsed(uint16_t seq, uint32_t timestamp, bool marker,
+                               std::initializer_list<uint8_t> payload)
+{
+    RtpView view;
+    view.ssrc = 42;
+    view.seq = seq;
+    view.ts = timestamp;
+    view.marker = marker;
+    view.payload = payload.begin();
+    view.payload_len = payload.size();
+    media::H264ParsedPacket packet;
+    media::H264RtpPayloadParser parser;
+    EXPECT_TRUE(parser.Parse(view, packet));
+    return packet;
+}
+media::H264PacketBuffer::TimePoint BufferTime(int ms)
+{
+    return media::H264PacketBuffer::TimePoint{} + std::chrono::milliseconds(ms);
+}
+}
+
+TEST(H264PacketBufferDeadline, ExpiresPartialChainAndRequiresFreshKeyframe)
+{
+    media::H264PacketBuffer buffer;
+    buffer.InsertPacket(Parsed(100, 90000, false, {0x7C, 0x85, 0x80}), BufferTime(0));
+    buffer.InsertPacket(Parsed(102, 90000, true, {0x7C, 0x45, 0xBB}), BufferTime(10));
+    EXPECT_EQ(buffer.FlushExpired(BufferTime(99)), 0U);
+    EXPECT_EQ(buffer.FlushExpired(BufferTime(100)), 2U);
+    EXPECT_EQ(buffer.BufferedPacketCount(), 0U);
+    EXPECT_EQ(buffer.FlushExpired(BufferTime(101)), 0U);
+    EXPECT_TRUE(buffer.InsertPacket(Parsed(101, 90000, false, {0x7C, 0x05, 0xCC}),
+        BufferTime(101)).late);
+    // Even a complete P frame after the discarded chain must not be emitted.
+    EXPECT_TRUE(buffer.InsertPacket(Parsed(103, 93000, true, {0x41, 0x80}),
+        BufferTime(102)).frames.empty());
+    // Another first slice in the abandoned AU cannot resurrect that AU.
+    EXPECT_TRUE(buffer.InsertPacket(Parsed(104, 90000, true, {0x65, 0x80}),
+        BufferTime(103)).frames.empty());
+    const auto recovered = buffer.InsertPacket(Parsed(105, 96000, true, {0x65, 0x80}), BufferTime(104));
+    ASSERT_EQ(recovered.frames.size(), 1U);
+    EXPECT_TRUE(recovered.frames.front().complete);
+    EXPECT_EQ(recovered.frames.front().first_seq, 105U);
+    EXPECT_EQ(buffer.BufferedPacketCount(), 0U);
+}
+
+TEST(H264PacketBufferDeadline, RepairRemovesOldDeadlineAndNewFrameGetsItsOwnBudget)
+{
+    media::H264PacketBuffer buffer;
+    buffer.InsertPacket(Parsed(100, 90000, false, {0x7C, 0x85, 0x80}), BufferTime(0));
+    buffer.InsertPacket(Parsed(102, 90000, true, {0x7C, 0x45, 0xBB}), BufferTime(10));
+    const auto repaired = buffer.InsertPacket(Parsed(101, 90000, false, {0x7C, 0x05, 0xCC}), BufferTime(99));
+    ASSERT_EQ(repaired.frames.size(), 1U);
+    EXPECT_EQ(buffer.BufferedPacketCount(), 0U);
+    buffer.InsertPacket(Parsed(103, 93000, false, {0x7C, 0x81, 0x80}), BufferTime(150));
+    EXPECT_EQ(buffer.FlushExpired(BufferTime(200)), 0U);
+    EXPECT_EQ(buffer.FlushExpired(BufferTime(250)), 1U);
+}
+
+TEST(H264PacketBufferDeadline, ArrivalAndDuplicatesDoNotRefreshDeadlineAcrossWrap)
+{
+    media::H264PacketBuffer buffer;
+    buffer.InsertPacket(Parsed(65534, 90000, false, {0x7C, 0x85, 0x80}), BufferTime(0));
+    buffer.InsertPacket(Parsed(0, 90000, true, {0x7C, 0x45, 0xBB}), BufferTime(10));
+    EXPECT_TRUE(buffer.InsertPacket(Parsed(0, 90000, true, {0x7C, 0x45, 0xBB}), BufferTime(90)).duplicate);
+    const auto result = buffer.InsertPacket(Parsed(1, 93000, true, {0x41, 0x80}), BufferTime(100));
+    EXPECT_EQ(result.expired_packets, 2U);
+    EXPECT_TRUE(result.frames.empty());
+    EXPECT_TRUE(buffer.InsertPacket(Parsed(65535, 90000, false, {0x7C, 0x05, 0xCC}), BufferTime(101)).late);
+    const auto recovered = buffer.InsertPacket(Parsed(2, 96000, true, {0x65, 0x80}), BufferTime(102));
+    ASSERT_EQ(recovered.frames.size(), 1U);
+    EXPECT_EQ(recovered.frames.front().first_seq, 2U);
+}
+
+TEST(H264PacketBufferDeadline, ResetDropsDeadlinesAndSequenceFloor)
+{
+    media::H264PacketBuffer buffer;
+    buffer.InsertPacket(Parsed(100, 90000, false, {0x7C, 0x85, 0x80}), BufferTime(0));
+    buffer.Reset();
+    EXPECT_EQ(buffer.FlushExpired(BufferTime(1000)), 0U);
+    const auto result = buffer.InsertPacket(Parsed(1, 100, true, {0x65, 0x80}), BufferTime(1000));
+    ASSERT_EQ(result.frames.size(), 1U);
+    EXPECT_EQ(result.frames.front().first_seq, 1U);
+}
+
 TEST(VideoDepacketizerTest, InterfaceOutputsOwningAnnexBFrameAndMetadata)
 {
     auto depacketizer = VideoRtpDepacketizerFactory::Create(CodecType::H264, "H264", 90000);

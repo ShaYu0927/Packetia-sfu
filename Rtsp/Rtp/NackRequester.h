@@ -59,6 +59,9 @@ public:
     void UpdateRtt(uint32_t rtt_ms);
 
     void ClearUpTo(uint16_t seq);
+    // A frame deadline already triggered recovery. Stop retries for its old
+    // gaps without resetting sequence tracking or cumulative statistics.
+    void AbandonPending();
 
     void Reset();
 

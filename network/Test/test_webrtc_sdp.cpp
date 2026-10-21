@@ -255,8 +255,18 @@ void BrowserH264OfferProducesLocalSendOnlyAnswer()
     std::string repeated;
     CHECK(session->CreateLocalAnswer(repeated));
     CHECK(repeated == text);
-    CHECK(!session->ApplyRemoteOffer(Header() + Video()));
+    // Unchanged offers may retain their origin version during renegotiation.
+    CHECK(session->ApplyRemoteOffer(Header() + Video()));
+    CHECK(session->State() == WebRtcSessionState::HaveOffer);
+    CHECK(session->SignalingState() == sdp::SdpNegotiationState::HaveRemoteOffer);
+    CHECK(sdp::Sdp::Serialize(session->LocalDescription()) == text);
+    session->RollbackNegotiation();
     CHECK(session->State() == WebRtcSessionState::HaveAnswer);
+    CHECK(session->SignalingState() == sdp::SdpNegotiationState::Stable);
+    CHECK(sdp::Sdp::Serialize(session->LocalDescription()) == text);
+    CHECK(!session->ApplyRemoteOffer(Replace(Header() + Video(), "a=recvonly\r\n", "a=sendrecv\r\n")));
+    CHECK(session->State() == WebRtcSessionState::HaveAnswer);
+    CHECK(session->SignalingState() == sdp::SdpNegotiationState::Stable);
 }
 
 void HeaderExtensionsAndFeedbackAreIntersected()

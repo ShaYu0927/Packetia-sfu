@@ -19,6 +19,7 @@ enum class ServiceType : uint16_t
     Rtsp    = 301,
     WebRtc  = 302,
     Sip     = 303,
+    Transcode = 304,
 
     Ai      = 400,
     Asr     = 401,

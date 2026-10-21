@@ -19,6 +19,7 @@
 #include "AIService.h"
 #include "UnavailableModelProvider.h"
 #include "RecordingService.h"
+#include "TranscodeService.h"
 #include "EncodedFrameRouter.h"
 #include "logger.h"
 
@@ -40,6 +41,8 @@ ServerApp::ServerApp(ServerConfig config, std::shared_ptr<service::IRecordingEve
       event_loop_(std::make_shared<EventLoop>(config_.io_threads)),
       frame_router_(std::make_shared<media::EncodedFrameRouter>()),
       mix_output_router_(std::make_shared<media::EncodedFrameRouter>()),
+      transcode_output_router_(std::make_shared<media::EncodedFrameRouter>()),
+      transcode_service_(std::make_shared<service::transcode::TranscodeService>(frame_router_, transcode_output_router_)),
       mix_service_(std::make_shared<service::mix::ConferenceMixService>(frame_router_, mix_output_router_, settings_))
 {
     ConfigureServices();
@@ -140,6 +143,8 @@ void ServerApp::AddMediaServices()
         std::make_shared<service::ai::AIService>(
             std::make_shared<service::ai::UnavailableModelProvider>(), frame_router_, nullptr, 128, settings_), config_.ai_enabled);
     launcher_.AddService(SERVICE_CONFERENCE_MIX, mix_service_, config_.conference_mix_enabled);
+    // No transcode workers are allocated until a task is explicitly started.
+    launcher_.AddService(SERVICE_TRANSCODE, transcode_service_);
 }
 
 bool ServerApp::SetServiceEnabled(service::ServiceType type, bool enabled)
@@ -149,6 +154,8 @@ bool ServerApp::SetServiceEnabled(service::ServiceType type, bool enabled)
     config::Feature feature;
     switch (type) 
     {
+    case service::ServiceType::Transcode:
+        return launcher_.SetEnabled(SERVICE_TRANSCODE, enabled);
     case service::ServiceType::Record: name = SERVICE_RECORD; feature = config::Feature::Recording; break;
     case service::ServiceType::Ai: name = SERVICE_AI; feature = config::Feature::AI; break;
     case service::ServiceType::ConferenceMix:
@@ -166,6 +173,7 @@ bool ServerApp::ServiceEnabled(service::ServiceType type) const
     const auto settings = settings_->Snapshot();
     switch (type) 
     {
+    case service::ServiceType::Transcode: return launcher_.IsEnabled(SERVICE_TRANSCODE);
     case service::ServiceType::Record: return settings->recording_enabled;
     case service::ServiceType::Ai: return settings->ai_enabled;
     case service::ServiceType::ConferenceMix: return settings->conference_mix_enabled;
@@ -243,6 +251,29 @@ bool ServerApp::StopConference(const std::string& room_id)
 {
     std::lock_guard<std::mutex> lock(lifecycle_mutex_);
     return mix_service_->StopConference(room_id);
+}
+
+bool ServerApp::StartTranscode(service::transcode::TranscodeTaskConfig config,
+                               std::function<void()> request_keyframe)
+{
+    std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+    return transcode_service_->StartTask(std::move(config), std::move(request_keyframe));
+}
+
+bool ServerApp::StopTranscode(const std::string& task_id, service::transcode::TranscodeTaskStatus* final_status)
+{
+    std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+    return transcode_service_->StopTask(task_id, final_status);
+}
+
+std::optional<service::transcode::TranscodeTaskStatus> ServerApp::TranscodeStatus(const std::string& task_id) const
+{
+    return transcode_service_->TaskStatus(task_id);
+}
+
+std::string ServerApp::TranscodeLastError() const
+{
+    return transcode_service_->LastError();
 }
 
 bool ServerApp::RenegotiateWebRtc(uint64_t session_id, const std::vector<sdp::SdpMedia>& medias, std::string& error)

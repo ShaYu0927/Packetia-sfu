@@ -128,6 +128,7 @@ struct IJobHandler
     }
     virtual void on_worker_tick(std::size_t worker_index) { (void)worker_index; }
     virtual void on_worker_stop(std::size_t worker_index) { (void)worker_index; }
+    virtual uint32_t worker_tick_interval_ms() const { return 100; }
 };
 
 

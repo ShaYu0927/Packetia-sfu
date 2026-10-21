@@ -6,7 +6,9 @@
 #include "ThreadRuntimeStatus.h"
 #include "ConferenceMixService.h"
 #include "RecordingRecords.h"
+#include "TranscodeTaskTypes.h"
 
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <vector>
@@ -15,6 +17,7 @@ class EventLoop;
 namespace media { class EncodedFrameRouter; }
 namespace service { class RecordingService; class IRecordingEventSink; }
 namespace service::account { class AccountService; }
+namespace service::transcode { class TranscodeService; }
 namespace sdp { struct SdpMedia; }
 namespace protocol { class TurnServer; }
 
@@ -52,6 +55,12 @@ public:
     bool RenegotiateWebRtc(uint64_t session_id, const std::vector<sdp::SdpMedia>& medias, std::string& error);
     // Output subscribers (such as recording) can be attached by the application.
     std::shared_ptr<media::EncodedFrameRouter> MixedFrameRouter() const { return mix_output_router_; }
+    bool StartTranscode(service::transcode::TranscodeTaskConfig config,
+                        std::function<void()> request_keyframe = {});
+    bool StopTranscode(const std::string& task_id, service::transcode::TranscodeTaskStatus* final_status = nullptr);
+    std::optional<service::transcode::TranscodeTaskStatus> TranscodeStatus(const std::string& task_id) const;
+    std::string TranscodeLastError() const;
+    std::shared_ptr<media::EncodedFrameRouter> TranscodedFrameRouter() const { return transcode_output_router_; }
 
 private:
     void ConfigureServices();
@@ -71,6 +80,8 @@ private:
     std::shared_ptr<api::ApiServer> api_server_;
     std::shared_ptr<media::EncodedFrameRouter> frame_router_;
     std::shared_ptr<media::EncodedFrameRouter> mix_output_router_;
+    std::shared_ptr<media::EncodedFrameRouter> transcode_output_router_;
+    std::shared_ptr<service::transcode::TranscodeService> transcode_service_;
     std::shared_ptr<service::mix::ConferenceMixService> mix_service_;
     std::shared_ptr<service::RecordingService> recording_service_;
     std::shared_ptr<WebRtcService> webrtc_service_;

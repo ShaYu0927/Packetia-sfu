@@ -3,9 +3,11 @@
 
 #include "PoolAllocator.h"
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <map>
 #include <optional>
 #include <vector>
 #include "H264Payload.h"
@@ -26,10 +28,13 @@ private:
 class H264PacketBuffer
 {
 public:
+    using Clock = std::chrono::steady_clock;
+    using TimePoint = Clock::time_point;
     struct Config
     {
         std::size_t max_frame_packets = 512;
         bool idr_only_keyframes_allowed = true;
+        uint32_t max_wait_ms = 100;
     };
     struct InsertResult
     {
@@ -37,20 +42,26 @@ public:
         bool duplicate = false;
         bool late = false;
         bool buffer_collision = false;
+        size_t expired_packets = 0;
         std::vector<H264AccessUnit> frames;
     };
 
     H264PacketBuffer();
     explicit H264PacketBuffer(const Config& config);
     void Reset();
-    InsertResult InsertPacket(H264ParsedPacket packet);
+    InsertResult InsertPacket(H264ParsedPacket packet, TimePoint now = Clock::now());
+    // An expired partial AU/reference chain is discarded, never emitted as a
+    // complete frame. A fresh first IDR slice/SPS is required to resume.
+    size_t FlushExpired(TimePoint now = Clock::now());
     size_t BufferedPacketCount() const noexcept { return buffered_packet_count_; }
 
 private:
+    using Arrivals = std::multimap<TimePoint, int64_t>;
     struct BufferedPacket
     {
         int64_t unwrapped_seq = -1;
         H264ParsedPacket packet;
+        Arrivals::iterator arrival;
     };
     static constexpr size_t kBufferSize = 2048;
     static_assert((kBufferSize & (kBufferSize - 1)) == 0, "buffer size must be a power of two");
@@ -69,15 +80,18 @@ private:
     void RemovePacketsBefore(int64_t seq);
     void DropCurrentFrame(int64_t end_seq);
     void ClearInternal();
+    void ErasePacket(std::unique_ptr<BufferedPacket>& packet);
 
     Config config_;
     std::array<std::unique_ptr<BufferedPacket>, kBufferSize> buffer_{};
+    Arrivals arrivals_;
     RtpSequenceNumberUnwrapper seq_unwrapper_;
     std::optional<int64_t> last_continuous_unwrapped_seq_;
     std::optional<uint32_t> last_continuous_timestamp_;
     std::optional<int64_t> current_frame_start_;
     uint32_t current_frame_timestamp_ = 0;
     bool discarding_frame_ = false;
+    bool waiting_for_recovery_ = false;
     size_t buffered_packet_count_ = 0;
 };
 } // namespace media

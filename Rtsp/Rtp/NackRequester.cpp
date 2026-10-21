@@ -20,6 +20,12 @@ void NackRequester::SetNackCallback(NackCallback cb)
     nack_callback_ = std::move(cb);
 }
 
+void NackRequester::AbandonPending()
+{
+    stats_.abandoned_packets += missing_packets_.size();
+    missing_packets_.clear();
+}
+
 void NackRequester::SetRecoveryFailureCallback(RecoveryFailureCallback cb)
 {
     recovery_failure_callback_ = std::move(cb);

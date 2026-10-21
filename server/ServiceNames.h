@@ -10,6 +10,7 @@
 #define SERVICE_RECORD    "RecordingService"
 #define SERVICE_AI        "AIService"
 #define SERVICE_CONFERENCE_MIX "ConferenceMixService"
+#define SERVICE_TRANSCODE "TranscodeService"
 #define SERVICE_RTSP      "RtspServer"
 #define SERVICE_SIP       "SipServer"
 #define SERVICE_RTMP      "RtmpServer"

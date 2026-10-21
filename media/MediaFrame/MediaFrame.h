@@ -6,38 +6,10 @@
 #include <memory>
 #include <vector>
 #include "SharedBuffer.h"
+#include "MediaFrameTypes.h"
 
 namespace media
 {
-
-using TrackId = uint32_t;
-
-enum class MediaType
-{
-    Unknown = 0,
-    Audio,
-    Video
-};
-
-enum class CodecType
-{
-    Unknown = 0,
-
-    H264,
-    H265,
-
-    Opus,
-    PCMU,
-    PCMA,
-    AAC
-};
-
-enum class FrameIntegrity
-{
-    Complete = 0,
-    Incomplete,
-    Corrupted
-};
 
 struct FrameTimestamp
 {
@@ -78,6 +50,7 @@ struct VideoFrameInfo
     bool parameter_sets_injected = false;
     int32_t width = -1;
     int32_t height = -1;
+    bool has_vps = false;
 };
 
 struct MediaFrameInfo
@@ -93,15 +66,6 @@ struct MediaFrameInfo
     FrameIntegrity integrity = FrameIntegrity::Complete;
 };
 
-
-enum class EncodedFrameType
-{
-    Unknown = 0,
-    Key,
-    Delta,
-    Config,
-    Audio
-};
 
 struct EncodedFrame
 {
@@ -125,6 +89,8 @@ struct EncodedFrame
     // Storage, offset and length are one owning range. Use Slice() for a
     // subframe instead of keeping independent, potentially stale bounds.
     common::SharedBuffer buffer;
+    // Elementary bitstream representation, independent of RTP PT/container.
+    EncodedBitstream bitstream = EncodedBitstream::Unspecified;
 
     const uint8_t* Data() const noexcept
     {

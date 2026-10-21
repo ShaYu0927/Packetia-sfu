@@ -211,6 +211,8 @@ std::size_t ShardedWorkerPool::shard_index(std::uint64_t key) const
 
 void ShardedWorkerPool::worker_loop(Worker &worker, std::size_t idx)
 {
+    const auto tick_interval = std::chrono::milliseconds(
+        std::max<uint32_t>(1, handler_ ? handler_->worker_tick_interval_ms() : 100));
     for (;;)
     {
         media_latency::ReportIfDue();
@@ -218,7 +220,7 @@ void ShardedWorkerPool::worker_loop(Worker &worker, std::size_t idx)
         {
             std::unique_lock<std::mutex> lk(worker.mtx);
 
-            worker.cv.wait_for(lk, std::chrono::milliseconds(100), [&] {
+            worker.cv.wait_for(lk, tick_interval, [&] {
                 return !worker.running.load() || !worker.q.empty();
             });
 
@@ -265,6 +267,7 @@ void ShardedWorkerPool::worker_loop(Worker &worker, std::size_t idx)
                 LOG_ERROR("worker function threw unknown exception, idx=", idx);
             }
             safe_release_job(job);
+            if (handler_) RunWorkerHook([&] { handler_->on_worker_tick(idx); }, idx, "tick");
             continue;
         }
 

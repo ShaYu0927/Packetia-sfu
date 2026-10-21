@@ -5,6 +5,8 @@
 #include <atomic>
 #include <cstdint>
 #include <string>
+#include <map>
+#include <optional>
 
 #include "ShardedWorkerPool.h"
 namespace utils 
@@ -59,6 +61,9 @@ public:
     virtual bool Start() = 0;
     virtual void Stop() = 0;
     virtual void ProcessJob(WorkJob& job);
+    // Invoked on the worker owning this affinity key. False unregisters the
+    // stream until its next RTP job; no extra thread is created per stream.
+    virtual bool PollMedia(uint64_t /*stream_key*/, uint64_t /*now_ms*/) { return false; }
 
 protected:
     virtual void OnRtp(WorkJob& job)  {}
@@ -129,9 +134,22 @@ public:
 
     ~EndpointJobHandler() override = default;
     void handle(WorkJob& job) override;
+    void handle(WorkJob& job, std::size_t worker_index) override;
+    void on_worker_tick(std::size_t worker_index) override;
+    void on_worker_stop(std::size_t worker_index) override;
+    uint32_t worker_tick_interval_ms() const override { return 10; }
 
 
 private:
+    using StreamKey = std::pair<uint64_t, uint64_t>; // Endpoint ID, affinity key.
+    struct WorkerStreams
+    {
+        uint64_t last_tick_ms = 0;
+        std::map<StreamKey, std::weak_ptr<EndpointBase>> streams;
+    };
+    void Dispatch(WorkJob& job, std::optional<std::size_t> worker_index);
+    std::mutex streams_mutex_;
+    std::map<std::size_t, WorkerStreams> worker_streams_;
     EndpointManager* mgr_{nullptr};
 };
 

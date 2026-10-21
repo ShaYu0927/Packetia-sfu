@@ -234,6 +234,10 @@ std::shared_ptr<rtsp::RtpReceiverTrack> SfuEndpoint::GetOrCreateReceiverTrack(ui
         self->OnTrackPli(media_ssrc);
     });
 
+    new_track->setRequestKeyFrameCallback([Weak_self, ssrc] {
+        if (auto self = Weak_self.lock()) self->OnTrackPli(ssrc);
+    });
+
     new_track->setOnEncodedFrame(
         [Weak_self](const rtsp::RtpReceiverTrack::EncodedFramePtr& frame) {
             if (auto self = Weak_self.lock())
@@ -255,6 +259,7 @@ std::shared_ptr<rtsp::RtpReceiverTrack> SfuEndpoint::GetOrCreateReceiverTrack(ui
     {
         rtcp_dispatcher_->AddReceiverTrack(ssrc, new_track);
     }
+    receiver_tick_keys_[media_affinity::MakeStreamKey(Id(), ssrc)] = new_track;
 
     return new_track;
 }
@@ -504,8 +509,27 @@ void SfuEndpoint::Stop()
     while (!subscriptions_.empty()) Unsubscribe(subscriptions_.begin()->first);
     subscription_parameters_.clear();
     while (!published_tracks_.empty()) RemovePublishedTrack(published_tracks_.begin()->first);
+    receiver_tick_keys_.clear();
     SetRtcpSendCallback({});
     SetState(State::kStopped);
+}
+
+bool SfuEndpoint::PollMedia(uint64_t stream_key, uint64_t now_ms)
+{
+    std::vector<media::EncodedFrame::Ptr> frames;
+    {
+        std::lock_guard<std::recursive_mutex> guard(runtime_mutex_);
+        if (!IsRunning()) return false;
+        const auto found = receiver_tick_keys_.find(stream_key);
+        if (found == receiver_tick_keys_.end()) return false;
+        const auto track = found->second.lock();
+        if (!track) { receiver_tick_keys_.erase(found); return false; }
+        track->TickReceive(now_ms);
+        frames.swap(pending_frames_);
+    }
+    // Match OnRtp: business callbacks run outside the media-state lock.
+    for (const auto& frame : frames) DispatchEncodedFrame(frame);
+    return true;
 }
 
 
@@ -524,6 +548,7 @@ int SfuEndpoint::RemoveMediaStream(uint32_t source_ssrc)
 void SfuEndpoint::RemoveMediaStreamOnOwner(uint32_t source_ssrc)
 {
     std::lock_guard<std::recursive_mutex> guard(runtime_mutex_);
+    receiver_tick_keys_.erase(media_affinity::MakeStreamKey(Id(), source_ssrc));
     {
         std::lock_guard<std::mutex> lock(track_mtx_);
         ssrc_to_track_.erase(source_ssrc);

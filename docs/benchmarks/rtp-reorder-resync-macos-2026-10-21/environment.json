@@ -1,0 +1,29 @@
+{
+  "started_at": "2026-10-21T17:13:53.787322+08:00",
+  "os": "26.5.1",
+  "architecture": "arm64",
+  "compiler": "Apple clang version 21.0.0 (clang-2100.1.1.101)",
+  "benchmark_optimization": "CMake target -O2; not sanitizer-instrumented",
+  "binary": "/Users/kxy/code/Packetia-sfu/build/webrtc-integration/Rtsp/Test/rtp_weaknet_bench",
+  "seeds": [
+    11,
+    29,
+    47
+  ],
+  "binary_sha256": "17386b7a2bada23c3fc0ffd0962555e84cd0c25ff834c75d62b3d08b65f2ab72",
+  "source_sha256": {
+    "Rtsp/RtpPacketReorderQueue.h": "6e7c47c6d810d2b38aaadc086105679148f28fafae9bf585f7b3c0e47f4e42d3",
+    "Rtsp/Test/rtp_weaknet_bench.cpp": "51b4648c6142b47f1180a68f8178d618dcfb9ee6e87a2ff56b3048e7636a30cc",
+    "Rtsp/Test/run_rtp_weaknet_bench.py": "1d02953021d17907a290708a99a4dcd389269ea183b972766e467d8c4736c7b6"
+  },
+  "simulated_duration_ms": 10000,
+  "udp_duration_ms": 3000,
+  "hw.model": "Mac17,3",
+  "hw.ncpu": "10",
+  "hw.memsize": "25769803776",
+  "machdep.cpu.brand_string": "Apple M5",
+  "elapsed_wall_seconds": 132.923,
+  "trials": 72,
+  "failed_invariants": 0,
+  "udp_local_delivery_gap": 0
+}

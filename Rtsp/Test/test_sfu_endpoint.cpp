@@ -9,6 +9,7 @@
 #include "RtcpNack.h"
 #include "RtcpFeedback.h"
 #include <future>
+#include <atomic>
 #include <thread>
 
 namespace
@@ -110,6 +111,117 @@ protected:
     }
     WorkerRegistry registry;
 };
+
+struct RegisteredReceiver
+{
+    std::shared_ptr<media::SfuEndpoint> endpoint;
+    ~RegisteredReceiver() {
+        endpoint->Stop();
+        utils::EndpointManager::Instance().Remove(endpoint->Id());
+    }
+};
+
+TEST_F(SfuConference, IdleAudioGapExpiresOnOwningWorkerWithoutAnotherPacket)
+{
+    auto endpoint = std::make_shared<media::SfuEndpoint>(9001001);
+    RegisteredReceiver cleanup{endpoint};
+    ASSERT_TRUE(endpoint->AddPublishedTrack("audio", Description(0, true, 111)));
+    ASSERT_TRUE(endpoint->Start());
+    ASSERT_TRUE(utils::EndpointManager::Instance().Add(endpoint));
+    struct Observed {
+        std::mutex mutex;
+        std::vector<uint16_t> sequences;
+        std::vector<std::thread::id> threads;
+        std::promise<void> released;
+    };
+    auto observed = std::make_shared<Observed>();
+    auto released = observed->released.get_future();
+    endpoint->AddEncodedFrameCallback([observed](const auto& frame) {
+        std::lock_guard<std::mutex> lock(observed->mutex);
+        observed->sequences.push_back(frame->rtp.first_sequence);
+        observed->threads.push_back(std::this_thread::get_id());
+        if (observed->sequences.size() == 2) observed->released.set_value();
+    });
+    const auto key = media_affinity::MakeStreamKey(endpoint->Id(), 11);
+    auto post = [&](uint16_t seq) {
+        const auto bytes = Packet(11, 111, seq);
+        WorkJob job;
+        job.type = WorkType::Rtp;
+        job.target_id = endpoint->Id();
+        job.key = key;
+        job.media_track_id = "audio";
+        job.payload = common::SharedBuffer::TryCopy(bytes.data(), bytes.size());
+        return WorkerService::post(POOL_MEDIA, std::move(job));
+    };
+    ASSERT_EQ(post(100), 0);
+    ASSERT_EQ(post(102), 0);
+    ASSERT_EQ(released.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    ASSERT_EQ(post(101), 0); // Late retransmission must not be emitted.
+    ASSERT_EQ(post(103), 0);
+    Drain(key);
+    std::lock_guard<std::mutex> lock(observed->mutex);
+    EXPECT_EQ(observed->sequences, (std::vector<uint16_t>{100, 102, 103}));
+    ASSERT_EQ(observed->threads.size(), 3U);
+    EXPECT_NE(observed->threads.front(), std::this_thread::get_id());
+    EXPECT_EQ(observed->threads[0], observed->threads[1]);
+    EXPECT_EQ(observed->threads[1], observed->threads[2]);
+}
+
+TEST_F(SfuConference, IdleVideoGapRequestsKeyframeAndPreservesNegotiatedParameterSets)
+{
+    auto endpoint = std::make_shared<media::SfuEndpoint>(9001002);
+    RegisteredReceiver cleanup{endpoint};
+    auto info = Description(0, false, 96)->getTrackInfo();
+    info.fmtp = "sprop-parameter-sets=Z0IAH5WoFAFuQA==,aM4G4g==";
+    ASSERT_TRUE(endpoint->AddPublishedTrack("video", std::make_shared<RtpTrackDescription>(info)));
+    ASSERT_TRUE(endpoint->Start());
+    ASSERT_TRUE(utils::EndpointManager::Instance().Add(endpoint));
+    auto pli = std::make_shared<std::promise<void>>();
+    auto requested = pli->get_future();
+    auto notified = std::make_shared<std::atomic<bool>>(false);
+    endpoint->SetTrackRtcpSendCallback("video", [pli, notified](const uint8_t* data, size_t size) {
+        if (size >= 12 && data[1] == 206 && (data[0] & 31) == 1 && !notified->exchange(true))
+            pli->set_value();
+        return true;
+    });
+    auto frame_promise = std::make_shared<std::promise<media::EncodedFrame::ConstPtr>>();
+    auto recovered = frame_promise->get_future();
+    auto frames = std::make_shared<std::atomic<unsigned>>(0);
+    endpoint->AddEncodedFrameCallback([frame_promise, frames](const auto& frame) {
+        if (frames->fetch_add(1) == 0) frame_promise->set_value(frame);
+    });
+    const auto key = media_affinity::MakeStreamKey(endpoint->Id(), 22);
+    auto post = [&](uint16_t seq, uint8_t timestamp, bool marker, std::initializer_list<uint8_t> payload) {
+        auto bytes = Packet(22, 96, seq);
+        bytes.resize(12);
+        bytes[1] = static_cast<uint8_t>(96 | (marker ? 0x80 : 0));
+        bytes[7] = timestamp;
+        bytes.insert(bytes.end(), payload);
+        WorkJob job;
+        job.type = WorkType::Rtp;
+        job.target_id = endpoint->Id();
+        job.key = key;
+        job.media_track_id = "video";
+        job.payload = common::SharedBuffer::TryCopy(bytes.data(), bytes.size());
+        return WorkerService::post(POOL_MEDIA, std::move(job));
+    };
+    ASSERT_EQ(post(65534, 1, false, {0x7C, 0x85, 0x80}), 0);
+    ASSERT_EQ(post(0, 1, true, {0x7C, 0x45, 0xBB}), 0);
+    ASSERT_EQ(requested.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_EQ(frames->load(), 0U);
+    ASSERT_EQ(post(65535, 1, false, {0x7C, 0x05, 0xCC}), 0);
+    ASSERT_EQ(post(1, 2, true, {0x65, 0x80}), 0);
+    ASSERT_EQ(recovered.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    const auto frame = recovered.get();
+    EXPECT_TRUE(frame->IsComplete());
+    EXPECT_TRUE(frame->IsKeyFrame());
+    EXPECT_EQ(frame->rtp.first_sequence, 1U);
+    EXPECT_TRUE(frame->video.has_sps);
+    EXPECT_TRUE(frame->video.has_pps);
+    EXPECT_TRUE(frame->video.parameter_sets_injected);
+    Drain(key);
+    EXPECT_EQ(frames->load(), 1U);
+}
 
 TEST_F(SfuConference, SharedPayloadNeedsMidOrExplicitBindingAndCannotChangeTracks)
 {

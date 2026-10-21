@@ -1,5 +1,7 @@
 #include "EndpointBase.h"
 #include "logger.h"
+#include <chrono>
+#include <vector>
 
 namespace utils 
 {
@@ -56,6 +58,16 @@ void EndpointManager::Clear()
 
 void EndpointJobHandler::handle(WorkJob& job)
 {
+    Dispatch(job, std::nullopt);
+}
+
+void EndpointJobHandler::handle(WorkJob& job, std::size_t worker_index)
+{
+    Dispatch(job, worker_index);
+}
+
+void EndpointJobHandler::Dispatch(WorkJob& job, std::optional<std::size_t> worker_index)
+{
     if (!mgr_)
     {
         LOG_INFO("ERROR mgr_");
@@ -72,7 +84,39 @@ void EndpointJobHandler::handle(WorkJob& job)
     }
 
     endpoint->ProcessJob(job);
+    if (worker_index && job.type == WorkType::Rtp && endpoint->IsRunning()) {
+        std::lock_guard<std::mutex> lock(streams_mutex_);
+        worker_streams_[*worker_index].streams[{endpoint_id, job.key}] = endpoint;
+    }
+}
 
+void EndpointJobHandler::on_worker_tick(std::size_t worker_index)
+{
+    const uint64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    std::vector<std::pair<StreamKey, std::weak_ptr<EndpointBase>>> streams;
+    {
+        std::lock_guard<std::mutex> lock(streams_mutex_);
+        const auto found = worker_streams_.find(worker_index);
+        if (found == worker_streams_.end()) return;
+        auto& state = found->second;
+        if (now_ms - state.last_tick_ms < worker_tick_interval_ms()) return;
+        state.last_tick_ms = now_ms;
+        streams.assign(state.streams.begin(), state.streams.end());
+    }
+    for (const auto& entry : streams) {
+        const auto endpoint = entry.second.lock();
+        if (endpoint && mgr_->Find(entry.first.first) == endpoint && endpoint->IsRunning() &&
+            endpoint->PollMedia(entry.first.second, now_ms)) continue;
+        std::lock_guard<std::mutex> lock(streams_mutex_);
+        worker_streams_[worker_index].streams.erase(entry.first);
+    }
+}
+
+void EndpointJobHandler::on_worker_stop(std::size_t worker_index)
+{
+    std::lock_guard<std::mutex> lock(streams_mutex_);
+    worker_streams_.erase(worker_index);
 }
 
 void EndpointBase::ProcessJob(WorkJob& job)

@@ -179,6 +179,7 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(const uint8_t *ptr, size_t len)
     pkt->setHeaderInfo(headerLen, headerLen, payloadLen);
     pkt->setRecvTimeMs(NowMs());
 
+    TickReceive(pkt->getRecvTimeMs());
     if (_nack_receiver)
     {
         _nack_receiver->OnReceivedPacket(pkt->getSeq(), pkt->getRecvTimeMs());
@@ -192,6 +193,16 @@ RtpPacket::Ptr RtpVideoTracker::inputRtp(const uint8_t *ptr, size_t len)
         return nullptr;
     }
     return pkt;
+}
+
+void RtpVideoTracker::TickReceive(uint64_t now_ms)
+{
+    if (depacketizer_ && depacketizer_->FlushExpired())
+    {
+        if (_nack_receiver) _nack_receiver->AbandonPending();
+        if (_on_request_keyframe) { CountPli(); _on_request_keyframe(); }
+    }
+    TickNack(now_ms);
 }
 
 
