@@ -109,6 +109,12 @@ void WebRtcTransport::ClearSelectedPeer()
         state_.store(WebRtcTransportState::Connecting, std::memory_order_release);
 }
 
+network::SocketAddr WebRtcTransport::SelectedPeer() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return selected_peer_;
+}
+
 network::transport::DatagramSendResult WebRtcTransport::Send(network::transport::DatagramProtocol protocol, const uint8_t* data, size_t size)
 {
     network::SocketAddr peer;

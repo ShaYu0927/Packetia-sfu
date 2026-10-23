@@ -18,6 +18,7 @@ TURN UDP 中继及录像模块。支持原有 `Packetia` 单进程入口，以�
 - [视频转码与多编码适配](#视频转码与多编码适配)：默认 720p/360p 输出、任务接口、实现选择与验证命令。
 - [多编码适配设计](docs/media-codec-adaptation.md)、[业务格式兼容方案](docs/media-format-plan.md)：已实现能力与后续协议、容器、播放接入规划。
 - [RTP 接收排序与弱网恢复](#rtp-接收排序与弱网恢复)：等待预算、前向重同步、本机实测与复现。
+- [服务端切网恢复框架](docs/network-handover-framework.md)：核心 C++ 路径状态、媒体适配和带宽估计重置，以及后续接入任务。
 - [TURN UDP 中继](#turn-udp-中继)：认证、资源管理、STUN 地址发现与双栈。
 - [参与者与连接数据结构](#参与者与连接数据结构)：对象归属、信令恢复与 ICE restart。
 - [双浏览器房间与 TURN 示例](#双浏览器房间与-turn-示例)：启动方式与浏览器检查。
@@ -32,7 +33,7 @@ TURN UDP 中继及录像模块。支持原有 `Packetia` 单进程入口，以�
 | 模块 | 当前能力 | 当前限制 |
 | --- | --- | --- |
 | WebRTC/SFU | WebSocket 信令、H264/Opus 协商、DTLS/SRTP、房间发布与订阅 | 示例每人一个媒体会话，只承担发布或订阅一种角色；动态轨道重协商未开放 |
-| ICE | ICE-Lite、认证提名、存活检测、同会话 ICE restart | 主动检查和重新收集候选由浏览器完成；尚未接通 SFU 双栈候选发布 |
+| ICE | ICE-Lite、认证提名、存活检测、同会话 ICE restart、路径状态通知与发送估计重置 | 主动检查和重新收集候选由浏览器完成；尚未接通 SFU 双栈候选发布；真实移动网络切换待验收 |
 | 断线恢复 | 默认 15 秒保留成员、媒体会话和转发关系，凭恢复凭据绑定新信令连接 | 仅同页面、同进程内恢复；刷新页面、服务重启或媒体终止后需重新加入 |
 | TURN/STUN | UDP 长期凭证认证、中继、权限、通道、到期清理、配额/ACL、IPv4/IPv6 | 不支持 TURN TCP/TLS、双地址族 Allocation 或完整 coturn 功能 |
 | TCP/TLS | 有界 TCP 缓冲、所属线程调度、TLS 1.2/1.3 服务端传输组件 | TLS 尚未接入 TURN 或 WSS 监听、应用配置 |
@@ -1022,6 +1023,11 @@ SFU 的双栈监听与双地址 SDP 候选发布尚未在这一功能中实现�
 保持不变。服务端保留 SFU 端点、发布轨道、订阅关系及已建立的 DTLS/SRTP 状态；原 ufrag 和地址路由
 被撤销，新路径完成认证和提名前暂停媒体收发。协商失败保留原协商与路由。
 
+核心 C++ 已接通 `WebRtcSession → WebRtcMediaTransport → SendSideController` 的路径状态通知：
+restart 等待期间禁用发送控制；新路径可用后清除旧反馈历史和带宽估计，保留 TWCC 分配器及会话身份。
+同代次地址重绑定也触发路径更新，重复提名不重复重置；旧路径排队的发送任务按 epoch 作废。
+阅读顺序、测试边界与关键帧/统计的后续任务见[服务端切网恢复框架](docs/network-handover-framework.md)。
+
 `examples/webrtc-room` 自动重连信令，按指数退避重试恢复，再完成 ICE restart；ICE 状态变成 `failed`
 且信令仍在线时也会尝试 restart。恢复超时、已终止的媒体会话、页面刷新或服务端重启需要重新加入房间。
 目前没有持久化恢复、跨节点迁移、TURN/TCP 或 TURN/TLS 回退。
@@ -1146,6 +1152,11 @@ WebRTC 会话的 100 ms 定时器向媒体池投递恢复任务，停止收包�
 
 ## 本轮验证
 
+2026-10-23 服务端切网框架验证：`Packetia` 及相关测试目标构建成功，六个 CTest 入口通过，
+覆盖会话、媒体适配、发送控制、业务服务、DTLS/SRTP 和 UDP mux。
+核心已接通路径状态通知、旧估计重置和旧队列发送作废；恢复关键帧、耗时统计及真实手机切网仍待完成。
+改动清单、复现命令和验证边界见[2026-10-23 变更说明](docs/changes/2026-10-23.md)。
+
 2026-10-21 多编码与接收恢复验证（Apple M5 / macOS 26.5.1）：完整构建成功，
 现有 `build/webrtc-integration` 配置下 **54/54 组 CTest 通过，无跳过**。
 包含 2 个任务领域、18 个视频转码、19 个多编码和 24 个排序队列用例；
@@ -1237,6 +1248,58 @@ build/webrtc-integration/Rtsp/Test/test_rtp_input \
 ## 开发记录
 
 以下记录描述各次修改当时的状态；其中的待实现能力和限制可能已在后续完成，当前状态以上文为准。
+
+### 2026-10-23：服务端切网路径状态与媒体控制恢复
+
+将切网路径状态接入核心 C++ 源码，使 ICE restart 或地址重绑定后，发送控制能切换到新路径的状态。
+
+```text
+WebRtcService → WebRtcSession → WebRtcMediaTransport → SendSideController
+  restart 提交 → Checking → 新路径认证、提名及加密状态可用 → Ready
+```
+
+- 新增 `WebRtcNetworkPath`，描述 New、Checking、Ready、Failed、Closed，以及 ICE 代次、路径修订号和可用地址。
+- `WebRtcSession` 在启动、restart 提交、路径可用、失败及关闭时通知上层；失败的协商准备保留原路径，
+  同代次地址重绑定和同地址的新一轮 restart 均可更新路径，重复检查与重复提名不重复报告 Ready。
+- `WebRtcService` 通过弱引用接通媒体适配器。等待或关闭期间禁用发送控制，Ready 时清除旧发送历史、
+  反馈适配状态、TWCC 新鲜度和 GCC 估计；保留 TWCC 序号分配器、sender 登记及既有媒体会话身份。
+- 异步发送携带路径 epoch，切网前已排队、尚未执行的任务检查代次后丢弃；移除 Send/收包时自行启用控制器的行为。
+- 为可选 `log/Test` 和 `server/examples/WebRtcRoomDemo.cpp` 增加存在性检查，当前检出缺少这些文件时，
+  核心程序与相关测试目标仍可生成。
+
+验证：`Packetia` 及相关测试目标构建成功，六个 CTest 入口通过，覆盖会话、媒体适配、发送控制、业务服务、
+真实 DTLS/SRTP 和 UDP mux。新增迁移用例检查旧凭据拒绝、重复提名、地址重绑定、同地址新代次恢复、
+旧地址过滤、失败关闭、旧排队发送作废，以及旧反馈清理后 RR/新 TWCC 恢复。
+
+```sh
+cmake --build build/webrtc-integration \
+  --target Packetia test_webrtc_session test_rtp_input test_weak_network_manual \
+  test_webrtc_service test_webrtc_crypto test_datagram_transport -j4
+ctest --test-dir build/webrtc-integration --output-on-failure \
+  -R '^(test_webrtc_session|test_rtp_input|test_weak_network_manual|webrtc_service|test_webrtc_crypto|test_datagram_transport)$'
+git diff --check
+```
+
+本轮地址迁移用例使用真实 STUN 消息构造与认证处理，媒体加密边界使用测试替身；单独的真实加密回归
+不代表完成真实加密切网互通。尚未验收手机 4G/5G 切换，也未运行全量 CTest 或新增弱网压测。
+构建仍有既有重复库链接等警告。
+
+后续任务：恢复后的关键帧请求、路径恢复耗时统计、客户端有界重试及信令黑洞检测；异步发送历史仍需进一步
+对齐真实 socket 完成回执。阅读顺序及接入契约见[服务端切网恢复框架](docs/network-handover-framework.md)，
+完整清单见[当天变更说明](docs/changes/2026-10-23.md)。
+
+本轮提交日志：
+
+```text
+feat(webrtc): 接入服务端切网路径状态与媒体控制恢复
+
+- 增加 ICE 代次、路径修订号及可用路径生命周期通知
+- 接通会话到媒体适配器的状态回调，重置旧路径反馈与带宽估计
+- 按路径 epoch 作废旧异步发送，保留 TWCC 序号和媒体会话身份
+- 补齐路径迁移回归、可选构建输入检查及核心框架文档
+
+验证：Packetia 构建成功，6 组相关 CTest 通过；真实移动网络切换待验收。
+```
 
 ### 2026-10-21：多编码转码与 RTP 弱网恢复
 

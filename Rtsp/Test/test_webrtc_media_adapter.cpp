@@ -78,6 +78,10 @@ TEST(WebRtcMediaAdapter, ReceivesPlaintextAndQueuesEncryptionOnSessionLoop)
     options.ice.ufrag = "local"; options.ice.pwd = std::string(24, 'l');
     options.ice.candidates = {"1 1 udp 2130706431 192.0.2.1 5000 typ host"};
     options.medias = {audio};
+    options.onNetworkPathChanged = [weak = std::weak_ptr<media::transport::WebRtcMediaTransport>(adapter)]
+        (const WebRtcNetworkPath& path) {
+        if (auto target = weak.lock()) target->OnNetworkPathChanged(path);
+    };
     auto session = std::make_shared<WebRtcSession>(wire, std::make_unique<AdapterDtls>(),
         std::move(crypto), adapter, options);
     ASSERT_TRUE(adapter->BindSession(session));
@@ -113,10 +117,45 @@ TEST(WebRtcMediaAdapter, ReceivesPlaintextAndQueuesEncryptionOnSessionLoop)
     tasks.front()(); tasks.clear();
     EXPECT_EQ(counters->protects, 1U);
     EXPECT_EQ(udp->sends, 1U);
+    auto controller = adapter->GetSendSideController();
+    media::WeakNetFeedback feedback;
+    feedback.now_ms = 100;
+    feedback.loss_rate = 0.1;
+    controller->OnReceiverFeedback(feedback);
+    ASSERT_TRUE(controller->GetNetworkState().HasUpdates());
+    // Queue old-path media, then commit a restart before its owner-loop send.
+    ASSERT_EQ(adapter->SendRtp(rtp.data(), rtp.size()), SendResult::Ok);
+    offer.origin.sess_version = "2";
+    offer.ice.ufrag = "newremote";
+    offer.ice.pwd = std::string(24, 'n');
+    ASSERT_TRUE(session->RestartIce(offer, answer)) << session->LastError();
+    EXPECT_FALSE(controller->GetNetworkState().HasUpdates());
+    controller->OnReceiverFeedback(feedback);
+    EXPECT_FALSE(controller->GetNetworkState().HasUpdates());
+    ASSERT_EQ(adapter->SendRtp(rtp.data(), rtp.size()), SendResult::NotWritable);
+    protocol::IceRequestParams check;
+    check.username = answer.medias.front().ice.ufrag + ":newremote";
+    check.password = answer.medias.front().ice.pwd;
+    check.controlling = true; check.tie_breaker = 42; check.priority = 1234; check.use_candidate = true;
+    std::vector<uint8_t> stun(1500);
+    size_t length = 0;
+    ASSERT_TRUE(protocol::StunCodec::BuildIceBindingRequest(check, stun.data(), stun.size(), length));
+    const auto newPeer = network::SocketAddr::FromIPPort("192.0.2.3", 7000);
+    wire->OnDatagram({10, 200, newPeer, stun.data(), length});
+    ASSERT_EQ(adapter->State(), MediaTransportState::Connected);
+    for (auto& task : tasks) task();
+    tasks.clear();
+    EXPECT_EQ(counters->protects, 1U); // Old queued media did not cross into the new path.
+    EXPECT_FALSE(controller->GetNetworkState().HasUpdates());
+    controller->OnReceiverFeedback(feedback);
+    EXPECT_TRUE(controller->GetNetworkState().HasUpdates());
+    ASSERT_EQ(adapter->SendRtp(rtp.data(), rtp.size()), SendResult::Ok);
+    tasks.front()(); tasks.clear();
+    EXPECT_EQ(counters->protects, 2U);
     ASSERT_EQ(adapter->SendRtp(rtp.data(), rtp.size()), SendResult::Ok);
     adapter->Close();
     for (auto& task : tasks) task();
-    EXPECT_EQ(counters->protects, 1U); // Queued send is cancelled on close.
+    EXPECT_EQ(counters->protects, 2U); // Queued send is cancelled on close.
     EXPECT_EQ(wire->State(), WebRtcTransportState::Closed);
     EXPECT_FALSE(wire->IsSelectedPeer(peer));
     EXPECT_EQ(session->State(), WebRtcSessionState::Closed);

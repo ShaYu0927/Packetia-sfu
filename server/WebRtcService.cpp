@@ -613,6 +613,11 @@ std::string WebRtcService::CreateSession(const std::string& connection, const st
         if (endpoint->GetState() == utils::EndpointBase::State::kInit && tracks.empty()) return false;
         return endpoint->ReplacePublishedTracks(tracks);
     };
+    options.onNetworkPathChanged = [weak = std::weak_ptr<media::transport::WebRtcMediaTransport>(session.transport)]
+        (const WebRtcNetworkPath& path)
+    {
+        if (const auto transport = weak.lock()) transport->OnNetworkPathChanged(path);
+    };
     session.rtc = std::make_shared<WebRtcSession>(
         std::make_shared<WebRtcTransport>(session.id, datagram),
         std::move(dtls), std::move(srtp), session.transport, std::move(options));

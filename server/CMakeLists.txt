@@ -17,7 +17,9 @@ target_include_directories(server
 target_compile_features(server PUBLIC cxx_std_17)
 target_link_libraries(server PUBLIC LOGGER packetia_config)
 
-if(PACKETIA_WITH_LIBWEBSOCKETS AND PACKETIA_SRTP_AVAILABLE)
+# The optional demo source is not present in every source snapshot.
+if(PACKETIA_WITH_LIBWEBSOCKETS AND PACKETIA_SRTP_AVAILABLE AND
+   EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples/WebRtcRoomDemo.cpp")
     add_executable(PacketiaRoomDemo examples/WebRtcRoomDemo.cpp WebRtcService.cpp)
     target_link_libraries(PacketiaRoomDemo PRIVATE
         "$<$<PLATFORM_ID:Linux>:-Wl,--start-group>"

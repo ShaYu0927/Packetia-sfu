@@ -91,6 +91,7 @@ target_link_libraries(PacketiaTurn PRIVATE TURN utils)
 add_library(WebRtc STATIC
     WebRtc/WebRtcSession.cpp
     WebRtc/WebRtcSession.h
+    WebRtc/WebRtcNetworkPath.h
     WebRtc/WebRtcSdp.h
     WebRtc/WebRtcCodec.cpp
     WebRtc/WebRtcCodec.h

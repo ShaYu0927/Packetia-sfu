@@ -190,7 +190,9 @@ void SendSideController::SetNetworkAvailable(bool available)
         if (available_ == available) return;
         available_ = available;
         history_.Clear();
+        adapter_ = TransportFeedbackAdapter{};
         has_twcc_ = false;
+        last_valid_twcc_receive_time_ms_ = 0;
         config_.network_available = available;
         controller_ = GoogCcNetworkController(config_);
         callback = update_callback_;
@@ -198,6 +200,24 @@ void SendSideController::SetNetworkAvailable(bool available)
     // An empty update on a state transition clears the consumer's old rate.
     // Keep sequence allocation monotonic so delayed feedback cannot alias
     // freshly sent packets when the network becomes writable again.
+    if (callback) callback(NetworkControlUpdate{});
+}
+
+void SendSideController::OnNetworkRouteChanged()
+{
+    UpdateCallback callback;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        history_.Clear();
+        adapter_ = TransportFeedbackAdapter{};
+        has_twcc_ = false;
+        last_valid_twcc_receive_time_ms_ = 0;
+        config_.network_available = available_ = true;
+        controller_ = GoogCcNetworkController(config_);
+        callback = update_callback_;
+    }
+    // Do not reset sequence_allocator_ or sender_clock_rates_: old feedback
+    // must not match a newly sent packet just because the route changed.
     if (callback) callback(NetworkControlUpdate{});
 }
 

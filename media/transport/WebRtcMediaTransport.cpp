@@ -16,6 +16,18 @@ bool WebRtcMediaTransport::BindSession(const std::shared_ptr<protocol::webrtc::W
     return true;
 }
 
+void WebRtcMediaTransport::OnNetworkPathChanged(const protocol::webrtc::WebRtcNetworkPath& path)
+{
+    if (closed_) return;
+    path_epoch_.fetch_add(1, std::memory_order_acq_rel);
+    if (path.state == protocol::webrtc::WebRtcNetworkPathState::Ready)
+        controller_->OnNetworkRouteChanged();
+    else
+        controller_->SetNetworkAvailable(false);
+    // Extension point: coalesce a video key-frame request on recovered paths.
+    // Keep track lookup and worker dispatch in the endpoint/application layer.
+}
+
 MediaTransportState WebRtcMediaTransport::State() const noexcept
 {
     if (closed_) return MediaTransportState::Closed;
@@ -40,16 +52,16 @@ void WebRtcMediaTransport::SetPacketSink(std::weak_ptr<IMediaPacketSink> sink)
 
 SendResult WebRtcMediaTransport::Send(MediaPacketType type, const uint8_t* data, size_t size, bool)
 {
+    const auto epoch = path_epoch_.load(std::memory_order_acquire);
     if (IsClosed()) return SendResult::Closed;
     if (!IsWritable()) return SendResult::NotWritable;
     if (!data || !size || (type != MediaPacketType::Rtp && type != MediaPacketType::Rtcp)) return SendResult::Failed;
     std::vector<uint8_t> packet(data, data + size);
     const auto weak = weak_from_this();
     if (weak.expired()) return SendResult::Failed;
-    controller_->SetNetworkAvailable(true);
-    return dispatch_([weak, type, packet = std::move(packet)]() mutable {
+    return dispatch_([weak, epoch, type, packet = std::move(packet)]() mutable {
         const auto adapter = weak.lock();
-        if (!adapter || adapter->closed_) return;
+        if (!adapter || adapter->closed_ || adapter->path_epoch_.load(std::memory_order_acquire) != epoch) return;
         std::shared_ptr<protocol::webrtc::WebRtcSession> session;
         {
             std::lock_guard<std::mutex> lock(adapter->mutex_);
@@ -65,7 +77,6 @@ MediaPacketIngressResult WebRtcMediaTransport::OnMediaPacket(ReceivedMediaPacket
 {
     if (IsClosed()) return MediaPacketIngressResult::Closed;
     if (!IsWritable() || !packet.IsValid() || packet.transport_id != id_) return MediaPacketIngressResult::Dropped;
-    controller_->SetNetworkAvailable(true);
     if (packet.type == MediaPacketType::Rtcp &&
         !controller_->OnRtcpPacket(packet.Data(), packet.Size(), packet.receive_time_ms))
         return MediaPacketIngressResult::Dropped;

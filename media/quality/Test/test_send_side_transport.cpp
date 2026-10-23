@@ -190,6 +190,38 @@ TEST(SendSideTransportTest, CloseClearsStateAndOldFeedbackCannotResumeSending)
     EXPECT_TRUE(controller->GetNetworkState().HasUpdates());
 }
 
+TEST(SendSideTransportTest, RouteChangeClearsFeedbackButPreservesSequenceAndSenderRegistration)
+{
+    auto transport = std::make_shared<FeedbackTransport>();
+    auto controller = transport->GetSendSideController();
+    rtsp::RtpSenderTrack track(TrackConfig(11), transport);
+    const auto packet = Rtp();
+    ASSERT_TRUE(track.InputRtpPacket(packet.data(), packet.size()));
+    transport->Feedback(Twcc(0, {true}));
+    ASSERT_TRUE(controller->GetNetworkState().HasUpdates());
+    ASSERT_TRUE(track.InputRtpPacket(packet.data(), packet.size())); // Old unacked packet 1.
+    int clears = 0;
+    controller->SetUpdateCallback([&](const auto& update) {
+        if (!update.HasUpdates()) ++clears;
+        // Callback must run outside the controller lock.
+        controller->GetNetworkState();
+    });
+    controller->OnNetworkRouteChanged();
+    EXPECT_EQ(clears, 1);
+    EXPECT_FALSE(controller->GetNetworkState().HasUpdates());
+    EXPECT_EQ(controller->SequenceAllocator()->PeekNextExtendedSequence(), 2);
+    transport->Feedback(Twcc(1, {true}));
+    EXPECT_FALSE(controller->GetNetworkState().HasUpdates());
+    // Sender clock registration survived; stale TWCC no longer blocks RR fallback.
+    transport->Feedback(Rr(11), 2010);
+    EXPECT_TRUE(controller->GetNetworkState().HasUpdates());
+    EXPECT_DOUBLE_EQ(controller->GetNetworkState().target_rate.estimate.loss_rate, 0.25);
+    ASSERT_TRUE(track.InputRtpPacket(packet.data(), packet.size()));
+    EXPECT_EQ(TransportSequence(transport->packets.back()), 2);
+    transport->Feedback(Twcc(2, {true}), 2020);
+    EXPECT_DOUBLE_EQ(controller->GetNetworkState().target_rate.estimate.loss_rate, 0.0);
+}
+
 TEST(SendSideTransportTest, UnnegotiatedTwccUsesReceiverReportsForRegisteredSendersOnly)
 {
     auto transport = std::make_shared<FeedbackTransport>();

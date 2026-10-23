@@ -8,6 +8,7 @@
 #include "SrtpTransport.h"
 #include "IMediaPacketSink.h"
 #include "SdpNegotiator.h"
+#include "WebRtcNetworkPath.h"
 
 #include <memory>
 #include <atomic>
@@ -39,6 +40,10 @@ struct WebRtcSessionOptions
     std::function<bool(const network::SocketAddr&)> onSelectedPeer;
     // Replace the UDP mux generation atomically; false leaves the old route intact.
     std::function<bool(const std::string&, const std::string&)> onIceRestart;
+    // Owner-loop observation AFTER route reservation and crypto readiness.
+    // Checking pauses media control; Ready starts a fresh path estimate.
+    // Callback must not throw or synchronously mutate/stop this session.
+    std::function<void(const WebRtcNetworkPath&)> onNetworkPathChanged;
     // Apply negotiated media atomically on the owner loop, before SDP commit.
     // Returning false must leave the application's previous media intact.
     std::function<bool(const WebRtcSessionDescription&, const WebRtcSessionDescription&)> onNegotiated;
@@ -88,6 +93,8 @@ public:
     WebRtcSessionState State() const noexcept { return state_.load(std::memory_order_acquire); }
     uint64_t TransportId() const noexcept { return transport_ ? transport_->Id() : 0; }
     const std::string& LastError() const noexcept { return last_error_; }
+    // Owner-loop snapshot; Ready means transport usable, not video decoded.
+    const WebRtcNetworkPath& NetworkPath() const noexcept { return network_path_; }
 
     void OnWebRtcDatagram(network::transport::DatagramProtocol protocol, network::transport::ReceivedDatagram datagram) override;
     void OnWebRtcTransportClosed() override;
@@ -108,6 +115,7 @@ private:
     bool CheckTransport(const WebRtcSessionDescription& remote);
     bool CommitNegotiation();
     void UpdateSignalingState();
+    void NotifyNetworkPath(WebRtcNetworkPathState state);
 
     ice::IceAgent ice_;
     std::unique_ptr<DtlsTransport> dtls_;
@@ -131,6 +139,7 @@ private:
     bool srtp_ready_ = false;
     bool restarting_ice_ = false;
     bool awaiting_restart_nomination_ = false;
+    WebRtcNetworkPath network_path_;
 };
 
 

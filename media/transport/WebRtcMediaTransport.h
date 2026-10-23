@@ -12,6 +12,7 @@ namespace media::transport
 // Construct this adapter first, pass it as WebRtcSession's packet sink, then
 // BindSession and SetPacketSink(MediaEndpointIngress). Session ownership stays
 // with the application. All session operations must use its event loop.
+// Connect options.onNetworkPathChanged to OnNetworkPathChanged before starting.
 class WebRtcMediaTransport final : public IMediaTransport, public IMediaPacketSink,
                                   public std::enable_shared_from_this<WebRtcMediaTransport>
 {
@@ -29,11 +30,14 @@ public:
     void SetPacketSink(std::weak_ptr<IMediaPacketSink> sink) override;
     MediaPacketIngressResult OnMediaPacket(ReceivedMediaPacket packet) override;
     std::shared_ptr<media::SendSideController> GetSendSideController() override { return controller_; }
+    // Wire WebRtcSessionOptions::onNetworkPathChanged on the session owner loop.
+    void OnNetworkPathChanged(const protocol::webrtc::WebRtcNetworkPath& path);
 
 private:
     const uint64_t id_;
     const Dispatch dispatch_;
     std::atomic<bool> closed_{false};
+    std::atomic<uint64_t> path_epoch_{0};
     mutable std::mutex mutex_;
     std::weak_ptr<protocol::webrtc::WebRtcSession> session_;
     std::weak_ptr<IMediaPacketSink> sink_;

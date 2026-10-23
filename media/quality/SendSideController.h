@@ -27,6 +27,9 @@ public:
     bool OnRtcpPacket(const uint8_t* data, size_t size, uint64_t receive_time_ms);
     void OnReceiverFeedback(const WeakNetFeedback& feedback);
     void SetNetworkAvailable(bool available);
+    // Usable new ICE path, even if availability remained true (NAT rebind).
+    // Clear old feedback/estimate while preserving sender and TWCC identity.
+    void OnNetworkRouteChanged();
     void SetUpdateCallback(UpdateCallback callback);
     NetworkControlUpdate GetNetworkState() const;
 

@@ -647,16 +647,21 @@ void IceRestart()
     uint64_t now = 0;
     bool routeAccepted = true;
     int routes = 0;
+    std::vector<WebRtcNetworkPath> paths;
     auto options = Options();
+    options.onNetworkPathChanged = [&](const WebRtcNetworkPath& path) { paths.push_back(path); };
     options.iceTimeoutMs = 100;
     options.iceClock = [&] { return now; };
     options.onIceRestart = [&](const std::string& oldUfrag, const std::string& newUfrag) {
-        CHECK(oldUfrag == "local" && newUfrag != oldUfrag);
+        CHECK(!oldUfrag.empty() && newUfrag != oldUfrag);
         ++routes;
         return routeAccepted;
     };
     Fixture f(options);
     f.Start(); f.Handshake();
+    CHECK(paths.size() == 2 && paths[0].state == WebRtcNetworkPathState::Checking);
+    CHECK(paths[1].state == WebRtcNetworkPathState::Ready && paths[1].ice_generation == 1);
+    CHECK(paths[1].path_revision == 1 && paths[1].peer == f.peer);
     const auto original = f.session->RemoteDescription();
     auto offer = original;
     offer.origin.sess_version = "2";
@@ -675,12 +680,15 @@ void IceRestart()
     CHECK(f.session->SignalingState() == sdp::SdpNegotiationState::Stable);
     CHECK(f.session->RemoteDescription().origin.sess_version == original.origin.sess_version);
     CHECK(f.session->SendRtp(Rtp()));
+    CHECK(paths.size() == 2); // Failed restart preparation preserves the old path.
     routeAccepted = true;
     now = 90;
     if (!f.session->RestartIce(offer, answer))
         throw std::runtime_error("ICE restart: " + f.session->LastError());
     CHECK(answer.medias.front().ice.ufrag != "local" && answer.medias.front().ice.pwd != std::string(24, 'l'));
     CHECK(f.session->State() == WebRtcSessionState::Connecting);
+    CHECK(paths.size() == 3 && paths.back().state == WebRtcNetworkPathState::Checking);
+    CHECK(paths.back().ice_generation == 2 && paths.back().peer.len == 0);
     CHECK(!f.transport->IsSelectedPeer(f.peer) && !f.session->SendRtp(Rtp()));
     f.Deliver(Rtp(), f.peer);
     CHECK(f.sink->packets.empty());
@@ -696,6 +704,7 @@ void IceRestart()
     };
     nominate(f.peer);
     CHECK(!f.transport->IsSelectedPeer(f.peer));
+    CHECK(paths.size() == 3); // Old credentials cannot announce recovery.
     now = 100;
     CHECK(f.session->Tick(now));
     const auto nextPeer = network::SocketAddr::FromIPPort("192.0.2.3", 7000);
@@ -704,12 +713,48 @@ void IceRestart()
     nominate(nextPeer);
     CHECK(f.transport->IsSelectedPeer(nextPeer) && f.session->State() == WebRtcSessionState::Connected);
     CHECK(f.dtls->starts == 1 && f.srtp->installs == 1 && f.dtls->closes == 0);
+    CHECK(paths.size() == 4 && paths.back().state == WebRtcNetworkPathState::Ready);
+    CHECK(paths.back().ice_generation == 2 && paths.back().path_revision == 2);
+    CHECK(paths.back().peer == nextPeer);
+    nominate(nextPeer);
+    CHECK(paths.size() == 4); // Duplicate authenticated nomination is idempotent.
     f.Deliver(Rtp(), f.peer); CHECK(f.sink->packets.empty());
     f.Deliver(Rtp(), nextPeer); CHECK(f.sink->packets.size() == 1);
     CHECK(f.session->SendRtp(Rtp()));
     CHECK(!f.session->RestartIce(offer, answer));
-    now = 200;
+    // Authenticated tuple migration without a new SDP/ICE generation.
+    const auto rebound = network::SocketAddr::FromIPPort("192.0.2.4", 8000);
+    nominate(rebound);
+    CHECK(paths.size() == 5 && paths.back().peer == rebound);
+    CHECK(paths.back().ice_generation == 2 && paths.back().path_revision == 3);
+    nominate(rebound);
+    CHECK(paths.size() == 5);
+    f.Deliver(Rtp(), nextPeer); CHECK(f.sink->packets.size() == 1);
+    f.Deliver(Rtp(), rebound); CHECK(f.sink->packets.size() == 2);
+    // A new ICE generation may select the same tuple; it still needs one reset.
+    now = 110;
+    offer = f.session->RemoteDescription();
+    offer.origin.sess_version = "3";
+    offer.ice.ufrag = "newremote2";
+    offer.ice.pwd = std::string(24, 'z');
+    for (auto& media : offer.medias) media.ice = offer.ice;
+    CHECK(f.session->RestartIce(offer, answer));
+    CHECK(paths.size() == 6 && paths.back().ice_generation == 3);
+    nominate(rebound); // Previous generation is no longer valid.
+    CHECK(paths.size() == 6);
+    check.username = answer.medias.front().ice.ufrag + ":newremote2";
+    check.password = answer.medias.front().ice.pwd;
+    nominate(rebound);
+    CHECK(paths.size() == 7 && paths.back().state == WebRtcNetworkPathState::Ready);
+    CHECK(paths.back().ice_generation == 3 && paths.back().path_revision == 4);
+    CHECK(paths.back().peer == rebound);
+    CHECK(f.dtls->starts == 1 && f.srtp->installs == 1);
+    now = 210;
     CHECK(!f.session->Tick(now));
+    CHECK(paths.back().state == WebRtcNetworkPathState::Failed);
+    CHECK(f.session->NetworkPath().peer.len == 0);
+    CHECK(f.session->stop());
+    CHECK(paths.back().state == WebRtcNetworkPathState::Closed);
 #endif
 }
 

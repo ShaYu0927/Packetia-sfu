@@ -80,6 +80,7 @@ bool WebRtcSession::Fail(const std::string& error)
     last_error_ = error;
     state_ = WebRtcSessionState::Failed;
     Shutdown();
+    NotifyNetworkPath(WebRtcNetworkPathState::Failed);
     return false;
 }
 
@@ -374,6 +375,8 @@ bool WebRtcSession::CommitNegotiation()
         transport_->ClearSelectedPeer();
         awaiting_restart_nomination_ = true;
         state_ = WebRtcSessionState::Connecting;
+        ++network_path_.ice_generation;
+        NotifyNetworkPath(WebRtcNetworkPathState::Checking);
     }
     UpdateSignalingState();
     last_error_.clear();
@@ -397,6 +400,8 @@ bool WebRtcSession::start()
     state_ = WebRtcSessionState::Connecting;
     transport_->SetSink(weak_from_this());
     if (!transport_->Start()) return Fail("Datagram transport failed to start");
+    ++network_path_.ice_generation;
+    NotifyNetworkPath(WebRtcNetworkPathState::Checking);
     last_error_.clear();
     return true;
 }
@@ -420,6 +425,7 @@ bool WebRtcSession::stop()
     if (state_ == WebRtcSessionState::Closed) return true;
     state_ = WebRtcSessionState::Closed;
     Shutdown();
+    NotifyNetworkPath(WebRtcNetworkPathState::Closed);
     return true;
 }
 
@@ -448,7 +454,25 @@ bool WebRtcSession::CompleteDtls()
         return Fail("DTLS-SRTP key installation failed");
     srtp_ready_ = true;
     state_ = WebRtcSessionState::Connected;
+    NotifyNetworkPath(WebRtcNetworkPathState::Ready);
     return true;
+}
+
+void WebRtcSession::NotifyNetworkPath(WebRtcNetworkPathState state)
+{
+    network::SocketAddr peer;
+    if (state == WebRtcNetworkPathState::Ready)
+    {
+        if (!srtp_ready_ || awaiting_restart_nomination_) return;
+        peer = transport_->SelectedPeer();
+        if (!peer.len) return;
+        // Consent checks and duplicate nominations are not path changes.
+        if (network_path_.state == state && network_path_.peer == peer) return;
+        ++network_path_.path_revision;
+    }
+    network_path_.state = state;
+    network_path_.peer = peer;
+    if (options_.onNetworkPathChanged) options_.onNetworkPathChanged(network_path_);
 }
 
 bool WebRtcSession::Tick(uint64_t nowMs)
@@ -500,8 +524,12 @@ void WebRtcSession::HandleStun(network::transport::ReceivedDatagram datagram)
             return;
         }
         awaiting_restart_nomination_ = false;
-        BeginDtls();
-        if (srtp_ready_) state_ = WebRtcSessionState::Connected;
+        if (!BeginDtls()) return;
+        if (srtp_ready_)
+        {
+            state_ = WebRtcSessionState::Connected;
+            NotifyNetworkPath(WebRtcNetworkPathState::Ready);
+        }
     }
 }
 
