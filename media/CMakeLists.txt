@@ -20,9 +20,9 @@ add_library(media STATIC
     core/EventBus.cpp
     core/EncodedFrameRouter.h
     core/EncodedFrameRouter.cpp
-    endpoint/MediaEndpoint.cpp
+    endpoint/SfuEndpoint.h
+    endpoint/SfuEndpoint.cpp
     endpoint/SfuEndpointTracks.cpp
-    endpoint/MediaSession.cpp
     transport/IMediaPacketSink.h
     transport/MediaTransportPacket.h
     transport/MediaEndpointIngress.h

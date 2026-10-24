@@ -2,6 +2,8 @@
 #include "utils.h"
 #include "RtcpHealper.h"
 #include "logger.h"
+#include <optional>
+#include <utility>
 #include <vector>
 
 namespace
@@ -125,8 +127,10 @@ bool ParseTransportFeedback(const uint8_t* p, size_t len, rtcpx::TransportFeedba
         packet.received = true;
         packet.receive_time_us = static_cast<int64_t>(report.reference_time_ms) * 1000LL +
                                  receive_delta_us;
-        packet.receive_time_ms = report.reference_time_ms +
-                                 static_cast<uint64_t>(receive_delta_us >= 0 ? receive_delta_us : 0) / 1000ULL;
+        // Apply signed deltas before converting units. Reordered arrivals can
+        // precede the reference time; clamp only the final unsigned timestamp.
+        packet.receive_time_ms = packet.receive_time_us > 0 ?
+                                 static_cast<uint64_t>(packet.receive_time_us) / 1000ULL : 0;
         report.packets.push_back(packet);
     }
 
@@ -157,8 +161,13 @@ bool rtcpx::RtcpReceiverImpl::OnRtcpPacket(const uint8_t* data, size_t len)
         return false;
     }
 
+    struct PendingPacket
+    {
+        RtcpHeader header;
+        std::optional<TransportFeedbackReport> transport_feedback;
+    };
+    std::vector<PendingPacket> packets;
     size_t offset = 0;
-    bool parsed_any = false;
 
     while (offset + RtcpHeader::kHeaderSize <= len)
     {
@@ -169,11 +178,32 @@ bool rtcpx::RtcpReceiverImpl::OnRtcpPacket(const uint8_t* data, size_t len)
             return false;
         }
 
-        HandleSingleRtcpPacket(header.Data(), header.ContentSize(), header.CountOrFmt(), header.PacketType());
+        PendingPacket packet{header, std::nullopt};
+        if (header.PacketType() == RTCP_PT_RTPFB && header.CountOrFmt() == 15)
+        {
+            packet.transport_feedback.emplace();
+            if (!ParseTransportFeedback(header.Data(), header.ContentSize(),
+                                        *packet.transport_feedback))
+                return false;
+        }
+        packets.push_back(std::move(packet));
         offset += header.PacketSize();
-        parsed_any = true;
     }
-    return parsed_any && offset == len;
+    if (packets.empty() || offset != len) return false;
+
+    // Validate the complete compound before publishing any event. Otherwise a
+    // bad suffix can consume history and advance BWE through a valid prefix.
+    for (const auto& packet : packets)
+    {
+        if (packet.transport_feedback)
+        {
+            if (observer_) observer_->OnTransportFeedback(*packet.transport_feedback);
+        }
+        else
+            HandleSingleRtcpPacket(packet.header.Data(), packet.header.ContentSize(),
+                                   packet.header.CountOrFmt(), packet.header.PacketType());
+    }
+    return true;
 }
 
 void rtcpx::RtcpReceiverImpl::SetObserver(IRtcpObserver* obs)

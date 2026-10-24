@@ -1,5 +1,5 @@
 #include "Participant.h"
-#include "MediaEndpoint.h"
+#include "SfuEndpoint.h"
 #include "MediaTrack.h"
 
 #include <limits>

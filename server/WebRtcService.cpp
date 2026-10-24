@@ -9,7 +9,7 @@
 #include "Sdp.h"
 #include "SdpCodec.h"
 #include "logger.h"
-#include "MediaEndpoint.h"
+#include "SfuEndpoint.h"
 #include "MediaTrack.h"
 #include "MediaEndpointIngress.h"
 #include "WebRtcMediaTransport.h"

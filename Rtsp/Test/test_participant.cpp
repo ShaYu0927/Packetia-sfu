@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "Participant.h"
-#include "MediaEndpoint.h"
+#include "SfuEndpoint.h"
 #include "MediaTrack.h"
 
 TEST(Participant, StaleSignalingCloseCannotDetachReplacement)

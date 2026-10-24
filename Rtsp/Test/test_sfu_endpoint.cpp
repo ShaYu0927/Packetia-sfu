@@ -1,5 +1,5 @@
 #include <gtest/gtest.h>
-#include "MediaEndpoint.h"
+#include "SfuEndpoint.h"
 #include "Room.h"
 #include "Participant.h"
 #include "MediaTrack.h"

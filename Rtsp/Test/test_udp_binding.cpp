@@ -4,7 +4,7 @@
 #include "RtspUtil.h"
 #include "WorkerRegistry.h"
 #include "EndpointBase.h"
-#include "MediaEndpoint.h"
+#include "SfuEndpoint.h"
 #include <unordered_set>
 #include "EncodedFrameRouter.h"
 

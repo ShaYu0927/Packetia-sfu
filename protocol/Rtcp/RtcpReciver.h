@@ -16,7 +16,8 @@ public:
     ~RtcpReceiverImpl();
 
     // Parse one compound RTCP packet. A compound packet may include SR/RR,
-    // SDES, BYE, RTPFB, PSFB, etc. Return false on malformed framing.
+    // SDES, BYE, RTPFB, PSFB, etc. Validate all framing and TWCC payloads
+    // before emitting callbacks; return false without dispatch on failure.
     bool OnRtcpPacket(const uint8_t* data, size_t len) override;
 
     // Parse a single RTCP sub-packet whose common header has already been

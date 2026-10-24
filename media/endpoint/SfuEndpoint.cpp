@@ -1,4 +1,4 @@
-#include "MediaEndpoint.h"
+#include "SfuEndpoint.h"
 #include "RtspMediaSession.h"
 #include "logger.h"
 #include "RtcpContext.h"
@@ -17,14 +17,17 @@
 namespace media 
 {
 
-MediaEndpoint::MediaEndpoint(uint64_t id, std::shared_ptr<RtpTrackDescription>,
-                             std::shared_ptr<MediaSession> session)
-    : utils::EndpointBase(id, "MediaEndpoint")
+SfuEndpoint::SfuEndpoint(uint64_t id, std::shared_ptr<RtpTrackDescription> track_description,
+                         std::shared_ptr<MediaSession> session,
+                         std::shared_ptr<IEncodedFramePublisher> frame_publisher)
+    : utils::EndpointBase(id, "SfuEndpoint"), frame_publisher_(std::move(frame_publisher))
 {
     if (session) {
         session_id_ = std::to_string(session->GetId());
         stream_id_ = session->GetRtspSuffix();
     }
+    if (track_description)
+        AddPublishedTrack(std::to_string(track_description->getTrackIndex()), track_description);
 }
 
 namespace
@@ -71,28 +74,6 @@ static uint32_t ReadUint32BE(const uint8_t* data)
            (static_cast<uint32_t>(data[1]) << 16) |
            (static_cast<uint32_t>(data[2]) << 8) |
            static_cast<uint32_t>(data[3]);
-}
-
-// Views remain valid for the synchronous call; the WorkJob retains storage.
-void MediaEndpoint::OnRtp(WorkJob& job)
-{
-    media_latency::PacketScope trace_scope(job.media_trace);
-    if (!job.payload.Empty()) HandleRtpPacket(job.payload.View());
-}
-
-void MediaEndpoint::OnRtcp(WorkJob& job)
-{
-    if (!job.payload.Empty()) HandleRtcpPacket(job.payload.View());
-}
-
-void MediaEndpoint::OnStun(WorkJob& job)
-{
-    if (!job.payload.Empty()) HandleStunPacket(job.payload.View());
-}
-
-void MediaEndpoint::OnDtls(WorkJob& job)
-{
-    if (!job.payload.Empty()) HandleDtlsPacket(job.payload.View());
 }
 
 rtsp::RtpReceiverTrack::Ptr SfuEndpoint::FindReceiverTrackBySsrc(uint32_t ssrc)

@@ -2,7 +2,7 @@
 #include "EventLoop.h"
 #include "EndpointBase.h"
 #include "Sdp.h"
-#include "MediaEndpoint.h"
+#include "SfuEndpoint.h"
 #include "third/nlohmann/json.hpp"
 
 #include <arpa/inet.h>

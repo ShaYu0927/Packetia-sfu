@@ -1,6 +1,6 @@
 #include "Room.h"
 #include "Participant.h"
-#include "MediaEndpoint.h"
+#include "SfuEndpoint.h"
 #include "MediaTrack.h"
 #include <utility>
 #include "TimeUtil.h"

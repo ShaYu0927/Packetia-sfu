@@ -1,7 +1,7 @@
 #include "RtspSession.h"
 #include "logger.h"
 #include "MediaStreamAffinity.h"
-#include "MediaEndpoint.h"
+#include "SfuEndpoint.h"
 #include "RtcpContext.h"
 #include <algorithm>
 #include <iomanip>

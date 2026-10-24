@@ -5,7 +5,7 @@
 #include "EncodedFrameRouter.h"
 #include "ThreadManager.h"
 #ifdef PACKETIA_TEST_SFU_PIPELINE
-#include "MediaEndpoint.h"
+#include "SfuEndpoint.h"
 #endif
 
 extern "C" {

@@ -1,7 +1,7 @@
 #include "RtspMessage.h"
 #include <string>
 #include "EndpointBase.h"
-#include "MediaEndpoint.h"
+#include "SfuEndpoint.h"
 #include "Sdp.h"
 #include "RtspUtil.h"
 #include "TimeUtil.h"

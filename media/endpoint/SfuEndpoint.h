@@ -1,5 +1,5 @@
-#ifndef _MEDIAENDPOINT_H_
-#define _MEDIAENDPOINT_H_
+#ifndef PACKETIA_MEDIA_SFU_ENDPOINT_H_
+#define PACKETIA_MEDIA_SFU_ENDPOINT_H_
 
 #include "EndpointBase.h"
 #include "RtpReceiver.h"
@@ -20,57 +20,16 @@ namespace sdp { struct SdpMedia; }
 namespace media 
 {
 
-class MediaEndpoint : public utils::EndpointBase
-{
-public:
-    using EndpointBase::EndpointBase;
-    MediaEndpoint(uint64_t id,
-                  std::shared_ptr<RtpTrackDescription> track_description,
-                  std::shared_ptr<MediaSession> session);
-    explicit MediaEndpoint(uint64_t id) : utils::EndpointBase(id, "MediaEndpoint") {}
-    ~MediaEndpoint() = default;
-    bool Start() override
-    {
-        SetState(State::kRunning);
-        return true;
-    }
-
-    void Stop() override
-    {
-        SetState(State::kStopped);
-    }
-
-    void OnRtp(WorkJob& job) override;
-    void OnRtcp(WorkJob& job) override;
-    void OnStun(WorkJob& job) override;
-    void OnDtls(WorkJob& job) override;
-
-protected:
-    virtual void HandleRtpPacket(common::BufferView packet) = 0;
-    virtual void HandleRtcpPacket(common::BufferView packet) {}
-    virtual void HandleStunPacket(common::BufferView packet) {}
-    virtual void HandleDtlsPacket(common::BufferView packet) {}
-
-    std::string session_id_;
-    std::string stream_id_;
-};
-
-class SfuEndpoint : public MediaEndpoint,
+class SfuEndpoint : public utils::EndpointBase,
                     public std::enable_shared_from_this<SfuEndpoint>
 {
 public:
     SfuEndpoint(uint64_t id,
                 std::shared_ptr<RtpTrackDescription> track_description,
                 std::shared_ptr<MediaSession> session,
-                std::shared_ptr<IEncodedFramePublisher> frame_publisher)
-        : MediaEndpoint(id, track_description, std::move(session)),
-          frame_publisher_(std::move(frame_publisher))
-    {
-        if (track_description)
-            AddPublishedTrack(std::to_string(track_description->getTrackIndex()), track_description);
-    }
+                std::shared_ptr<IEncodedFramePublisher> frame_publisher);
     explicit SfuEndpoint(uint64_t id, std::shared_ptr<IEncodedFramePublisher> publisher = {})
-        : MediaEndpoint(id), frame_publisher_(std::move(publisher)) {}
+        : utils::EndpointBase(id, "SfuEndpoint"), frame_publisher_(std::move(publisher)) {}
     ~SfuEndpoint() override { Stop(); }
     using SendRtcpCallback = std::function<bool(const uint8_t*, size_t)>;
     using EncodedFrameCallback = std::function<void(const media::EncodedFrame::ConstPtr&)>;
@@ -124,10 +83,14 @@ public:
     void RemoveEncodedFrameCallback(FrameSubscriptionId id);
 
 protected:
-    void HandleRtpPacket(common::BufferView packet) override;
-    void HandleRtcpPacket(common::BufferView packet) override;
+    void HandleRtpPacket(common::BufferView packet);
+    void HandleRtcpPacket(common::BufferView packet);
 
     void ForwardRtpToSubscribers(uint32_t source_ssrc, const uint8_t* data, size_t len);
+
+    // Source identity attached to encoded-frame events by RTSP/WebRTC owners.
+    std::string session_id_;
+    std::string stream_id_;
 
 private:
     struct Subscription;
@@ -212,4 +175,4 @@ private:
 
 }
 
-#endif /* _MEDIAENDPOINT_H_ */
+#endif // PACKETIA_MEDIA_SFU_ENDPOINT_H_

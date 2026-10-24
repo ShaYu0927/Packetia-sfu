@@ -9,8 +9,7 @@ namespace media
 {
 namespace
 {
-// Parse into values first: malformed compound framing must not partially
-// advance history or GCC. Other RTCP events still go to the media endpoint.
+
 class FeedbackCollector final : public rtcpx::IRtcpObserver
 {
 public:

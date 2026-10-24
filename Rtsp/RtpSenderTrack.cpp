@@ -100,7 +100,6 @@ RtpSenderTrack::~RtpSenderTrack()
 }
 
 bool RtpSenderTrack::InputRtpPacket(const uint8_t* data, size_t len)
-try
 {
     RtpHeader in_header;
     if (!ParseRtpHeader(data, len, in_header))
@@ -149,8 +148,6 @@ try
 
     return true;
 }
-
-catch (const std::bad_alloc&) { return false; }
 
 void RtpSenderTrack::OnRtcpNack(const std::vector<uint16_t>& lost_seqs)
 try

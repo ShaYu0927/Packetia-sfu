@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "IMediaTransport.h"
-#include "MediaEndpoint.h"
+#include "SfuEndpoint.h"
 #include "GoogCcNetworkController.h"
 #include "NackRequester.h"
 #include "RtcpNack.h"
