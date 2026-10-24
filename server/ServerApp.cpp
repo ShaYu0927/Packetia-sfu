@@ -2,6 +2,9 @@
 #include "ServiceNames.h"
 #include "WorkerSetup.h"
 #include "ApiServer.h"
+#include "AccountController.h"
+#include "MetricsController.h"
+#include "MonitorService.h"
 #include "HttpServer.h"
 #include "AccountService.h"
 #include "ScryptPasswordHasher.h"
@@ -35,7 +38,8 @@
 namespace server
 {
 ServerApp::ServerApp(ServerConfig config, std::shared_ptr<service::IRecordingEventSink> recording_events)
-    : config_(std::move(config)),
+    : monitor_service_(std::make_shared<service::MonitorService>(metrics_context_.Registry())),
+      config_(std::move(config)),
       settings_(std::make_shared<config::ConfigStore>(config_)),
       recording_events_(std::move(recording_events)),
       event_loop_(std::make_shared<EventLoop>(config_.io_threads)),
@@ -56,7 +60,10 @@ ServerApp::~ServerApp()
 bool ServerApp::Start()
 {
     std::lock_guard<std::mutex> lock(lifecycle_mutex_);
-    return launcher_.StartAll();
+    if (!metrics_context_.Activate()) return false;
+    const bool started = launcher_.StartAll();
+    if (!started) metrics_context_.Deactivate();
+    return started;
 }
 
 void ServerApp::Run()
@@ -68,6 +75,7 @@ void ServerApp::Stop() noexcept
 {
     std::lock_guard<std::mutex> lock(lifecycle_mutex_);
     launcher_.StopAll();
+    metrics_context_.Deactivate();
 }
 
 ThreadRuntimeStatus ServerApp::ThreadStatus() const
@@ -77,6 +85,8 @@ ThreadRuntimeStatus ServerApp::ThreadStatus() const
 
 void ServerApp::ConfigureServices()
 {
+    // Monitor starts before producers and stops after they have drained.
+    launcher_.AddService(SERVICE_MONITOR, monitor_service_);
     // Reverse shutdown keeps I/O and frame consumers alive while workers
     // drain, including cleanup jobs submitted when network servers stop.
     launcher_.AddCustomService(SERVICE_LOOP,
@@ -123,7 +133,11 @@ void ServerApp::AddApiService()
     if (!account_service_)
         throw std::invalid_argument("HTTP account API requires the account service");
     auto transport = std::make_shared<protocol::http::HttpServer>(event_loop_.get());
-    api_server_ = std::make_shared<api::ApiServer>(config_.http, config_.account, account_service_, transport);
+    api::ApiRouter::Builder routes;
+    api::AccountController(account_service_).RegisterRoutes(routes);
+    api::MetricsController(monitor_service_).RegisterRoutes(routes);
+    api_server_ = std::make_shared<api::ApiServer>(config_.http, routes.Build(config_.http.max_body_bytes), transport,
+        config_.account.worker_count, config_.account.max_pending_requests);
     const auto api = api_server_;
     launcher_.AddCustomService(SERVICE_API,
         [api] {

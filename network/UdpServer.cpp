@@ -1,4 +1,5 @@
 #include "UdpServer.h"
+#include "RuntimeMetrics.h"
 #include "MediaLatency.h"
 namespace network
 {
@@ -118,9 +119,21 @@ bool UdpServer::SendTo(const network::SocketAddr &dst, const uint8_t *data, size
 UdpServer::SendResult UdpServer::TrySendTo(const network::SocketAddr& dst,
                                           const uint8_t* data, size_t len)
 {
+    struct RecordResult
+    {
+        SendResult result = SendResult::Closed;
+        size_t bytes;
+        ~RecordResult()
+        {
+            using namespace monitoring;
+            RecordSend(Transport::Udp, result == SendResult::Sent ? SendEvent::Sent :
+                result == SendResult::NotWritable ? SendEvent::Blocked : SendEvent::Failed,
+                result == SendResult::Sent ? bytes : 0, result == SendResult::Sent ? 1 : 0);
+        }
+    } metrics{SendResult::Closed, len};
     // Empty UDP datagrams are valid TURN relay payloads.
     if ((!data && len != 0) || len > 65507 || dst.len == 0 || dst.len > sizeof(dst.ss))
-        return SendResult::Failed;
+        return metrics.result = SendResult::Failed;
     if (!scheduler_ || !started_) return SendResult::Closed;
     SendResult result = SendResult::Closed;
     const auto trace = media_latency::CurrentSend();
@@ -139,7 +152,7 @@ UdpServer::SendResult UdpServer::TrySendTo(const network::SocketAddr& dst,
         result = n == 0 ? SendResult::Sent :
             n == -1 ? SendResult::NotWritable : SendResult::Failed;
     });
-    return result;
+    return metrics.result = result;
 }
 void UdpServer::OnReadable()
 {

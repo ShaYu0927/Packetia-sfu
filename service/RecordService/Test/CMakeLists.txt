@@ -53,6 +53,9 @@ if(RECORDING_FFMPEG)
     set_tests_properties(test_recording PROPERTIES FIXTURES_REQUIRED recording_media TIMEOUT 30)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     get_filename_component(PACKETIA_RECORD_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
+    if(NOT TARGET packetia_monitoring)
+        add_subdirectory("${PACKETIA_RECORD_ROOT}/monitoring" monitoring-library)
+    endif()
     add_library(recording_test_pipeline STATIC
         ../RecordingService.cpp ../RecordingDispatcher.cpp ../RecordingSession.cpp ../RecordingInstance.cpp
         ../Mp4Recorder.cpp ../Mp4Writer.cpp ../LocalFileIO.cpp
@@ -66,7 +69,7 @@ if(RECORDING_FFMPEG)
         ${PACKETIA_RECORD_ROOT}/service/core
         ${PACKETIA_RECORD_ROOT}/media/MediaFrame
         ${PACKETIA_RECORD_ROOT}/Common/memory)
-    target_link_libraries(recording_test_pipeline PUBLIC packetia_config packetia_recording_index ${FFMPEG_LIBRARIES} packetia_threads)
+    target_link_libraries(recording_test_pipeline PUBLIC packetia_config packetia_recording_index ${FFMPEG_LIBRARIES} packetia_threads packetia_monitoring)
     add_executable(test_recording_control test_recording_control.cpp)
     target_link_libraries(test_recording_control PRIVATE recording_test_pipeline)
     add_test(NAME recording_control COMMAND ${Python3_EXECUTABLE}

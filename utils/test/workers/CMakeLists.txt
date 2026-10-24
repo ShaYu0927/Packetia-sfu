@@ -8,6 +8,9 @@ endif()
 find_package(Threads REQUIRED)
 get_filename_component(PACKETIA_WORKERS_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
 include("${PACKETIA_WORKERS_ROOT}/utils/threading/ThreadSupport.cmake")
+if(NOT TARGET packetia_monitoring)
+    add_subdirectory("${PACKETIA_WORKERS_ROOT}/monitoring" monitoring-library)
+endif()
 
 add_executable(test_worker_registry test_worker_registry.cpp
     "${PACKETIA_WORKERS_ROOT}/server/WorkerSetup.cpp")
@@ -41,7 +44,7 @@ else()
         "${PACKETIA_WORKERS_ROOT}"
         "${PACKETIA_WORKERS_ROOT}/service/core"
         "${PACKETIA_WORKERS_ROOT}/log")
-    target_link_libraries(worker_registry_test_support PUBLIC packetia_memory packetia_threads)
+    target_link_libraries(worker_registry_test_support PUBLIC packetia_memory packetia_threads packetia_monitoring)
     target_link_libraries(test_worker_registry PRIVATE worker_registry_test_support)
 endif()
 

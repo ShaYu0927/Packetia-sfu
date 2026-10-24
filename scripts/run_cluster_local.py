@@ -153,6 +153,8 @@ def runtime_configs(root, data, names):
             node = dict(first, node_id=name,
                         websocket_port=first['websocket_port'] + index,
                         udp_port=first['udp_port'] + index)
+            if 'metrics_http_port' in first:
+                node['metrics_http_port'] = first['metrics_http_port'] + index
             host = node['public_ip']
             if ':' in host:
                 host = f'[{host}]'
@@ -174,6 +176,11 @@ def runtime_configs(root, data, names):
             raise RuntimeError(f'{name}: invalid or conflicting local ports')
         tcp.add(stream)
         udp.add(datagram)
+        if 'metrics_http_port' in node:
+            metrics = (node.get('metrics_listen_ip', '127.0.0.1'), node['metrics_http_port'])
+            if not 1 <= metrics[1] <= 65535 or metrics in tcp:
+                raise RuntimeError(f'{name}: invalid or conflicting metrics HTTP port')
+            tcp.add(metrics)
     result = []
     for name, config in configs:
         directory = data / name

@@ -38,6 +38,9 @@ add_test(NAME startup_config COMMAND test_startup_config "${CMAKE_CURRENT_LIST_D
 
 # Exercise real ingress/worker/session control with a fake persistence layer.
 get_filename_component(PACKETIA_SERVER_ROOT "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
+if(NOT TARGET packetia_monitoring)
+    add_subdirectory("${PACKETIA_SERVER_ROOT}/monitoring" monitoring-library)
+endif()
 add_executable(test_stream_services
     test_stream_services.cpp recording_instance_stub.cpp
     ${PACKETIA_SERVER_ROOT}/service/RecordService/RecordingService.cpp
@@ -63,7 +66,7 @@ target_include_directories(test_stream_services PRIVATE
 if(NOT TARGET packetia_recording_index)
     add_subdirectory("${PACKETIA_SERVER_ROOT}/service/RecordService/Index" recording-index)
 endif()
-target_link_libraries(test_stream_services PRIVATE packetia_config packetia_recording_index packetia_threads)
+target_link_libraries(test_stream_services PRIVATE packetia_config packetia_recording_index packetia_threads packetia_monitoring)
 add_test(NAME stream_services COMMAND test_stream_services)
 set_tests_properties(stream_services PROPERTIES TIMEOUT 30)
 

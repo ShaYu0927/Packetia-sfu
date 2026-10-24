@@ -2,13 +2,12 @@
 #define PACKETIA_SERVER_API_SERVER_H_
 
 #include "IHttpServer.h"
-#include "AccountOptions.h"
 #include "WorkerRegistry.h"
 #include "ApiRouter.h"
 
 #include <memory>
 
-namespace service::account { class AccountService; }
+namespace service::account { class AccountService; struct AccountOptions; }
 
 namespace server::api
 {
@@ -36,8 +35,9 @@ private:
     struct State;
 
     const protocol::http::HttpServerOptions http_options_;
-    const service::account::AccountOptions account_options_;
-    const std::shared_ptr<service::account::AccountService> accounts_;
+    const uint32_t worker_count_;
+    const std::size_t max_pending_requests_;
+    bool configuration_valid_ = true;
     const std::shared_ptr<protocol::http::IHttpServer> transport_;
     const std::string pool_name_;
     WorkerRegistry workers_;

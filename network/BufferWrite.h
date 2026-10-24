@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstddef>
 #include "MediaLatency.h"
+#include "RuntimeMetrics.h"
 
 
 void WriteUint32BE(char* p, uint32_t value);
@@ -24,6 +25,8 @@ public:
 
     explicit BufferWirte(std::size_t max_queued_bytes = KDefaultMaxQueuedBytes);
     ~BufferWirte();
+    BufferWirte(const BufferWirte&) = delete;
+    BufferWirte& operator=(const BufferWirte&) = delete;
     bool IsEmpty() const
     {
         return buffer_.empty();
@@ -46,17 +49,20 @@ public:
     bool Append(const char* data,uint32_t size,uint32_t index = 0);
     int  Send(int socketfd,int timeOut = 0);
 private:
-    typedef struct 
+    struct Packet
     {
         std::shared_ptr<char> data;
         uint32_t size;
         uint32_t writeIndex;
         media_latency::SendTrace trace;
-    }Packet;
+        uint64_t enqueue_ns = 0;
+    };
 
     std::size_t max_queued_bytes_ = KDefaultMaxQueuedBytes;
     std::size_t queued_bytes_ = 0;
     std::queue<Packet> buffer_;
+    std::shared_ptr<monitoring::SendQueueMetrics> metrics_;
+    void UpdateMetrics();
 };
 
 

@@ -1,5 +1,4 @@
 #include "ApiServer.h"
-#include "AccountController.h"
 #include "ApiResponse.h"
 #include "ApiRouter.h"
 #include "logger.h"
@@ -18,13 +17,6 @@ std::atomic<std::uint64_t> next_pool_id{0};
 protocol::http::HttpResponse Unavailable()
 {
     return ErrorResponse(503, "unavailable", "API unavailable.");
-}
-
-ApiRouter BuildRoutes(std::shared_ptr<service::account::AccountService> accounts, std::size_t body_limit)
-{
-    ApiRouter::Builder builder;
-    AccountController(std::move(accounts)).RegisterRoutes(builder);
-    return builder.Build(body_limit);
 }
 
 void RespondSafely(const protocol::http::IHttpServer::Respond& respond,
@@ -105,19 +97,6 @@ struct ApiServer::State
     }
 };
 
-ApiServer::ApiServer(protocol::http::HttpServerOptions http_options,
-                     service::account::AccountOptions account_options,
-                     std::shared_ptr<service::account::AccountService> accounts,
-                     std::shared_ptr<protocol::http::IHttpServer> transport)
-    : http_options_(std::move(http_options)), account_options_(std::move(account_options)),
-      accounts_(std::move(accounts)), transport_(std::move(transport)),
-      pool_name_("account_api_" + std::to_string(next_pool_id.fetch_add(1)))
-{
-    workers_.AddFunction({pool_name_, account_options_.worker_count,
-                          account_options_.max_pending_requests,
-                          ShardedWorkerPool::DropPolicy::DropTail});
-}
-
 ApiServer::~ApiServer()
 {
     Stop();
@@ -126,13 +105,8 @@ ApiServer::~ApiServer()
 ApiServer::ApiServer(protocol::http::HttpServerOptions http_options, ApiRouter router,
                      std::shared_ptr<protocol::http::IHttpServer> transport,
                      uint32_t worker_count, std::size_t max_pending_requests)
-    : http_options_(std::move(http_options)), account_options_([&] {
-          service::account::AccountOptions options;
-          options.worker_count = worker_count;
-          options.max_pending_requests = max_pending_requests;
-          return options;
-      }()), transport_(std::move(transport)),
-      pool_name_("api_" + std::to_string(next_pool_id.fetch_add(1))),
+    : http_options_(std::move(http_options)), worker_count_(worker_count), max_pending_requests_(max_pending_requests),
+      transport_(std::move(transport)), pool_name_("api_" + std::to_string(next_pool_id.fetch_add(1))),
       routes_(std::make_shared<const ApiRouter>(std::move(router)))
 {
     workers_.AddFunction({pool_name_, worker_count, max_pending_requests,
@@ -142,18 +116,17 @@ ApiServer::ApiServer(protocol::http::HttpServerOptions http_options, ApiRouter r
 bool ApiServer::Start()
 {
     if (started_ || !http_options_.enabled) return true;
-    if ((!routes_ && (!account_options_.enabled || !accounts_)) || !account_options_.IsValid() || !transport_ ||
+    if (!configuration_valid_ || !routes_ || !worker_count_ || worker_count_ > 64 || !max_pending_requests_ || max_pending_requests_ > 65536 || !transport_ ||
         !http_options_.IsValid())
     {
-        LOG_ERROR("[ApiServer] invalid or missing account API configuration");
+        LOG_ERROR("[ApiServer] invalid API configuration");
         return false;
     }
 
     try
     {
         if (workers_.Start() != 0) return false;
-        state_ = std::make_shared<State>(routes_ ? *routes_ : BuildRoutes(accounts_, http_options_.max_body_bytes),
-            http_options_.max_body_bytes, account_options_.max_pending_requests, pool_name_);
+        state_ = std::make_shared<State>(*routes_, http_options_.max_body_bytes, max_pending_requests_, pool_name_);
         const std::weak_ptr<State> weak = state_;
         if (!transport_->Start(http_options_, [weak](auto request, auto respond)
             {

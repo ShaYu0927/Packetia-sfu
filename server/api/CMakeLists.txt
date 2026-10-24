@@ -1,24 +1,21 @@
-add_library(packetia_account_api STATIC
-    ApiRouter.cpp
-    ApiRouter.h
-    ApiResponse.cpp
-    ApiResponse.h
-    AccountController.cpp
-    AccountController.h
-    ApiServer.cpp
-    ApiServer.h
-)
+add_library(packetia_api STATIC ApiRouter.cpp ApiResponse.cpp ApiServer.cpp)
+target_compile_features(packetia_api PUBLIC cxx_std_17)
+target_include_directories(packetia_api PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../../third)
+target_link_libraries(packetia_api PUBLIC packetia_http utils)
 
-target_compile_features(packetia_account_api PUBLIC cxx_std_17)
+add_library(packetia_account_api STATIC AccountController.cpp AccountApiServer.cpp)
 target_include_directories(packetia_account_api PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../..)
-target_link_libraries(packetia_account_api PUBLIC packetia_account packetia_http utils)
+target_link_libraries(packetia_account_api PUBLIC packetia_account packetia_api)
+
+add_library(packetia_monitoring_api STATIC MetricsController.cpp MetricsJsonEncoder.cpp)
+target_link_libraries(packetia_monitoring_api PUBLIC packetia_api packetia_monitor_service)
 
 if(BUILD_TESTING)
     add_executable(test_account_api test/test_account_api.cpp)
     target_link_libraries(test_account_api PRIVATE packetia_account_api GTest::gtest_main)
     add_test(NAME AccountApiFrameworkUnitTest COMMAND test_account_api)
     add_executable(test_api_router test/test_api_router.cpp)
-    target_link_libraries(test_api_router PRIVATE packetia_account_api GTest::gtest_main)
+    target_link_libraries(test_api_router PRIVATE packetia_api GTest::gtest_main)
     add_test(NAME ApiRouterUnitTest COMMAND test_api_router)
     set_tests_properties(ApiRouterUnitTest PROPERTIES TIMEOUT 15)
 endif()

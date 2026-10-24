@@ -7,6 +7,7 @@
 #include "ConferenceMixService.h"
 #include "RecordingRecords.h"
 #include "TranscodeTaskTypes.h"
+#include "RuntimeMetrics.h"
 
 #include <functional>
 #include <memory>
@@ -16,6 +17,7 @@
 class EventLoop;
 namespace media { class EncodedFrameRouter; }
 namespace service { class RecordingService; class IRecordingEventSink; }
+namespace service { class MonitorService; }
 namespace service::account { class AccountService; }
 namespace service::transcode { class TranscodeService; }
 namespace sdp { struct SdpMedia; }
@@ -71,6 +73,8 @@ private:
     void AddTurnService();
     void RefreshStreamPolicies();
 
+    monitoring::MetricsContext metrics_context_{false};
+    std::shared_ptr<service::MonitorService> monitor_service_;
     const ServerConfig config_; // Immutable network/resource startup settings.
     std::shared_ptr<config::ConfigStore> settings_;
     std::shared_ptr<service::IRecordingEventSink> recording_events_;

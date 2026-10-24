@@ -14,6 +14,7 @@ endif()
 find_package(OpenSSL REQUIRED)
 set(THREADS_PREFER_PTHREAD_FLAG TRUE)
 find_package(Threads REQUIRED)
+add_subdirectory(monitoring)
 add_subdirectory(utils/threading)
 add_subdirectory(config)
 add_subdirectory(Common/memory)
@@ -180,9 +181,9 @@ add_library(utils STATIC
 
 )
 
-target_link_libraries(utils PUBLIC LOGGER Threads::Threads packetia_memory PRIVATE OpenSSL::Crypto)
+target_link_libraries(utils PUBLIC LOGGER Threads::Threads packetia_memory packetia_monitoring PRIVATE OpenSSL::Crypto)
 target_link_libraries(COMMON PUBLIC packetia_memory)
-target_link_libraries(network PUBLIC packetia_memory PRIVATE OpenSSL::SSL)
+target_link_libraries(network PUBLIC packetia_memory packetia_monitoring PRIVATE OpenSSL::SSL)
 
 add_library(rtp STATIC
     Rtsp/Rtp.cpp
@@ -272,6 +273,7 @@ if(BUILD_TESTING)
     add_subdirectory(Rtsp/Test)
     add_subdirectory(utils/test)
     add_subdirectory(utils/test/latency)
+    add_subdirectory(monitoring/test)
     add_subdirectory(server/Test)
 
     add_executable(ice_unit_tests
@@ -315,7 +317,7 @@ endif()
 target_link_libraries(Packetia
     PRIVATE
     "$<$<PLATFORM_ID:Linux>:-Wl,--start-group>"
-    server media rtsp rtp sip Rtmp network utils Rtcp LOGGER ROOM_LIB COMMON ICE WebRtc TURN Interleaved service packetia_auth packetia_account_api
+    server media rtsp rtp sip Rtmp network utils Rtcp LOGGER ROOM_LIB COMMON ICE WebRtc TURN Interleaved service packetia_auth packetia_account_api packetia_monitoring_api
     "$<$<PLATFORM_ID:Linux>:-Wl,--end-group>"
     ${FFMPEG_LIBRARIES}
     pthread

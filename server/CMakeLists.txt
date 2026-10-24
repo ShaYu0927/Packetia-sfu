@@ -37,13 +37,13 @@ if(PACKETIA_WITH_LIBWEBSOCKETS)
     endif()
     add_executable(PacketiaControl cluster/ProcessMain.cpp cluster/ControlApp.cpp)
     target_compile_definitions(PacketiaControl PRIVATE PACKETIA_CONTROL_PROCESS=1)
-    target_link_libraries(PacketiaControl PRIVATE packetia_cluster_api)
+    target_link_libraries(PacketiaControl PRIVATE packetia_cluster_api packetia_monitoring_api)
     if(PACKETIA_SRTP_AVAILABLE)
         find_package(CURL REQUIRED)
         add_executable(PacketiaSfu cluster/ProcessMain.cpp cluster/SfuApp.cpp cluster/NodeClient.cpp WebRtcService.cpp)
         target_link_libraries(PacketiaSfu PRIVATE
             "$<$<PLATFORM_ID:Linux>:-Wl,--start-group>"
-            server ROOM_LIB media network utils WebRtc LOGGER packetia_auth packetia_cluster CURL::libcurl
+            server ROOM_LIB media network utils WebRtc LOGGER packetia_auth packetia_cluster packetia_monitoring_api CURL::libcurl
             "$<$<PLATFORM_ID:Linux>:-Wl,--end-group>")
         if(BUILD_TESTING)
             find_package(Python3 COMPONENTS Interpreter)

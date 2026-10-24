@@ -1,5 +1,6 @@
 #include "BufferWrite.h"
 #include "MediaLatency.h"
+#include "RuntimeMetrics.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -20,7 +21,7 @@ extern "C" ssize_t send(int, const void*, size_t size, int)
     if (results.empty()) std::abort();
     const int result = results.front();
     results.pop_front();
-    if (result < 0) { errno = EAGAIN; return -1; }
+    if (result < 0) { errno = result == -2 ? EPIPE : result == -3 ? EINTR : EAGAIN; return -1; }
     return static_cast<ssize_t>(std::min(size, static_cast<size_t>(result)));
 }
 
@@ -32,6 +33,8 @@ uint64_t CountOf(const Snapshot& stats, Counter counter)
 int main()
 try
 {
+    monitoring::MetricsContext context;
+    auto registry = context.Registry();
     const auto now = NowNs();
     const PacketTrace trace{now - 3000000, now - 2000000, now - 1000000};
     BufferWirte buffer;
@@ -41,13 +44,23 @@ try
         CHECK(buffer.Append("test", 4));
     }
     CHECK(CountOf(TakeSnapshot(), Counter::TcpSent) == 0); // Enqueue is not send.
+    CHECK(registry->Collect().queues.at(0).bytes == 4);
     results = {2, -1};
     const auto partial = buffer.Send(-1);
     CHECK(partial == 0);
     CHECK(buffer.QueuedBytes() == 2);
+    auto metrics = registry->Collect();
+    CHECK(metrics.queues.at(0).bytes == 2);
+    CHECK(metrics.send[0].bytes == 2);
+    CHECK(metrics.send[0].packets == 0);
+    CHECK(metrics.send[0].blocked == 1);
+    CHECK(metrics.send[0].failures == 0);
     CHECK(CountOf(TakeSnapshot(), Counter::TcpSent) == 0);
     results = {2};
     CHECK(buffer.Send(-1) == 0 && buffer.IsEmpty());
+    metrics = registry->Collect();
+    CHECK(metrics.queues.empty());
+    CHECK(metrics.send[0].bytes == 4 && metrics.send[0].packets == 1);
     const auto completed = TakeSnapshot();
     CHECK(CountOf(completed, Counter::TcpSent) == 1);
     CHECK(completed.stages[static_cast<std::size_t>(Stage::TcpTotal)].MaxUs() >= 3000);
@@ -66,6 +79,7 @@ try
     const auto closed = TakeSnapshot();
     CHECK(CountOf(closed, Counter::TcpAbandoned) == 1);
     CHECK(CountOf(closed, Counter::TcpSent) == 0);
+    CHECK(registry->Collect().send[0].abandoned == 1);
     {
         PacketScope packet(trace);
         SendScope retransmission(true);
@@ -75,6 +89,21 @@ try
     results = {4, 4};
     CHECK(buffer.Send(-1) == 0);
     CHECK(CountOf(TakeSnapshot(), Counter::TcpSent) == 0);
+    {
+        BufferWirte limited(4);
+        CHECK(limited.Append("full", 4));
+        CHECK(!limited.Append("overflow", 8));
+        results = {0};
+        CHECK(limited.Send(-1) == -1);
+        results = {-2};
+        CHECK(limited.Send(-1) == -1);
+        results = {-3, 4};
+        CHECK(limited.Send(-1) == 0); // EINTR retries without counting failure or bytes twice.
+        metrics = registry->Collect();
+        CHECK(metrics.send[0].failures == 2);
+        CHECK(metrics.send[0].rejected == 1);
+        CHECK(metrics.queues.empty());
+    }
     std::cout << "TCP latency waits for full write, excludes retries and counts abandoned sends\n";
     return 0;
 }

@@ -25,6 +25,7 @@ TURN UDP 中继及录像模块。支持原有 `Packetia` 单进程入口，以�
 - [WebRTC SDP 协商](#webrtc-sdp-协商)、[RTP 协议规范](#rtp-协议规范)：协商行为与 RFC 支持边界。
 - [房间鉴权](#房间鉴权)：JWT 验证、房间权限与参与者身份绑定。
 - [账号与登录框架](#账号与登录框架)、[HTTP 业务接口](#http-业务接口)：账号路由、请求格式、返回契约与实现状态。
+- [运行指标与 HTTP 监控](#运行指标与-http-监控)：模块拆分、采样生命周期、访问方式与覆盖范围。
 - [弱网与带宽控制](#弱网与带宽控制)、[丢包恢复说明](docs/weak-network.md)：NACK/SRTP 重传、TWCC/RR、OU 时延检测与码率控制。
 - [本轮验证](#本轮验证)、[开发记录](#开发记录)：验证范围与历史变更。
 
@@ -43,6 +44,7 @@ TURN UDP 中继及录像模块。支持原有 `Packetia` 单进程入口，以�
 | 多档转码 | 一次解码、多档缩放编码；默认 H264 → 720p/360p H264；有界输入队列、任务启停与状态统计 | 原 `Packetia` 入口集成；独立 `PacketiaSfu` 尚未接入；缺少任务 HTTP API、派生流 RTP 输出及浏览器播放闭环 |
 | 应用鉴权 | HS256 房间 JWT、API key 查询、发布/订阅权限、参与者身份绑定和恢复校验 | 登录与签发由业务后端负责；暂不包含自动刷新、动态权限更新和撤销列表 |
 | HTTP/账号 API | libwebsockets HTTP 接入、有界业务队列、SQLite 账号与会话、scrypt 密码校验、5 个账号接口 | 单进程开发配置启用本机 API 与注册；控制入口另含房间、成员和入房凭证接口 |
+| 运行指标 | Worker 排队/执行耗时及 p95/p99、发送积压/速率/失败、Worker 忙碌率、进程与整机 CPU/内存；HTTP 查询快照 | 尚未统一覆盖 AI、混流和转码自有线程队列；不包含 libwebsockets 与内核发送队列 |
 | 多进程部署 | 独立控制进程、多 SFU、节点注册/心跳、持久化房间绑定、节点/实例 JWT 校验 | 单控制服务；SFU 故障后需新建房间，尚无迁移和房间回收 |
 
 尚未做系统容量压测，配置中的会话上限不是实际可承载并发数。当前浏览器验证属于本机互通验证，
@@ -559,9 +561,47 @@ JSON 响应带 `Cache-Control: no-store`；错误统一使用以下结构：
 `401` 响应同时带 `WWW-Authenticate: Bearer`。登录会话凭据与 WebRTC 房间 JWT
 各自用于对应入口：原 `Packetia` 入口保留账号接口；`PacketiaControl` 另提供 HTTP 房间创建、
 房主添加成员和入房 JWT 签发，见[多进程运行说明](docs/distributed-services.md)。线程状态当前通过 C++ 的
-`ServerApp::ThreadStatus()` 查询，尚未注册 HTTP 监控接口。
+`ServerApp::ThreadStatus()` 查询；Worker 和资源指标通过下述 HTTP 监控接口查询。
 
 账号登录、控制入口的房间成员准入与入房凭证签发已实现；尚无成员查询和完整会议管理接口。
+
+## 运行指标与 HTTP 监控
+
+监控按指标计算、系统资源采集、服务生命周期和 HTTP 展示拆分，各层使用独立 CMake 目标：
+
+| 目录 / 构建目标 | 职责 |
+| --- | --- |
+| `monitoring/core` / `packetia_monitoring` | 指标句柄、计数、直方图、注册表与结构化快照；仅依赖标准库及线程库 |
+| `monitoring/collectors` / `packetia_resource_collector` | 读取操作系统 CPU、内存，计算采样差值；不依赖 HTTP 或 JSON |
+| `service/MonitorService` / `packetia_monitor_service` | 实现 `IService`，通过 `ThreadManager` 管理采样线程、健康状态和只读快照发布 |
+| `server/api/MetricsController`、`MetricsJsonEncoder` / `packetia_monitoring_api` | 注册指标路由、编码 JSON，读取监控服务的缓存快照 |
+
+通用 `packetia_api` 负责路由和有界请求调度，账号接口由 `packetia_account_api` 单独提供，
+监控接口不依赖账号服务。应用入口显式组装路由。
+
+`ServerApp`、`ControlApp`、`SfuApp` 各自持有指标上下文与监控服务。
+为适配现有全局 Worker 和深层 socket 调用，进程保留一个有作用域的指标注册表绑定：
+启动时激活，停止或启动回滚时解除，同一进程同时只允许一个活动应用上下文。
+监控服务先于业务生产者启动、晚于生产者停止，默认每秒采样并原子发布只读快照。
+HTTP 查询不现场读取系统资源或获取生产者指标锁；HTTP I/O 仍复用已有 EventLoop。
+服务不可用时返回 `503`，运行中采样失败保留上次快照，通过 `monitor` 字段报告健康状态和快照年龄。
+
+单进程入口启用 `http.enabled` 后，可在配置的 HTTP 地址查询；默认开发配置为：
+
+```sh
+curl http://127.0.0.1:8081/metrics
+curl http://127.0.0.1:8081/api/v1/metrics
+```
+
+两个 GET 路由返回同一 JSON 结构，无需登录，响应禁止缓存。`PacketiaControl` 在公共 HTTP 监听提供相同路由。
+独立 `PacketiaSfu` 通过 `metrics_http_port` 和 `metrics_listen_ip` 配置指标监听；未配置端口时不监听。
+HTTP 后端需要构建时启用 `PACKETIA_WITH_LIBWEBSOCKETS`。
+
+当前覆盖 `ShardedWorkerPool`、TCP 发送缓冲、UDP 发送和 TLS 缓冲。
+p95/p99 是 Worker 生命周期累计直方图的近似值，速率与忙碌率采用近 5 秒窗口；
+Worker 忙碌率包含任务内锁等待，不等同于线程 CPU 使用率；发送成功表示内核 socket 接受数据。
+本次拆分保留既有采集范围，尚未统一接入 AI、混流、转码自有线程队列。
+完整字段口径、SFU 配置示例和独立测试命令见 [monitoring 模块文档](monitoring/README.md)。
 
 ## 房间鉴权
 

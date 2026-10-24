@@ -3,6 +3,7 @@
 
 // Names registered with ServerLauncher.
 #define SERVICE_LOOP      "EventLoop"
+#define SERVICE_MONITOR   "MonitorService"
 #define SERVICE_PUBLISHER "FramePublisher"
 #define SERVICE_WORKERS   "WorkerPools"
 #define SERVICE_ACCOUNT   "AccountService"

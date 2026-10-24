@@ -20,6 +20,7 @@
 
 #include "SharedBuffer.h"
 #include "MediaLatency.h"
+#include "RuntimeMetrics.h"
 
 // Shared names for worker pool registration, submission and shutdown.
 #define POOL_MEDIA "media"
@@ -77,6 +78,7 @@ struct WorkJob
     common::SharedBuffer payload;
 
     uint64_t enqueue_ts = 0;
+    uint64_t metrics_enqueue_ns = 0;
     media_latency::PacketTrace media_trace;
 
     // Non-byte business objects, e.g. RecordingDispatcher::FrameJob.
@@ -200,6 +202,12 @@ private:
         std::atomic<bool> draining{false};
 
         ThreadStats st;
+        std::shared_ptr<monitoring::WorkerMetrics> metrics;
+        void UpdateMetrics()
+        {
+            if (metrics) metrics->Queue(q.size(), st.queue_bytes,
+                           q.empty() ? 0 : q.front().metrics_enqueue_ns, st.dropped);
+        }
     };
 
     std::size_t shard_index(std::uint64_t key) const;

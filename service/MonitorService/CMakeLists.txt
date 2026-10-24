@@ -1,0 +1,4 @@
+add_library(packetia_monitor_service STATIC MonitorService.cpp)
+target_compile_features(packetia_monitor_service PUBLIC cxx_std_17)
+target_include_directories(packetia_monitor_service PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../core)
+target_link_libraries(packetia_monitor_service PUBLIC packetia_monitoring packetia_resource_collector packetia_threads)

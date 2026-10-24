@@ -7,7 +7,7 @@ add_library(packetia_http STATIC
 )
 
 target_compile_features(packetia_http PUBLIC cxx_std_17)
-target_include_directories(packetia_http PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../..)
+target_include_directories(packetia_http PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 target_link_libraries(packetia_http PRIVATE utils LOGGER)
 if(PACKETIA_WITH_LIBWEBSOCKETS)
     target_compile_definitions(packetia_http PRIVATE PACKETIA_HTTP_WITH_LIBWEBSOCKETS=1)

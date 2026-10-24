@@ -7,5 +7,7 @@
   "public_ip": "127.0.0.1",
   "websocket_port": 18180,
   "udp_port": 19100,
-  "max_participants": 128
+  "max_participants": 128,
+  "metrics_listen_ip": "127.0.0.1",
+  "metrics_http_port": 18084
 }

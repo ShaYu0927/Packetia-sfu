@@ -8,6 +8,9 @@ endif()
 find_package(Threads REQUIRED)
 get_filename_component(PACKETIA_POSIX_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
 include("${PACKETIA_POSIX_ROOT}/utils/threading/ThreadSupport.cmake")
+if(NOT TARGET packetia_monitoring)
+    add_subdirectory("${PACKETIA_POSIX_ROOT}/monitoring" monitoring-library)
+endif()
 if(NOT TARGET packetia_memory)
     add_subdirectory("${PACKETIA_POSIX_ROOT}/Common/memory" memory-library)
 endif()
@@ -24,7 +27,7 @@ target_include_directories(test_posix_socket PRIVATE
     "${PACKETIA_POSIX_ROOT}/network"
     "${PACKETIA_POSIX_ROOT}/utils"
     "${PACKETIA_POSIX_ROOT}/log")
-target_link_libraries(test_posix_socket PRIVATE packetia_memory packetia_threads)
+target_link_libraries(test_posix_socket PRIVATE packetia_memory packetia_threads packetia_monitoring)
 
 add_test(NAME posix_socket COMMAND test_posix_socket)
 set_tests_properties(posix_socket PROPERTIES TIMEOUT 20)

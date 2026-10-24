@@ -7,11 +7,15 @@
 #include "SqliteAccountStore.h"
 #include "ScryptPasswordHasher.h"
 #include "EventLoop.h"
+#include "MetricsController.h"
+#include "MonitorService.h"
 
 namespace server::cluster
 {
 struct ControlApp::Impl
 {
+    monitoring::MetricsContext metrics_context{false};
+    std::shared_ptr<service::MonitorService> monitor = std::make_shared<service::MonitorService>(metrics_context.Registry());
     EventLoop loop{1};
     std::shared_ptr<service::account::AccountService> accounts;
     std::shared_ptr<service::cluster::Coordinator> coordinator;
@@ -38,6 +42,7 @@ struct ControlApp::Impl
         http.listen_port = Port(config, "http_port");
         api::ApiRouter::Builder routes;
         api::AccountController(accounts).RegisterRoutes(routes);
+        api::MetricsController(monitor).RegisterRoutes(routes);
         controller.RegisterPublic(routes);
         public_api = std::make_unique<api::ApiServer>(http, routes.Build(http.max_body_bytes),
             std::make_shared<protocol::http::HttpServer>(&loop));
@@ -55,13 +60,17 @@ struct ControlApp::Impl
         if (internal_api) internal_api->Stop();
         if (accounts) accounts->Stop();
         loop.Stop();
+        monitor->Stop();
+        monitor->Shutdown();
+        metrics_context.Deactivate();
     }
 };
 ControlApp::ControlApp(const std::string& path) : impl_(std::make_unique<Impl>(path)) {}
 ControlApp::~ControlApp() { Stop(); }
 bool ControlApp::Start()
 {
-    if (!impl_->accounts->Start().Succeeded() || !impl_->loop.Start() ||
+    if (!impl_->metrics_context.Activate() || !impl_->monitor->Init() || !impl_->monitor->Start() ||
+        !impl_->accounts->Start().Succeeded() || !impl_->loop.Start() ||
         !impl_->internal_api->Start() || !impl_->public_api->Start())
     {
         Stop();

@@ -5,20 +5,40 @@
 #include "EventLoop.h"
 #include "EndpointBase.h"
 #include "WorkerRegistry.h"
+#include "MetricsController.h"
+#include "ApiServer.h"
+#include "HttpServer.h"
+#include "MonitorService.h"
 
 namespace server::cluster
 {
 struct SfuApp::Impl
 {
+    monitoring::MetricsContext metrics_context{false};
+    std::shared_ptr<service::MonitorService> monitor = std::make_shared<service::MonitorService>(metrics_context.Registry());
     EventLoop loop{1};
     WorkerRegistry workers;
     std::shared_ptr<WebRtcService> rtc;
     std::shared_ptr<service::cluster::NodeLease> lease;
     std::unique_ptr<NodeClient> client;
+    std::unique_ptr<api::ApiServer> metrics_api;
     explicit Impl(const std::string& path)
     {
         const auto json = ReadConfig(path, {"node_id", "control_url", "signaling_url", "max_rooms",
-            "listen_ip", "public_ip", "websocket_port", "udp_port", "max_participants"});
+            "listen_ip", "public_ip", "websocket_port", "udp_port", "max_participants",
+            "metrics_http_port", "metrics_listen_ip"});
+        if (json.contains("metrics_http_port"))
+        {
+            protocol::http::HttpServerOptions http;
+            http.enabled = true;
+            http.listen_ip = json.value("metrics_listen_ip", std::string("127.0.0.1"));
+            http.listen_port = Port(json, "metrics_http_port");
+            if (!http.IsValid()) throw std::runtime_error("invalid metrics HTTP config");
+            api::ApiRouter::Builder routes;
+            api::MetricsController(monitor).RegisterRoutes(routes);
+            metrics_api = std::make_unique<api::ApiServer>(http, routes.Build(http.max_body_bytes),
+                std::make_shared<protocol::http::HttpServer>(&loop), 1, 64);
+        }
         service::cluster::Node node;
         node.id = json.at("node_id").get<std::string>();
         node.instance = service::cluster::Coordinator::RandomId();
@@ -46,17 +66,23 @@ struct SfuApp::Impl
     }
     void Stop() noexcept
     {
+        if (metrics_api) metrics_api->Stop();
         if (client) client->Stop();
         if (rtc) rtc->Stop();
         workers.Stop();
         loop.Stop();
+        monitor->Stop();
+        monitor->Shutdown();
+        metrics_context.Deactivate();
     }
 };
 SfuApp::SfuApp(const std::string& path) : impl_(std::make_unique<Impl>(path)) {}
 SfuApp::~SfuApp() { Stop(); }
 bool SfuApp::Start()
 {
-    if (!impl_->loop.Start() || impl_->workers.Start() != 0 || !impl_->rtc->Start() || !impl_->client->Start())
+    if (!impl_->metrics_context.Activate() || !impl_->monitor->Init() || !impl_->monitor->Start() || !impl_->loop.Start() ||
+        impl_->workers.Start() != 0 || !impl_->rtc->Start() || !impl_->client->Start() ||
+        (impl_->metrics_api && !impl_->metrics_api->Start()))
     {
         Stop();
         return false;

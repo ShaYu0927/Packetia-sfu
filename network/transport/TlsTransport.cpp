@@ -1,5 +1,6 @@
 #include "TlsTransport.h"
 #include "SharedBuffer.h"
+#include "RuntimeMetrics.h"
 
 #include <openssl/err.h>
 #include <openssl/ssl.h>
@@ -16,7 +17,7 @@ struct TlsTransport::Impl
 {
     static constexpr size_t kRecordBytes = 16 * 1024;
     static constexpr size_t kDriveBudget = 32;
-    struct PendingWrite { common::SharedBuffer bytes; size_t offset = 0; };
+    struct PendingWrite { common::SharedBuffer bytes; size_t offset = 0; uint64_t enqueued_ns = 0; };
 
     TcpConnection::Ptr connection;
     std::shared_ptr<TlsContext> context;
@@ -31,6 +32,20 @@ struct TlsTransport::Impl
     TimeId timer = 0;
     std::deque<PendingWrite> writes;
     size_t queued_plaintext = 0;
+    std::shared_ptr<monitoring::SendQueueMetrics> metrics = monitoring::RegisterSendQueue("tls_plaintext");
+    std::shared_ptr<monitoring::SendQueueMetrics> ciphertext_metrics = monitoring::RegisterSendQueue("tls_ciphertext");
+    uint64_t ciphertext_enqueue_ns = 0;
+    void UpdateCiphertextMetrics()
+    {
+        const auto bytes = output && !Terminal() ? BIO_ctrl_pending(output) : 0;
+        if (!bytes) ciphertext_enqueue_ns = 0;
+        else if (!ciphertext_enqueue_ns) ciphertext_enqueue_ns = monitoring::NowNs();
+        if (ciphertext_metrics) ciphertext_metrics->Set(bytes, bytes ? 1 : 0, ciphertext_enqueue_ns);
+    }
+    void UpdateMetrics()
+    {
+        if (metrics) metrics->Set(queued_plaintext, writes.size(), writes.empty() ? 0 : writes.front().enqueued_ns);
+    }
     bool driving = false;
     bool continuation_pending = false;
     bool shutdown_started = false;
@@ -51,6 +66,8 @@ struct TlsTransport::Impl
         CancelTimer();
         writes.clear();
         queued_plaintext = 0;
+        UpdateMetrics();
+        UpdateCiphertextMetrics();
         connection->Disconnect();
         auto closed = callbacks.on_closed;
         if (closed) closed(reason);
@@ -58,6 +75,8 @@ struct TlsTransport::Impl
 
     bool FlushCiphertext()
     {
+        UpdateCiphertextMetrics();
+        struct Publish { Impl& impl; ~Publish() { impl.UpdateCiphertextMetrics(); } } publish{*this};
         if (Terminal()) return false;
         if (BIO_ctrl_pending(output) > options.max_ciphertext_bytes) {
             Finish(Error::BufferLimit);
@@ -104,6 +123,7 @@ struct TlsTransport::Impl
         state = State::Closing;
         writes.clear();
         queued_plaintext = 0;
+        UpdateMetrics();
         CancelTimer();
         timer = Scheduler()->AddTimer([weak = owner] {
             if (auto self = weak.lock()) self->impl_->Finish(Error::IoError);
@@ -174,6 +194,7 @@ struct TlsTransport::Impl
                 pending.offset += consumed;
                 queued_plaintext -= consumed;
                 if (pending.offset == pending.bytes.Size()) writes.pop_front();
+                UpdateMetrics();
                 ++sent;
             }
             if (!FlushCiphertext()) return;
@@ -307,9 +328,10 @@ TlsTransport::SendResult TlsTransport::Send(const uint8_t* data, size_t size)
         }
         auto bytes = common::SharedBuffer::TryCopy(data, size);
         if (bytes.Empty()) { result = SendResult::Failed; return; }
-        try { p.writes.push_back({std::move(bytes), 0}); }
+        try { p.writes.push_back({std::move(bytes), 0, monitoring::NowNs()}); }
         catch (const std::bad_alloc&) { result = SendResult::Failed; return; }
         p.queued_plaintext += size;
+        p.UpdateMetrics();
         result = SendResult::Queued;
         p.Drive();
     });

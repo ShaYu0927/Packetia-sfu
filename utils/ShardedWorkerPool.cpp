@@ -60,8 +60,10 @@ void ShardedWorkerPool::shutdown(bool drain)
                         WorkJob job = std::move(w.q.front());
                         w.q.pop_front();
                         w.st.queue_bytes -= job.payload.StorageSize();
+                        ++w.st.dropped;
                         if (job.media_trace) media_latency::Count(media_latency::Counter::QueueDropped);
                     }
+                    w.UpdateMetrics();
                 }
             }
             w.cv.notify_one();
@@ -88,6 +90,7 @@ static inline void safe_release_job(WorkJob& job)
 
 int ShardedWorkerPool::post(WorkJob&& job)
 {
+    job.metrics_enqueue_ns = monitoring::NowNs();
     if (job.media_trace) job.media_trace.enqueue_ns = media_latency::NowNs();
     std::lock_guard<std::mutex> lifecycle_lock(lifecycle_mtx_);
 
@@ -104,6 +107,11 @@ int ShardedWorkerPool::post(WorkJob&& job)
     Worker& shard_worker = *workers_[idx];
     {
         std::unique_lock<std::mutex> lk(shard_worker.mtx);
+        struct PublishQueue
+        {
+            Worker& worker;
+            ~PublishQueue() { worker.UpdateMetrics(); }
+        } publish{shard_worker};
 
         const size_t before_size = shard_worker.q.size();
         if (!shard_worker.running.load())
@@ -176,6 +184,10 @@ int ShardedWorkerPool::start(std::size_t worker_count, std::shared_ptr<IJobHandl
         for(std::size_t t = 0;t < worker_count; t++)
         {
             auto w = std::make_unique<Worker>();
+            // WorkType labels belong to the worker adapter, not the metric core.
+            w->metrics = monitoring::RegisterWorker(name, t,
+                {"invalid", "rtp", "rtcp", "stun", "dtls", "raw_tcp", "raw_udp",
+                 "timer", "control", "function", "recording"});
             w->running.store(true);
             w->draining.store(false);
             auto* wp = w.get();
@@ -244,8 +256,11 @@ void ShardedWorkerPool::worker_loop(Worker &worker, std::size_t idx)
             worker.q.pop_front();
             worker.st.queue_bytes -= job.payload.StorageSize();
             worker.st.dequeued++;
+            worker.UpdateMetrics();
         }
 
+        monitoring::TaskScope task_metrics(worker.metrics.get(), job.metrics_enqueue_ns,
+                                           static_cast<size_t>(job.type));
         media_latency::WorkerStarted(job.media_trace);
 
         if (job.type == WorkType::Function)
