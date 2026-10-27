@@ -14,7 +14,6 @@
 #include <optional>
 #include <vector>
 
-class MediaSession;
 namespace sdp { struct SdpMedia; }
 
 namespace media 
@@ -26,7 +25,7 @@ class SfuEndpoint : public utils::EndpointBase,
 public:
     SfuEndpoint(uint64_t id,
                 std::shared_ptr<RtpTrackDescription> track_description,
-                std::shared_ptr<MediaSession> session,
+                const EncodedFrameSource& source,
                 std::shared_ptr<IEncodedFramePublisher> frame_publisher);
     explicit SfuEndpoint(uint64_t id, std::shared_ptr<IEncodedFramePublisher> publisher = {})
         : utils::EndpointBase(id, "SfuEndpoint"), frame_publisher_(std::move(publisher)) {}

@@ -10,6 +10,7 @@
 #include <array>
 #include <unordered_map>
 #include "Rtsp.h"
+#include "CodecNames.h"
 
 
 static constexpr size_t kRtpHeaderSize = 12;
@@ -250,20 +251,23 @@ inline void NormalizeTrackInfo(TrackInfo& info)
     }
 }
 
+inline CodecId ToLegacyCodecId(media::CodecType codec)
+{
+    switch (codec)
+    {
+    case media::CodecType::H264: return CodecId::H264;
+    case media::CodecType::H265: return CodecId::H265;
+    case media::CodecType::Opus: return CodecId::OPUS;
+    case media::CodecType::PCMU: return CodecId::PCMU;
+    case media::CodecType::PCMA: return CodecId::PCMA;
+    case media::CodecType::AAC: return CodecId::AAC;
+    default: return CodecId::Unknown;
+    }
+}
+
 inline CodecId StringToCodecId(const std::string& name)
 {
-    std::string codec = name;
-    std::transform(codec.begin(), codec.end(), codec.begin(),
-                   [](unsigned char c) { return std::toupper(c); });
-
-    if (codec == "H264") return CodecId::H264;
-    if (codec == "H265" || codec == "HEVC") return CodecId::H265;
-    if (codec == "PCMU") return CodecId::PCMU;
-    if (codec == "PCMA") return CodecId::PCMA;
-    if (codec == "OPUS") return CodecId::OPUS;
-    if (codec == "AAC" || codec == "MPEG4-GENERIC") return CodecId::AAC;
-
-    return CodecId::Unknown;
+    return ToLegacyCodecId(media::CodecTypeFromName(name));
 }
 
 inline const char* TrackTypeToString(TrackType type)

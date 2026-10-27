@@ -1,42 +1,18 @@
 #include "RtspMessage.h"
+#include <charconv>
 #include <string>
 #include "EndpointBase.h"
 #include "SfuEndpoint.h"
 #include "Sdp.h"
 #include "RtspUtil.h"
 #include "TimeUtil.h"
+#include "StringUtil.h"
 #include "logger.h"
-
-
-static inline void Trim(std::string& s)
-{
-    auto not_space = [](unsigned char c){ return !std::isspace(c); };
-
-    while (!s.empty() && !not_space((unsigned char)s.front()))
-        s.erase(s.begin());
-
-    while (!s.empty() && !not_space((unsigned char)s.back()))
-        s.pop_back();
-}
-
-static inline bool SplitOnce(const std::string& s, char delim, std::string& left, std::string& right) 
-{
-    auto pos = s.find(delim);
-    if (pos == std::string::npos) return false;
-    left = s.substr(0, pos);
-    right = s.substr(pos + 1);
-    return true;
-}
-
-static inline std::string ToLower(std::string s)
-{
-    for (auto& c : s) c = (char)std::tolower((unsigned char)c);
-    return s;
-}
 
 
 bool RtspRequest::ParseRequest(const char* p, size_t total, RtspRequestInfo& out)
 {
+    out = RtspRequestInfo{};
     std::string msg(p, total);
     auto hdrEnd = msg.find("\r\n\r\n");
 
@@ -70,7 +46,7 @@ bool RtspRequest::ParseRequest(const char* p, size_t total, RtspRequestInfo& out
         out.method  = line.substr(0, a);
         out.url     = line.substr(a + 1, b - (a + 1));
         out.version = line.substr(b + 1);
-        Trim(out.method); Trim(out.url); Trim(out.version);
+        utils::Trim(out.method); utils::Trim(out.url); utils::Trim(out.version);
         if (out.method.empty() || out.url.empty()) return false;
     }
 
@@ -80,17 +56,19 @@ bool RtspRequest::ParseRequest(const char* p, size_t total, RtspRequestInfo& out
         if (line.empty()) break;
 
         std::string k, v;
-        if (!SplitOnce(line, ':', k, v))
+        if (!utils::SplitOnce(line, ':', k, v))
         {
             continue;
         }
 
-        Trim(k); Trim(v);
-        k = ToLower(k);
-        out.headers[k] = v;
+        utils::Trim(k); utils::Trim(v);
+        k = utils::ToLower(k);
+        // 重复头不能被后值覆盖，尤其是 Authorization 和 Session。
+        if (k.empty() || !out.headers.emplace(k, v).second) return false;
         if (k == "cseq") 
         {
-            out.cseq = std::stoi(v);
+            const auto parsed = std::from_chars(v.data(), v.data() + v.size(), out.cseq);
+            if (parsed.ec != std::errc{} || parsed.ptr != v.data() + v.size() || out.cseq < 0) return false;
         }
     }
 
@@ -423,7 +401,7 @@ bool RtspRequest::ParseHeaderLines(const char *begin, const char *end)
 
     if (line.find("Authorization:") == 0) 
     {
-        ParseAuthorization(line);
+        // 认证统一由 RtspSession 的请求入口处理。
         return true;
     }
 
@@ -587,27 +565,6 @@ bool RtspRequest::ParseMediaChannel(std::string &message)
 	return true;
 }
 
-bool RtspRequest::ParseAuthorization(std::string &message)
-{
-    std::size_t pos = message.find("Authorization:");
-    if (pos != std::string::npos)
-    {
-        if(pos != std::string::npos)
-        {
-            if((message.find("resonse")) != std::string::npos)
-            {
-                auth_response_ = message.substr(pos + 10, 32);
-			    if (auth_response_.size() == 32) 
-                {
-				    return true;
-			    }
-            }
-        }
-    }
-
-    return false;
-}
-
 std::string RtspRequest::HandleCmdOptions(RtspRequestInfo& req)
 {
     std::shared_ptr<char> res(new char[2048], std::default_delete<char[]>());
@@ -650,19 +607,18 @@ std::string RtspRequest::HandleCmdANNOUNCE(RtspRequestInfo& req)
         return "";
     }
 
-    auto session = MediaSessionManager::Instance().GetSessionBySuffix(suffix);
-    if (!session)
-    {
-        session = MediaSession::CreateNew(suffix);
-        session->SetRtspUrl(req.url);
-        MediaSessionManager::Instance().AddSession(session, suffix);
-    }
-
+    if (media_session && media_session->GetRtspSuffix() != suffix)
+        return BuildStatusResponse(req.cseq, "455 Method Not Valid in This State");
+    auto session = media_session ? media_session : RtspMediaSession::CreateNew(suffix);
     if (!session->ApplySdp(result.session, &err))
     {
         LOG_ERROR("ApplySdp failed:", err.c_str());
-        return "";
+        return BuildStatusResponse(req.cseq, "400 Bad Request");
     }
+    // 先验证完整描述，再争用发布名；失败对象未注册，自动回滚。
+    if (!session->Register())
+        return BuildStatusResponse(req.cseq, "455 Method Not Valid in This State");
+    media_session = std::move(session);
 
     std::shared_ptr<char> res(new char[2048], std::default_delete<char[]>());
     int size = BuildANNOUNCERes(req,res,1024);
@@ -673,6 +629,14 @@ std::string RtspRequest::BuildStatusResponse(int cseq, const std::string& status
 {
     return "RTSP/1.0 " + status + "\r\nCSeq: " + std::to_string(cseq) +
            "\r\nContent-Length: 0\r\n\r\n";
+}
+
+std::unique_ptr<RtspRequest> RtspRequest::CreateNextPublication() const
+{
+    auto next = std::make_unique<RtspRequest>();
+    // 保留本连接已验证的协商描述，允许 TEARDOWN 后直接 SETUP；不保留活动流注册。
+    if (media_session) next->media_session = media_session->CreateNextPublication();
+    return next;
 }
 
 std::string RtspRequest::HandleCmdSetup(RtspRequestInfo& req, const SetupTransportFactory& factory)
@@ -691,12 +655,15 @@ std::string RtspRequest::HandleCmdSetup(RtspRequestInfo& req, const SetupTranspo
         return BuildStatusResponse(req.cseq, "461 Unsupported Transport");
 
     const auto suffix = rtsp::RtspUtil::GetSuffixFromSetupUrl(req.url);
-    media_session = MediaSessionManager::Instance().GetSessionBySuffix(suffix);
-    if (!media_session) return BuildStatusResponse(req.cseq, "404 Not Found");
+    // 推流只能使用本连接声明的媒体描述，不能接管其他连接的同名流。
+    if (!media_session || media_session->GetRtspSuffix() != suffix)
+        return BuildStatusResponse(req.cseq, "404 Not Found");
     const auto track = media_session->GetTrackDescription(req.GetControlFromUrl());
     if (!track) return BuildStatusResponse(req.cseq, "404 Not Found");
     const int track_id = track->getTrackIndex();
-    if (media_session->FindEndpointByTrack(track_id) != 0)
+    if (!media_session->Register())
+        return BuildStatusResponse(req.cseq, "455 Method Not Valid in This State");
+    if (media_session->GetMediaStream()->FindEndpointByTrack(track_id) != 0)
         return BuildStatusResponse(req.cseq, "455 Method Not Valid in This State");
 
     auto endpoint = std::dynamic_pointer_cast<media::SfuEndpoint>(
@@ -707,8 +674,11 @@ std::string RtspRequest::HandleCmdSetup(RtspRequestInfo& req, const SetupTranspo
     const auto endpoint_id = endpoint ? endpoint->Id() : utils::EndpointBase::NextEndpointId();
     const auto media_track_id = std::to_string(track_id);
     if (new_endpoint) {
+        media::EncodedFrameSource source;
+        source.session_id = std::to_string(media_session->GetId());
+        source.stream_id = media_session->GetRtspSuffix();
         endpoint = std::make_shared<media::SfuEndpoint>(
-            endpoint_id, track, media_session, media_session->GetFramePublisher());
+            endpoint_id, track, source, media_session->GetMediaStream()->GetFramePublisher());
         if (!endpoint->Start()) return BuildStatusResponse(req.cseq, "500 Internal Server Error");
     } else if (!endpoint->AddPublishedTrack(media_track_id, track)) {
         return BuildStatusResponse(req.cseq, "455 Method Not Valid in This State");
@@ -773,6 +743,8 @@ std::string RtspRequest::HandleCmdRecord(RtspRequestInfo& req)
     if (!media_session || session_id != std::to_string(media_session->GetId()))
         return BuildStatusResponse(req.cseq, "454 Session Not Found");
 
+    if (!media_session->GetMediaStream()->StartPublishing())
+        return BuildStatusResponse(req.cseq, "455 Method Not Valid in This State");
     std::shared_ptr<char> res(new char[2048], std::default_delete<char[]>());
     int size = BuildRecordRes(req, res, 1024);
     return res.get();

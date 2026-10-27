@@ -12,7 +12,7 @@
 
 #include "EventLoop.h"
 #include "RtspServer.h"
-#include "RtspMediaSession.h"
+#include "MediaStreamRegistry.h"
 #include "SipServer.h"
 #include "rtmp_server.h"
 #include "UdpServer.h"
@@ -95,10 +95,13 @@ void ServerApp::ConfigureServices()
 
     launcher_.AddCustomService(SERVICE_PUBLISHER,
         [router = frame_router_] {
-            MediaSessionManager::Instance().SetFramePublisher(router);
+            media::MediaStreamRegistry::Instance().SetFramePublisher(router);
             return true;
         },
-        [] { MediaSessionManager::Instance().SetFramePublisher(nullptr); });
+        [] {
+            media::MediaStreamRegistry::Instance().Clear();
+            media::MediaStreamRegistry::Instance().SetFramePublisher(nullptr);
+        });
 
     // Account resources outlive API callbacks and their business workers.
     AddAccountServices();
@@ -305,7 +308,7 @@ void ServerApp::AddNetworkServices()
     AddTurnService();
     const auto& ip = config_.listen_ip;
     auto* loop = event_loop_.get();
-    launcher_.AddIpPortService<RtspServer>(SERVICE_RTSP, ip, config_.rtsp_port, loop);
+    launcher_.AddIpPortService<RtspServer>(SERVICE_RTSP, ip, config_.rtsp_port, loop, config_.rtsp_auth);
     launcher_.AddIpPortService<SipServer>(SERVICE_SIP, ip, config_.sip_port, loop);
     launcher_.AddIpPortService<protocol::rtmp::RtmpServer>(SERVICE_RTMP, ip, config_.rtmp_port, loop);
 

@@ -1,6 +1,6 @@
 #pragma once
 #include "third/nlohmann/json.hpp"
-#include "service/Auth/AuthTypes.h"
+#include "AuthTypes.h"
 #include <cstdint>
 #include <string>
 #include <string_view>

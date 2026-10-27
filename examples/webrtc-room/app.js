@@ -62,8 +62,13 @@ async function openSocket() {
   socket = new WebSocket(config.url, 'packetia');
   const current = socket;
   current.addEventListener('message', event => {
-    if (!pending || current !== socket) return;
+    if (current !== socket) return;
     const reply = JSON.parse(event.data);
+    if (reply.type === 'tracks_changed') {
+      if (participant && reply.room_id === roomId) updateTracks(reply.tracks);
+      return;
+    }
+    if (!pending) return;
     const operation = pending;
     pending = undefined; clearTimeout(operation.timeout);
     if (reply.type === 'error') operation.reject(new Error(reply.error));
@@ -138,7 +143,10 @@ async function join(id = $('room').value) {
 async function refreshTracks() {
   if (!participant) return [];
   const reply = await request({type: 'tracks'});
-  available = reply.tracks.filter(track => track.publisher_id !== participant);
+  return updateTracks(reply.tracks);
+}
+function updateTracks(tracks) {
+  available = tracks.filter(track => track.publisher_id !== participant);
   const previous = $('publisher').value;
   const publishers = [...new Set(available.map(track => track.publisher_id))];
   $('publisher').replaceChildren(...(publishers.length ? publishers.map(id => new Option(id, id)) : [new Option('No published tracks', '')]));

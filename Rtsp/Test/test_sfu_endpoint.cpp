@@ -4,6 +4,8 @@
 #include "Participant.h"
 #include "MediaTrack.h"
 #include "SdpTrackBinding.h"
+#include "Sdp.h"
+#include "RtpTrackAdapter.h"
 #include "MediaStreamAffinity.h"
 #include "WorkerRegistry.h"
 #include "RtcpNack.h"
@@ -566,7 +568,7 @@ TEST_F(SfuConference, RoomRoutesMultipleTracksAndLeaveCleansOtherParticipants)
     ASSERT_TRUE(conference.Join(b));
     a->OnTrackPublished([&](auto, auto) { EXPECT_EQ(conference.ParticipantCount(), 2U); });
     for (const auto& id : {"camera", "mic"}) {
-        media::TrackInfo business;
+        media::TrackMetadata business;
         business.sid = id;
         ASSERT_TRUE(conference.PublishTrack("a", std::make_shared<media::MediaTrack>(business),
             std::string(id) == "camera" ? 11 : 22, std::string(id) == "camera" ? 102 : 111));
@@ -609,7 +611,7 @@ TEST_F(SfuConference, RoomTrackIdentityCanDifferFromPublisherMid)
     ASSERT_TRUE(source->Start()); ASSERT_TRUE(destination->Start());
     ASSERT_TRUE(a->BindEndpoint(source)); ASSERT_TRUE(b->BindEndpoint(destination));
     ASSERT_TRUE(conference.Join(a)); ASSERT_TRUE(conference.Join(b));
-    media::TrackInfo business;
+    media::TrackMetadata business;
     business.sid = "a:0";
     ASSERT_TRUE(conference.PublishTrack("a", std::make_shared<media::MediaTrack>(business), 11, 102, "0"));
     auto transport = std::make_shared<CaptureTransport>();
@@ -654,11 +656,11 @@ TEST_F(SfuConference, RoomKeepsPublishAndSubscribeEndpointsIsolatedDuringRouting
     ASSERT_TRUE(conference.Join(b));
     for (const auto& id : {"a:camera", "a:mic", "b:camera"})
     {
-        media::TrackInfo info;
+        media::TrackMetadata info;
         info.sid = id;
         const bool microphone = info.sid == "a:mic";
         const bool from_a = info.sid.front() == 'a';
-        info.type = microphone ? media::TrackType::Audio : media::TrackType::Video;
+        info.type = microphone ? media::MediaType::Audio : media::MediaType::Video;
         ASSERT_TRUE(conference.PublishTrack(from_a ? "a" : "b",
             std::make_shared<media::MediaTrack>(info), microphone ? 22 : (from_a ? 11 : 33),
             microphone ? 111 : (from_a ? 102 : 103), microphone ? "mic" : "camera"));
@@ -747,7 +749,7 @@ TEST_F(SfuConference, MissingPublishRoleDoesNotFallBackToMetadataOnlyRoom)
     auto b = std::make_shared<room::Participant>("b", "B");
     ASSERT_TRUE(conference.Join(a));
     ASSERT_TRUE(conference.Join(b));
-    media::TrackInfo info;
+    media::TrackMetadata info;
     info.sid = "metadata-camera";
     ASSERT_TRUE(conference.PublishTrack("a", std::make_shared<media::MediaTrack>(info), 11, 102));
 
@@ -784,7 +786,7 @@ TEST_F(SfuConference, MissingSubscribeRoleDoesNotFallBackToMetadataOnlyRoom)
         1312, room::ParticipantSessionRole::Publish, publish)));
     ASSERT_TRUE(conference.Join(a));
     ASSERT_TRUE(conference.Join(b));
-    media::TrackInfo info;
+    media::TrackMetadata info;
     info.sid = "camera";
     ASSERT_TRUE(conference.PublishTrack("a", std::make_shared<media::MediaTrack>(info), 11, 102));
     ASSERT_TRUE(b->HasMediaBinding());
@@ -809,7 +811,7 @@ TEST(SfuRoomCommands, MetadataOnlyRoomStillPublishesAndSubscribesWithoutMediaBin
     ASSERT_TRUE(conference.Join(b));
     EXPECT_FALSE(a->HasMediaBinding());
     EXPECT_FALSE(b->HasMediaBinding());
-    media::TrackInfo info;
+    media::TrackMetadata info;
     info.sid = "camera";
     auto track = std::make_shared<media::MediaTrack>(info);
     ASSERT_TRUE(conference.PublishTrack("a", track, 11, 102));
@@ -949,7 +951,7 @@ TEST(SfuRoomCommands, SubscribeUsesTrackIdAndCloseDoesNotCreateAnotherRoom)
     auto b = std::make_shared<room::Participant>("b", "B");
     ASSERT_TRUE(conference->Join(a));
     ASSERT_TRUE(conference->Join(b));
-    media::TrackInfo info;
+    media::TrackMetadata info;
     info.sid = "camera";
     ASSERT_TRUE(conference->PublishTrack("a", std::make_shared<media::MediaTrack>(info), 11, 96));
     ASSERT_TRUE(conference->UnsubscribeTrack("b", "camera"));

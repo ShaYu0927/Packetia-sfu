@@ -5,11 +5,19 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace service::auth
 {
 
-enum class Audience { WebRtc, Control };
+enum class Audience { WebRtc, Control, Rtsp };
+
+struct StreamGrant
+{
+    std::string path;
+    bool can_publish = false;
+    bool can_play = false;
+};
 
 enum class Action
 {
@@ -48,6 +56,7 @@ struct AuthContext
     RoomGrant video;                /* 音视频房间权限 */
     std::string node_id;
     std::string instance_id;
+    std::vector<StreamGrant> streams;
 };
 
 struct ResourceContext

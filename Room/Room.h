@@ -14,6 +14,8 @@
 
 #include "RoomCommand.h"
 #include "RoomTypes.h"
+#include "EventBus.h"
+#include "TrackPublicationEvent.h"
 
 namespace room 
 {
@@ -61,6 +63,9 @@ public:
 
     void Close();
 
+    // 仅发布已提交的变更事实；回调在房间锁外、当前调用线程执行。
+    media::EventBus& Events() { return events_; }
+
     void SetOnParticipantChanged(std::function<void(std::shared_ptr<Participant>)> cb);
     void SetOnRoomClosed(std::function<void(const std::string& room_id)> cb);
 
@@ -69,12 +74,17 @@ private:
     void UpdateStateLocked();
     bool SubscribeTrackLocked(const std::string& subscriber_id, const std::string& track_id);
     void UnsubscribeTrackLocked(const std::string& subscriber_id, const std::string& track_id);
+    media::TrackPublicationSnapshot TrackSnapshotLocked(const std::string& track_id, const PublishedTrackInfo& info);
+    void NotifyTrackEvent(const media::MediaEvent& event);
 
 private:
     mutable std::mutex mutex_;
 
     RoomInfo info_;
     RoomOptions options_;
+    media::EventBus events_;
+    uint64_t next_publication_id_ = 0;
+    uint64_t track_revision_ = 0;
 
     std::unordered_map<std::string, std::shared_ptr<Participant>> participants_;
     std::unordered_map<std::string, PublishedTrackInfo> published_tracks_;

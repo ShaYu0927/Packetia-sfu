@@ -11,6 +11,8 @@
 #include <cstddef>
 #include "Sdp.h"
 #include "StateController.h"
+#include "AuthService.h"
+#include "RtspDigestAuthenticator.h"
 #include <unordered_map>
 
 namespace rtsp 
@@ -38,12 +40,8 @@ public:
     enum class SessionState { Initial, Announced, Ready, Recording, Closed };
     SessionState CurrentState() const noexcept { return lifecycle_.CurrentState(); }
 
-    explicit RtspSession(RtspConnection::Ptr conn)
-        : conn_(std::move(conn))
-        , rtsp_request_(std::make_unique<RtspRequest>())
-    {
-        task_scheduler_ = conn_->GetTaskScheduler();
-    }
+    explicit RtspSession(RtspConnection::Ptr conn,
+                         std::shared_ptr<service::auth::RtspDigestAuthenticator> digest = {});
 
     ~RtspSession()
     {
@@ -88,6 +86,7 @@ private:
     bool RequireState(const RtspRequest::RtspRequestInfo& req,
                       std::initializer_list<SessionState> allowed);
     bool HasMatchingSession(const RtspRequest::RtspRequestInfo& req) const;
+    bool AuthenticateRequest(const RtspRequest::RtspRequestInfo& req);
     struct TransportBinding
     {
         ~TransportBinding() { if (transport) transport->Close(); }
@@ -96,7 +95,7 @@ private:
         std::shared_ptr<IMediaTransport> transport;
         std::shared_ptr<media::transport::RtspInterleavedTransport> interleaved;
         std::shared_ptr<media::transport::MediaEndpointIngress> ingress;
-        MediaSession::Ptr session;
+        RtspMediaSession::Ptr session;
     };
 
     void CloseMediaTransports();
@@ -104,6 +103,10 @@ private:
     TaskScheduler* task_scheduler_;
     RtspConnection::Ptr conn_;
     std::unique_ptr<RtspRequest> rtsp_request_;
+    std::shared_ptr<service::auth::RtspDigestAuthenticator> digest_;
+    std::unique_ptr<service::auth::AuthService> auth_;
+    std::string authenticated_user_;
+    std::string authorized_stream_;
     std::unique_ptr<sdp::Sdp> sdp_;
     ShardedWorkerPool* media_pool_ = nullptr;
     int session_id_{0};
@@ -112,7 +115,7 @@ private:
     Lifecycle lifecycle_{*this, SessionState::Initial, {
         Lifecycle::On(SessionState::Initial, SessionEvent::AnnounceOk, SessionState::Announced),
         Lifecycle::Stay(SessionState::Announced, SessionEvent::AnnounceOk),
-        // SETUP may also use a media description registered before this connection.
+        // 本连接 TEARDOWN 后可用缓存的描述重新 SETUP，生成新的媒体会话。
         Lifecycle::On(SessionState::Initial, SessionEvent::SetupOk, SessionState::Ready),
         Lifecycle::On(SessionState::Announced, SessionEvent::SetupOk, SessionState::Ready),
         Lifecycle::Stay(SessionState::Ready, SessionEvent::SetupOk),
@@ -126,7 +129,7 @@ private:
         Lifecycle::On(SessionState::Recording, SessionEvent::Close, SessionState::Closed),
         Lifecycle::Stay(SessionState::Closed, SessionEvent::Close)
     }};
-    MediaSession::Ptr media_session_;
+    RtspMediaSession::Ptr media_session_;
     std::unordered_map<uint8_t, std::shared_ptr<TransportBinding>>
         media_transports_;
     std::vector<std::shared_ptr<TransportBinding>> udp_transports_;

@@ -15,6 +15,8 @@ TURN UDP 中继及录像模块。支持原有 `Packetia` 单进程入口，以�
 - [构建与依赖](#构建与依赖)：Linux/macOS 构建、测试依赖。
 - [控制服务与 SFU 节点](docs/distributed-services.md)：一控两节点、本地启动、房间接口与 Docker Compose。
 - [网络层边界与线程约定](#网络层边界与线程约定)：调度归属、TCP 缓冲、TLS 传输。
+- [媒体流管理](media/core/README.md)：core 流注册、轨道归属、RTSP 接入及释放流程。
+- [媒体参数分层与轨道事件](media/README.md)：通用轨道、RTP/SDP 适配、统计接口及 EventBus 的业务接入。
 - [视频转码与多编码适配](#视频转码与多编码适配)：默认 720p/360p 输出、任务接口、实现选择与验证命令。
 - [多编码适配设计](docs/media-codec-adaptation.md)、[业务格式兼容方案](docs/media-format-plan.md)：已实现能力与后续协议、容器、播放接入规划。
 - [RTP 接收排序与弱网恢复](#rtp-接收排序与弱网恢复)：等待预算、前向重同步、本机实测与复现。
@@ -51,6 +53,8 @@ TURN UDP 中继及录像模块。支持原有 `Packetia` 单进程入口，以�
 公网部署仍需配置可达的媒体/中继地址、端口及安全信令入口。
 
 创建会议、入会、音视频发布订阅的实际流程，以及轨道事件通知和动态订阅的当前限制，见[信令与会议流程](server/signaling/README.md)。
+
+RTSP 支持复用公共鉴权层的 Digest 认证与精确流权限，默认关闭；配置和接入限制见 [RTSP 鉴权](docs/rtsp-authentication.md)。
 
 ## 构建与依赖
 
@@ -1006,9 +1010,11 @@ SFU 的双栈监听与双地址 SDP 候选发布尚未在这一功能中实现�
 `BindSignaling` 每次绑定都会增加代数；`UnbindSignaling` 同时匹配连接 ID 和代数，
 避免旧连接的迟到关闭通知清除新绑定。解绑信令不等于离开房间。
 
-`RoomTypes.h`、`RoomCommand.h`、`ParticipantTypes.h` 和 `media/track/TrackTypes.h`
+`RoomTypes.h`、`RoomCommand.h`、`ParticipantTypes.h` 和 `media/track/TrackMetadata.h`
 分别定义房间描述、业务命令、参与者描述和轨道元数据；对象接口通过前置声明引用实现。
-`MediaTrack.h` 定义轨道对象，原 `TrackeInfo.h` 保留为兼容包含入口。详细边界见
+`MediaTrack.h` 定义轨道对象，调用方按需包含 `TrackMetadata.h` 或 `MediaTrackFwd.h`。
+通用轨道描述保留在 `media/track`，RTP/SDP 参数转换位于 `media/rtp`，目录职责见
+[媒体模块说明](media/README.md)。房间模型的详细边界见
 [房间模型与资源归属](Room/README.md)。
 
 媒体创建成功后，服务层创建 `ParticipantSession` 绑定，并通过 `BindPublishSession` 或
@@ -1089,6 +1095,8 @@ A 发布，B 订阅，并可在 B 建连前勾选 Force TURN 强制 `iceTranspor
 WebSocket 信令支持 join、tracks、publish、subscribe、resume、restart_ice、leave；
 每个参与者当前只承担发布或订阅一种角色，房间内轨道变更重协商尚未开放。
 订阅通过轨道 ID 和下游 MID 显式绑定。
+房间轨道发布、移除通过 EventBus 接到信令层，使用 `tracks_changed` 主动推送最新列表；
+客户端需将该通知与请求响应分流，示例页面已适配。通知不会自动创建或重协商订阅。
 
 需要安装上述 WebSocket/libSRTP 构建依赖及 Node.js。首次运行先配置构建目录；
 macOS 按上面的构建说明配置 OpenSSL/libwebsockets 路径，或通过 `PACKETIA_ROOM_DEMO_BINARY`
@@ -2080,7 +2088,7 @@ RTCP SR
 
 #### 本次完成
 
-- 将 SDP 媒体描述统一转换为现有 RTP Track 参数，复用 `StreamContext` 和 `SdpTrackBinding`。
+- 将 SDP 媒体描述统一转换为现有 RTP Track 参数，现由 `media/rtp` 中的 `RtpStreamContext` 和 `SdpTrackBinding` 承接。
 - 支持单个 `SfuEndpoint` 管理多条发布轨道，按 MID、SSRC 和轨道提示分流。
 - 将接收 Track 归属发布端点、发送 Track 归属订阅端点，通过工作线程投递完成跨端点转发。
 - 接通房间发布、订阅、取消订阅、取消发布和参与者退出的媒体生命周期。
@@ -2127,3 +2135,82 @@ RTCP SR
 - RTMP、AI 和公共服务生命周期尚未迁移至状态机组件。
 
 SFU 信令模块划分、线程与双向通道、失败回滚和测试记录见 [重构说明](docs/sfu-signaling-refactor.md)。
+
+### 2026-10-27 — 统一媒体参数分层、RTSP 鉴权与房间轨道事件
+
+#### 本次完成
+
+**RTSP 复用公共鉴权与工具函数**
+
+- 扩展 `AuthService` 的请求上下文，RTSP 使用 Digest 验证凭据，WebRTC 保留 JWT 路径；认证结果继续交给各自的访问策略判断权限。
+- 新增 `RtspDigestAuthenticator`、`StreamAccessPolicy` 和 `RtspAuthOptions`，支持连接内 nonce 到期、重放检查和精确流路径权限。
+- RTSP 在受保护命令入口重新认证，配置增加 `rtsp_auth`，默认关闭；提供 `scripts/make_rtsp_auth.py` 生成凭据配置。
+- 统一 `AuthService.h` 等项目头文件的短名称引用，由 CMake 提供搜索路径。
+- 将 `FindCrlfCrlf`、正文长度解析移入 `utils/HttpUtil.h`，将 `Trim`、`SplitOnce`、`ToLower` 等移入 `utils/StringUtil.h`，移除 RTSP 内重复实现。
+
+**媒体流管理与参数隔离**
+
+- 通过 `MediaStream`、`MediaStreamRegistry` 管理 RTSP 流注册、流内轨道及轨道到 Endpoint 的绑定；按对象身份移除注册，避免旧对象清理误删替代流。
+- `RtspMediaSession` 保留 RTSP control、TCP channel 和接入生命周期职责；补齐重复发布拒绝、失败回滚、断连清理及 TEARDOWN 后下一次发布的资源边界。
+- SFU 端点通过通用编码帧发布接口对接帧路由，移除不再使用的 `Rtsp/Media.h`、`MediaSource.h`。
+- 新增 `media/types/MediaTypes.h`、`CodecNames.h`，统一媒体类型、编码身份、流向及编码名称别名，清理重复的基础枚举。
+- 业务轨道元信息统一为 `TrackMetadata`；`MediaTrack` 加锁读取并返回自有值，`MediaTrackFwd.h` 仅保留前置声明及共享句柄。
+- `MediaStreamTrack` 仅保存通用轨道 ID、媒体类型、编码及音频采样率/声道，不再混入 PT、RTP 时钟和头扩展编号。
+- `media/rtp` 拆分纯数据 `RtpStreamContext`、候选选择/通用描述转换 `RtpTrackBinding` 和 SDP 适配 `SdpTrackBinding`。
+- 新增 `Rtsp/RtpTrackAdapter`，将选中的 RTP 参数转换为旧接收器所需的 `::TrackInfo`，将兼容代码留在协议适配层。
+- RTSP 的 SDP 一次解析为只读 RTP 快照，只保存选中 payload 的索引；通用轨道和旧接收器参数均从同一份选择派生，避免重复参数表漂移。
+- 拆出 `IMediaStatsSink`，统一统计公共类型及 `MetricsCalculator` 命名空间，将统计实现构建为独立目标。
+- CMake 分离 `packetia_media_types`、`packetia_media_core`、`packetia_media_rtp`、`packetia_sdp_media_adapter`、`packetia_media_stats`，同步更新录像、转码及测试依赖。
+
+**EventBus 接通房间轨道通知**
+
+- 每个 `Room` 拥有独立 Bus，新增 `TrackPublishedEvent`、`TrackUnpublishedEvent`；成功发布、取消发布、发布者离房和房间关闭均发布已提交的变化。
+- 事件携带元信息值快照、发布实例 `publication_id` 和变更 `revision`；两种编号在当前房间实例内有效，同名重新发布获得新的发布实例编号。
+- Bus 回调在房间锁外同步执行；订阅句柄可晚于 Bus 销毁，退订使快照中的槽失效，回调异常被隔离并返回失败计数。
+- 已通过 active 检查的回调仍可能在退订后执行，因此信令订阅者只捕获版本槽的弱引用，不捕获房间、连接或 handler。
+- `RoomSignalHandler` 在 owner 的 Tick 中合并变更，经现有有界响应通道发送 `tracks_changed` 完整列表；同一版本不重复通知，初始响应和 Answer 先入队。
+- 通知检查房间范围与 ListTracks 权限，恢复期间不发给旧连接；恢复成功后向新连接补发当前快照，离房与停服解除订阅。
+- 示例页面将主动通知与请求响应分流，收到通知后更新可选发布者列表，避免把通知误交给等待 Answer 的请求。
+
+#### 当前调用链与线程归属
+
+```text
+RTSP ANNOUNCE SDP
+  → SdpTrackBinding：生成只读 RTP 参数快照
+  → RtpTrackBinding：选择候选并生成通用轨道描述
+  → MediaStream / MediaStreamRegistry：登记流与轨道
+  → RtpTrackAdapter：生成旧接收器参数
+
+WebRTC 发布请求
+  → Gateway 解码 → 请求通道 → RoomSignalHandler
+  → WebRtcSession 协商 → Room::PublishTrack
+  → TrackPublishedEvent → Bus 回调更新版本槽
+  → 返回 Answer → 响应通道 → Gateway 串行发送
+  → 后续 Tick → tracks_changed → 同一响应通道 → 客户端更新列表
+```
+
+- RTSP 接入状态仍由连接所属 EventLoop 串行处理；媒体包继续交给现有 MediaWorker。
+- WebRTC 房间状态与通知生成由现有服务 owner 执行器处理，WebSocket 写入仍经过连接执行器和统一出口。
+- Bus 本身不切换线程、不排队重放事件；异步消费者必须复制事件数据并投递到所属执行器。
+- 房间和 Endpoint 的直接调用继续保证路由清理顺序，Bus 传播结果，不依赖订阅者顺序完成必需清理。
+
+实现细节见[媒体模块边界](media/README.md)和[房间信令与轨道事件](server/signaling/README.md)。
+
+#### 验证情况
+
+- `Packetia`、`PacketiaControl`、`PacketiaSfu` 构建通过；链接器仍有重复库警告。
+- 媒体隔离阶段：`server_app`、`media_parameters`、`test_rtp_input`、`test_udp_binding`、`rtsp_auth`、`webrtc_service` 共 6 组 CTest 通过。
+- 录像独立测试 3/3 通过，转码独立测试 3/3 通过；这两项为媒体隔离阶段结果，Bus 接入后未重复运行。
+- Bus 接入后：`server_app`、`media_parameters`、`test_rtp_input`、`webrtc_service`、`signal_channel` 共 5 组 CTest 通过。
+- 新增 Bus 句柄析构、退订快照过滤、回调异常隔离、弱引用及捕获对象析构测试；新增房间发布/移除、同名重发、离房和重复关闭测试。
+- 真实 WebSocket 集成测试覆盖发布主动通知、跨房间隔离、重连快照补发和恢复超时后的移除通知；补充通知合并及版本不变时不重复发送的断言后，`webrtc_service` 再次通过。
+- 示例页面通过 `node --check`，`git diff --check` 通过；本次未重新运行浏览器媒体互通、公网、容量或完整回归测试。
+
+#### 当前限制与后续工作
+
+- WebRTC 房间轨道仍由 Room/Participant 管理，尚未全部统一到 `MediaStreamRegistry`；业务字符串轨道 ID 与 core 流内数值 ID 仍是不同作用域。
+- 完整 WebRTC SDP 保留在连接会话的协商层；`RtpStreamContext` 是参数子集，不存完整 SDP。RTSP 当前保留 RTP 快照和 control 映射，不长期保存完整 SDP 描述。
+- `tracks_changed` 是最新完整列表，多次变化可能合并；客户端必须与请求响应分流。通知不代表已开始收到媒体，也不会自动创建订阅或触发动态重协商。
+- 轨道级 Open/Closing/Closed、订阅意图与重试、动态权限、静音转发控制、通用 MediaStream/RTSP 流状态事件尚未接入。
+- `MediaStatsCore` 的 RTP/RTCP/帧事件处理仍为空实现，接口隔离不等于已经接通实时统计。
+- 本次未新增 RTMP/SRT 接入或跨协议输出，也未引入 RTX、simulcast 层选择或新的拥塞控制算法。

@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include "MediaTypes.h"
 
 namespace media 
 {
@@ -20,13 +21,6 @@ enum class MediaStatsProtocol
     Hls,
     AudioFrame,
     VideoFrame
-};
-
-enum class MediaStatsDirection
-{
-    Unknown = 0,
-    Send,
-    Recv
 };
 
 enum class MediaStatsEventType
@@ -112,7 +106,7 @@ struct MediaStatsEvent
     MediaStatsHandle handle = kInvalidMediaStatsHandle;
 
     MediaStatsProtocol protocol = MediaStatsProtocol::Unknown;
-    MediaStatsDirection direction = MediaStatsDirection::Unknown;
+    MediaFlowDirection direction = MediaFlowDirection::Unknown;
     MediaStatsEventType type = MediaStatsEventType::Unknown;
 
     int64_t timestamp_ms = 0;

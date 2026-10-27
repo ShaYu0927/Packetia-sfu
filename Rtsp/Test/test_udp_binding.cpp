@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include "UdpMediaTransport.h"
 #include "RtspServer.h"
+#include "MediaStreamRegistry.h"
 #include "RtspUtil.h"
 #include "WorkerRegistry.h"
 #include "EndpointBase.h"
@@ -239,8 +240,7 @@ protected:
         if (client >= 0) ::close(client);
         if (server) server->Stop();
         registry.Stop();
-        auto session = MediaSessionManager::Instance().GetSessionBySuffix("live/udp_binding");
-        if (session) MediaSessionManager::Instance().RemoveSession(session->GetId());
+        EXPECT_FALSE(media::MediaStreamRegistry::Instance().FindByName("live/udp_binding"));
         server.reset();
         loop.Stop();
     }
@@ -270,7 +270,7 @@ protected:
 
 TEST_F(RtspUdpIntegration, SetupReceiveFrameRtcpFeedbackAndTeardown) {
     Announce();
-    auto session = MediaSessionManager::Instance().GetSessionBySuffix("live/udp_binding");
+    auto session = media::MediaStreamRegistry::Instance().FindByName("live/udp_binding");
     ASSERT_NE(session, nullptr);
     auto collector = std::make_shared<FrameCollector>();
     auto frame = collector->frame.get_future();
@@ -311,6 +311,12 @@ TEST_F(RtspUdpIntegration, SetupReceiveFrameRtcpFeedbackAndTeardown) {
     EXPECT_EQ(session->FindEndpointByTrack(0), 0U);
     // The same track can be set up again after its binding was released.
     EXPECT_NE(Request("SETUP", "/trackID=0", headers).find("200 OK"), std::string::npos);
+    auto replacement = media::MediaStreamRegistry::Instance().FindByName("live/udp_binding");
+    ASSERT_TRUE(replacement);
+    EXPECT_NE(replacement->GetId(), session->GetId());
+    EXPECT_NE(Request("RECORD", "", session_header).find("454"), std::string::npos);
+    EXPECT_NE(Request("RECORD", "", "Session: " + std::to_string(replacement->GetId()) + "\r\n")
+        .find("200 OK"), std::string::npos);
 }
 
 TEST_F(RtspUdpIntegration, InvalidSetupDoesNotConsumeTrackAndTcpStillWorks) {
@@ -330,7 +336,7 @@ TEST_F(RtspUdpIntegration, StateMachineRejectsWrongOrderAndAllowsSessionReuse) {
     EXPECT_NE(Request("RECORD", "").find("455"), std::string::npos);
     ASSERT_NE(Request("SETUP", "/trackID=0", "Transport: RTP/AVP/TCP;unicast;interleaved=4-5\r\n")
         .find("200 OK"), std::string::npos);
-    auto session = MediaSessionManager::Instance().GetSessionBySuffix("live/udp_binding");
+    auto session = media::MediaStreamRegistry::Instance().FindByName("live/udp_binding");
     ASSERT_NE(session, nullptr);
     const auto endpoint_id = session->FindEndpointByTrack(0);
     const auto header = "Session: " + std::to_string(session->GetId()) + "\r\n";
@@ -351,14 +357,19 @@ TEST_F(RtspUdpIntegration, StateMachineRejectsWrongOrderAndAllowsSessionReuse) {
     Announce();
     EXPECT_NE(Request("SETUP", "/trackID=0", "Transport: RTP/AVP/TCP;unicast;interleaved=4-5\r\n")
         .find("200 OK"), std::string::npos);
-    EXPECT_NE(Request("TEARDOWN", "", header).find("200 OK"), std::string::npos);
+    auto replacement = media::MediaStreamRegistry::Instance().FindByName("live/udp_binding");
+    ASSERT_TRUE(replacement);
+    EXPECT_NE(replacement->GetId(), session->GetId());
+    EXPECT_NE(Request("TEARDOWN", "", header).find("454"), std::string::npos);
+    EXPECT_NE(Request("TEARDOWN", "", "Session: " + std::to_string(replacement->GetId()) + "\r\n")
+        .find("200 OK"), std::string::npos);
 }
 
 TEST_F(RtspUdpIntegration, DisconnectReleasesActiveEndpoint) {
     Announce();
     ASSERT_NE(Request("SETUP", "/trackID=0", "Transport: RTP/AVP/TCP;unicast;interleaved=4-5\r\n")
         .find("200 OK"), std::string::npos);
-    auto session = MediaSessionManager::Instance().GetSessionBySuffix("live/udp_binding");
+    auto session = media::MediaStreamRegistry::Instance().FindByName("live/udp_binding");
     ASSERT_NE(session, nullptr);
     const auto id = session->FindEndpointByTrack(0);
     ASSERT_NE(id, 0U);
@@ -366,10 +377,13 @@ TEST_F(RtspUdpIntegration, DisconnectReleasesActiveEndpoint) {
     ::close(client);
     client = -1;
     const auto deadline = std::chrono::steady_clock::now() + 2s;
-    while (session->FindEndpointByTrack(0) != 0 && std::chrono::steady_clock::now() < deadline)
+    while (media::MediaStreamRegistry::Instance().FindByName("live/udp_binding") &&
+           std::chrono::steady_clock::now() < deadline)
         std::this_thread::sleep_for(5ms);
     EXPECT_EQ(session->FindEndpointByTrack(0), 0U);
     EXPECT_EQ(utils::EndpointManager::Instance().Find(id), nullptr);
+    EXPECT_FALSE(media::MediaStreamRegistry::Instance().FindByName("live/udp_binding"));
+    EXPECT_EQ(session->GetState(), media::MediaStream::State::Closed);
 }
 
 TEST_F(RtspUdpIntegration, TwoTracksShareEndpointAndFailedSetupPreservesFirstTrack) {
@@ -378,7 +392,7 @@ TEST_F(RtspUdpIntegration, TwoTracksShareEndpointAndFailedSetupPreservesFirstTra
         "m=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\na=control:trackID=0\r\n"
         "m=audio 0 RTP/AVP 96\r\na=rtpmap:96 opus/48000/2\r\na=control:trackID=1\r\n");
     ASSERT_NE(response.find("200 OK"), std::string::npos);
-    auto session = MediaSessionManager::Instance().GetSessionBySuffix("live/udp_binding");
+    auto session = media::MediaStreamRegistry::Instance().FindByName("live/udp_binding");
     ASSERT_NE(session, nullptr);
     ASSERT_NE(Request("SETUP", "/trackID=0", "Transport: RTP/AVP/TCP;unicast;interleaved=4-5\r\n")
         .find("200 OK"), std::string::npos);
@@ -419,11 +433,16 @@ TEST_F(RtspUdpIntegration, TwoTracksShareEndpointAndFailedSetupPreservesFirstTra
 }
 
 TEST_F(RtspUdpIntegration, FailedAllocationDoesNotRegisterEndpoint) {
-    Announce();
-    auto session = MediaSessionManager::Instance().GetSessionBySuffix("live/udp_binding");
-    ASSERT_NE(session, nullptr);
-    auto before = utils::EndpointManager::Instance().Size();
+    const auto before = utils::EndpointManager::Instance().Size();
     RtspRequest request;
+    RtspRequest::RtspRequestInfo announce;
+    announce.cseq = 1;
+    announce.url = "rtsp://127.0.0.1/live/udp_binding";
+    announce.body = "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=test\r\nt=0 0\r\n"
+        "m=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\na=control:trackID=0\r\n";
+    ASSERT_NE(request.HandleCmdANNOUNCE(announce).find("200 OK"), std::string::npos);
+    auto session = media::MediaStreamRegistry::Instance().FindByName("live/udp_binding");
+    ASSERT_TRUE(session);
     RtspRequest::RtspRequestInfo setup;
     setup.cseq = 99;
     setup.url = "rtsp://127.0.0.1/live/udp_binding/trackID=0";
@@ -461,4 +480,68 @@ TEST(UdpBinding, TransportMayBeReleasedInsideReceiveCallback) {
     loop.Stop();
     EXPECT_EQ(sink->transport, nullptr);
 }
+}
+
+TEST_F(RtspUdpIntegration, AnnounceOnlyDisconnectAndServerStopReleaseStream) {
+    Announce();
+    auto stream = media::MediaStreamRegistry::Instance().FindByName("live/udp_binding");
+    ASSERT_TRUE(stream);
+    ::shutdown(client, SHUT_RDWR);
+    ::close(client);
+    client = -1;
+    const auto deadline = std::chrono::steady_clock::now() + 2s;
+    while (media::MediaStreamRegistry::Instance().FindByName("live/udp_binding") &&
+           std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(5ms);
+    EXPECT_FALSE(media::MediaStreamRegistry::Instance().FindByName("live/udp_binding"));
+    EXPECT_EQ(stream->GetState(), media::MediaStream::State::Closed);
+}
+
+TEST_F(RtspUdpIntegration, DuplicatePublisherCannotOverwriteOrTakeOverExistingStream) {
+    Announce();
+    auto stream = media::MediaStreamRegistry::Instance().FindByName("live/udp_binding");
+    ASSERT_TRUE(stream);
+    RtspRequest competitor;
+    RtspRequest::RtspRequestInfo announce;
+    announce.cseq = 1;
+    announce.url = "rtsp://127.0.0.1/live/udp_binding";
+    announce.body = "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=test\r\nt=0 0\r\n"
+        "m=audio 0 RTP/AVP 0\r\na=control:trackID=0\r\n";
+    EXPECT_NE(competitor.HandleCmdANNOUNCE(announce).find("455"), std::string::npos);
+    RtspRequest::RtspRequestInfo setup;
+    setup.cseq = 2;
+    setup.url = announce.url + "/trackID=0";
+    setup.headers["transport"] = "RTP/AVP/TCP;unicast;interleaved=0-1";
+    EXPECT_NE(competitor.HandleCmdSetup(setup, {}).find("404"), std::string::npos);
+    EXPECT_EQ(media::MediaStreamRegistry::Instance().FindByName("live/udp_binding"), stream);
+    const auto tracks = stream->GetTracks();
+    ASSERT_EQ(tracks.size(), 1U);
+    EXPECT_EQ(tracks[0].codec, media::CodecType::H264);
+    EXPECT_NE(Request("SETUP", "/trackID=0", "Transport: RTP/AVP/TCP;unicast;interleaved=4-5\r\n")
+        .find("200 OK"), std::string::npos);
+}
+
+TEST_F(RtspUdpIntegration, InvalidAnnounceNeverRegistersPartialStream) {
+    const auto response = Request("ANNOUNCE", "", "Content-Type: application/sdp\r\n",
+        "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=test\r\nt=0 0\r\n"
+        "m=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\na=control:same\r\n"
+        "m=audio 0 RTP/AVP 0\r\na=control:same\r\n");
+    EXPECT_NE(response.find("400"), std::string::npos);
+    EXPECT_FALSE(media::MediaStreamRegistry::Instance().FindByName("live/udp_binding"));
+    Announce();
+}
+
+TEST_F(RtspUdpIntegration, ServerStopClosesStreamAndEndpointWithRetainedReference) {
+    Announce();
+    auto stream = media::MediaStreamRegistry::Instance().FindByName("live/udp_binding");
+    ASSERT_TRUE(stream);
+    ASSERT_NE(Request("SETUP", "/trackID=0", "Transport: RTP/AVP/TCP;unicast;interleaved=4-5\r\n")
+        .find("200 OK"), std::string::npos);
+    const auto endpoint = stream->FindEndpointByTrack(0);
+    ASSERT_NE(endpoint, 0U);
+    server->Stop();
+    EXPECT_FALSE(media::MediaStreamRegistry::Instance().FindByName("live/udp_binding"));
+    EXPECT_EQ(stream->GetState(), media::MediaStream::State::Closed);
+    EXPECT_FALSE(utils::EndpointManager::Instance().Find(endpoint));
+    server->Stop();
 }

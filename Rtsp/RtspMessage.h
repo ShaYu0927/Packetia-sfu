@@ -8,7 +8,7 @@
 #include <sstream>
 #include <functional>
 #include "RtpTypes.h"
-#include "Media.h"
+#include "Rtsp.h"
 #include "RtspMediaSession.h"
 
 
@@ -19,6 +19,12 @@ class Sdp;
 class RtspRequest
 {
 public:
+    ~RtspRequest() { if (media_session) media_session->Close(); }
+    RtspRequest() = default;
+    RtspRequest(const RtspRequest&) = delete;
+    RtspRequest& operator=(const RtspRequest&) = delete;
+    std::unique_ptr<RtspRequest> CreateNextPublication() const;
+
     enum class Method
     {
         OPTIONS = 0,
@@ -161,7 +167,7 @@ public:
         }
         return "";
     }
-    MediaSession::Ptr GetMediaSession() const { return media_session; }
+    RtspMediaSession::Ptr GetMediaSession() const { return media_session; }
     uint64_t GetLastSetupEndpointId() const { return last_setup_endpoint_id_; }
     uint8_t GetLastSetupRtpChannel() const { return last_setup_rtp_channel_; }
     uint8_t GetLastSetupRtcpChannel() const { return last_setup_rtcp_channel_; }
@@ -236,7 +242,6 @@ private:
     std::string rtsp_url_suffix_;                       //RTSP URL后缀
     std::string date_;
     MediaChannelId channel_id_;
-    std::string auth_response_;
 
     uint16_t rtp_channel_ = 0; //RTP端口
     uint16_t rtcp_channel_ = 0;
@@ -254,12 +259,11 @@ private:
     bool ParseAccept(std::string& message);
     bool ParseTransport(const std::string &header);
     bool ParseMediaChannel(std::string& message);
-	bool ParseAuthorization(std::string& message);
 
     std::unordered_map<std::string, std::pair<std::string, uint32_t>> request_line_param_;
     std::unordered_map<std::string, std::pair<std::string, uint32_t>> header_line_param_;
 
-    MediaSession::Ptr media_session;
+    RtspMediaSession::Ptr media_session;
     uint64_t last_setup_endpoint_id_ = 0;
     uint64_t media_endpoint_id_ = 0;
     uint32_t setup_media_session_id_ = 0;

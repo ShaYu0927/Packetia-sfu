@@ -4,6 +4,7 @@
 #include "AccountOptions.h"
 #include "HttpServerOptions.h"
 #include "TurnConstants.h"
+#include "RtspAuthOptions.h"
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -98,6 +99,7 @@ struct AppConfig
     service::account::AccountOptions account;
     protocol::http::HttpServerOptions http;
     WebRtcOptions webrtc;
+    service::auth::RtspAuthOptions rtsp_auth;
     TurnOptions turn;
     bool recording_enabled = true;
     bool ai_enabled = true;

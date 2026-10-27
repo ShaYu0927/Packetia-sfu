@@ -1,309 +1,156 @@
 #ifndef _EVENT_BUS_H_
 #define _EVENT_BUS_H_
 
-
+#include "MediaEvent.h"
 #include <atomic>
-#include <string>
-#include <stdint.h>
 #include <functional>
-#include <unordered_map>
-#include <vector>
+#include <memory>
 #include <mutex>
-#include <atomic>
+#include <unordered_map>
 #include <utility>
-#
-
-#include "MediaStatsTypes.h"
-#include "coreEvent.h"
+#include <vector>
 
 namespace media
 {
-
-enum class MediaObjectType
-{
-    Unknown = 0,
-    Worker,
-    Session,
-    Transport,
-    Producer,
-    Consumer,
-    ReceiverTrack,
-    SenderTrack
-};
-
-class MediaObject
-{
-public:
-    MediaObject(MediaObjectType type, const std::string& id)
-        : type_(type),
-          id_(id),
-          closed_(false)
-    {
-    }
-
-    virtual ~MediaObject()
-    {
-    }
-
-    MediaObjectType Type() const { return type_; }
-
-    const std::string& Id() const { return id_; }
-
-    bool IsClosed() const { return closed_.load(); }
-
-    void Close();
-
-protected:
-    virtual void OnClose()
-    {
-    }
-
-private:
-    MediaObjectType type_ = MediaObjectType::Unknown;
-    std::string id_;
-    std::atomic<bool> closed_;
-};
-
-class MediaProducer : public MediaObject
-{
-public:
-    explicit MediaProducer(const std::string& id)
-        : MediaObject(MediaObjectType::Producer, id)
-    {
-    }
-
-    virtual bool InputRtpPacket(const MediaTrackStats& packet) = 0;
-};
-
-class MediaConsumer : public MediaObject
-{
-public:
-    explicit MediaConsumer(const std::string& id)
-        : MediaObject(MediaObjectType::Consumer, id)
-    {
-    }
-
-    virtual bool SendRtpPacket(const MediaTrackStats& packet) = 0;
-};
-
+// 同步分发；线程切换由订阅者负责。不同 Publish 调用之间不保证顺序。
 class EventBus
 {
 public:
-    using HandlerId = uint64_t;
     using RawCallback = std::function<void(const MediaEvent&)>;
+    struct DispatchResult
+    {
+        std::size_t delivered = 0;
+        std::size_t failed = 0;
+    };
+
+private:
+    struct Slot
+    {
+        explicit Slot(RawCallback cb) : callback(std::move(cb)) {}
+        std::atomic<bool> active{true};
+        RawCallback callback;
+    };
+    struct State
+    {
+        std::mutex mutex;
+        bool closed = false;
+        std::unordered_map<MediaEventType, std::vector<std::shared_ptr<Slot>>> handlers;
+    };
 
 public:
     class Subscription
     {
     public:
-        Subscription()
-            : bus_(nullptr),
-              type_(MediaEventType::Unknown),
-              id_(0)
-        {
-        }
-
-        Subscription(EventBus* bus, MediaEventType type, HandlerId id)
-            : bus_(bus),
-              type_(type),
-              id_(id)
-        {
-        }
-
-        ~Subscription()
-        {
-            Reset();
-        }
-
+        Subscription() = default;
+        ~Subscription() { Reset(); }
         Subscription(const Subscription&) = delete;
         Subscription& operator=(const Subscription&) = delete;
-
         Subscription(Subscription&& other) noexcept
-            : bus_(other.bus_),
-              type_(other.type_),
-              id_(other.id_)
-        {
-            other.bus_ = nullptr;
-            other.id_ = 0;
-            other.type_ = MediaEventType::Unknown;
-        }
-
+            : state_(std::move(other.state_)), slot_(std::move(other.slot_)), type_(other.type_) {}
         Subscription& operator=(Subscription&& other) noexcept
         {
             if (this != &other)
             {
                 Reset();
-
-                bus_ = other.bus_;
+                state_ = std::move(other.state_);
+                slot_ = std::move(other.slot_);
                 type_ = other.type_;
-                id_ = other.id_;
-
-                other.bus_ = nullptr;
-                other.id_ = 0;
-                other.type_ = MediaEventType::Unknown;
             }
-
             return *this;
         }
-
         void Reset()
         {
-            if (bus_ && id_ != 0)
+            const auto slot = slot_.lock();
+            slot_.reset();
+            if (slot) slot->active.store(false);
+            if (const auto state = state_.lock())
             {
-                bus_->Unsubscribe(type_, id_);
-                bus_ = nullptr;
-                id_ = 0;
-                type_ = MediaEventType::Unknown;
+                std::lock_guard<std::mutex> lock(state->mutex);
+                const auto found = state->handlers.find(type_);
+                if (found != state->handlers.end())
+                {
+                    auto& slots = found->second;
+                    for (auto it = slots.begin(); it != slots.end(); ++it)
+                        if (*it == slot) { slots.erase(it); break; }
+                    if (slots.empty()) state->handlers.erase(found);
+                }
             }
+            state_.reset();
         }
-
         bool Valid() const
         {
-            return bus_ != nullptr && id_ != 0;
+            const auto slot = slot_.lock();
+            return !state_.expired() && slot && slot->active.load();
         }
-
     private:
-        EventBus* bus_;
-        MediaEventType type_;
-        HandlerId id_;
+        friend class EventBus;
+        Subscription(const std::shared_ptr<State>& state, const std::shared_ptr<Slot>& slot, MediaEventType type)
+            : state_(state), slot_(slot), type_(type) {}
+        std::weak_ptr<State> state_;
+        std::weak_ptr<Slot> slot_;
+        MediaEventType type_ = MediaEventType::Unknown;
     };
 
-public:
-    EventBus()
-        : next_id_(1)
+    EventBus() : state_(std::make_shared<State>()) {}
+    EventBus(const EventBus&) = delete;
+    EventBus& operator=(const EventBus&) = delete;
+    ~EventBus()
     {
+        decltype(State::handlers) retired;
+        {
+            std::lock_guard<std::mutex> lock(state_->mutex);
+            state_->closed = true;
+            for (const auto& handlers : state_->handlers)
+                for (const auto& slot : handlers.second) slot->active.store(false);
+            retired.swap(state_->handlers);
+        }
+        // 用户回调的捕获对象也可能持有订阅句柄，必须在锁外析构。
     }
 
     template <typename EventT>
     Subscription Subscribe(std::function<void(const EventT&)> callback)
     {
-        if (!callback)
-        {
-            return Subscription();
-        }
-
-        MediaEventType type = EventT::StaticType();
-
-        RawCallback wrapper = [callback](const MediaEvent& event) {
-            const EventT* typed_event = dynamic_cast<const EventT*>(&event);
-            if (!typed_event)
-            {
-                return;
-            }
-
-            callback(*typed_event);
-        };
-
-        HandlerId id = SubscribeRaw(type, wrapper);
-        return Subscription(this, type, id);
+        if (!callback) return {};
+        auto slot = std::make_shared<Slot>([callback = std::move(callback)](const MediaEvent& event) {
+            if (const auto* typed = dynamic_cast<const EventT*>(&event)) callback(*typed);
+        });
+        const auto type = EventT::StaticType();
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        if (state_->closed) return {};
+        state_->handlers[type].push_back(slot);
+        return Subscription(state_, slot, type);
     }
 
-    size_t Publish(const MediaEvent& event)
+    DispatchResult Publish(const MediaEvent& event)
     {
-        std::vector<RawCallback> callbacks;
-
+        std::vector<std::shared_ptr<Slot>> slots;
         {
-            std::lock_guard<std::mutex> lock(mutex_);
-
-            auto it = handlers_.find(event.Type());
-            if (it == handlers_.end())
-            {
-                return 0;
-            }
-
-            callbacks.reserve(it->second.size());
-
-            for (const auto& slot : it->second)
-            {
-                callbacks.push_back(slot.callback);
-            }
+            std::lock_guard<std::mutex> lock(state_->mutex);
+            if (state_->closed) return {};
+            const auto found = state_->handlers.find(event.Type());
+            if (found != state_->handlers.end()) slots = found->second;
         }
-
-        for (const auto& cb : callbacks)
+        DispatchResult result;
+        for (const auto& slot : slots)
         {
-            cb(event);
+            if (!slot->active.load()) continue;
+            try { slot->callback(event); ++result.delivered; }
+            catch (...) { ++result.failed; }
         }
-
-        return callbacks.size();
+        return result;
     }
 
+    // Reset 不等待已通过 active 检查的回调；捕获业务对象时应使用 weak_ptr。
+    // 事件只在本次调用期间有效，异步任务必须复制数据。
     template <typename EventT, typename... Args>
-    size_t EmplacePublish(Args&&... args)
+    DispatchResult EmplacePublish(Args&&... args)
     {
         EventT event(std::forward<Args>(args)...);
         return Publish(event);
     }
-
 private:
-    struct HandlerSlot
-    {
-        HandlerId id = 0;
-        RawCallback callback;
-    };
-
-    struct EventTypeHash
-    {
-        size_t operator()(MediaEventType type) const
-        {
-            return static_cast<size_t>(type);
-        }
-    };
-
-private:
-    HandlerId SubscribeRaw(MediaEventType type, RawCallback callback)
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-
-        HandlerId id = next_id_++;
-
-        HandlerSlot slot;
-        slot.id = id;
-        slot.callback = callback;
-
-        handlers_[type].push_back(slot);
-
-        return id;
-    }
-
-    void Unsubscribe(MediaEventType type, HandlerId id)
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-
-        auto it = handlers_.find(type);
-        if (it == handlers_.end())
-        {
-            return;
-        }
-
-        auto& vec = it->second;
-
-        for (auto iter = vec.begin(); iter != vec.end(); ++iter)
-        {
-            if (iter->id == id)
-            {
-                vec.erase(iter);
-                break;
-            }
-        }
-
-        if (vec.empty())
-        {
-            handlers_.erase(it);
-        }
-    }
-
-private:
-    std::mutex mutex_;
-    std::atomic<HandlerId> next_id_;
-
-    std::unordered_map<
-        MediaEventType,
-        std::vector<HandlerSlot>,
-        EventTypeHash
-    > handlers_;
+    const std::shared_ptr<State> state_;
 };
-
 }
-
 
 #endif /* _EVENT_BUS_H_ */

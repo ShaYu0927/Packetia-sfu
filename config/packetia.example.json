@@ -38,6 +38,13 @@
     "ai": true,
     "conference_mix": false
   },
+  "rtsp_auth": {
+    "enabled": false,
+    "realm": "packetia",
+    "nonce_ttl_seconds": 300,
+    "allow_legacy_digest": true,
+    "users": []
+  },
   "webrtc": {
     "enabled": false,
     "public_ip": "",

@@ -1,6 +1,7 @@
-#ifndef PACKETIA_MEDIA_TRACK_TYPES_H
-#define PACKETIA_MEDIA_TRACK_TYPES_H
+#ifndef PACKETIA_MEDIA_TRACK_METADATA_H
+#define PACKETIA_MEDIA_TRACK_METADATA_H
 
+#include "MediaTypes.h"
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -8,13 +9,6 @@
 // Value types describing media tracks. Independent of transports and runtime objects.
 namespace media
 {
-    enum class TrackType
-    {
-        Unknown = 0,
-        Audio,
-        Video,
-    };
-
     enum class TrackSource
     {
         Unknown = 0,
@@ -92,7 +86,7 @@ namespace media
     };
 
 
-    struct TrackInfo
+    struct TrackMetadata
     {
         /**
         * 服务端生成的 Track 唯一 ID
@@ -103,7 +97,7 @@ namespace media
         /**
         * 音频 / 视频。
         */
-        TrackType type = TrackType::Unknown;
+        MediaType type = MediaType::Unknown;
 
         /**
         * Track 名称。
@@ -178,4 +172,4 @@ namespace media
     };
 }
 
-#endif // PACKETIA_MEDIA_TRACK_TYPES_H
+#endif // PACKETIA_MEDIA_TRACK_METADATA_H

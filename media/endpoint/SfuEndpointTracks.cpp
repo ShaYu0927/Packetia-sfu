@@ -1,6 +1,8 @@
 #include "SfuEndpoint.h"
 #include "MediaStreamAffinity.h"
 #include "SdpTrackBinding.h"
+#include "Sdp.h"
+#include "RtpTrackAdapter.h"
 #include "RtpHeaderExtensions.h"
 
 #include <algorithm>

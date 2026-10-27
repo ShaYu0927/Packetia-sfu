@@ -3,6 +3,14 @@
 
 #include <string>
 #include <memory>
+#include <cstdint>
+
+// 旧 RTSP 解析接口使用的媒体 channel 标识，不作为通用轨道或编码类型。
+enum MediaChannelId
+{
+    channel_0,
+    channel_1,
+};
 
 
 struct RtspUrlInfo

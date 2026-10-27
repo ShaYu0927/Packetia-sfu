@@ -40,6 +40,7 @@ private:
     using Session = server::WebRtcSessionContext;
     struct Membership;
     struct Subscription;
+    struct RoomObservation;
     Json DispatchMessage(const std::string&, const SignalRequest&, const ParticipantInit*);
     std::optional<Json> AuthorizeMessage(const std::string&, const SignalRequest&) const;
     Json HandleNegotiationReply(Session&, const SignalRequest&);
@@ -51,6 +52,8 @@ private:
     Json ResumeRoom(const std::string&, const std::string&, const std::string&, const std::string&,
                     const service::auth::AuthContext&);
     Json ListTracks(const std::string&) const;
+    void ObserveRoom(const std::shared_ptr<room::Room>&);
+    void NotifyTrackChanges();
     void LeaveRoom(const std::string&);
     void RemoveSession(const std::string&);
     void RemoveMediaSession(const std::string&);
@@ -66,6 +69,7 @@ private:
     std::unordered_map<std::string, std::unique_ptr<Membership>> memberships_;
     std::unordered_map<std::string, std::string> participant_connections_;
     std::unordered_map<std::string, std::shared_ptr<room::Room>> rooms_;
+    std::unordered_map<std::string, std::unique_ptr<RoomObservation>> room_observations_;
     bool started_ = false;
 };
 }

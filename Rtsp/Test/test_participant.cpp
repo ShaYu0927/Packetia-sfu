@@ -64,7 +64,7 @@ TEST(Participant, LeaveDetachesBindingsBeforeCallbackAndCannotRebind)
         8003, room::ParticipantSessionRole::Publish, endpoint);
     ASSERT_TRUE(participant->BindMediaSession(session));
     ASSERT_TRUE(participant->BindSignaling("ws-1"));
-    media::TrackInfo track;
+    media::TrackMetadata track;
     track.sid = "camera";
     ASSERT_TRUE(participant->AddPublishedTrack(std::make_shared<media::MediaTrack>(track)));
     ASSERT_TRUE(participant->SubscribeTrack("remote-camera"));
@@ -195,7 +195,7 @@ TEST(Participant, LeaveDetachesBothRolesAndPreservesPriorSnapshot)
     ASSERT_TRUE(participant->BindPublishSession(publication));
     ASSERT_TRUE(participant->BindSubscribeSession(subscription));
     ASSERT_TRUE(participant->BindSignaling("ws-1"));
-    media::TrackInfo track;
+    media::TrackMetadata track;
     track.sid = "camera";
     ASSERT_TRUE(participant->AddPublishedTrack(std::make_shared<media::MediaTrack>(track)));
     ASSERT_TRUE(participant->SubscribeTrack("remote-camera"));

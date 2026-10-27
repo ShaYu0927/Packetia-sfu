@@ -74,6 +74,7 @@ StreamFeatures AppConfig::Resolve(const StreamKey& key) const {
     return result;
 }
 void AppConfig::Validate() const {
+    rtsp_auth.Validate();
     if (recording.segment_ms > static_cast<uint64_t>(INT64_MAX / 1000) || recording.reorder_ms > 5000)
         throw std::invalid_argument("invalid segment duration or reorder window (0..5000 ms)");
     if (listen_ip.empty() || !rtsp_port || !sip_port || !rtmp_port || !udp_port || !websocket_port || !io_threads || io_threads > 64)
@@ -121,7 +122,7 @@ void AppConfig::Validate() const {
 }
 AppConfig AppConfig::FromJson(const std::string& text) {
     const auto root = Json::parse(text);
-    Keys(root, {"server", "workers", "account", "http", "webrtc", "turn", "services", "recording", "stream_defaults", "streams"});
+    Keys(root, {"server", "workers", "account", "http", "webrtc", "rtsp_auth", "turn", "services", "recording", "stream_defaults", "streams"});
     AppConfig config;
     if (root.contains("server")) {
         const auto& server = root.at("server");
@@ -191,6 +192,33 @@ AppConfig AppConfig::FromJson(const std::string& text) {
         Number(rtc, "admission_timeout_ms", config.webrtc.admission_timeout_ms);
         Number(rtc, "signaling_ping_seconds", config.webrtc.signaling_ping_seconds);
         Number(rtc, "signaling_idle_timeout_seconds", config.webrtc.signaling_idle_timeout_seconds);
+    }
+    if (root.contains("rtsp_auth")) {
+        const auto& auth = root.at("rtsp_auth");
+        Keys(auth, {"enabled", "realm", "nonce_ttl_seconds", "allow_legacy_digest", "users"});
+        if (auth.contains("enabled")) config.rtsp_auth.enabled = Flag(auth.at("enabled"));
+        if (auth.contains("realm")) config.rtsp_auth.realm = auth.at("realm").get<std::string>();
+        Number(auth, "nonce_ttl_seconds", config.rtsp_auth.nonce_ttl_seconds);
+        if (auth.contains("allow_legacy_digest")) config.rtsp_auth.allow_legacy_digest = Flag(auth.at("allow_legacy_digest"));
+        if (auth.contains("users")) {
+            if (!auth.at("users").is_array()) throw std::invalid_argument("RTSP users must be an array");
+            for (const auto& value : auth.at("users")) {
+                Keys(value, {"username", "ha1", "streams"});
+                service::auth::RtspCredential user;
+                user.username = value.at("username").get<std::string>();
+                user.ha1 = value.at("ha1").get<std::string>();
+                if (!value.at("streams").is_array()) throw std::invalid_argument("RTSP streams must be an array");
+                for (const auto& item : value.at("streams")) {
+                    Keys(item, {"path", "can_publish", "can_play"});
+                    service::auth::StreamGrant grant;
+                    grant.path = item.at("path").get<std::string>();
+                    if (item.contains("can_publish")) grant.can_publish = Flag(item.at("can_publish"));
+                    if (item.contains("can_play")) grant.can_play = Flag(item.at("can_play"));
+                    user.streams.push_back(std::move(grant));
+                }
+                config.rtsp_auth.users.push_back(std::move(user));
+            }
+        }
     }
     if (root.contains("services")) {
         const auto& services = root.at("services");

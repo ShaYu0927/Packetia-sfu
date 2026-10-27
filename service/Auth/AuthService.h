@@ -17,8 +17,9 @@ public:
     AuthService(std::shared_ptr<const IAuthenticator> authenticator, std::shared_ptr<const IAccessPolicy> policy, Clock clock = {});
 
     AuthResult Authenticate(std::string_view token, Audience expected_audience) const;
-    // caller must be the verified snapshot bound to this participant at admission.
-    // Token expiry gates join/resume; it does not interrupt an established session.
+    AuthResult Authenticate(const AuthRequest& request, Audience expected_audience) const;
+    // caller 必须来自已验证的身份快照；本方法不重新验证凭据或检查到期时间。
+    // WebRTC 在 join/resume 时认证；RTSP 在每条受保护命令进入时重新认证。
     AuthDecision Authorize(const AuthContext& caller, Action action, const ResourceContext& resource) const;
 
 private:

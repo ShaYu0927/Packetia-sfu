@@ -25,6 +25,7 @@ target_include_directories(conference_mix_tests PRIVATE
     ${PACKETIA_MIX_ROOT}/service/ConferenceMixService
     ${PACKETIA_MIX_ROOT}/media/core
     ${PACKETIA_MIX_ROOT}/media/MediaFrame
+    ${PACKETIA_MIX_ROOT}/media/types
     ${PACKETIA_MIX_ROOT}/Common/memory)
 target_compile_features(conference_mix_tests PRIVATE cxx_std_17)
 target_link_libraries(conference_mix_tests PRIVATE packetia_threads packetia_config)

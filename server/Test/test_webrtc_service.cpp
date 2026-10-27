@@ -167,6 +167,30 @@ public:
 
     Json Receive()
     {
+        for (;;)
+        {
+            auto message = ReceiveFrame();
+            if (message.value("type", "") != "tracks_changed") return message;
+            notifications_.push_back(std::move(message));
+        }
+    }
+
+    Json ReceiveTrackChange()
+    {
+        if (!notifications_.empty())
+        {
+            auto message = std::move(notifications_.front());
+            notifications_.pop_front();
+            return message;
+        }
+        auto message = ReceiveFrame();
+        Require(message.value("type", "") == "tracks_changed", "expected unsolicited track notification");
+        return message;
+    }
+    std::size_t PendingTrackChanges() const { return notifications_.size(); }
+
+    Json ReceiveFrame()
+    {
         std::string response;
         for (;;)
         {
@@ -238,6 +262,7 @@ private:
     }
 
     Socket socket_;
+    std::deque<Json> notifications_;
 };
 
 Json Join(Client& client, const std::string& identity, const std::string& room,
@@ -504,12 +529,20 @@ void RunCoordinatorChannels()
         pump();
         Require(received.size() == 2 && received[0].initial && received[1].body.value("type", "") == "answer",
             "initial response did not precede pipelined publication");
+        owner->Invoke([&] { coordinator->Tick(); });
+        pump();
+        Require(received.size() == 3 && received[2].body.value("type", "") == "tracks_changed" &&
+            received[2].body.at("tracks").size() == 2,
+            "two track publications were not coalesced after initial and answer responses");
+        owner->Invoke([&] { coordinator->Tick(); });
+        pump();
+        Require(received.size() == 3, "unchanged track revision emitted duplicate notifications");
         // 使用真实 ICE 计时器，避免把推进业务 Tick 的参数误当作媒体时钟。
         std::this_thread::sleep_for(30100ms);
         owner->Invoke([&] { coordinator->Tick(); });
         pump();
-        Require(received.size() == 3 && received[0].body.value("type", "") == "joined" &&
-            received[1].body.value("type", "") == "answer" && received[2].close_after,
+        Require(received.size() == 4 && received[0].body.value("type", "") == "joined" &&
+            received[1].body.value("type", "") == "answer" && received[3].close_after,
             "room notification bypassed initial response or response channel");
         owner->Invoke([&] {
             coordinator->Closed(active->Key());
@@ -595,8 +628,12 @@ void RunRoom()
     const auto viewerJoin = Join(b, "viewer", "demo", false, true);
     const auto outsiderJoin = Join(outsider, "outsider", "other");
     Join(secondPublisher, "second-publisher", "demo");
-    const auto publication = a.Request({{"type", "publish"}, {"sdp", Offer()}});
+    a.Send(1, Json{{"type", "publish"}, {"sdp", Offer()}}.dump());
+    const auto publication = a.ReceiveFrame();
     CheckAnswer(publication, config.udp_port);
+    const auto changed = b.ReceiveTrackChange();
+    Require(changed.at("room_id") == "demo" && changed.at("tracks").size() == 2 &&
+        changed.at("revision").get<uint64_t>() > 0, "publication did not notify idle room peer");
     const auto source = std::dynamic_pointer_cast<media::SfuEndpoint>(utils::EndpointManager::Instance().Find(
         publication.at("session_id").get<uint64_t>()));
     Require(source && source->PublishedTrackCount() == 2, "room source endpoint missing");
@@ -605,6 +642,7 @@ void RunRoom()
     };
     const auto tracks = list(b);
     Require(tracks.size() == 2 && list(outsider).empty(), "room track visibility incorrect");
+    Require(outsider.PendingTrackChanges() == 0, "track event leaked to another room");
     auto browser = ParseDescription({{"sdp", Offer()}}, sdp::SdpType::Offer);
     browser.bundle.mids = {"down-a", "down-v"};
     Json bindings = Json::array();
@@ -637,6 +675,9 @@ void RunRoom()
     Require(destination && destination->SubscriptionCount() == 2, "room did not create real forwarding routes");
     const auto second = secondPublisher.Request({{"type", "publish"}, {"sdp", Offer()}});
     CheckAnswer(second, config.udp_port);
+    const auto secondChanged = b.ReceiveTrackChange();
+    Require(secondChanged.at("tracks").size() == 4 && secondChanged.at("revision") > changed.at("revision"),
+        "second publication did not update room snapshot");
     Require(list(b).size() == 4, "same MIDs from another publisher collided in room");
     Require(b.Request(subscription).value("type", "") == "error", "duplicate room media session accepted");
     Require(a.Request({{"type", "offer"}, {"sdp", Offer()}}).value("type", "") == "error",
@@ -679,6 +720,9 @@ void RunRoom()
         {"token", RoomToken("viewer", "demo", false, true)},
         {"room_id", "demo"}, {"participant_id", viewerJoin.at("participant_id")}, {"resume_token", viewerJoin.at("resume_token")}});
     Require(viewerRecovery.value("type", "") == "resumed", "viewer recovery failed");
+    const auto recoveredTracks = resumedViewer.ReceiveTrackChange();
+    Require(recoveredTracks.at("tracks").size() == 4 && recoveredTracks.at("revision") == secondChanged.at("revision"),
+        "new signaling generation did not receive current tracks after resumed response");
     browser.origin.sess_version = "2";
     browser.ice.ufrag = "newviewer"; browser.ice.pwd = std::string(24, 'v');
     for (auto& media : browser.medias) media.ice = browser.ice;
@@ -699,6 +743,9 @@ void RunRoom()
     Require(idleRecovery.value("type", "") == "resumed" && idleRecovery.at("ice_restart") == false &&
         list(resumedOutsider).empty(), "participant without media could not recover its room");
     resumedPublisher.Close();
+    const auto removed = resumedViewer.ReceiveTrackChange();
+    Require(removed.at("tracks").size() == 2 && removed.at("revision") > secondChanged.at("revision"),
+        "recovery expiry did not notify track removal");
     const auto deadline = std::chrono::steady_clock::now() + 5s;
     while (list(resumedViewer).size() != 2)
     {

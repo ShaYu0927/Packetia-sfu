@@ -3,41 +3,27 @@
 
 #include <cstdint>
 #include <string>
+#include "MediaTypes.h"
 
 namespace media 
 {
 
 enum class MediaProtocol
 {
-    UNKNOWN = 0,
-    RTP,
-    RTMP,
-    HLS,
-    RTSP,
-    WEBRTC
-};
-
-enum class MediaType
-{
-    UNKNOWN = 0,
-    AUDIO,
-    VIDEO,
-    DATA
-};
-
-enum class MediaDirection
-{
-    UNKNOWN = 0,
-    INBOUND,
-    OUTBOUND
+    Unknown = 0,
+    Rtp,
+    Rtmp,
+    Hls,
+    Rtsp,
+    WebRtc
 };
 
 
 struct MediaStatsKey
 {
-    MediaProtocol protocol = MediaProtocol::UNKNOWN;
-    MediaType media_type = MediaType::UNKNOWN;
-    MediaDirection direction = MediaDirection::UNKNOWN;
+    MediaProtocol protocol = MediaProtocol::Unknown;
+    MediaType media_type = MediaType::Unknown;
+    MediaFlowDirection direction = MediaFlowDirection::Unknown;
 
     std::string session_id;
     std::string stream_id;
@@ -49,9 +35,9 @@ struct MediaStatsKey
 
 struct MediaStatsMeta
 {
-    MediaProtocol protocol = MediaProtocol::UNKNOWN;
-    MediaType media_type = MediaType::UNKNOWN;
-    MediaDirection direction = MediaDirection::UNKNOWN;
+    MediaProtocol protocol = MediaProtocol::Unknown;
+    MediaType media_type = MediaType::Unknown;
+    MediaFlowDirection direction = MediaFlowDirection::Unknown;
 
     std::string session_id;
     std::string stream_id;

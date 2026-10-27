@@ -41,7 +41,8 @@ target_include_directories(test_memory_model PRIVATE
     "${PACKETIA_MEMORY_ROOT}/media/quality"
     "${PACKETIA_MEMORY_ROOT}/log"
     "${PACKETIA_MEMORY_ROOT}/Common/Depacketizer"
-    "${PACKETIA_MEMORY_ROOT}/media/MediaFrame")
+    "${PACKETIA_MEMORY_ROOT}/media/MediaFrame"
+    "${PACKETIA_MEMORY_ROOT}/media/types")
 target_link_libraries(test_memory_model PRIVATE packetia_threads packetia_memory packetia_monitoring)
 
 add_test(NAME memory_model COMMAND test_memory_model)

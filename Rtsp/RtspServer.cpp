@@ -2,9 +2,12 @@
 #include "RtspSession.h"
 
 
-RtspServer::RtspServer(EventLoop* event_loop)
-    : TcpServer(event_loop)
+RtspServer::RtspServer(EventLoop* event_loop, service::auth::RtspAuthOptions auth)
+    : TcpServer(event_loop), auth_options_(std::move(auth))
 {
+    auth_options_.Validate();
+    if (auth_options_.enabled)
+        credentials_ = std::make_shared<service::auth::StaticRtspCredentialProvider>(auth_options_);
     LOG_INFO("RtspServer created with event loop: " + std::to_string(reinterpret_cast<uintptr_t>(event_loop)));
 
 }
@@ -29,7 +32,11 @@ TcpConnection::Ptr RtspServer:: OnConnect(SOCKET sockfd)
         return conn;
     }
 
-    auto session = std::make_shared<rtsp::RtspSession>(rtsp_conn);
+    std::shared_ptr<service::auth::RtspDigestAuthenticator> digest;
+    if (auth_options_.enabled)
+        digest = std::make_shared<service::auth::RtspDigestAuthenticator>(credentials_, auth_options_.realm,
+            auth_options_.nonce_ttl_seconds, auth_options_.allow_legacy_digest);
+    auto session = std::make_shared<rtsp::RtspSession>(rtsp_conn, std::move(digest));
     sessions_[sockfd] = session;
     std::weak_ptr<rtsp::RtspSession> weak_session = session;
     conn->SetReadCallback(

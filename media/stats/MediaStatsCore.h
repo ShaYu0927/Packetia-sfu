@@ -1,8 +1,7 @@
 #ifndef _MEDIA_STATS_CORE_H_
 #define _MEDIA_STATS_CORE_H_
 
-#include "MediaStatsTypes.h"
-#include "MediaStatsEvent.h"
+#include "IMediaStatsSink.h"
 
 #include <atomic>
 #include <mutex>
@@ -11,18 +10,6 @@
 
 namespace media
 {
-class IMediaStatsSink
-{
-public:
-    virtual ~IMediaStatsSink() = default;
-
-    virtual MediaStatsHandle RegisterTrack(const MediaStatsMeta& meta) = 0;
-
-    virtual void UnregisterTrack(MediaStatsHandle handle) = 0;
-
-    virtual void OnEvent(const MediaStatsEvent& event) = 0;
-};
-
 class MediaStatsCore : public IMediaStatsSink
 {
 public:
@@ -38,7 +25,7 @@ private:
     void HandleFrameEvent(MediaTrackStats& stats, const MediaStatsEvent& event);
 
 private:
-    std::atomic<uint64_t> next_handle_;
+    std::atomic<uint64_t> next_handle_{0};
     std::mutex mutex_;
     std::unordered_map<MediaStatsHandle, MediaTrackStats> tracks_;
 };

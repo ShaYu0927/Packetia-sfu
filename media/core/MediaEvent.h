@@ -1,10 +1,10 @@
-#ifndef _CORE_EVENT_H_
-#define _CORE_EVENT_H_
+#ifndef PACKETIA_MEDIA_EVENT_H_
+#define PACKETIA_MEDIA_EVENT_H_
 
 #include <cstdint>
 #include <string>
 
-#include "MediaStatsTypes.h"
+#include "MediaTypes.h"
 
 namespace media 
 {
@@ -20,14 +20,9 @@ enum class MediaEventType
     PacketGapDetected,
     TimestampJumpDetected,
     StreamTimeout,
-    StreamStateChanged
-};
-
-enum class MediaKind
-{
-    Unknown = 0,
-    Audio,
-    Video
+    StreamStateChanged,
+    TrackPublished,
+    TrackUnpublished
 };
 
 
@@ -47,8 +42,8 @@ struct MediaEventMeta
     uint32_t ssrc = 0;
     uint8_t payload_type = 0;
 
-    MediaKind media_kind = MediaKind::Unknown;
-    MediaDirection direction = MediaDirection::UNKNOWN;
+    MediaType media_type = MediaType::Unknown;
+    MediaFlowDirection direction = MediaFlowDirection::Unknown;
 
     int64_t event_time_ms = 0;
 };
@@ -110,4 +105,4 @@ private:
 
 }
 
-#endif /* _CORE_EVENT_H_ */
+#endif // PACKETIA_MEDIA_EVENT_H_

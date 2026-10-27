@@ -1,5 +1,7 @@
 #include "MetricsCalculator.h"
 
+namespace media
+{
 uint64_t MetricsCalculator::CalculateBitrateBps(uint64_t bytes, uint64_t duration_ms)
 {
     if (duration_ms == 0)
@@ -53,4 +55,5 @@ double MetricsCalculator::FractionLostToRate(uint8_t fraction_lost)
 double MetricsCalculator::FractionLostToPercent(uint8_t fraction_lost)
 {
     return FractionLostToRate(fraction_lost) * 100.0;
+}
 }

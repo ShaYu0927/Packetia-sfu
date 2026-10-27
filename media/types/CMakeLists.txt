@@ -1,0 +1,3 @@
+add_library(packetia_media_types INTERFACE)
+target_include_directories(packetia_media_types INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(packetia_media_types INTERFACE cxx_std_17)

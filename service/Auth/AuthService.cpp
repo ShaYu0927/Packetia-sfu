@@ -31,9 +31,14 @@ AuthError AuthService::ValidateContext(const AuthContext& caller, bool check_exp
 
 AuthResult AuthService::Authenticate(std::string_view token, Audience expected_audience) const
 {
+    return Authenticate(AuthRequest{token, {}, {}}, expected_audience);
+}
+
+AuthResult AuthService::Authenticate(const AuthRequest& request, Audience expected_audience) const
+{
     if (!authenticator_) return AuthResult::Failure(AuthError::NotConfigured);
-    if (token.empty()) return AuthResult::Failure(AuthError::Unauthenticated);
-    auto result = authenticator_->Authenticate(token, expected_audience);
+    if (request.credential.empty()) return AuthResult::Failure(AuthError::Unauthenticated);
+    auto result = authenticator_->Authenticate(request, expected_audience);
     if (!result.Succeeded())
         return AuthResult::Failure(result.error);
     if (result.context->audience != expected_audience)

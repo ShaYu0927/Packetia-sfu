@@ -1,6 +1,6 @@
 #pragma once
 #include "SignalMessages.h"
-#include "service/Auth/AuthService.h"
+#include "AuthService.h"
 #include <functional>
 #include <optional>
 

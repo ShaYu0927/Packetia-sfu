@@ -18,6 +18,7 @@ add_subdirectory(monitoring)
 add_subdirectory(utils/threading)
 add_subdirectory(config)
 add_subdirectory(Common/memory)
+add_subdirectory(media/types)
 
 option(PACKETIA_WITH_LIBWEBSOCKETS "Build the libwebsockets signaling server" ON)
 if(PACKETIA_WITH_LIBWEBSOCKETS)
@@ -72,6 +73,8 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/media/endpoint
     ${CMAKE_SOURCE_DIR}/media/core
     ${CMAKE_SOURCE_DIR}/media/track
+    ${CMAKE_SOURCE_DIR}/media/rtp
+    ${CMAKE_SOURCE_DIR}/media/types
     ${CMAKE_SOURCE_DIR}/media/MediaFrame
     ${CMAKE_SOURCE_DIR}/media/transport
     ${CMAKE_SOURCE_DIR}/media/quality
@@ -203,11 +206,12 @@ add_library(rtp STATIC
     Rtsp/RtpConnection.cpp
     Rtsp/RtpConnection.h
     Rtsp/RtpTypes.h
+    Rtsp/RtpTrackAdapter.cpp
     Rtsp/RtspUtil.cpp
     Rtsp/RtspUtil.h
 )
 
-target_link_libraries(rtp PUBLIC packetia_memory)
+target_link_libraries(rtp PUBLIC packetia_memory packetia_media_types)
 
 add_library(rtsp STATIC
     Rtsp/Rtsp.h
@@ -217,7 +221,6 @@ add_library(rtsp STATIC
     Rtsp/RtspServer.h
     Rtsp/RtspMediaSession.cpp
     Rtsp/RtspMediaSession.h
-    Rtsp/MediaSource.h
     Rtsp/RtspConnection.cpp
     Rtsp/RtspConnection.h
     Rtsp/RtspSession.cpp
@@ -252,6 +255,7 @@ add_library(ROOM_LIB STATIC
 add_subdirectory(protocol)
 add_subdirectory(media)
 add_subdirectory(service)
+target_link_libraries(rtsp PUBLIC packetia_auth)
 add_subdirectory(server)
 
 option(PACKETIA_BUILD_RECORDING_TESTS "Build FFmpeg recording integration tests" OFF)

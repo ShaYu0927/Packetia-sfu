@@ -379,7 +379,7 @@ TEST(RtcpChainTest, EndpointBuildsOutboundNack)
     TrackInfo info;
     info.type = TrackVideo;
     auto source_track = std::make_shared<RtpTrackDescription>(info);
-    auto endpoint = std::make_shared<media::SfuEndpoint>(9, source_track, nullptr, nullptr);
+    auto endpoint = std::make_shared<media::SfuEndpoint>(9, source_track, media::EncodedFrameSource{}, nullptr);
     ASSERT_TRUE(endpoint->Start());
 
     std::vector<uint8_t> sent;
@@ -404,7 +404,7 @@ TEST(RtcpChainTest, EndpointBuildsOutboundPli)
     TrackInfo info;
     info.type = TrackVideo;
     auto source_track = std::make_shared<RtpTrackDescription>(info);
-    auto endpoint = std::make_shared<media::SfuEndpoint>(10, source_track, nullptr, nullptr);
+    auto endpoint = std::make_shared<media::SfuEndpoint>(10, source_track, media::EncodedFrameSource{}, nullptr);
     ASSERT_TRUE(endpoint->Start());
 
     std::vector<uint8_t> sent;

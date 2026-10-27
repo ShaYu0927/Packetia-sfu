@@ -3,6 +3,8 @@
 
 #include <cstdint>
 
+namespace media
+{
 struct MetricsSnapshot
 {
     uint64_t timestamp_ms = 0;             // Snapshot time
@@ -75,5 +77,7 @@ public:
      */
     static double FractionLostToPercent(uint8_t fraction_lost);
 };
+
+}
 
 #endif /* _METRICS_CALCULATOR_H_ */

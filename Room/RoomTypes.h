@@ -38,6 +38,7 @@ struct RoomInfo
 
 struct PublishedTrackInfo
 {
+    uint64_t publication_id = 0;
     std::string publisher_id;
     std::string source_track_id;
     media::MediaTrackPtr track;

@@ -3,8 +3,10 @@
 #include "MediaStreamAffinity.h"
 #include "SfuEndpoint.h"
 #include "RtcpContext.h"
+#include "StreamAccessPolicy.h"
+#include "RtspUtil.h"
+#include "HttpUtil.h"
 #include <algorithm>
-#include <iomanip>
 #include <limits>
 #include <unordered_set>
 #include <vector>
@@ -12,85 +14,12 @@
 
 namespace rtsp 
 {
-static inline int FindCrlfCrlf(const char* p, size_t n)
+RtspSession::RtspSession(RtspConnection::Ptr conn, std::shared_ptr<service::auth::RtspDigestAuthenticator> digest)
+    : task_scheduler_(conn->GetTaskScheduler()), conn_(std::move(conn)),
+      rtsp_request_(std::make_unique<RtspRequest>()), digest_(std::move(digest))
 {
-    for (size_t i = 0; i + 3 < n; ++i) 
-    {
-        if (p[i] == '\r' && p[i+1] == '\n' && p[i+2] == '\r' && p[i+3] == '\n')
-            return (int)i;
-    }
-    return -1;
-}
-
-static inline bool IStartsWith(const char* s, size_t n, const char* prefix)
-{
-    size_t m = 0;
-    while (prefix[m]) m++;
-    if (n < m) return false;
-    for (size_t i = 0; i < m; ++i) {
-        unsigned char a = (unsigned char)s[i];
-        unsigned char b = (unsigned char)prefix[i];
-        if (a >= 'A' && a <= 'Z') a = a - 'A' + 'a';
-        if (b >= 'A' && b <= 'Z') b = b - 'A' + 'a';
-        if (a != b) return false;
-    }
-    return true;
-}
-
-static inline bool ParseContentLengthFromHeader(const char* header, size_t headerLen, size_t& outLen)
-{
-    outLen = 0;
-
-    size_t i = 0;
-    while (i < headerLen) 
-    {
-        size_t lineEnd = i;
-        while (lineEnd + 1 < headerLen && !(header[lineEnd] == '\r' && header[lineEnd + 1] == '\n'))
-            lineEnd++;
-        size_t lineLen = (lineEnd > i) ? (lineEnd - i) : 0;
-
-        if (lineLen == 0) break; 
-
-        const char* line = header + i;
-
-        if (IStartsWith(line, lineLen, "content-length:")) 
-        {
-            size_t k = 15;
-            while (k < lineLen && (line[k] == ' ' || line[k] == '\t')) k++;
-
-            size_t v = 0;
-            bool any = false;
-            while (k < lineLen) 
-            {
-                char c = line[k];
-                if (c < '0' || c > '9') break;
-                any = true;
-                v = v * 10 + size_t(c - '0');
-                k++;
-            }
-            if (!any) return false;
-            outLen = v;
-            return true;
-        }
-
-        i = lineEnd + 2; 
-    }
-
-    return true; 
-}
-
-static void DumpBytes(const uint8_t* data, size_t len, size_t max_dump = 16)
-{
-    if (!data)
-        return;
-
-    std::ostringstream oss;
-    size_t n = std::min(len, max_dump);
-    for (size_t i = 0; i < n; ++i)
-    {
-        oss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(data[i]) << " ";
-    }
-    LOG_INFO("RtspSession dump len=", len, " bytes=", oss.str());
+    if (digest_) auth_ = std::make_unique<service::auth::AuthService>(digest_,
+        std::make_shared<service::auth::StreamAccessPolicy>());
 }
 
 bool RtspSession::OnRead(TcpConnection::Ptr conn, BufferReader& buffer)
@@ -138,6 +67,7 @@ void RtspSession::OnClosed(int reason)
     (void)lifecycle_.Dispatch(SessionEvent::Close);
     CloseMediaTransports();
     media_session_.reset();
+    rtsp_request_.reset();
 }
 
 void RtspSession::SendRaw(std::string_view s,size_t size)
@@ -175,6 +105,8 @@ void RtspSession::Dispatch(const char* p, size_t total)
     RtspRequest::RtspRequestInfo req;
     if (!rtsp_request_->ParseRequest(p, total, req)) 
     {
+        const auto response = RtspRequest::BuildStatusResponse(req.cseq, "400 Bad Request");
+        SendRaw(response, response.size());
         return;
     }
 
@@ -184,6 +116,7 @@ void RtspSession::Dispatch(const char* p, size_t total)
     }
 
 
+    if (!AuthenticateRequest(req)) return;
     if (req.method == "OPTIONS")  { HandleCmdOptions(req);  return; }
     if (req.method == "DESCRIBE") { HandleCmdDescribe(req); return; }
     if (req.method ==  "ANNOUNCE"){ HandleCmdANNOUNCE(req); return; }
@@ -192,6 +125,52 @@ void RtspSession::Dispatch(const char* p, size_t total)
     if (req.method == "PAUSE")    { HandleCmdPause(req);    return; }
     if (req.method == "TEARDOWN") { HandleCmdTeardown(req); return; }
     if (req.method == "RECORD")   { HandleCmdRecord(req);   return; }
+    const auto response = RtspRequest::BuildStatusResponse(req.cseq, "405 Method Not Allowed");
+    SendRaw(response, response.size());
+}
+
+bool RtspSession::AuthenticateRequest(const RtspRequest::RtspRequestInfo& req)
+{
+    namespace auth = service::auth;
+    if (!auth_ || req.method == "OPTIONS") return true;
+    const auto status = [&](const char* value) {
+        const auto response = RtspRequest::BuildStatusResponse(req.cseq, value);
+        SendRaw(response, response.size()); return false;
+    };
+    try
+    {
+        const auto header = req.GetHeader("authorization");
+        const auto verified = auth_->Authenticate(auth::AuthRequest{header, req.method, req.url}, auth::Audience::Rtsp);
+        if (!verified.Succeeded())
+        {
+            if (verified.error == auth::AuthError::NotConfigured || verified.error == auth::AuthError::InternalError)
+                return status("500 Internal Server Error");
+            const auto response = "RTSP/1.0 401 Unauthorized\r\nCSeq: " + std::to_string(req.cseq) +
+                "\r\nWWW-Authenticate: " + digest_->Challenge(verified.error == auth::AuthError::ExpiredToken) +
+                "\r\nContent-Length: 0\r\n\r\n";
+            SendRaw(response, response.size());
+            return false;
+        }
+        const auto& caller = *verified.context;
+        if (!authenticated_user_.empty() && authenticated_user_ != caller.subject_id) return status("403 Forbidden");
+        const auto stream = RtspUtil::GetSuffixFromSetupUrl(req.url);
+        if (!auth::IsValidStreamPath(stream)) return status("400 Bad Request");
+        // 活跃会话不能借用同一 Session ID 操作另一条流。
+        if (CurrentState() != SessionState::Initial && authorized_stream_ != stream) return status("403 Forbidden");
+        auth::Action action;
+        if (req.method == "ANNOUNCE" || req.method == "SETUP" || req.method == "RECORD" || req.method == "TEARDOWN")
+            action = auth::Action::Publish; // 当前 SETUP 仅实现推流接收端。
+        else if (req.method == "DESCRIBE" || req.method == "PLAY" || req.method == "PAUSE")
+            action = auth::Action::Subscribe;
+        else return status("405 Method Not Allowed");
+        auth::ResourceContext resource;
+        resource.type = auth::ResourceType::Stream; resource.id = stream; resource.stream_id = stream;
+        if (!auth_->Authorize(caller, action, resource).Allowed()) return status("403 Forbidden");
+        authenticated_user_ = caller.subject_id;
+        authorized_stream_ = stream;
+        return true;
+    }
+    catch (...) { return status("500 Internal Server Error"); }
 }
 
 RtspSession::ParseResult RtspSession::TryConsumeOneFrame(BufferReader &buffer)
@@ -252,7 +231,7 @@ RtspSession::ParseResult RtspSession::TryConsumeRtspRequest(BufferReader &buffer
 
     }
 
-    int idx = FindCrlfCrlf(p, n);
+    int idx = utils::FindCrlfCrlf(p, n);
     if (idx < 0) 
     {
         if (n > kMaxHeader) return ParseResult::ERROR; 
@@ -263,7 +242,7 @@ RtspSession::ParseResult RtspSession::TryConsumeRtspRequest(BufferReader &buffer
     if (headerLen > kMaxHeader) return ParseResult::ERROR;
 
     size_t bodyLen = 0;
-    if (!ParseContentLengthFromHeader(p, headerLen, bodyLen)) return ParseResult::ERROR;
+    if (!utils::ParseContentLengthFromHeader(p, headerLen, bodyLen)) return ParseResult::ERROR;
 
     constexpr size_t kMaxBody = 2 * 1024 * 1024;
     if (bodyLen > kMaxBody) return ParseResult::ERROR;
@@ -287,7 +266,7 @@ RtspSession::ParseResult RtspSession::TryConsumeRtspResponse(BufferReader &buffe
     if (p[0] == '$') return ParseResult::ERROR;
 
     constexpr size_t kMaxHeader = 32 * 1024;
-    int idx = FindCrlfCrlf(p, n);
+    int idx = utils::FindCrlfCrlf(p, n);
     if (idx < 0)
     {
         if (n > kMaxHeader) return ParseResult::ERROR;
@@ -298,7 +277,7 @@ RtspSession::ParseResult RtspSession::TryConsumeRtspResponse(BufferReader &buffe
     if (headerLen > kMaxHeader) return ParseResult::ERROR;
 
     size_t bodyLen = 0;
-    if (!ParseContentLengthFromHeader(p, headerLen, bodyLen)) return ParseResult::ERROR;
+    if (!utils::ParseContentLengthFromHeader(p, headerLen, bodyLen)) return ParseResult::ERROR;
 
     constexpr size_t kMaxBody = 2 * 1024 * 1024;
     if (bodyLen > kMaxBody) return ParseResult::ERROR;
@@ -458,7 +437,7 @@ void RtspSession::HandleCmdTeardown(RtspRequest::RtspRequestInfo& req)
     if (!RequireState(req, {SessionState::Ready, SessionState::Recording})) return;
     CloseMediaTransports();
     media_session_.reset();
-    rtsp_request_ = std::make_unique<RtspRequest>();
+    rtsp_request_ = rtsp_request_->CreateNextPublication();
     (void)lifecycle_.Dispatch(SessionEvent::Teardown);
     const auto response = RtspRequest::BuildStatusResponse(req.cseq, "200 OK");
     SendRaw(response, response.size());

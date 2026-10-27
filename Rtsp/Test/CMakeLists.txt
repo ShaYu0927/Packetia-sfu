@@ -6,6 +6,7 @@ add_executable(test_rtp_input
     test_video_depacketizer.cpp
     test_sfu_endpoint.cpp
     test_participant.cpp
+    test_room_events.cpp
     test_webrtc_media_adapter.cpp
 )
 
@@ -62,3 +63,12 @@ target_link_libraries(test_udp_binding PRIVATE
     GTest::gtest GTest::gtest_main OpenSSL::Crypto pthread)
 add_test(NAME test_udp_binding COMMAND test_udp_binding)
 set_tests_properties(test_udp_binding PROPERTIES TIMEOUT 30)
+
+add_executable(test_rtsp_auth test_rtsp_auth.cpp)
+target_link_libraries(test_rtsp_auth PRIVATE
+    "$<$<PLATFORM_ID:Linux>:-Wl,--start-group>"
+    media rtsp rtp Rtcp network utils LOGGER COMMON ROOM_LIB ICE Interleaved
+    "$<$<PLATFORM_ID:Linux>:-Wl,--end-group>"
+    GTest::gtest_main OpenSSL::Crypto pthread)
+add_test(NAME rtsp_auth COMMAND test_rtsp_auth)
+set_tests_properties(rtsp_auth PROPERTIES TIMEOUT 30)

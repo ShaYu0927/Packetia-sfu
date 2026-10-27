@@ -17,6 +17,7 @@
 #include "WebRtcUdpMux.h"
 #include <openssl/crypto.h>
 #include <algorithm>
+#include <atomic>
 #include <set>
 #include <stdexcept>
 #include <utility>
@@ -84,6 +85,15 @@ struct RoomSignalHandler::Membership
     room::SignalingBinding binding;
     std::string resume_token;
     uint64_t reconnect_deadline_ms = 0;
+    uint64_t notified_track_revision = 0;
+};
+
+struct RoomSignalHandler::RoomObservation
+{
+    std::weak_ptr<room::Room> room;
+    std::shared_ptr<std::atomic<uint64_t>> revision = std::make_shared<std::atomic<uint64_t>>(0);
+    media::EventBus::Subscription published;
+    media::EventBus::Subscription unpublished;
 };
 
 struct RoomSignalHandler::Subscription
@@ -396,10 +406,10 @@ Json RoomSignalHandler::CreateSession(const std::string& connection, const std::
             for (const auto& media : answer.medias)
             {
                 if (!media.port || media.direction != MediaDirection::RecvOnly) continue;
-                media::TrackInfo info;
+                media::TrackMetadata info;
                 info.sid = membership.participant->Id() + ":" + media.mid;
                 info.mid = media.mid;
-                info.type = media.media == "video" ? media::TrackType::Video : media::TrackType::Audio;
+                info.type = media.media == "video" ? media::MediaType::Video : media::MediaType::Audio;
                 info.mimeType = media.media + "/" + media.codecs.front().encodingName;
                 session.room_tracks.push_back(info.sid);
                 if (!membership.room->PublishTrack(membership.participant->Id(), std::make_shared<media::MediaTrack>(info),
@@ -501,6 +511,8 @@ Json RoomSignalHandler::ResumeRoom(const std::string& connection, const std::str
     }
     member.binding = std::move(nextBinding);
     member.reconnect_deadline_ms = 0;
+    // 旧连接已经入队的通知未必送达；新连接在 resumed 响应后重新获得当前快照。
+    member.notified_track_revision = 0;
     member.participant->SetState(room::ParticipantState::Joined);
     memberships_.at(connection) = std::move(memberships_.at(previous));
     memberships_.erase(previous);
@@ -521,10 +533,66 @@ Json RoomSignalHandler::ListTracks(const std::string& connection) const
         {
             const auto info = track->info();
             tracks.push_back({{"track_id", info.sid}, {"publisher_id", participant->Id()},
-                {"kind", info.type == media::TrackType::Video ? "video" : "audio"}, {"mime_type", info.mimeType}});
+                {"kind", info.type == media::MediaType::Video ? "video" : "audio"}, {"mime_type", info.mimeType}});
         }
     std::sort(tracks.begin(), tracks.end(), [](const auto& a, const auto& b) { return a.at("track_id") < b.at("track_id"); });
     return Json{{"type", "tracks"}, {"tracks", tracks}};
+}
+
+void RoomSignalHandler::ObserveRoom(const std::shared_ptr<room::Room>& target)
+{
+    const auto found = room_observations_.find(target->Id());
+    if (found != room_observations_.end() && found->second->room.lock() == target) return;
+    auto observation = std::make_unique<RoomObservation>();
+    observation->room = target;
+    const std::weak_ptr<std::atomic<uint64_t>> weak = observation->revision;
+    // Bus 回调只更新一个有界的版本槽，不触碰房间、连接或 handler 生命周期。
+    const auto changed = [weak](const auto& event) {
+        if (const auto revision = weak.lock())
+        {
+            auto previous = revision->load();
+            while (previous < event.snapshot.revision &&
+                   !revision->compare_exchange_weak(previous, event.snapshot.revision)) {}
+        }
+    };
+    observation->published = target->Events().Subscribe<media::TrackPublishedEvent>(changed);
+    observation->unpublished = target->Events().Subscribe<media::TrackUnpublishedEvent>(changed);
+    room_observations_[target->Id()] = std::move(observation);
+}
+
+void RoomSignalHandler::NotifyTrackChanges()
+{
+    // 仅在 owner 的 Tick 中读业务状态；初始响应和请求响应已先进入响应通道。
+    for (auto it = room_observations_.begin(); it != room_observations_.end();)
+    {
+        const auto room = rooms_.find(it->first);
+        if (room == rooms_.end() || it->second->room.lock() != room->second)
+            it = room_observations_.erase(it);
+        else ++it;
+    }
+    std::unordered_map<std::string, Json> snapshots;
+    for (auto& item : memberships_)
+    {
+        auto& member = *item.second;
+        if (member.reconnect_deadline_ms || !emit_) continue;
+        const auto observed = room_observations_.find(member.room->Id());
+        if (observed == room_observations_.end()) continue;
+        const auto revision = observed->second->revision->load();
+        if (member.notified_track_revision == revision) continue;
+        if (!auth_->Authorize(member.caller, auth::Action::ListTracks, RoomResource(member.room->Id())).Allowed())
+            continue;
+        auto snapshot = snapshots.find(member.room->Id());
+        if (snapshot == snapshots.end())
+        {
+            auto message = ListTracks(item.first);
+            message["type"] = "tracks_changed";
+            message["room_id"] = member.room->Id();
+            message["revision"] = revision;
+            snapshot = snapshots.emplace(member.room->Id(), std::move(message)).first;
+        }
+        if (emit_(item.first, snapshot->second, false)) member.notified_track_revision = revision;
+        // 队列拒绝时不推进版本；关闭由现有通道负责，仍可写的连接会在后续 Tick 重试最新快照。
+    }
 }
 
 void RoomSignalHandler::LeaveRoom(const std::string& connection)
@@ -535,7 +603,11 @@ void RoomSignalHandler::LeaveRoom(const std::string& connection)
     memberships_.erase(found);
     participant_connections_.erase(membership->participant->Id());
     membership->room->Leave(membership->participant->Id());
-    if (membership->room->ParticipantCount() == 0) rooms_.erase(membership->room->Id());
+    if (membership->room->ParticipantCount() == 0)
+    {
+        room_observations_.erase(membership->room->Id());
+        rooms_.erase(membership->room->Id());
+    }
 }
 
 
@@ -651,6 +723,7 @@ bool RoomSignalHandler::Start()
 void RoomSignalHandler::Stop()
 {
     started_ = false;
+    room_observations_.clear();
     while (!sessions_.empty()) RemoveSession(sessions_.begin()->first);
     while (!memberships_.empty()) LeaveRoom(memberships_.begin()->first);
     participant_connections_.clear(); rooms_.clear();
@@ -671,7 +744,9 @@ Json RoomSignalHandler::Handle(const std::string& connection, const SignalReques
         if (!had_media) RemoveMediaSession(connection);
         if (!had_member) LeaveRoom(connection);
         for (auto it = rooms_.begin(); it != rooms_.end();)
-            if (!it->second || !it->second->ParticipantCount()) it = rooms_.erase(it); else ++it;
+            if (!it->second || !it->second->ParticipantCount())
+            { room_observations_.erase(it->first); it = rooms_.erase(it); }
+            else ++it;
         return Error("Invalid signaling request");
     }
 }
@@ -700,7 +775,9 @@ Json RoomSignalHandler::JoinRoom(const std::string& connection, const std::strin
         options.max_participants = config_.webrtc.max_sessions;
         target = std::make_shared<room::Room>(room::RoomInfo{roomId, roomId}, options);
     }
+    ObserveRoom(target);
     auto member = std::make_unique<Membership>();
+    member->notified_track_revision = room_observations_.at(roomId)->revision->load();
     member->caller = std::move(caller); member->room = target;
     member->participant = std::make_shared<room::Participant>(room::ParticipantIdentity{
         id, member->caller.name.empty() ? member->caller.subject_id : member->caller.name, member->caller.subject_id});
@@ -759,6 +836,7 @@ void RoomSignalHandler::Tick()
         RemoveSession(connection);
         if (!suspended && emit_) emit_(connection, Error("WebRTC connection closed or timed out"), true);
     }
+    NotifyTrackChanges();
 }
 
 }

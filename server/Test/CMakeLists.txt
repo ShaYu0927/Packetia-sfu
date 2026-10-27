@@ -62,6 +62,7 @@ target_include_directories(test_stream_services PRIVATE
     ${PACKETIA_SERVER_ROOT}/service/core
     ${PACKETIA_SERVER_ROOT}/service/AIService
     ${PACKETIA_SERVER_ROOT}/media/MediaFrame
+    ${PACKETIA_SERVER_ROOT}/media/types
     ${PACKETIA_SERVER_ROOT}/Common/memory)
 if(NOT TARGET packetia_recording_index)
     add_subdirectory("${PACKETIA_SERVER_ROOT}/service/RecordService/Index" recording-index)

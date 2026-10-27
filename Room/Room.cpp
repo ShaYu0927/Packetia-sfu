@@ -4,6 +4,7 @@
 #include "MediaTrack.h"
 #include <utility>
 #include "TimeUtil.h"
+#include "logger.h"
 
 
 namespace room
@@ -36,6 +37,25 @@ Room::Room(RoomInfo info, RoomOptions options)
 }
 
 Room::~Room() = default;
+
+media::TrackPublicationSnapshot Room::TrackSnapshotLocked(const std::string& track_id, const PublishedTrackInfo& info)
+{
+    media::TrackPublicationSnapshot snapshot;
+    snapshot.room_id = info_.room_id;
+    snapshot.publisher_id = info.publisher_id;
+    snapshot.publication_id = info.publication_id;
+    snapshot.revision = ++track_revision_;
+    snapshot.track = info.track->info();
+    snapshot.track.sid = track_id;
+    return snapshot;
+}
+
+void Room::NotifyTrackEvent(const media::MediaEvent& event)
+{
+    const auto result = events_.Publish(event);
+    if (result.failed) LOG_ERROR("Room event callback failed: room=", info_.room_id,
+        "event=", event.Name(), "failed=", result.failed);
+}
 
 const std::string& Room::Id() const
 {
@@ -125,6 +145,7 @@ bool Room::Leave(const std::string& participant_id)
 {
     Participant::Ptr participant;
     std::vector<std::string> published_track_ids;
+    std::vector<media::TrackPublicationSnapshot> removed_tracks;
     std::function<void(Participant::Ptr)> cb;
 
     {
@@ -163,6 +184,7 @@ bool Room::Leave(const std::string& participant_id)
                 const std::vector<std::string> ids(subs->second.begin(), subs->second.end());
                 for (const auto& id : ids) UnsubscribeTrackLocked(id, track_id);
             }
+            removed_tracks.push_back(TrackSnapshotLocked(track_id, published_tracks_.at(track_id)));
             published_tracks_.erase(track_id);
             track_subscribers_.erase(track_id);
 
@@ -181,6 +203,8 @@ bool Room::Leave(const std::string& participant_id)
     if (participant)
     {
         participant->Leave();
+        for (auto& snapshot : removed_tracks)
+            NotifyTrackEvent(media::TrackUnpublishedEvent(std::move(snapshot)));
         if (cb)
         {
             cb(participant);
@@ -233,11 +257,12 @@ bool Room::PublishTrack(const std::string& participant_id, const media::MediaTra
 
     std::vector<std::string> auto_subscribers;
     Participant::Ptr publisher;
+    media::TrackPublicationSnapshot snapshot;
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
         auto participant_it = participants_.find(participant_id);
-        if (participant_it == participants_.end())
+        if (info_.state == RoomState::Closed || participant_it == participants_.end())
         {
             return false;
         }
@@ -264,12 +289,14 @@ bool Room::PublishTrack(const std::string& participant_id, const media::MediaTra
         publisher = participant_it->second;
 
         PublishedTrackInfo info;
+        info.publication_id = ++next_publication_id_;
         info.publisher_id = participant_id;
         info.source_track_id = endpoint_track_id;
         info.track = track;
         info.ssrc = ssrc;
         info.payload_type = payload_type;
         published_tracks_[track_id] = std::move(info);
+        snapshot = TrackSnapshotLocked(track_id, published_tracks_.at(track_id));
 
         if (options_.auto_subscribe)
         {
@@ -287,6 +314,7 @@ bool Room::PublishTrack(const std::string& participant_id, const media::MediaTra
             SubscribeTrackLocked(subscriber_id, track_id);
         }
     }
+    NotifyTrackEvent(media::TrackPublishedEvent(std::move(snapshot)));
     publisher->NotifyTrackPublished(track);
     return true;
 }
@@ -300,6 +328,7 @@ bool Room::UnpublishTrack(const std::string& track_id)
 
     Participant::Ptr publisher;
     std::string source_track_id;
+    media::TrackPublicationSnapshot snapshot;
 
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -328,6 +357,7 @@ bool Room::UnpublishTrack(const std::string& track_id)
             }
         }
 
+        snapshot = TrackSnapshotLocked(track_id, track_it->second);
         published_tracks_.erase(track_it);
     }
 
@@ -336,6 +366,8 @@ bool Room::UnpublishTrack(const std::string& track_id)
         if (auto endpoint = publisher->GetPublishEndpoint()) endpoint->RemovePublishedTrack(source_track_id);
         publisher->RemovePublishedTrack(track_id);
     }
+
+    NotifyTrackEvent(media::TrackUnpublishedEvent(std::move(snapshot)));
 
     return true;
 }
@@ -453,6 +485,7 @@ void Room::Close()
 {
     std::function<void(const std::string&)> cb;
     std::vector<Participant::Ptr> participants;
+    std::vector<media::TrackPublicationSnapshot> removed_tracks;
 
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -462,6 +495,8 @@ void Room::Close()
         }
 
         info_.state = RoomState::Closed;
+        for (const auto& entry : published_tracks_)
+            removed_tracks.push_back(TrackSnapshotLocked(entry.first, entry.second));
         for (const auto& entry : participants_) participants.push_back(entry.second);
         participants_.clear();
         published_tracks_.clear();
@@ -472,6 +507,8 @@ void Room::Close()
     }
 
     for (const auto& participant : participants) participant->Leave();
+    for (auto& snapshot : removed_tracks)
+        NotifyTrackEvent(media::TrackUnpublishedEvent(std::move(snapshot)));
     if (cb)
     {
         cb(info_.room_id);

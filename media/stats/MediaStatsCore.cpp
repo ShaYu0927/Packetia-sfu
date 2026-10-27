@@ -1,8 +1,17 @@
 #include "MediaStatsCore.h"
-#include "TimeUtil.h"
+#include <chrono>
 
-namespace media 
+namespace media
 {
+namespace
+{
+int64_t NowMs()
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+}
+
 
 MediaStatsHandle MediaStatsCore::RegisterTrack(const MediaStatsMeta& meta)
 {
@@ -14,7 +23,7 @@ MediaStatsHandle MediaStatsCore::RegisterTrack(const MediaStatsMeta& meta)
 
     MediaTrackStats stats;
     stats.meta = meta;
-    stats.create_time_ms = Timestamp::NowMs();
+    stats.create_time_ms = NowMs();
     stats.last_event_time_ms = stats.create_time_ms;
 
     {
@@ -52,7 +61,7 @@ void MediaStatsCore::OnEvent(const MediaStatsEvent& event)
     }
 
     MediaTrackStats& stats = it->second;
-    stats.last_event_time_ms = event.timestamp_ms > 0 ? event.timestamp_ms : Timestamp::NowMs();
+    stats.last_event_time_ms = event.timestamp_ms > 0 ? event.timestamp_ms : NowMs();
 
     switch (event.protocol)
     {

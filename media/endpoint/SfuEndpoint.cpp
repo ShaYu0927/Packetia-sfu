@@ -1,5 +1,4 @@
 #include "SfuEndpoint.h"
-#include "RtspMediaSession.h"
 #include "logger.h"
 #include "RtcpContext.h"
 #include "RtcpReciver.h"
@@ -18,14 +17,12 @@ namespace media
 {
 
 SfuEndpoint::SfuEndpoint(uint64_t id, std::shared_ptr<RtpTrackDescription> track_description,
-                         std::shared_ptr<MediaSession> session,
+                         const EncodedFrameSource& source,
                          std::shared_ptr<IEncodedFramePublisher> frame_publisher)
     : utils::EndpointBase(id, "SfuEndpoint"), frame_publisher_(std::move(frame_publisher))
 {
-    if (session) {
-        session_id_ = std::to_string(session->GetId());
-        stream_id_ = session->GetRtspSuffix();
-    }
+    session_id_ = source.session_id;
+    stream_id_ = source.stream_id;
     if (track_description)
         AddPublishedTrack(std::to_string(track_description->getTrackIndex()), track_description);
 }

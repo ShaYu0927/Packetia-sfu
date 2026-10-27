@@ -105,6 +105,36 @@ void AccountConfiguration() {
     Check(rejected, "programmatic HTTP configuration must require accounts");
 }
 
+void RtspAuthConfiguration() {
+    Check(!config::AppConfig::FromJson("{}").rtsp_auth.enabled, "RTSP authentication must be opt-in");
+    const auto configured = config::AppConfig::FromJson(R"({"rtsp_auth":{
+        "enabled":true,"realm":"packetia","nonce_ttl_seconds":60,"allow_legacy_digest":false,
+        "users":[{"username":"alice","ha1":"0123456789abcdef0123456789abcdef",
+                  "streams":[{"path":"live/camera","can_publish":true,"can_play":false}]}]
+    }})");
+    Check(configured.rtsp_auth.enabled && configured.rtsp_auth.nonce_ttl_seconds == 60 &&
+        !configured.rtsp_auth.allow_legacy_digest && configured.rtsp_auth.users[0].streams[0].can_publish &&
+        !configured.rtsp_auth.users[0].streams[0].can_play, "RTSP authentication configuration ignored");
+    for (const char* invalid : {
+        R"({"rtsp_auth":{"enabled":true}})", R"({"rtsp_auth":{"enabled":"true"}})",
+        R"({"rtsp_auth":{"realm":"bad\r\nrealm"}})", R"({"rtsp_auth":{"nonce_ttl_seconds":0}})",
+        R"({"rtsp_auth":{"nonce_ttl_seconds":3601}})", R"({"rtsp_auth":{"users":{}}})",
+        R"({"rtsp_auth":{"users":[{"username":"a","ha1":"bad","streams":[]}]}})",
+        R"({"rtsp_auth":{"users":[{"username":"a","ha1":"0123456789abcdef0123456789abcdef",
+          "streams":[{"path":"live/../camera","can_publish":true}]}]}})",
+        R"({"rtsp_auth":{"users":[{"username":"a","ha1":"0123456789abcdef0123456789abcdef",
+          "streams":[{"path":"live/camera"}]}]}})", R"({"rtsp_auth":{"unknown":1}})"}) {
+        bool rejected = false;
+        try { config::AppConfig::FromJson(invalid); } catch (const std::exception&) { rejected = true; }
+        Check(rejected, "invalid RTSP auth configuration accepted");
+    }
+    auto duplicate = configured;
+    duplicate.rtsp_auth.users.push_back(duplicate.rtsp_auth.users.front());
+    bool rejected = false;
+    try { duplicate.Validate(); } catch (const std::invalid_argument&) { rejected = true; }
+    Check(rejected, "duplicate RTSP usernames accepted");
+}
+
 void StreamConfiguration() {
     auto config = config::AppConfig::FromJson(R"({
         "services": {"recording":true,"ai":false,"conference_mix":true},
@@ -314,6 +344,7 @@ int main() {
         catch (const std::invalid_argument&) { rejected = true; }
         Check(rejected, "invalid flags must not silently enable a feature");
         StreamConfiguration();
+        RtspAuthConfiguration();
         WorkerConfiguration();
         const auto file = std::filesystem::temp_directory_path() / "packetia-test-config.json";
         { std::ofstream output(file); output << R"({"services":{"recording":false,"ai":true},"streams":[{"session_id":"a","stream_id":"b","recording":true}]})"; }
