@@ -46,6 +46,7 @@ include_directories(
     # Project headers use their file names; list module search paths explicitly.
     ${CMAKE_SOURCE_DIR}/config
     ${CMAKE_SOURCE_DIR}/utils
+    ${CMAKE_SOURCE_DIR}/monitoring/core
     ${CMAKE_SOURCE_DIR}/log
     ${CMAKE_SOURCE_DIR}/network
     ${CMAKE_SOURCE_DIR}/network/transport
@@ -311,7 +312,7 @@ if(NOT EXISTS "${CMAKE_CURRENT_BINARY_DIR}/packetia.json")
 endif()
 
 if(PACKETIA_WITH_LIBWEBSOCKETS)
-    target_sources(Packetia PRIVATE server/WebRtcService.cpp)
+    target_link_libraries(Packetia PRIVATE packetia_signaling)
 endif()
 
 target_link_libraries(Packetia
@@ -333,9 +334,6 @@ if(BUILD_TESTING AND (NOT PACKETIA_WITH_LIBWEBSOCKETS OR PACKETIA_SRTP_AVAILABLE
         server/Test/test_server_app.cpp
         server/ServerApp.cpp
         server/WorkerSetup.cpp)
-    if(PACKETIA_WITH_LIBWEBSOCKETS)
-        target_sources(test_server_app PRIVATE server/WebRtcService.cpp)
-    endif()
     get_target_property(PACKETIA_APP_LIBRARIES Packetia LINK_LIBRARIES)
     target_link_libraries(test_server_app PRIVATE ${PACKETIA_APP_LIBRARIES} GTest::gtest GTest::gtest_main)
     add_test(NAME server_app COMMAND test_server_app)

@@ -49,6 +49,8 @@ public:
 
     // Compatibility for callers with one media session; dispatches by role.
     bool BindMediaSession(ParticipantSession::Ptr session);
+    // 只解除匹配的媒体绑定，用于本次创建失败的回滚，不改变信令身份。
+    bool UnbindMediaSession(const ParticipantSession::Ptr& expected);
     // Returns null when both roles are bound. Use the explicit role accessors.
     ParticipantSession::Ptr GetMediaSession() const;
 

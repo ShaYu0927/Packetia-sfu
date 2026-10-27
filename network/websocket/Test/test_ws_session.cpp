@@ -317,6 +317,32 @@ void TestManagerLimitAndReentrantRemoval()
     CHECK(wakes == 1);
     CHECK(session->IsClosing());
 }
+
+void TestGracefulDrainRetainsInflightAndRejectsNewWork()
+{
+    auto budget = std::make_shared<WsSendBudget>(24, 6);
+    WsSession session("drain", {}, SmallLimits(), budget);
+    session.OnOpen();
+    CHECK(session.SendText("first"));
+    CHECK(session.SendText("last"));
+    WsOutgoingMessage message;
+    CHECK(session.PopOutgoing(message));
+    CHECK(session.BeginDrain());
+    CHECK(!session.BeginDrain());
+    CHECK(session.IsDraining() && !session.IsClosing());
+    CHECK(!session.SendText("late"));
+    CHECK(!session.ReceiveFragment("late", 4, true));
+    CheckStats(budget->GetStats(), 9, 2);
+    message.Reset();
+    CHECK(session.PopOutgoing(message) && message.Data() == "last");
+    CHECK(session.NeedsWritable());
+    session.Close(); // An immediate abort overrides drain, even mid-write.
+    CheckStats(budget->GetStats(), 0, 0);
+    message.Reset();
+    session.OnClosed();
+    CHECK(!session.BeginDrain());
+    CHECK(!session.NeedsWritable());
+}
 }
 
 int main()
@@ -330,5 +356,6 @@ int main()
     TestConcurrentGlobalBudget();
     TestConcurrentCloseAndDrain();
     TestManagerLimitAndReentrantRemoval();
-    std::cout << "PASS: 9 WebSocket session tests\n";
+    TestGracefulDrainRetainsInflightAndRejectsNewWork();
+    std::cout << "PASS: 10 WebSocket session tests\n";
 }

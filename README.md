@@ -50,6 +50,8 @@ TURN UDP 中继及录像模块。支持原有 `Packetia` 单进程入口，以�
 尚未做系统容量压测，配置中的会话上限不是实际可承载并发数。当前浏览器验证属于本机互通验证，
 公网部署仍需配置可达的媒体/中继地址、端口及安全信令入口。
 
+创建会议、入会、音视频发布订阅的实际流程，以及轨道事件通知和动态订阅的当前限制，见[信令与会议流程](server/signaling/README.md)。
+
 ## 构建与依赖
 
 项目自身的头文件统一使用文件名引用，例如 `#include "SharedBuffer.h"`。
@@ -1031,6 +1033,14 @@ SFU 的双栈监听与双地址 SDP 候选发布尚未在这一功能中实现�
 `webrtc.reconnect_timeout_ms` 默认 15000，允许配置 1..120000 毫秒。断开的参与者仍计入
 房间及服务人数限制，定时器到期会统一清理轨道、订阅、端点和 ICE 路由。
 未加入房间的连接不能创建媒体会话。
+
+WebSocket 建连后须在 `webrtc.admission_timeout_ms` 内成功 join 或 resume，默认 10000 毫秒；
+失败请求不延长期限，成功后取消期限，主动 leave 后重新计时。
+`webrtc.signaling_ping_seconds` / `webrtc.signaling_idle_timeout_seconds` 默认 30 / 60 秒，
+控制底层 WebSocket 探测与无有效接收超时，超时关闭后才开始参与者恢复窗口。
+服务端超时通知使用默认 250 毫秒的限时排空，慢客户端到期强制断开。
+接入与恢复计数、处理耗时及实时状态可通过 `WebRtcService::GetStats()` 查询；
+队列排空结果通过 `WsServer::GetStats()` 查询。详见[信令生命周期](docs/signaling-lifecycle.md)。
 
 加入房间的 `joined` 回复增加 `resume_token` 和 `reconnect_timeout_ms`。恢复凭据是服务端生成的
 256 位随机值，只对应当前房间中的当前参与者，不由参与者 ID 推导；客户端须同时提供仍有效、
@@ -2115,3 +2125,5 @@ RTCP SR
 - 应用需在会话事件循环周期调用 `WebRtcSession::Tick`，确保无流量时也能及时检测 ICE 超时。
 - ICE 建立与存活超时仍共用配置；会话级 ICE restart、完整主动检查及真实浏览器互通仍待完善。
 - RTMP、AI 和公共服务生命周期尚未迁移至状态机组件。
+
+SFU 信令模块划分、线程与双向通道、失败回滚和测试记录见 [重构说明](docs/sfu-signaling-refactor.md)。

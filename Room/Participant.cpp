@@ -69,6 +69,16 @@ bool Participant::BindMediaSession(ParticipantSession::Ptr session)
     return BindRoleSession(std::move(session), role);
 }
 
+bool Participant::UnbindMediaSession(const ParticipantSession::Ptr& expected)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!expected) return false;
+    auto& current = expected->Role() == ParticipantSessionRole::Publish ? publish_session_ : subscribe_session_;
+    if (current != expected) return false;
+    current.reset();
+    return true;
+}
+
 ParticipantSession::Ptr Participant::GetMediaSession() const
 {
     std::lock_guard<std::mutex> lock(mutex_);

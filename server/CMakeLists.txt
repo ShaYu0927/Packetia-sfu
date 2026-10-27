@@ -17,13 +17,28 @@ target_include_directories(server
 target_compile_features(server PUBLIC cxx_std_17)
 target_link_libraries(server PUBLIC LOGGER packetia_config)
 
+# 信令实现只编译一次，运行入口和集成测试共用同一接入链路。
+if(PACKETIA_WITH_LIBWEBSOCKETS)
+    add_library(packetia_signaling STATIC
+        WebRtcService.cpp
+        signaling/SignalMessages.cpp
+        signaling/AdmissionValidator.cpp
+        signaling/RoomSignalHandler.cpp
+        signaling/SignalSessionCoordinator.cpp
+        signaling/WsSignalGateway.cpp)
+    target_include_directories(packetia_signaling PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_features(packetia_signaling PUBLIC cxx_std_17)
+    target_link_libraries(packetia_signaling PUBLIC
+        ROOM_LIB media network utils WebRtc LOGGER packetia_auth packetia_config)
+endif()
+
 # The optional demo source is not present in every source snapshot.
 if(PACKETIA_WITH_LIBWEBSOCKETS AND PACKETIA_SRTP_AVAILABLE AND
    EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples/WebRtcRoomDemo.cpp")
-    add_executable(PacketiaRoomDemo examples/WebRtcRoomDemo.cpp WebRtcService.cpp)
+    add_executable(PacketiaRoomDemo examples/WebRtcRoomDemo.cpp)
     target_link_libraries(PacketiaRoomDemo PRIVATE
         "$<$<PLATFORM_ID:Linux>:-Wl,--start-group>"
-        server ROOM_LIB media network utils WebRtc TURN LOGGER packetia_auth
+        server packetia_signaling ROOM_LIB media network utils WebRtc TURN LOGGER packetia_auth
         "$<$<PLATFORM_ID:Linux>:-Wl,--end-group>")
 endif()
 
@@ -40,10 +55,10 @@ if(PACKETIA_WITH_LIBWEBSOCKETS)
     target_link_libraries(PacketiaControl PRIVATE packetia_cluster_api packetia_monitoring_api)
     if(PACKETIA_SRTP_AVAILABLE)
         find_package(CURL REQUIRED)
-        add_executable(PacketiaSfu cluster/ProcessMain.cpp cluster/SfuApp.cpp cluster/NodeClient.cpp WebRtcService.cpp)
+        add_executable(PacketiaSfu cluster/ProcessMain.cpp cluster/SfuApp.cpp cluster/NodeClient.cpp)
         target_link_libraries(PacketiaSfu PRIVATE
             "$<$<PLATFORM_ID:Linux>:-Wl,--start-group>"
-            server ROOM_LIB media network utils WebRtc LOGGER packetia_auth packetia_cluster packetia_monitoring_api CURL::libcurl
+            server packetia_signaling ROOM_LIB media network utils WebRtc LOGGER packetia_auth packetia_cluster packetia_monitoring_api CURL::libcurl
             "$<$<PLATFORM_ID:Linux>:-Wl,--end-group>")
         if(BUILD_TESTING)
             find_package(Python3 COMPONENTS Interpreter)

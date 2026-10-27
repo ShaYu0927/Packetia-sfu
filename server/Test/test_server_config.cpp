@@ -148,6 +148,11 @@ void StreamConfiguration() {
         R"({"recording":{"segment_ms":18446744073709551615}})", R"({"stream_default":{}})",
         R"({"webrtc":{"enabled":"true"}})", R"({"webrtc":{"max_sessions":0}})",
         R"({"webrtc":{"reconnect_timeout_ms":0}})", R"({"webrtc":{"reconnect_timeout_ms":120001}})",
+        R"({"webrtc":{"admission_timeout_ms":0}})", R"({"webrtc":{"admission_timeout_ms":120001}})",
+        R"({"webrtc":{"signaling_ping_seconds":0}})",
+        R"({"webrtc":{"signaling_ping_seconds":60,"signaling_idle_timeout_seconds":60}})",
+        R"({"webrtc":{"signaling_idle_timeout_seconds":1}})",
+        R"({"webrtc":{"signaling_idle_timeout_seconds":65536}})",
         R"({"webrtc":{"public_ip":42}})", R"({"webrtc":{"unknown":true}})",
         R"({"webrtc":{"token":"old-shared-token"}})", R"({"webrtc":{"api_keys":[]}})",
         R"({"webrtc":{"api_keys":{"key":42}}})", R"({"webrtc":{"api_keys":{"key":"short"}}})",
@@ -191,6 +196,12 @@ void StreamConfiguration() {
     Check(rtc.webrtc.reconnect_timeout_ms == 15000 &&
           config::AppConfig::FromJson(R"({"webrtc":{"reconnect_timeout_ms":5000}})").webrtc.reconnect_timeout_ms == 5000,
           "WebRTC reconnect timeout was not applied");
+    const auto signaling = config::AppConfig::FromJson(R"({"webrtc":{
+        "admission_timeout_ms":500,"signaling_ping_seconds":2,"signaling_idle_timeout_seconds":5}})");
+    Check(rtc.webrtc.admission_timeout_ms == 10000 && rtc.webrtc.signaling_ping_seconds == 30 &&
+          rtc.webrtc.signaling_idle_timeout_seconds == 60 && signaling.webrtc.admission_timeout_ms == 500 &&
+          signaling.webrtc.signaling_ping_seconds == 2 && signaling.webrtc.signaling_idle_timeout_seconds == 5,
+          "WebRTC signaling deadlines were not applied");
     auto turn = config::AppConfig::FromJson(R"({"turn":{
         "enabled":true,"listen_ip":"::","listen_port":13478,"dual_stack":true,
         "relay_bind_ip":"0.0.0.0","advertised_ip":"192.0.2.1",

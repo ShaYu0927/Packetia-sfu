@@ -128,7 +128,7 @@ bool WsSession::SendText(const std::string& message)
     WakeCallback wake;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (!open_ || closing_ || message.size() > limits_.max_message_bytes)
+        if (!open_ || closing_ || draining_ || message.size() > limits_.max_message_bytes)
             return false;
         // Reject exhausted budgets without copying the payload. The ticket
         // already owns the full reservation if allocation or enqueue throws.
@@ -162,6 +162,24 @@ void WsSession::ClearBinding()
     room_id_.clear();
     participant_id_.clear();
 }
+bool WsSession::BeginDrain()
+{
+    WakeCallback wake;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!open_ || closing_ || draining_) return false;
+        draining_ = true;
+        received_.clear();
+        wake = wake_;
+    }
+    if (wake) wake();
+    return true;
+}
+bool WsSession::IsDraining() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return draining_;
+}
 void WsSession::SetOnMessage(MessageCallback cb)
 {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -172,7 +190,7 @@ void WsSession::OnMessage(const std::string& message)
     MessageCallback callback;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (!open_ || closing_) return;
+        if (!open_ || closing_ || draining_) return;
         callback = on_message_;
     }
     if (callback) callback(session_id_, message);
@@ -200,7 +218,7 @@ bool WsSession::ReceiveFragment(const void* data, std::size_t size, bool final)
     std::string message;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (!open_ || closing_ || size > limits_.max_message_bytes - received_.size() ||
+        if (!open_ || closing_ || draining_ || size > limits_.max_message_bytes - received_.size() ||
             (size != 0 && data == nullptr)) return false;
         if (size) received_.append(static_cast<const char*>(data), size);
         if (!final) return true;
@@ -220,7 +238,7 @@ bool WsSession::PopOutgoing(WsOutgoingMessage& message)
 bool WsSession::NeedsWritable() const
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    return open_ && (closing_ || !outgoing_.empty());
+    return open_ && (closing_ || draining_ || !outgoing_.empty());
 }
 bool WsSession::IsClosing() const
 {

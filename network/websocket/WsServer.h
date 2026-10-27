@@ -29,6 +29,11 @@ struct WsServerOptions
     std::size_t max_writable_batch = 256;
     std::size_t max_pending_handshakes = 128;
     uint32_t handshake_timeout_seconds = 10;
+    uint16_t idle_ping_seconds = 30;
+    uint16_t idle_timeout_seconds = 60;
+    uint32_t drain_timeout_ms = 250;
+    // 单条消息从等待可写到 lws 缓冲排空的总截止时间。
+    uint32_t write_timeout_ms = 5000;
 };
 
 struct WsServerStats
@@ -41,6 +46,10 @@ struct WsServerStats
     uint64_t received_messages = 0;
     uint64_t sent_messages = 0;
     uint64_t rejected_messages = 0;
+    uint64_t drain_started = 0;
+    uint64_t drain_completed = 0;
+    uint64_t drain_timeouts = 0;
+    uint64_t write_timeouts = 0;
 };
 
 
@@ -63,6 +72,11 @@ public:
 
     bool SendText(const std::string& connId, const std::string& message);
     bool CloseConnection(const std::string& connId);
+    // Owner-serialized, nonblocking drain. Queued messages are written before
+    // close; a timer aborts slow sockets. Success is acceptance, not peer receipt.
+    // Enqueue the final response first; callbacks requesting drain return empty.
+    // Stop() and CloseConnection() retain their immediate-abort semantics.
+    bool DrainConnection(const std::string& connId);
     WsServerStats GetStats() const;
 
     // Callbacks normally execute on the I/O owner, outside session/registry

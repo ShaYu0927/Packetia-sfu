@@ -71,11 +71,18 @@ add_test(NAME stream_services COMMAND test_stream_services)
 set_tests_properties(stream_services PROPERTIES TIMEOUT 30)
 
 if(TARGET media AND PACKETIA_WITH_LIBWEBSOCKETS AND PACKETIA_SRTP_AVAILABLE)
-    add_executable(test_webrtc_service test_webrtc_service.cpp ../WebRtcService.cpp)
+    add_executable(test_webrtc_service test_webrtc_service.cpp)
     target_link_libraries(test_webrtc_service PRIVATE
         "$<$<PLATFORM_ID:Linux>:-Wl,--start-group>"
-        server ROOM_LIB media network utils WebRtc LOGGER packetia_auth
+        server packetia_signaling ROOM_LIB media network utils WebRtc LOGGER packetia_auth
         "$<$<PLATFORM_ID:Linux>:-Wl,--end-group>")
     add_test(NAME webrtc_service COMMAND test_webrtc_service)
-    set_tests_properties(webrtc_service PROPERTIES TIMEOUT 30)
+    set_tests_properties(webrtc_service PROPERTIES TIMEOUT 60)
+endif()
+
+if(TARGET packetia_signaling)
+    add_executable(test_signal_channel test_signal_channel.cpp)
+    target_link_libraries(test_signal_channel PRIVATE packetia_signaling GTest::gtest_main)
+    add_test(NAME signal_channel COMMAND test_signal_channel)
+    set_tests_properties(signal_channel PROPERTIES TIMEOUT 10)
 endif()

@@ -94,6 +94,11 @@ void AppConfig::Validate() const {
         throw std::invalid_argument("webrtc.max_sessions must be positive");
     if (!webrtc.reconnect_timeout_ms || webrtc.reconnect_timeout_ms > 120000)
         throw std::invalid_argument("webrtc.reconnect_timeout_ms must be between 1 and 120000");
+    if (!webrtc.admission_timeout_ms || webrtc.admission_timeout_ms > 120000)
+        throw std::invalid_argument("webrtc.admission_timeout_ms must be between 1 and 120000");
+    if (!webrtc.signaling_ping_seconds ||
+        webrtc.signaling_idle_timeout_seconds <= webrtc.signaling_ping_seconds)
+        throw std::invalid_argument("WebRTC signaling idle timeout must exceed a positive ping interval");
     for (const auto& key : webrtc.api_keys) {
         if (key.first.empty() || key.first.size() > 128 ||
             !std::all_of(key.first.begin(), key.first.end(), [](unsigned char ch) { return ch >= 33 && ch <= 126; }) ||
@@ -171,7 +176,8 @@ AppConfig AppConfig::FromJson(const std::string& text) {
         const auto& rtc = root.at("webrtc");
         if (rtc.contains("token"))
             throw std::invalid_argument("webrtc.token was removed; configure webrtc.api_keys and issue room JWTs");
-        Keys(rtc, {"enabled", "public_ip", "api_keys", "max_sessions", "reconnect_timeout_ms"});
+        Keys(rtc, {"enabled", "public_ip", "api_keys", "max_sessions", "reconnect_timeout_ms",
+            "admission_timeout_ms", "signaling_ping_seconds", "signaling_idle_timeout_seconds"});
         if (rtc.contains("enabled")) config.webrtc.enabled = Flag(rtc.at("enabled"));
         if (rtc.contains("public_ip")) config.webrtc.public_ip = rtc.at("public_ip").get<std::string>();
         if (rtc.contains("api_keys")) {
@@ -182,6 +188,9 @@ AppConfig AppConfig::FromJson(const std::string& text) {
         }
         Number(rtc, "max_sessions", config.webrtc.max_sessions);
         Number(rtc, "reconnect_timeout_ms", config.webrtc.reconnect_timeout_ms);
+        Number(rtc, "admission_timeout_ms", config.webrtc.admission_timeout_ms);
+        Number(rtc, "signaling_ping_seconds", config.webrtc.signaling_ping_seconds);
+        Number(rtc, "signaling_idle_timeout_seconds", config.webrtc.signaling_idle_timeout_seconds);
     }
     if (root.contains("services")) {
         const auto& services = root.at("services");

@@ -63,6 +63,9 @@ public:
     bool IsJoinedRoom() const;
     bool SendText(const std::string& message);
     void Close();
+    // Reject new sends/requests, retaining queued and in-flight reservations.
+    bool BeginDrain();
+    bool IsDraining() const;
     void ClearBinding();
     void SetOnMessage(MessageCallback cb);
     void OnMessage(const std::string& message);
@@ -85,6 +88,7 @@ private:
     std::deque<WsOutgoingMessage> outgoing_;
     bool open_ = false;
     bool closing_ = false;
+    bool draining_ = false;
     WakeCallback wake_;
     MessageCallback on_message_;
 };

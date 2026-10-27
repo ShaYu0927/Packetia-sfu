@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace room { class ParticipantSession; }
 namespace protocol::webrtc { class WebRtcSession; }
@@ -37,6 +38,9 @@ struct WebRtcSessionContext
     bool endpoint_registered = false;
     bool room_managed = false;
     bool subscriber = false;
+    // 仅记录本次媒体创建的房间资源，失败回滚不得移除已有参与者。
+    std::vector<std::string> room_tracks;
+    std::vector<std::string> room_subscriptions;
 };
 
 } // namespace server

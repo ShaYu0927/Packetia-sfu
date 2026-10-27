@@ -28,6 +28,9 @@ class WsServer::Impl : public std::enable_shared_from_this<WsServer::Impl>
         WsSession::Ptr session;
         WsOutgoingMessage outgoing;
         std::size_t offset = 0;
+        bool drain_completed = false;
+        bool waiting_flush = false;
+        uint64_t write_deadline = 0, drain_deadline = 0;
     };
 
 public:
@@ -40,8 +43,8 @@ public:
         protocols_[0].callback = &Callback;
         protocols_[0].rx_buffer_size = kChunkBytes;
         protocols_[0].tx_packet_size = kChunkBytes;
-        idle_policy_.secs_since_valid_ping = 30;
-        idle_policy_.secs_since_valid_hangup = 60;
+        idle_policy_.secs_since_valid_ping = options_.idle_ping_seconds;
+        idle_policy_.secs_since_valid_hangup = options_.idle_timeout_seconds;
     }
 
     bool Start(const std::string& ip, uint16_t port)
@@ -88,6 +91,28 @@ public:
         return true;
     }
 
+    bool DrainConnection(const std::string& id)
+    {
+        auto scheduler = GetScheduler(false);
+        if (!scheduler || stopping_ || scheduler->IsStopped()) return false;
+        bool accepted = false;
+        scheduler->Invoke([self = shared_from_this(), scheduler, &id, &accepted] {
+            std::lock_guard<std::recursive_mutex> lock(self->context_mutex_);
+            if (self->scheduler_ != scheduler || self->stopping_) return;
+            const auto found = self->sockets_by_id_.find(id);
+            if (found == self->sockets_by_id_.end()) return;
+            auto& connection = self->connections_.at(found->second);
+            if (!connection.session->BeginDrain()) return;
+            ++self->drain_started_;
+            // Independent of writable readiness, including a wedged peer.
+            connection.drain_deadline = Timestamp::NowMs() + self->options_.drain_timeout_ms;
+            self->ArmDeadline(found->second, connection);
+            lws_callback_on_writable(found->second);
+            accepted = true;
+        });
+        return accepted;
+    }
+
     void SetOnOpen(OnOpenCallback cb)
     {
         std::lock_guard<std::mutex> lock(callback_mutex_);
@@ -109,7 +134,8 @@ public:
         const auto queued = send_budget_->GetStats();
         return {sessions_.GetSessionCount(), queued.bytes, queued.messages,
                 accepted_connections_.load(), rejected_connections_.load(),
-                received_messages_.load(), sent_messages_.load(), rejected_messages_.load()};
+                received_messages_.load(), sent_messages_.load(), rejected_messages_.load(),
+                drain_started_.load(), drain_completed_.load(), drain_timeouts_.load(), write_timeouts_.load()};
     }
 
 private:
@@ -121,6 +147,9 @@ private:
             limits.max_total_queued_bytes > 0 && limits.max_total_queued_messages > 0 &&
             options_.service_interval_ms > 0 && options_.max_writable_batch > 0 &&
             options_.max_pending_handshakes > 0 && options_.handshake_timeout_seconds > 0 &&
+            options_.idle_ping_seconds > 0 && options_.idle_timeout_seconds > options_.idle_ping_seconds &&
+            options_.drain_timeout_ms > 0 && options_.drain_timeout_ms <= 30000 &&
+            options_.write_timeout_ms > 0 && options_.write_timeout_ms <= 120000 &&
             limits.max_connections <= static_cast<std::size_t>(std::numeric_limits<int>::max()) / 2 &&
             options_.max_pending_handshakes <= static_cast<std::size_t>(std::numeric_limits<int>::max()) / 2 - 16;
     }
@@ -202,7 +231,17 @@ private:
                 ready_index_.erase(id);
             }
             const auto found = sockets_by_id_.find(id);
-            if (found != sockets_by_id_.end()) lws_callback_on_writable(found->second);
+            if (found != sockets_by_id_.end())
+            {
+                auto& connection = connections_.at(found->second);
+                if (!connection.write_deadline && connection.session->NeedsWritable() &&
+                    !connection.session->IsClosing() && !connection.session->IsDraining())
+                {
+                    connection.write_deadline = Timestamp::NowMs() + options_.write_timeout_ms;
+                    ArmDeadline(found->second, connection);
+                }
+                lws_callback_on_writable(found->second);
+            }
         }
     }
 
@@ -329,6 +368,7 @@ private:
             auto it = connections_.find(wsi);
             if (it == connections_.end() || stopping_) return -1;
             if (it->second.session->IsClosing()) return -1;
+            if (it->second.session->IsDraining()) return 0;
             if (lws_frame_is_binary(wsi))
             {
                 lws_close_reason(wsi, LWS_CLOSE_STATUS_UNACCEPTABLE_OPCODE, nullptr, 0);
@@ -348,6 +388,15 @@ private:
             return 0;
         case LWS_CALLBACK_SERVER_WRITEABLE:
             return Write(wsi);
+        case LWS_CALLBACK_TIMER:
+        {
+            const auto found = connections_.find(wsi);
+            if (found != connections_.end())
+            {
+                if (!ExpireDeadline(wsi, found->second)) ArmDeadline(wsi, found->second);
+            }
+            return 0;
+        }
         case LWS_CALLBACK_CLOSED:
         case LWS_CALLBACK_WSI_DESTROY:
             DropConnection(wsi);
@@ -422,6 +471,32 @@ private:
         return 0;
     }
 
+    bool ExpireDeadline(lws* wsi, Connection& connection)
+    {
+        const auto now = Timestamp::NowMs();
+        const bool write_expired = connection.write_deadline && now >= connection.write_deadline;
+        const bool drain_expired = connection.drain_deadline && now >= connection.drain_deadline;
+        if (!write_expired && !drain_expired) return false;
+        if (write_expired) ++write_timeouts_;
+        if (drain_expired && !connection.drain_completed) ++drain_timeouts_;
+        connection.write_deadline = connection.drain_deadline = 0;
+        connection.session->Close();
+        lws_set_timer_usecs(wsi, LWS_SET_TIMER_USEC_CANCEL);
+        // 超时不再等待不可读客户端的关闭握手。
+        lws_set_timeout(wsi, PENDING_TIMEOUT_USER_OK, LWS_TO_KILL_ASYNC);
+        return true;
+    }
+
+    void ArmDeadline(lws* wsi, const Connection& connection)
+    {
+        uint64_t deadline = connection.write_deadline;
+        if (connection.drain_deadline && (!deadline || connection.drain_deadline < deadline))
+            deadline = connection.drain_deadline;
+        if (!deadline) { lws_set_timer_usecs(wsi, LWS_SET_TIMER_USEC_CANCEL); return; }
+        const auto now = Timestamp::NowMs();
+        lws_set_timer_usecs(wsi, lws_usec_t(deadline > now ? deadline - now : 1) * 1000);
+    }
+
     int Write(lws* wsi)
     {
         auto it = connections_.find(wsi);
@@ -432,8 +507,38 @@ private:
             lws_close_reason(wsi, LWS_CLOSE_STATUS_NORMAL, nullptr, 0);
             return -1;
         }
+        // 可写事件也检查期限，避免晚到的回调越过定时器后重置截止时间。
+        if (ExpireDeadline(wsi, connection)) return -1;
+        if (lws_partial_buffered(wsi)) { lws_callback_on_writable(wsi); return 0; }
+        if (connection.waiting_flush)
+        {
+            connection.waiting_flush = false;
+            connection.write_deadline = 0;
+            ArmDeadline(wsi, connection);
+        }
         if (connection.outgoing.Empty() && !connection.session->PopOutgoing(connection.outgoing))
+        {
+            if (connection.session->IsDraining())
+            {
+                // lws may still own a short write after our reservation ended.
+                if (lws_partial_buffered(wsi)) { lws_callback_on_writable(wsi); return 0; }
+                if (!connection.drain_completed)
+                {
+                    connection.drain_completed = true;
+                    ++drain_completed_;
+                }
+                lws_close_reason(wsi, LWS_CLOSE_STATUS_NORMAL, nullptr, 0);
+                return -1;
+            }
+            connection.write_deadline = 0;
+            ArmDeadline(wsi, connection);
             return 0;
+        }
+        if (!connection.write_deadline)
+        {
+            connection.write_deadline = Timestamp::NowMs() + options_.write_timeout_ms;
+            ArmDeadline(wsi, connection);
+        }
         const auto remaining = connection.outgoing.Size() - connection.offset;
         const auto count = std::min(remaining, kChunkBytes);
         // All writes run on the owner. lws copies any socket short write into
@@ -452,9 +557,11 @@ private:
         {
             connection.outgoing.Reset();
             connection.offset = 0;
+            // 整帧交给 lws 后，仍计时到其内部短写缓冲排空。
+            connection.waiting_flush = true;
             ++sent_messages_;
         }
-        if (!connection.outgoing.Empty() || connection.session->NeedsWritable())
+        if (connection.waiting_flush || !connection.outgoing.Empty() || connection.session->NeedsWritable())
             lws_callback_on_writable(wsi);
         return 0;
     }
@@ -513,6 +620,7 @@ private:
     std::array<unsigned char, LWS_PRE + kChunkBytes + 1> write_buffer_{};
     std::atomic<uint64_t> accepted_connections_{0}, rejected_connections_{0};
     std::atomic<uint64_t> received_messages_{0}, sent_messages_{0}, rejected_messages_{0};
+    std::atomic<uint64_t> drain_started_{0}, drain_completed_{0}, drain_timeouts_{0}, write_timeouts_{0};
     OnOpenCallback on_open_;
     OnMessageCallback on_message_;
     OnCloseCallback on_close_;
@@ -530,6 +638,8 @@ bool WsServer::SendText(const std::string& id, const std::string& message)
 { return impl_->SendText(id, message); }
 bool WsServer::CloseConnection(const std::string& id)
 { return impl_->CloseConnection(id); }
+bool WsServer::DrainConnection(const std::string& id)
+{ return impl_->DrainConnection(id); }
 WsServerStats WsServer::GetStats() const { return impl_->GetStats(); }
 void WsServer::SetOnOpen(OnOpenCallback cb) { impl_->SetOnOpen(std::move(cb)); }
 void WsServer::SetOnMessage(OnMessageCallback cb) { impl_->SetOnMessage(std::move(cb)); }

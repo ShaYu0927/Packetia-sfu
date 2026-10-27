@@ -243,3 +243,27 @@ TEST(Participant, LeaveDetachesBothRolesAndPreservesPriorSnapshot)
         8017, room::ParticipantSessionRole::Subscribe, replacement_endpoint)));
     replacement_endpoint->Stop();
 }
+
+TEST(Participant, FailedMediaAttemptUnbindsOnlyItsExactSession)
+{
+    auto participant = std::make_shared<room::Participant>("rollback", "rollback");
+    auto endpoint = std::make_shared<media::SfuEndpoint>(8020);
+    ASSERT_TRUE(endpoint->Start());
+    ASSERT_TRUE(participant->BindSignaling("ws-rollback"));
+    const auto signaling = participant->GetSignaling();
+    auto first = std::make_shared<room::ParticipantSession>(
+        8020, room::ParticipantSessionRole::Publish, endpoint);
+    auto second = std::make_shared<room::ParticipantSession>(
+        8021, room::ParticipantSessionRole::Publish, endpoint);
+    ASSERT_TRUE(participant->BindMediaSession(first));
+    EXPECT_FALSE(participant->UnbindMediaSession(second));
+    ASSERT_TRUE(participant->UnbindMediaSession(first));
+    EXPECT_FALSE(participant->UnbindMediaSession(first));
+    ASSERT_TRUE(participant->BindMediaSession(second));
+    EXPECT_FALSE(participant->UnbindMediaSession(first));
+    EXPECT_EQ(participant->GetPublishSession(), second);
+    EXPECT_EQ(participant->GetSignaling().connection_id, signaling.connection_id);
+    EXPECT_EQ(participant->GetSignaling().generation, signaling.generation);
+    EXPECT_TRUE(endpoint->IsRunning());
+    participant->Leave();
+}

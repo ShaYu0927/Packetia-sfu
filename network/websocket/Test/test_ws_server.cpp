@@ -332,6 +332,117 @@ private:
     bool released_ = false;
 };
 
+void GracefulDrainWritesTailBeforeClose()
+{
+    Fixture fixture;
+    auto client = fixture.Connect();
+    const auto id = fixture.Id(0);
+    const std::string fragmented(40000, 'x');
+    fixture.loop.GetTaskScheduler()->Invoke([&] {
+        CHECK(fixture.server->SendText(id, fragmented));
+        CHECK(fixture.server->SendText(id, ""));
+        CHECK(fixture.server->SendText(id, "last-response"));
+        CHECK(fixture.server->DrainConnection(id));
+        CHECK(!fixture.server->DrainConnection(id));
+        CHECK(!fixture.server->SendText(id, "late"));
+    });
+    CHECK(client->ReadText() == fragmented);
+    CHECK(client->ReadText().empty());
+    CHECK(client->ReadText() == "last-response");
+    client->ExpectClosed(1000);
+    WaitUntil([&] { return fixture.closed == 1; });
+    const auto stats = fixture.server->GetStats();
+    CHECK(stats.drain_started == 1 && stats.drain_completed == 1 && stats.drain_timeouts == 0);
+    CHECK(stats.sent_messages == 3 && stats.queued_bytes == 0 && stats.queued_messages == 0);
+    CHECK(!fixture.server->DrainConnection(id));
+}
+
+void GracefulDrainAbortsUnresponsiveReader()
+{
+    WsServerOptions options;
+    options.drain_timeout_ms = 80;
+    options.limits.max_queued_bytes = 16 * 1024 * 1024;
+    Fixture fixture(options);
+    auto client = fixture.Connect();
+    client->LimitReceiveBuffer(1024);
+    const auto id = fixture.Id(0);
+    const std::string payload(1024 * 1024, 'x');
+    fixture.loop.GetTaskScheduler()->Invoke([&] {
+        for (int i = 0; i < 16; ++i) CHECK(fixture.server->SendText(id, payload));
+        CHECK(fixture.server->DrainConnection(id));
+    });
+    // No client reads, hence no writable callback is required for the timeout.
+    WaitUntil([&] { return fixture.closed == 1; }, 3000ms);
+    const auto stats = fixture.server->GetStats();
+    CHECK(stats.drain_started == 1 && stats.drain_timeouts == 1 && stats.drain_completed == 0);
+    CHECK(stats.active_connections == 0 && stats.queued_bytes == 0 && stats.queued_messages == 0);
+    auto healthy = fixture.Connect();
+    healthy->SendFrame(1, "still-serving");
+    CHECK(healthy->ReadText() == "still-serving");
+}
+
+void OrdinaryWriteHasDeadline()
+{
+    WsServerOptions options;
+    options.write_timeout_ms = 100;
+    options.limits.max_queued_bytes = 16 * 1024 * 1024;
+    Fixture fixture(options);
+    auto slow = fixture.Connect();
+    slow->LimitReceiveBuffer(1024);
+    const auto id = fixture.Id(0);
+    const std::string payload(1024 * 1024, 'w');
+    fixture.loop.GetTaskScheduler()->Invoke([&] {
+        for (int i = 0; i < 16; ++i) CHECK(fixture.server->SendText(id, payload));
+    });
+    // 未请求排空或关闭，普通写本身也必须到期并释放预算。
+    WaitUntil([&] { return fixture.closed == 1; }, 3000ms);
+    const auto stats = fixture.server->GetStats();
+    CHECK(stats.write_timeouts == 1 && stats.drain_started == 0);
+    CHECK(stats.active_connections == 0 && stats.queued_bytes == 0 && stats.queued_messages == 0);
+    auto healthy = fixture.Connect();
+    healthy->SendFrame(1, "after-write-timeout");
+    CHECK(healthy->ReadText() == "after-write-timeout");
+}
+
+void GracefulDrainCanBeAborted()
+{
+    Fixture fixture;
+    auto client = fixture.Connect();
+    const auto id = fixture.Id(0);
+    fixture.loop.GetTaskScheduler()->Invoke([&] {
+        CHECK(fixture.server->SendText(id, "discard-on-abort"));
+        CHECK(fixture.server->DrainConnection(id));
+        CHECK(fixture.server->CloseConnection(id));
+    });
+    client->ExpectClosed(1000);
+    WaitUntil([&] { return fixture.closed == 1; });
+    const auto stats = fixture.server->GetStats();
+    CHECK(stats.drain_started == 1 && stats.drain_completed == 0 && stats.drain_timeouts == 0);
+    CHECK(stats.queued_bytes == 0 && stats.queued_messages == 0);
+}
+
+void MissingPongClosesSignaling()
+{
+    WsServerOptions options;
+    options.idle_ping_seconds = 1;
+    options.idle_timeout_seconds = 2;
+    Fixture fixture(options);
+    auto client = fixture.Connect();
+    WaitUntil([&] { return fixture.closed == 1; }, 5000ms);
+    CHECK(fixture.server->GetStats().active_connections == 0);
+    auto healthy = fixture.Connect();
+    // Respond to server probes across multiple heartbeat intervals.
+    for (int i = 0; i < 3; ++i)
+    {
+        Client::Frame frame;
+        CHECK(healthy->ReadFrame(frame) && frame.opcode == 9);
+        healthy->SendFrame(10, frame.payload);
+    }
+    healthy->SendFrame(1, "alive");
+    CHECK(healthy->ReadText() == "alive");
+    CHECK(fixture.closed == 1);
+}
+
 void HandshakeFramesAndPing()
 {
     Fixture fixture;
@@ -778,6 +889,11 @@ int main(int argc, char** argv)
         }
     }
     const std::pair<const char*, void (*)()> tests[] = {
+        {"graceful drain preserves FIFO tail", GracefulDrainWritesTailBeforeClose},
+        {"graceful drain aborts slow sockets", GracefulDrainAbortsUnresponsiveReader},
+        {"ordinary write deadline", OrdinaryWriteHasDeadline},
+        {"immediate close overrides drain", GracefulDrainCanBeAborted},
+        {"missing pong and responsive heartbeat", MissingPongClosesSignaling},
         {"handshake, fragmented/empty/large messages and ping", HandshakeFramesAndPing},
         {"oversized fragmented message", OversizedFragmentedMessageIsRejected},
         {"connection limit and repeated disconnects", ConnectionLimitAndRepeatedDisconnects},

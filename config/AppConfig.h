@@ -48,6 +48,9 @@ struct WebRtcOptions
     std::map<std::string, std::string> api_keys;
     std::size_t max_sessions = 128;
     uint32_t reconnect_timeout_ms = 15000;
+    uint32_t admission_timeout_ms = 10000;
+    uint16_t signaling_ping_seconds = 30;
+    uint16_t signaling_idle_timeout_seconds = 60;
 };
 
 struct TurnOptions

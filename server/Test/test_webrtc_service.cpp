@@ -1,4 +1,9 @@
 #include "WebRtcService.h"
+#include "signaling/SignalSessionCoordinator.h"
+#include "JwtAuthenticator.h"
+#include "KeyProvider.h"
+#include "RoomAccessPolicy.h"
+#include <deque>
 #include "EventLoop.h"
 #include "EndpointBase.h"
 #include "Sdp.h"
@@ -141,6 +146,17 @@ public:
 
     void Close() { socket_.Close(); }
 
+    void ExpectClosed()
+    {
+        const auto header = Read(2);
+        Require((static_cast<uint8_t>(header[0]) & 15) == 8 &&
+            static_cast<uint8_t>(header[1]) == 2, "expected normal WebSocket close after final response");
+        const auto status = Read(2);
+        Require(static_cast<uint8_t>(status[0]) == 3 && static_cast<uint8_t>(status[1]) == 232,
+            "expected normal close status");
+        Close();
+    }
+
     Json Request(const Json& request) { return RequestText(request.dump()); }
 
     Json RequestText(const std::string& payload)
@@ -174,7 +190,8 @@ public:
         }
     }
 
-private:
+public:
+    // 允许测试流水线请求，不等待上一条响应。
     void Send(uint8_t opcode, const std::string& payload)
     {
         std::string frame(1, static_cast<char>(0x80 | opcode));
@@ -193,6 +210,7 @@ private:
         Write(frame);
     }
 
+private:
     void Write(const std::string& data)
     {
         size_t offset = 0;
@@ -287,6 +305,228 @@ sdp::SdpSession ParseDescription(const Json& message, sdp::SdpType type)
     Require(sdp::Sdp::Parse(message.at("sdp").get<std::string>(), sdp::SdpProfile::WebRtc,
         type, description, error), "could not parse negotiated SDP");
     return description;
+}
+
+void RunSignalingLifecycle()
+{
+    EventLoop loop(1);
+    Require(loop.Start(), "signaling lifecycle loop did not start");
+    config::AppConfig config;
+    config.listen_ip = config.webrtc.public_ip = "127.0.0.1";
+    config.udp_port = AvailablePort(SOCK_DGRAM);
+    config.websocket_port = AvailablePort(SOCK_STREAM);
+    config.webrtc.enabled = true;
+    config.webrtc.api_keys = {{kApiKey, kApiSecret}};
+    config.webrtc.admission_timeout_ms = 500;
+    config.webrtc.reconnect_timeout_ms = 250;
+    auto service = std::make_shared<server::WebRtcService>(&loop, config, nullptr);
+    Require(service->Start(), "signaling lifecycle service did not start");
+    const auto wait = [&](auto predicate)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + 5s;
+        while (!predicate(service->GetStats()))
+        {
+            Require(std::chrono::steady_clock::now() < deadline, "signaling lifecycle stats timed out");
+            std::this_thread::sleep_for(2ms);
+        }
+    };
+
+    Client idle(config.websocket_port);
+    Require(idle.Request({{"type", "join"}, {"token", "bad"}, {"room_id", "lifecycle"}})
+        .value("type", "") == "error", "invalid admission unexpectedly succeeded");
+    Require(idle.Receive().value("error", "") == "Room admission timed out", "admission timeout response lost");
+    idle.ExpectClosed();
+    wait([](const auto& stats) { return stats.signaling_closed == 1; });
+    auto stats = service->GetStats();
+    Require(stats.admission_timeouts == 1 && stats.join_attempts == 1 && stats.join_failed == 1 &&
+        stats.active_signaling == 0 && stats.pending_admissions == 0, "admission timeout counted incorrectly");
+
+    Client original(config.websocket_port);
+    const auto joined = Join(original, "lifecycle", "lifecycle");
+    original.Close();
+    wait([](const auto& state) { return state.reconnecting_participants == 1; });
+    Client recovered(config.websocket_port);
+    Json resume = {{"type", "resume"}, {"room_id", "lifecycle"}, {"token", RoomToken("lifecycle", "lifecycle")},
+        {"participant_id", joined.at("participant_id")}, {"resume_token", "wrong"}};
+    Require(recovered.Request(resume).value("type", "") == "error", "invalid resume unexpectedly succeeded");
+    resume["resume_token"] = joined.at("resume_token");
+    Require(recovered.Request(resume).value("type", "") == "resumed", "valid resume failed");
+    // Admission timers must be cancelled for joined and resumed connections.
+    std::this_thread::sleep_for(650ms);
+    stats = service->GetStats();
+    Require(stats.admission_timeouts == 1 && stats.pending_admissions == 0 &&
+        stats.reconnecting_participants == 0 && service->ParticipantCount() == 1,
+        "admitted connection expired or recovery state leaked");
+    Require(stats.join_attempts == 2 && stats.join_succeeded == 1 && stats.join_failed == 1 &&
+        stats.resume_attempts == 2 && stats.resume_succeeded == 1 && stats.resume_failed == 1 &&
+        stats.admission_validation_failed == 1 && stats.admission_binding_failed == 1 &&
+        stats.join_duration_us_total >= stats.join_duration_us_max && stats.join_duration_us_max > 0 &&
+        stats.resume_duration_us_total >= stats.resume_duration_us_max && stats.resume_duration_us_max > 0,
+        "admission outcome or duration stats incorrect");
+    Require(recovered.Request({{"type", "leave"}}).value("type", "") == "closed", "leave failed");
+    recovered.Send(1, Json{{"type", "join"}, {"room_id", "lifecycle"},
+        {"token", RoomToken("transient", "lifecycle")}}.dump());
+    recovered.Send(1, "{");
+    recovered.Send(1, Json{{"type", "tracks"}}.dump());
+    recovered.Send(1, Json{{"type", "leave"}}.dump());
+    recovered.Send(1, Json{{"type", "join"}, {"room_id", "lifecycle"},
+        {"token", RoomToken("replacement", "lifecycle")}}.dump());
+    Require(recovered.Receive().value("type", "") == "joined" &&
+        recovered.Receive().value("type", "") == "error" && recovered.Receive().value("type", "") == "tracks" &&
+        recovered.Receive().value("type", "") == "closed" && recovered.Receive().value("type", "") == "joined",
+        "pipelined join/leave/join responses reordered");
+    std::this_thread::sleep_for(650ms);
+    Require(service->GetStats().pending_admissions == 0 && service->ParticipantCount() == 1,
+        "old initial response acknowledgement changed new admission deadline");
+    recovered.Close();
+    wait([](const auto& state) { return state.recovery_expired == 1; });
+    Require(service->ParticipantCount() == 0, "expired recovery retained participant");
+    service->Stop();
+    stats = service->GetStats();
+    Require(stats.signaling_opened == 3 && stats.signaling_closed == 3 && stats.active_signaling == 0 &&
+        stats.pending_admissions == 0 && stats.reconnecting_participants == 0,
+        "stop did not preserve counters and clear gauges");
+    loop.Stop();
+}
+
+void RunCoordinatorChannels()
+{
+    using namespace server::signaling;
+    namespace auth = service::auth;
+    EventLoop loop(1);
+    Require(loop.Start(), "coordinator loop did not start");
+    auto owner = loop.GetTaskScheduler();
+    config::AppConfig config;
+    config.listen_ip = config.webrtc.public_ip = "127.0.0.1";
+    config.udp_port = 0;
+    config.webrtc.reconnect_timeout_ms = 1000;
+    auto authService = std::make_shared<auth::AuthService>(
+        std::make_shared<auth::JwtAuthenticator>(std::make_shared<auth::StaticKeyProvider>(
+            std::map<std::string, std::string>{{kApiKey, kApiSecret}})),
+        std::make_shared<auth::RoomAccessPolicy>());
+    server::WebRtcServiceStats stats;
+    auto room = std::make_shared<RoomSignalHandler>(owner, config, nullptr, authService, stats);
+    auto coordinator = std::make_shared<SignalSessionCoordinator>(owner, room, AdmissionValidator(authService, {}), stats, 50);
+    std::deque<std::function<void()>> outgoing;
+    std::vector<SignalResponse> received;
+    const auto open = [&](SignalKey key, bool acknowledge = true, bool writable = true)
+    {
+        std::shared_ptr<SignalSession> session;
+        owner->Invoke([&] {
+            session = coordinator->Open(key,
+                [&, writable](auto task) {
+                    if (!writable) return false;
+                    outgoing.push_back(std::move(task)); return true;
+                },
+                [&, key, acknowledge](SignalResponse response) {
+                    if (acknowledge && response.initial) coordinator->ConfirmInitial(key, response.admission_generation);
+                    received.push_back(std::move(response));
+                });
+        });
+        Require(session != nullptr, "coordinator open failed");
+        return session;
+    };
+    const auto send = [&](const auto& session, Json body) {
+        SignalRequest request; Json error;
+        const auto bytes = body.dump();
+        Require(DecodeRequest(bytes, request, error), "request decode failed");
+        Require(session->Request(std::move(request), bytes.size()) == SignalResult::Accepted, "request rejected");
+        owner->Invoke([] {});
+    };
+    const auto join = [&](const auto& session, const std::string& identity) {
+        send(session, {{"type", "join"}, {"room_id", "channels"}, {"token", RoomToken(identity, "channels")}});
+    };
+    const auto pump = [&] {
+        owner->Invoke([&] {
+            while (!outgoing.empty())
+            { auto task = std::move(outgoing.front()); outgoing.pop_front(); task(); }
+        });
+    };
+    const auto cleanup = [&] {
+        owner->Invoke([&] { coordinator->Stop(); room->Stop(); });
+        loop.Stop();
+    };
+    try
+    {
+        owner->Invoke([&] { Require(room->Start(), "coordinator room start failed"); coordinator->Start(); });
+        // 响应执行器拒收：新入房参与者必须回滚，不能变成可恢复的孤儿。
+        auto failed = open({"same-id", 1}, true, false);
+        join(failed, "failed");
+        Require(failed->IsCancelled(), "failed response post did not cancel channels");
+        owner->Invoke([&] {
+            Require(room->ParticipantCount() == 1, "test did not reach committed join");
+            coordinator->Closed(failed->Key());
+            Require(room->ParticipantCount() == 0, "failed initial response leaked participant");
+        });
+        auto current = open({"same-id", 2});
+        join(current, "reusable"); pump();
+        Require(received.back().body.value("type", "") == "joined", "new generation did not join");
+        const auto joined = received.back().body;
+        owner->Invoke([&] {
+            coordinator->Closed(failed->Key()); coordinator->ConfirmInitial(failed->Key(), 1);
+            Require(room->HasMember("same-id") && coordinator->GetStats().active_signaling == 1,
+                "stale close affected new generation");
+            coordinator->Closed(current->Key());
+        });
+        // 恢复后的首响失败：只撤销本次信令绑定，保留既有参与者。
+        auto resumed = open({"resume-1", 3}, false);
+        Json resume = {{"type", "resume"}, {"room_id", "channels"}, {"token", RoomToken("reusable", "channels")},
+            {"participant_id", joined.at("participant_id")}, {"resume_token", joined.at("resume_token")}};
+        send(resumed, resume);
+        owner->Invoke([&] {
+            coordinator->Closed(resumed->Key()); coordinator->Closed(resumed->Key());
+            Require(room->ParticipantCount() == 1 && room->ReconnectingCount() == 1,
+                "failed resume removed existing participant");
+        });
+        auto recovered = open({"resume-2", 4});
+        send(recovered, resume); pump();
+        Require(received.back().body.value("type", "") == "resumed", "retry resume failed");
+        // 房间已提交而首响尚未交给连接队列时，期限到达也要回滚新资源。
+        auto delayed = open({"delayed", 5}, false);
+        join(delayed, "delayed");
+        std::this_thread::sleep_for(65ms);
+        owner->Invoke([&] {
+            Require(!coordinator->ConfirmInitial(delayed->Key(), 1),
+                "late initial acknowledgement bypassed admission deadline");
+            coordinator->Tick();
+            Require(delayed->IsCancelled() && !room->HasMember("delayed"), "initial response timeout leaked join");
+            Require(room->HasMember("resume-2"), "initial timeout affected another connection");
+            coordinator->Closed(delayed->Key());
+        });
+        pump();
+        send(recovered, {{"type", "leave"}}); pump();
+        owner->Invoke([&] { coordinator->Closed(recovered->Key()); });
+        // 房间的真实 ICE 到期通知经响应通道发送，不依赖新的客户端请求。
+        received.clear();
+        auto active = open({"notify", 6});
+        join(active, "notify");
+        send(active, {{"type", "publish"}, {"sdp", Offer()}});
+        pump();
+        Require(received.size() == 2 && received[0].initial && received[1].body.value("type", "") == "answer",
+            "initial response did not precede pipelined publication");
+        // 使用真实 ICE 计时器，避免把推进业务 Tick 的参数误当作媒体时钟。
+        std::this_thread::sleep_for(30100ms);
+        owner->Invoke([&] { coordinator->Tick(); });
+        pump();
+        Require(received.size() == 3 && received[0].body.value("type", "") == "joined" &&
+            received[1].body.value("type", "") == "answer" && received[2].close_after,
+            "room notification bypassed initial response or response channel");
+        owner->Invoke([&] {
+            coordinator->Closed(active->Key());
+            Require(room->ParticipantCount() == 0, "room termination left participant");
+        });
+        // 停服取消尚未执行的请求及响应，排队任务随后运行也不能重新创建资源。
+        auto stopped = open({"stopped", 7});
+        owner->Invoke([&] {
+            stopped->Request({SignalRequest::Type::Join, {{"type", "join"}, {"room_id", "channels"},
+                {"token", RoomToken("stopped", "channels")}}}, 100);
+            coordinator->Stop(); room->Stop();
+        });
+        owner->Invoke([] {}); pump();
+        Require(stopped->IsCancelled(), "stop did not cancel channels");
+        cleanup();
+    }
+    catch (...) { cleanup(); throw; }
 }
 
 void RunNegotiationGuards()
@@ -634,6 +874,15 @@ void Run()
     bad["sdp"] = std::string(65537, 'x');
     Require(first.Request(bad).value("type", "") == "error", "oversized SDP accepted");
     Require(utils::EndpointManager::Instance().Size() == baseline, "rejected request allocated endpoint");
+    auto inactiveOffer = Offer();
+    for (auto offset = inactiveOffer.find("a=sendonly"); offset != std::string::npos;
+         offset = inactiveOffer.find("a=sendonly"))
+        inactiveOffer.replace(offset, std::string("a=sendonly").size(), "a=inactive");
+    Require(first.Request({{"type", "publish"}, {"sdp", inactiveOffer}}).value("type", "") == "error",
+        "empty publication unexpectedly accepted");
+    Require(service->ParticipantCount() == 1 && first.Request({{"type", "tracks"}}).value("type", "") == "tracks",
+        "failed media creation removed joined participant");
+    Require(utils::EndpointManager::Instance().Size() == baseline, "failed media creation leaked endpoint");
     CheckAnswer(first.Request(publication), config.udp_port);
     Require(utils::EndpointManager::Instance().Size() == baseline + 1, "accepted publication did not register endpoint");
     Require(first.Request(offer).value("type", "") == "error", "room reoffer bypassed negotiation guard");
@@ -689,6 +938,8 @@ int main()
     try
     {
         Run();
+        RunSignalingLifecycle();
+        RunCoordinatorChannels();
         RunNegotiationGuards();
         RunRoom();
         RunAuthorization();
