@@ -6,6 +6,7 @@
 #include "ThreadManager.h"
 #ifdef PACKETIA_TEST_SFU_PIPELINE
 #include "SfuEndpoint.h"
+#include "MediaStreamRegistry.h"
 #endif
 
 extern "C" {
@@ -594,15 +595,26 @@ TEST(TranscodeService, RoutesOnlyRequestedTrackOnWorkerAndDrainsOnStop)
     TranscodeService service(input, output);
     ASSERT_TRUE(service.Init());
     ASSERT_TRUE(service.Start());
-    ASSERT_TRUE(service.StartTask(TaskConfig())) << service.LastError();
+    auto config = TaskConfig();
+    config.input.media_stream_id = 71;
+    ASSERT_TRUE(service.StartTask(config)) << service.LastError();
     auto frames = MakeInput(640, 360, 10, 2);
-    auto wrong = Event(frames.front());
+    const auto selected = [](const auto& frame) {
+        auto event = Event(frame);
+        event.source.media_stream_id = 71;
+        return event;
+    };
+    auto wrong = selected(frames.front());
     wrong.source.endpoint_id = 999;
     EXPECT_EQ(input->Publish(wrong), 0u);
-    wrong = Event(frames.front());
+    wrong = selected(frames.front());
     wrong.source.track_id = 1;
     EXPECT_EQ(input->Publish(wrong), 0u);
-    for (const auto& frame : frames) EXPECT_EQ(input->Publish(Event(frame)), 1u);
+    wrong = selected(frames.front());
+    wrong.source.media_stream_id = 72;
+    EXPECT_EQ(input->Publish(wrong), 0u);
+    EXPECT_EQ(input->Publish(Event(frames.front())), 0u);
+    for (const auto& frame : frames) EXPECT_EQ(input->Publish(selected(frame)), 1u);
     TranscodeTaskStatus final;
     ASSERT_TRUE(service.StopTask(TaskConfig().task_id, &final));
     EXPECT_EQ(final.state, TranscodeTaskState::Stopped) << final.last_error;
@@ -614,7 +626,7 @@ TEST(TranscodeService, RoutesOnlyRequestedTrackOnWorkerAndDrainsOnStop)
     EXPECT_EQ(final.stats.queue_bytes, 0u);
     for (auto thread : sink->threads) EXPECT_NE(thread, std::this_thread::get_id());
     Verify(CollectedFrames(*sink), 10, 9000);
-    EXPECT_EQ(input->Publish(Event(frames.front())), 0u);
+    EXPECT_EQ(input->Publish(selected(frames.front())), 0u);
     EXPECT_FALSE(service.TaskStatus(TaskConfig().task_id));
 }
 
@@ -881,8 +893,19 @@ TEST(TranscodeService, RealRtpReceiverReassemblesReorderedFuAndTranscodesThrough
     TranscodeService service(input, output);
     ASSERT_TRUE(service.Init());
     ASSERT_TRUE(service.Start());
-    ASSERT_TRUE(service.StartTask(TaskConfig()));
-    auto endpoint = std::make_shared<media::SfuEndpoint>(10, input);
+    media::MediaStreamRegistry registry;
+    auto stream = std::make_shared<media::MediaStream>("camera");
+    ASSERT_TRUE(stream->ReplaceTracks({{42, media::MediaType::Video, media::CodecType::H264}}));
+    ASSERT_TRUE(stream->BindTrackEndpoint(42, 10));
+    ASSERT_TRUE(stream->StartPublishing());
+    ASSERT_TRUE(registry.Register(stream));
+    const auto track = registry.FindTrack({stream->GetId(), 42});
+    ASSERT_TRUE(track);
+    auto config = TaskConfig();
+    config.input.endpoint_id = track->endpoint_id;
+    config.input.media_stream_id = track->ref.stream_id;
+    config.input.track_id = track->ref.track_id;
+    ASSERT_TRUE(service.StartTask(config));
     ::TrackInfo info;
     info.track_index = 42;
     info.type = TrackVideo;
@@ -891,7 +914,10 @@ TEST(TranscodeService, RealRtpReceiverReassemblesReorderedFuAndTranscodesThrough
     info.payload_type = 96;
     info.clock_rate = 90000;
     info.ssrc = 99;
-    ASSERT_TRUE(endpoint->AddPublishedTrack("video", std::make_shared<RtpTrackDescription>(info)));
+    media::EncodedFrameSource source;
+    source.media_stream_id = stream->GetId();
+    auto endpoint = std::make_shared<media::SfuEndpoint>(10,
+        std::make_shared<RtpTrackDescription>(info), source, input);
     ASSERT_TRUE(endpoint->Start());
     uint16_t sequence = 65530;
     for (const auto& frame : input_frames) {
@@ -902,6 +928,7 @@ TEST(TranscodeService, RealRtpReceiverReassemblesReorderedFuAndTranscodesThrough
         }
     }
     endpoint->Stop();
+    ASSERT_TRUE(registry.Remove(stream));
     TranscodeTaskStatus final;
     ASSERT_TRUE(service.StopTask(TaskConfig().task_id, &final));
     EXPECT_EQ(final.state, TranscodeTaskState::Stopped) << final.last_error;

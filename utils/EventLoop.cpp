@@ -30,6 +30,12 @@ std::shared_ptr<TaskScheduler> EventLoop::GetTaskScheduler()
     return ts;
 }
 
+std::vector<std::shared_ptr<TaskScheduler>> EventLoop::GetTaskSchedulers() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return task_schedulers_;
+}
+
 bool EventLoop::AddTriggerEvent(TriggerEvent callback)
 {
     std::lock_guard<std::mutex> locker(mutex_);

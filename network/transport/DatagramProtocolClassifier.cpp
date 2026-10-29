@@ -27,14 +27,12 @@ bool DatagramProtocolClassifier::IsDtls(const uint8_t* data, size_t size) noexce
 
 bool DatagramProtocolClassifier::IsRtcp(const uint8_t* data, size_t size) noexcept
 {
-    return data && size >= 4 && (data[0] >> 6) == 2 &&
-           data[1] >= 192 && data[1] <= 223;
+    return data && size >= 4 && (data[0] >> 6) == 2 && data[1] >= 192 && data[1] <= 223;
 }
 
 bool DatagramProtocolClassifier::IsRtp(const uint8_t* data, size_t size) noexcept
 {
-    return data && size >= 12 && (data[0] >> 6) == 2 &&
-           !IsRtcp(data, size);
+    return data && size >= 12 && (data[0] >> 6) == 2 && !IsRtcp(data, size);
 }
 
 DatagramProtocol DatagramProtocolClassifier::Classify(const uint8_t* data, size_t size) noexcept

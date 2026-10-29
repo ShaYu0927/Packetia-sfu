@@ -3,6 +3,7 @@
 
 #include "IService.h"
 #include <atomic>
+#include <mutex>
 
 namespace service 
 {
@@ -27,6 +28,8 @@ protected:
     void SetFailed(int error_code);
 
 private:
+    // 生命周期由管理线程串行调用；业务就绪检查使用 State()，不持有此锁。
+    std::mutex lifecycle_mutex_;
     std::atomic<ServiceState> state_{ServiceState::Created};
     std::atomic<int> error_code_{0};
 };

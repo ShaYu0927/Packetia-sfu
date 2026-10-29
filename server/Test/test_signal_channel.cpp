@@ -129,6 +129,51 @@ TEST(SignalChannel, MessageCountAndProducerOrdering)
     { EXPECT_GT(value.second, last[value.first]); last[value.first] = value.second; }
     EXPECT_EQ(budget->Used().second, 0u);
 }
+TEST(SignalChannel, AsyncConsumerKeepsBudgetAndSerializesUntilCompletion)
+{
+    Executor executor;
+    auto budget = std::make_shared<SignalBudget>(8, 2);
+    std::vector<int> received;
+    SignalChannel<int>::Complete finish;
+    SignalChannel<int> channel([&](auto task) { return executor.Post(std::move(task)); },
+        [&](int value, SignalChannel<int>::Complete complete) {
+            received.push_back(value); finish = std::move(complete);
+        }, budget, 8, 2);
+    ASSERT_EQ(channel.Send(1, 4), SignalResult::Accepted);
+    ASSERT_EQ(channel.Send(2, 4), SignalResult::Accepted);
+    executor.Run();
+    EXPECT_EQ(received, (std::vector<int>{1}));
+    EXPECT_EQ(budget->Used().first, 8u);
+    EXPECT_EQ(channel.Send(3, 1), SignalResult::Full);
+    auto first = finish;
+    std::thread worker([first] { first(); first(); });
+    worker.join();
+    executor.Run();
+    EXPECT_EQ(received, (std::vector<int>{1, 2}));
+    EXPECT_EQ(budget->Used().first, 4u);
+    channel.Cancel();
+    finish(); executor.Run();
+    EXPECT_EQ(budget->Used().second, 0u);
+    EXPECT_EQ(channel.Status(), SignalResult::Cancelled);
+}
+TEST(SignalChannel, AsyncCancellationDropsQueuedMessagesButWaitsForRunningWork)
+{
+    Executor executor;
+    auto budget = std::make_shared<SignalBudget>();
+    SignalChannel<int>::Complete finish;
+    int consumed = 0;
+    {
+        SignalChannel<int> channel([&](auto task) { return executor.Post(std::move(task)); },
+            [&](int, SignalChannel<int>::Complete complete) { ++consumed; finish = std::move(complete); }, budget);
+        channel.Send(1, 10); channel.Send(2, 10);
+        executor.Run();
+        channel.Close();
+        EXPECT_EQ(budget->Used().second, 1u);
+    }
+    finish(); executor.Run();
+    EXPECT_EQ(consumed, 1);
+    EXPECT_EQ(budget->Used().second, 0u);
+}
 TEST(SignalSession, DistinctExecutorsCancelAndFinalResponse)
 {
     Executor room, connection;

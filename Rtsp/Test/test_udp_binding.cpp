@@ -213,11 +213,15 @@ TEST(RtspUdpSetup, RejectsInvalidPortsAndInterleavedNumbers) {
 class FrameCollector : public media::IEncodedFramePublisher {
 public:
     size_t Publish(const media::EncodedFrameEvent& event) override {
-        if (!seen.exchange(true)) frame.set_value(event.frame);
+        if (!seen.exchange(true)) {
+            source.set_value(event.source);
+            frame.set_value(event.frame);
+        }
         return 1;
     }
     std::atomic<bool> seen{false};
     std::promise<media::EncodedFrame::ConstPtr> frame;
+    std::promise<media::EncodedFrameSource> source;
 };
 
 class RtspUdpIntegration : public testing::Test {
@@ -274,6 +278,7 @@ TEST_F(RtspUdpIntegration, SetupReceiveFrameRtcpFeedbackAndTeardown) {
     ASSERT_NE(session, nullptr);
     auto collector = std::make_shared<FrameCollector>();
     auto frame = collector->frame.get_future();
+    auto frameSource = collector->source.get_future();
     session->SetFramePublisher(collector);
     UdpClient rtp_client, rtcp_client;
     const auto headers = "Transport: RTP/AVP;unicast;client_port=" +
@@ -296,6 +301,13 @@ TEST_F(RtspUdpIntegration, SetupReceiveFrameRtcpFeedbackAndTeardown) {
         kRtp.data(), kRtp.size()), 0);
     ASSERT_EQ(frame.wait_for(2s), std::future_status::ready);
     EXPECT_EQ(frame.get()->buffer.ToVector(), (std::vector<uint8_t>{0, 0, 0, 1, 0x65, 0xAA, 0xBB}));
+    const auto sourceInfo = frameSource.get();
+    EXPECT_EQ(session->GetSource().protocol, "rtsp");
+    EXPECT_EQ(sourceInfo.media_stream_id, session->GetId());
+    const auto coreTrack = media::MediaStreamRegistry::Instance().FindTrack(
+        {sourceInfo.media_stream_id, sourceInfo.track_id});
+    ASSERT_TRUE(coreTrack);
+    EXPECT_EQ(coreTrack->endpoint_id, endpoint_id);
     // Sender Report on the RTCP port must reach the receiver statistics path
     // and produce a Receiver Report from that same RTCP port.
     std::vector<uint8_t> sr{0x80, 200, 0, 6, 0x11, 0x22, 0x33, 0x44,

@@ -2,7 +2,7 @@
 
 基于 C++17 的音视频服务学习项目，包含 RTSP、RTMP、SIP 接入、WebRTC 房间转发、
 TURN UDP 中继及录像模块。支持原有 `Packetia` 单进程入口，以及 `PacketiaControl` 控制服务和多个
-`PacketiaSfu` 节点的独立进程部署；运行方式见[控制服务与 SFU 节点](docs/distributed-services.md)。
+`PacketiaSfu` 节点的独立进程部署；运行方式见[会议控制与节点调度](#会议控制与节点调度)。
 
 当前已验证：两个浏览器加入同一房间，A 发布、B 观看，B 强制经过 TURN UDP；
 双方信令意外断开后恢复原参与者，通过 ICE restart 建立新路径并继续传输媒体。
@@ -13,22 +13,24 @@ TURN UDP 中继及录像模块。支持原有 `Packetia` 单进程入口，以�
 ### 阅读导航
 
 - [构建与依赖](#构建与依赖)：Linux/macOS 构建、测试依赖。
-- [控制服务与 SFU 节点](docs/distributed-services.md)：一控两节点、本地启动、房间接口与 Docker Compose。
+- [会议控制与节点调度](#会议控制与节点调度)：一控两节点、本地启动、房间接口与 Docker Compose。
 - [网络层边界与线程约定](#网络层边界与线程约定)：调度归属、TCP 缓冲、TLS 传输。
-- [媒体流管理](media/core/README.md)：core 流注册、轨道归属、RTSP 接入及释放流程。
-- [媒体参数分层与轨道事件](media/README.md)：通用轨道、RTP/SDP 适配、统计接口及 EventBus 的业务接入。
+- [媒体层结构与命名](#媒体层结构与命名)：目录边界、源轨道描述、发布信息与消费关系。
+- [媒体流管理](#统一发布流注册)：core 流注册、轨道归属、RTSP 接入及释放流程。
+- [RTP 参数与 SDP 适配](#媒体层结构与命名)：协议参数归属、候选选择及与通用轨道的边界。
 - [视频转码与多编码适配](#视频转码与多编码适配)：默认 720p/360p 输出、任务接口、实现选择与验证命令。
-- [多编码适配设计](docs/media-codec-adaptation.md)、[业务格式兼容方案](docs/media-format-plan.md)：已实现能力与后续协议、容器、播放接入规划。
+- [多编码适配设计](#视频转码与多编码适配)、[业务格式兼容方案](#视频转码与多编码适配)：已实现能力与后续协议、容器、播放接入规划。
 - [RTP 接收排序与弱网恢复](#rtp-接收排序与弱网恢复)：等待预算、前向重同步、本机实测与复现。
-- [服务端切网恢复框架](docs/network-handover-framework.md)：核心 C++ 路径状态、媒体适配和带宽估计重置，以及后续接入任务。
+- [服务端切网恢复框架](#信令恢复与-ice-restart)：核心 C++ 路径状态、媒体适配和带宽估计重置，以及后续接入任务。
 - [TURN UDP 中继](#turn-udp-中继)：认证、资源管理、STUN 地址发现与双栈。
 - [参与者与连接数据结构](#参与者与连接数据结构)：对象归属、信令恢复与 ICE restart。
+- [WebRTC 房间 owner](#webrtc-房间-owner)：固定房间执行器、跨线程信令与共享 UDP、队列和清理。
 - [双浏览器房间与 TURN 示例](#双浏览器房间与-turn-示例)：启动方式与浏览器检查。
 - [WebRTC SDP 协商](#webrtc-sdp-协商)、[RTP 协议规范](#rtp-协议规范)：协商行为与 RFC 支持边界。
 - [房间鉴权](#房间鉴权)：JWT 验证、房间权限与参与者身份绑定。
 - [账号与登录框架](#账号与登录框架)、[HTTP 业务接口](#http-业务接口)：账号路由、请求格式、返回契约与实现状态。
 - [运行指标与 HTTP 监控](#运行指标与-http-监控)：模块拆分、采样生命周期、访问方式与覆盖范围。
-- [弱网与带宽控制](#弱网与带宽控制)、[丢包恢复说明](docs/weak-network.md)：NACK/SRTP 重传、TWCC/RR、OU 时延检测与码率控制。
+- [弱网与带宽控制](#弱网与带宽控制)、[丢包恢复说明](#弱网与带宽控制)：NACK/SRTP 重传、TWCC/RR、OU 时延检测与码率控制。
 - [本轮验证](#本轮验证)、[开发记录](#开发记录)：验证范围与历史变更。
 
 ### 当前能力与限制
@@ -44,17 +46,17 @@ TURN UDP 中继及录像模块。支持原有 `Packetia` 单进程入口，以�
 | RTP 接收排序 | 按 SSRC 隔离、乱序/回绕处理、有界缓存与等待、连续包验证后的前向重同步；H264 独立组帧期限 | 等待预算受 worker 调度影响；不保证端到端时延；后退重启和半周期歧义需会话重置 |
 | 视频编解码 | FFmpeg 软件适配 H264/H265/VP8/VP9/AV1，按格式、方向、参数和实现偏好创建实例 | 取决于本机 FFmpeg 实现；当前输出 SDR 8-bit I420；硬件、音频转码尚未接入 |
 | 多档转码 | 一次解码、多档缩放编码；默认 H264 → 720p/360p H264；有界输入队列、任务启停与状态统计 | 原 `Packetia` 入口集成；独立 `PacketiaSfu` 尚未接入；缺少任务 HTTP API、派生流 RTP 输出及浏览器播放闭环 |
-| 应用鉴权 | HS256 房间 JWT、API key 查询、发布/订阅权限、参与者身份绑定和恢复校验 | 登录与签发由业务后端负责；暂不包含自动刷新、动态权限更新和撤销列表 |
+| 应用鉴权 | HS256 房间 JWT、发布/订阅及成员管理权限、会内权限更新、身份绑定和恢复校验 | 登录与签发由业务后端负责；会内变更不写回控制库，无自动刷新或 JWT 撤销列表 |
 | HTTP/账号 API | libwebsockets HTTP 接入、有界业务队列、SQLite 账号与会话、scrypt 密码校验、5 个账号接口 | 单进程开发配置启用本机 API 与注册；控制入口另含房间、成员和入房凭证接口 |
 | 运行指标 | Worker 排队/执行耗时及 p95/p99、发送积压/速率/失败、Worker 忙碌率、进程与整机 CPU/内存；HTTP 查询快照 | 尚未统一覆盖 AI、混流和转码自有线程队列；不包含 libwebsockets 与内核发送队列 |
-| 多进程部署 | 独立控制进程、多 SFU、节点注册/心跳、持久化房间绑定、节点/实例 JWT 校验 | 单控制服务；SFU 故障后需新建房间，尚无迁移和房间回收 |
+| 多进程部署 | 独立控制进程、多 SFU、节点注册/心跳、持久化房间绑定、节点/实例 JWT 校验 | 单控制服务；支持空房间绑定回收和结束会议，尚无 SFU 故障迁移 |
 
 尚未做系统容量压测，配置中的会话上限不是实际可承载并发数。当前浏览器验证属于本机互通验证，
 公网部署仍需配置可达的媒体/中继地址、端口及安全信令入口。
 
-创建会议、入会、音视频发布订阅的实际流程，以及轨道事件通知和动态订阅的当前限制，见[信令与会议流程](server/signaling/README.md)。
+创建会议、入会、音视频发布订阅的实际流程，以及轨道事件通知和动态订阅的当前限制，见[信令与会议流程](#媒体层结构与命名)。
 
-RTSP 支持复用公共鉴权层的 Digest 认证与精确流权限，默认关闭；配置和接入限制见 [RTSP 鉴权](docs/rtsp-authentication.md)。
+RTSP 支持复用公共鉴权层的 Digest 认证与精确流权限，默认关闭；配置类型见 [RtspAuthOptions.h](service/Auth/RtspAuthOptions.h)，认证实现见 [RtspDigestAuthenticator.cpp](service/Auth/RtspDigestAuthenticator.cpp)。
 
 ## 构建与依赖
 
@@ -100,7 +102,7 @@ CMake 首次配置会把 `config/packetia.json` 复制为 `build/packetia.json`�
 地址为 `http://127.0.0.1:8081`，RTSP 使用无需特权的 `8554` 端口。
 程序会打印实际配置路径、HTTP 地址和数据库路径；Ctrl+C 会依次停止服务。
 账号数据库的父目录由服务自动创建。
-日志默认输出到终端和滚动文件，集群脚本会按节点统一收集日志；配置与保留策略见[日志说明](log/README.md)。
+日志默认输出到终端和滚动文件，集群脚本会按节点统一收集日志；日志实现见 [logger.h](log/logger.h) 和 [logger.cpp](log/logger.cpp)。
 
 ```sh
 # 修改配置后重启即可；也可以显式指定其他配置
@@ -121,7 +123,7 @@ curl -i http://127.0.0.1:8081/api/v1/me
 本机注册配置用于开发，部署时可修改 HTTP 地址和注册开关。
 
 单进程入口提供账号 API、媒体接入及已配置的本地服务；房间创建、成员管理和入房 JWT 签发
-目前属于 `PacketiaControl`。需要这些控制接口或多节点部署时，再使用[多进程启动方式](docs/distributed-services.md)。
+目前属于 `PacketiaControl`。需要这些控制接口或多节点部署时，再使用[多进程启动方式](#会议控制与节点调度)。
 
 WebSocket 默认启用，需要 libwebsockets；WebRTC 媒体运行需要 libsrtp2。
 缺少 libsrtp2 时部分协议目标仍能编译，但 WebRTC 服务不能正常启用，浏览器示例和相关测试也不可用。
@@ -197,8 +199,8 @@ if (!app.StartTranscode(task)) {
 
 当前服务在原 `Packetia` 入口注册；独立 `PacketiaSfu` 尚未集成。
 应用需显式订阅输出，尚无转码任务 HTTP API 或派生流 WebRTC 发布闭环。
-更多参数、所有权、线程契约和格式边界见[多编码适配设计](docs/media-codec-adaptation.md)，
-各业务的透传、换封装和转码规划见[业务格式兼容方案](docs/media-format-plan.md)。
+更多参数、所有权、线程契约和格式边界见[多编码适配设计](#视频转码与多编码适配)，
+各业务的透传、换封装和转码规划见[业务格式兼容方案](#视频转码与多编码适配)。
 
 使用已配置 `BUILD_TESTING=ON` 的构建目录运行转码测试：
 
@@ -322,7 +324,8 @@ API/转码使用拒绝新任务策略。旧 `QueueManager` 已复用有界命名
   注入模式下停止、重新监听仍使用同一调度器；旧调度器停止后，应使用新调度器创建新对象。
   兼容的 `EventLoop*` 构造方式仍在每次启动时选择调度器。
 - TCP 监听器及其连接使用同一调度线程；当前 TURN 控制入口、会话、relay socket 和定时器
-  也使用同一调度线程。增加 `io_threads` 不会自动拆分单个服务的会话。
+  也使用同一调度线程。WebRTC 另外按房间固定分配 owner；实际 I/O 调度器为 3 个时，
+  使用 1 个网络执行器和 2 个房间 owner，详见[房间 owner](#webrtc-房间-owner)。
 - 读取、协议状态变更、关闭通知在对象所属线程执行。TCP 回调设置通过 `Invoke` 串行化；
   启停和回调设置属于控制操作，调用方需串行安排。发送接口另有下述并发约定。
 - 跨线程提交业务命令使用 `Post` 并检查是否接受；数据库、远程鉴权及文件操作交给工作线程，
@@ -472,7 +475,7 @@ HTTP 异步回复仍返回所属 I/O owner。当前路由处理函数同步返�
 会话使用随机 Bearer token，仅保存 SHA-256 摘要。续期通过事务撤销旧 token 并创建新会话。
 内置默认值及 `packetia.example.json` 中的 `account.enabled`、`http.enabled`、
 `account.registration_enabled` 均关闭；直接启动时自动加载的 `packetia.json` 为本机开发启用这三个开关。
-示例配置见 `config/packetia.example.json`；多进程账号、成员和入房流程见[控制服务与 SFU 节点](docs/distributed-services.md)。
+示例配置见 `config/packetia.example.json`；多进程账号、成员和入房流程见[会议控制与节点调度](#会议控制与节点调度)。
 账号 API 的登录会话与房间 JWT 用途不同；邀请注册、密码找回、MFA、登录限流及 Cookie/CSRF 流程尚未提供。
 当前 HTTP 接入未实现原生 HTTPS，公网部署需要在 TLS 反向代理后运行。
 
@@ -566,7 +569,7 @@ JSON 响应带 `Cache-Control: no-store`；错误统一使用以下结构：
 
 `401` 响应同时带 `WWW-Authenticate: Bearer`。登录会话凭据与 WebRTC 房间 JWT
 各自用于对应入口：原 `Packetia` 入口保留账号接口；`PacketiaControl` 另提供 HTTP 房间创建、
-房主添加成员和入房 JWT 签发，见[多进程运行说明](docs/distributed-services.md)。线程状态当前通过 C++ 的
+房主添加成员和入房 JWT 签发，见[多进程运行说明](#会议控制与节点调度)。线程状态当前通过 C++ 的
 `ServerApp::ThreadStatus()` 查询；Worker 和资源指标通过下述 HTTP 监控接口查询。
 
 账号登录、控制入口的房间成员准入与入房凭证签发已实现；尚无成员查询和完整会议管理接口。
@@ -609,6 +612,140 @@ Worker 忙碌率包含任务内锁等待，不等同于线程 CPU 使用率；�
 本次拆分保留既有采集范围，尚未统一接入 AI、混流、转码自有线程队列。
 完整字段口径、SFU 配置示例和独立测试命令见 [monitoring 模块文档](monitoring/README.md)。
 
+## 会议控制与节点调度
+
+会议业务和集群调度分层实现，借鉴 LiveKit 的控制面与房间运行时分工，使用现有 C++ HTTP、
+SQLite、EventLoop 和有界通道，不引入 Redis 或跨节点媒体迁移。
+
+| 模块 | 负责内容 | 状态归属 |
+| --- | --- | --- |
+| `service/meeting/MeetingModule` | 继承 `ServiceBase`，统一会议控制面的初始化、准入、排空和资源释放 | 注册到 `ServiceManager`，类型为 `ServiceType::Meeting` |
+| `service/meeting/MeetingService` | 创建会议、房主校验、持久成员角色、结束状态 | 共享 `ClusterStore` 的 SQLite 事务 |
+| `service/meeting/RoomAdmissionService` | 检查成员角色、申请节点、签发入房 JWT | 不持有在线成员 |
+| `service/meeting/RoomAdminService` | 校验持久房主，将管理命令发往目标节点 | 注入 `RoomCommandSender`，不在事务中等待网络 |
+| `service/Cluster/Coordinator` | 节点注册、续租、实例隔离、房间分配与回收 | 节点租约和带 `assignment_id` 的绑定 |
+| `server/meeting/RoomController` | 账号会话认证与公共会议 API | 控制进程 API worker |
+| `server/cluster/NodeController` | 节点注册、心跳、带代次的释放确认 | 控制进程内部 API worker |
+| `server/meeting/RoomControlController` | 节点密钥、进程实例与租约检查 | SFU 内部 API worker |
+| `RoomSignalHandler` | 实际成员查询、修改、踢人、结束和媒体清理 | 房间固定 owner 执行器 |
+
+### 统一服务生命周期
+
+`MeetingModule : ServiceBase` 是会议控制面的应用入口，内部组合 `MeetingService`、
+`RoomAdmissionService`、`RoomAdminService` 和共享数据库的 `Coordinator`。
+这些业务对象保持原有职责，HTTP 路由只持有模块，不直接访问其内部对象。
+
+```text
+ControlApp → ServiceManager
+              ├─ MonitorService : IService
+              └─ MeetingModule : ServiceBase → IService
+                   ├─ ClusterStore / Coordinator
+                   ├─ MeetingService
+                   ├─ RoomAdmissionService
+                   └─ RoomAdminService
+```
+
+- `Init`：验证配置、打开数据库并构造业务对象；初始化失败自动回滚本轮资源。
+- `Start`：开启操作准入，状态进入 `Running`。`Stop` 后再次 `Start` 可复用已初始化的资源。
+- `Stop`：状态进入 `Stopping`，拒绝新操作，等待已接收的数据库或节点命令完成，再进入 `Stopped`。
+- `Shutdown`：停止操作后释放业务对象和数据库，回到 `Created`；重新运行需再次 `Init`。
+- `State` / `Health`：统一报告模块状态与初始化错误；公共 `/healthz` 同时返回会议模块的状态和错误码。
+
+`ServiceBase` 和 `ServiceManager` 编译到独立的 `packetia_service_core`，不依赖媒体库。
+生命周期方法在管理线程调用；业务操作继续在 API worker 上执行。操作计数的锁只用于准入和排空，
+执行数据库或 HTTP 请求时释放，不串行化全部业务调用。
+
+控制进程停止时先关闭模块准入并等待已开始的操作完成，然后停止 HTTP 接入、排空 HTTP worker，
+再停止账号和 EventLoop，最后调用 `ShutdownAll` 释放资源。旧路由即使继续持有模块，也只能收到
+`meeting_unavailable`（503），不会继续操作已关闭的数据库。该生命周期接口用于进程管理线程，
+不在网络 EventLoop 或房间 owner 上同步等待。
+
+以后台修改成员为例，完整链路为：
+
+```text
+POST /api/v1/rooms/participants/update
+  → RoomController：账号 session → MeetingModule：运行状态检查与操作计数
+  → RoomAdminService：持久房主校验
+  → Coordinator::FindRoom：读取 node_id / instance_id / assignment_id
+  → NodeCommandClient：HTTP POST 目标 SFU /internal/v1/rooms/command
+  → RoomControlController → WebRtcService::ControlRoom
+  → 有界 RoomControlChannel → 固定房间 owner → RoomSignalHandler::ApplyParticipantCommand
+  → Room::UpdateParticipant → 成员事件与通知
+  → promise 返回真实执行结果 → SFU HTTP 响应 → 控制进程 HTTP 响应
+```
+
+SQLite 的锁只覆盖事务；网络 EventLoop 负责接入和回包，HTTP 调用与同步结果等待位于 API worker。
+SFU owner 只执行本房间状态变更，不等待 HTTP；房间通知继续经既有信令响应通道回连接执行器发送。
+独立 SFU 使用 1 个网络执行器和 2 个房间 owner，媒体 worker 保持独立。
+
+### 公共接口与权限
+
+以下接口均为 POST，使用账号登录返回的 `Authorization: Bearer <session_token>`。
+公共后台管理当前要求数据库中的会议房主；WebSocket `roomAdmin` 是会内管理权限，两者分别检查。
+房主无需先建立 WebSocket 连接就能调用后台接口。
+
+| 路径 | 请求字段 | 行为 |
+| --- | --- | --- |
+| `/api/v1/rooms` | `{}` | 创建持久会议，返回 `room_id`，尚不创建媒体连接 |
+| `/api/v1/room-members` | `room_id`, `user_id`, `role` | 设置 `speaker` / `listener`，返回 `effective: next_join` |
+| `/api/v1/room-admissions` | `room_id` | 校验成员、分配节点、签发 60 秒 JWT，返回信令 URL 和三种路由标识 |
+| `/api/v1/rooms/participants` | `room_id`；可选 `limit`, `cursor`, `revision` | 有界成员分页，未分配节点的会议返回空列表 |
+| `/api/v1/rooms/participant` | `room_id`, `participant_id` | 查询指定在线或恢复等待中的成员 |
+| `/api/v1/rooms/participants/update` | `room_id`, `participant_id`；资料及 `permissions` 补丁 | 更新姓名、元数据、属性及会内权限，复用 WebSocket 的校验和媒体撤权清理 |
+| `/api/v1/rooms/participants/remove` | `room_id`, `participant_id` | 踢人，清理媒体和恢复凭据，通知在线连接 |
+| `/api/v1/rooms/end` | `room_id` | 停止准入、结束在线房间并回收节点容量，可重试 |
+
+持久角色决定**下一次新 join** 的初始权限；会内 `permissions` 更新只修改当前成员，立即生效。
+`resume` 保留原成员的会内有效权限，即使新的入房 JWT 因持久角色变更而带有不同 grants，
+也不会覆盖管理员提交的权限或重建成员。需要同时修改长期角色与当前权限时，调用各自接口。
+踢人只移除当前参与者，不删除持久成员资格；会议结束后该会议不能再签发入房凭证。
+
+### 房间绑定与回收
+
+三个标识各有用途：`node_id` 定位节点，`instance_id` 隔离节点进程重启，`assignment_id` 隔离同房间的新旧绑定。
+节点 JWT 和管理命令均携带这些信息；SFU 只接纳本节点、本进程和未退役的房间代次。
+
+- 准入预留绑定 90 秒，后续准入延长预留时间。心跳每轮返回至多 16 个回收候选；
+  节点必须先在 owner 上确认无成员（包括等待恢复的成员），封住旧代次后再向控制面确认释放。
+- 最后一人离开或被踢后，owner 退役该代次，由心跳报告释放。控制面收到确认后清除绑定，下一次准入生成新代次。
+  回收窗口内若拿到旧凭证而收到 `stale_assignment`，应重新申请准入，不重复使用旧 token。
+- 释放确认匹配完整节点、实例和房间代次；迟到释放不能清掉新绑定。退役记录覆盖尚未使用的短期 JWT，
+  等控制面确认且凭证保护期结束后删除；未确认记录有数量上限，满时拒绝新增以防无界增长。
+- 结束会议先持久化 `closing`，立即禁止准入；owner 清理后置 `ended`，释放节点和房主未结束会议额度。
+  HTTP 失败时保留 `closing`，可重试，也可由后续节点心跳继续清理。
+- 既有绑定不会因节点失联而自动迁移；控制进程重启保留会议、成员、绑定及退役实例。
+  旧数据库自动补列并生成绑定代次；升级前不带代次的节点 JWT 需要重新申请。
+
+### 内部连接配置与失败语义
+
+SFU 配置增加 `management_url`、`internal_listen_ip`、`internal_http_port`。
+本机模板使用 `http://127.0.0.1:19080` / `19081`，由控制面通过该地址发送命令；节点通过
+`PACKETIA_NODE_SECRET` 认证，控制进程在 `PACKETIA_NODE_SECRETS` 中配置对应密钥。
+省略管理 URL 仍可兼容原准入流程，但后台远程管理不可用。已有本地启动脚本为新增节点生成独立内部端口并检查冲突：
+
+```sh
+cmake --build build/webrtc-integration --target PacketiaControl PacketiaSfu -j6
+python3 scripts/run_cluster_local.py --build-dir build/webrtc-integration --nodes 2
+```
+
+owner 管理通道每个最多 64 条、4 MiB；单次等待最多 1 秒。HTTP 连接建立最多 500 ms，
+节点命令总请求最多 2 秒，响应最多 512 KiB；满队列、不可达或超时均返回错误。
+尚未开始且已取消的命令不会迟到执行；已经开始执行的操作可能在 HTTP 超时前后完成，
+当前没有通用命令去重和持久结果查询，不能把超时当作一定未执行，应查询当前状态后决定是否重试。
+控制进程停止顺序见上面的统一生命周期说明；SFU 仍先排空内部 HTTP worker，再结束心跳与 owner。
+
+相关验证入口：
+
+```sh
+ctest --test-dir build/webrtc-integration --output-on-failure \
+  -R '^(ServiceCoreUnitTest|MeetingModuleUnitTest|ClusterUnitTest|ClusterApiUnitTest|MeetingControlIntegrationTest|webrtc_control)$'
+```
+
+测试包含生命周期幂等、初始化失败回滚、停止期间拒绝新操作并排空已接收操作、重新初始化、
+旧 HTTP 路由的停止检查；以及假时钟的预留超时、旧库迁移、代次释放和额度恢复；真实 WebSocket 的后端撤权、
+最后一人踢出、媒体资源回收和排队命令超时；一控两 SFU 的管理转发、恢复权限、结束与控制面重启。
+未覆盖公网部署、容量压测、节点故障迁移和跨进程媒体恢复。
+
 ## 房间鉴权
 
 `service/Auth` 按 LiveKit 的职责划分实现：API key 查询签名密钥、JWT 验证可信声明、
@@ -622,14 +759,15 @@ Worker 忙碌率包含任务内锁等待，不等同于线程 CPU 使用率；�
 ```
 
 JWT 使用 `iss=API key`、`sub=用户身份`、`aud=packetia-webrtc`、`exp`，以及
-`video: {room, roomJoin, canPublish, canSubscribe}`。仅显式为 `true` 的权限允许执行；
+`video: {room, roomJoin, canPublish, canSubscribe, roomAdmin, canUpdateOwnMetadata}`。仅显式为 `true` 的权限允许执行；
 浏览器不能自报身份或通过更换后续消息里的 token 提升权限。旧的独立 `offer` 入口已关闭，
 须先 `join` 再 `publish/subscribe`；现有房间协商只支持专门的 `restart_ice` 恢复流程。
 
 `join`、`resume` 验证 JWT 有效期；已建立连接持续使用绑定权限，token 到期不会自动断流。
-恢复还需同一签发者、用户、房间、原权限和服务端生成的 `resume_token`，超过恢复窗口则重新入会。
-原 JWT 到期时先向业务签发端获取同身份、同房间、同权限的新 JWT；本版不在 SFU 自动刷新 token，
-也不提供权限热更新或撤销列表。TURN 长期凭据和 ICE 临时凭据各自独立。
+恢复还需同一签发者、用户、房间及房间绑定代次，以及服务端生成的 `resume_token`；超过恢复窗口则重新入会。
+原 JWT 到期时先向业务签发端获取同身份、同房间的新 JWT；本版不在 SFU 自动刷新 token。
+恢复使用服务端保存的会内有效权限，新 JWT 中的发布、订阅、管理及资料权限均不覆盖现有成员。
+暂不提供 JWT 撤销列表。TURN 长期凭据和 ICE 临时凭据各自独立。
 
 服务端配置 `webrtc.api_keys` 或成对设置环境变量；secret 至少 32 字节，永远不发给浏览器。
 旧 `webrtc.token` / `PACKETIA_WEBRTC_TOKEN` 会返回迁移错误。
@@ -644,7 +782,61 @@ python3 tools/create_room_token.py --identity bob --room demo --can-subscribe
 两次输出分别是发布者和观众的 JWT。签发工具在可信业务后端运行；线上由登录/入会接口
 决定 identity、room 和权限，再通过 HTTPS 返回 token；信令经反向代理配置 WSS，
 当前本地示例仍为 WS，不代表已接入原生 WSS 监听。具体声明、配置、信令格式和限制见
-[鉴权模块说明](service/Auth/README.md)。
+[鉴权模块说明](#房间鉴权)。
+
+### 会议成员管理
+
+以下 WebSocket 接口已接入 `RoomSignalHandler`，统一在房间 owner 上处理。`join`、`resume`
+回复保留原字段，增加自己的 `participant` 快照及成员 `revision`；查询包含断线恢复中的成员。
+
+| 请求 `type` | 参数 | 返回 `type` / 授权 |
+| --- | --- | --- |
+| `join` | `room_id`, `token`；可选 `name`, `metadata`, `attributes` | `joined`；附带资料时需自改资料权限 |
+| `leave` | 无 | `closed`；清理成员、媒体及恢复凭据，连接仍可重新入会 |
+| `participants` | 可选 `limit`（默认 20，1..100）、`cursor`, `revision` | `participants`；房间内成员均可查询 |
+| `participant` | `participant_id` | `participant`；只查询当前房间 |
+| `update_participant` | 可选 `participant_id`（默认自己），以及资料或 `permissions` 补丁 | `participant_updated`；修改自己需 `canUpdateOwnMetadata` 或 `roomAdmin`，修改他人或任何权限需 `roomAdmin` |
+| `remove_participant` / `kick` | `participant_id` | `participant_removed`；需 `roomAdmin`，移除自己请用 `leave` |
+
+成员快照包含 `participant_id`、`subject_id`、`name`、`state`、`metadata`、`attributes` 和 `permissions`，
+不包含连接标识、JWT 或恢复凭据。资料及权限请求全部校验后才提交，省略字段保留原值。
+姓名最多 256 字节，元数据是最多 4096 字节的字符串；属性按键合并，`null` 删除键，空字符串保留。
+最终属性最多 32 项，键 1..64 字节、值最多 512 字节，键和值合计最多 8192 字节。
+
+```json
+{"type":"update_participant","name":"Alice","metadata":"{\"department\":\"media\"}","attributes":{"team":"audio","old_key":null}}
+```
+
+```json
+{"type":"update_participant","participant_id":"p-...","permissions":{"can_publish":false,"can_subscribe":true,"can_update_own_metadata":true,"room_admin":false}}
+```
+
+权限撤销立即检查现有媒体角色，停止失去授权的发布或订阅会话，释放端点、转发关系及 UDP 路由；
+成员仍留在房间。被修改的在线成员收到 `permissions_changed`，其中 `media_stopped` 指示是否需关闭本地媒体连接。
+重连不会借旧 JWT 恢复已撤销权限。踢人同时清理媒体和恢复凭据，在线客户端收到 `removed` 后限时关闭连接，
+应停止自动恢复。踢人是移除本次入会，不是永久封禁；有效入房 JWT 仍可发起全新入会。
+
+`Room` 将入会、离会、资料及恢复状态变化发布为 `ParticipantChangedEvent`。
+信令订阅 Bus 后仅维护最新版本槽，在 Tick 中合并发送 `participants_changed {room_id, revision}`；
+客户端收到后重新查询。通知使用现有有界响应通道，首条响应先于通知，慢客户端不会无限堆积成员快照。
+成员分页还按 JSON 编码字节数限制页面大小，实际返回人数可能小于 `limit`。
+后续页必须带上一页的 `next_cursor` 和同一个 `revision`；`next_cursor` 为空表示结束。
+期间发生变更会返回 `code=snapshot_changed`，客户端应丢弃已收集页面并重新查询。
+版本属于当前房间实例，重新入会后应重新获取成员快照。
+
+控制服务签发的房间创建者 JWT 带 `roomAdmin=true`，普通成员不带管理权限；
+控制入口和本机开发示例均显式允许修改自己的资料。单进程部署可在可信后端签发：
+
+```sh
+python3 tools/create_room_token.py --identity owner --room demo --room-admin --can-publish --can-subscribe --can-update-own-metadata
+```
+
+浏览器示例已分流新通知，并通过 `window.demo.listParticipants()`、`getParticipant(id)`、
+`updateParticipant(patch, id)`、`removeParticipant(id)` 提供调用入口；示例签发器不会授予房间管理权限。
+这些更新目前只作用于 SFU 进程内的本次成员生命周期，不持久化到账号、控制服务成员表或下一次入会凭证。
+
+相关回归：`webrtc_members`（真实 WebSocket、媒体资源及 Bus）、`AuthFrameworkUnitTest`、
+`ClusterUnitTest` 和 `ClusterApiUnitTest`。浏览器页面操作、公网并发与容量仍需单独验证。
 
 ## RTP 协议规范
 
@@ -992,6 +1184,164 @@ IPv6 默认 ACL 同样拒绝回环、ULA、链路本地、组播及映射/兼容
 TURN 测试覆盖四种接入/中继地址族组合的真实 UDP 转发、通道、权限到期和资源释放。
 SFU 的双栈监听与双地址 SDP 候选发布尚未在这一功能中实现。
 
+## 媒体层结构与命名
+
+媒体层以发布源和转发关系为中心，分开保存源描述、发布元数据和消费关系。
+目录统一使用小写，生产文件使用 PascalCase，测试使用 `tests/test_snake_case.cpp`；
+类与头文件名称对应，拆分实现时增加职责后缀。CMake 显式维护质量模块源列表，避免新增文件被隐式编入目标。
+
+| 目录 | 主要职责 |
+| --- | --- |
+| `media/types/` | 媒体类型、编码身份及进程内 `MediaTrackRef` |
+| `media/track/` | 通用源描述、发布信息值快照及线程安全存储 |
+| `media/core/` | 流生命周期、全局目录、受管理消费句柄和事件总线 |
+| `media/frame/` | 帧类型、编码帧发布接口与路由；包含 `EncodedFrameRouterBinding.cpp` |
+| `media/endpoint/`、`media/transport/` | 现有协议相关收发运行时与传输适配 |
+| `media/factory/` | 现有 RTP 发送轨道工厂 |
+| `media/codec/`、`media/quality/`、`media/stats/` | 编解码、质量控制和统计；BWE 文件统一为 PascalCase |
+| `media/tests/`、`media/quality/tests/` | 核心与质量模块测试 |
+| `Rtsp/Rtp/` | RTSP/WebRTC 复用的 RTP 参数与 SDP 适配 |
+| `Room/` | 房间成员、权限、发布订阅关系，以及房间业务事件 |
+
+| 类型 | 原名称 | 含义 |
+| --- | --- | --- |
+| `MediaTrackDescription` | `MediaStreamTrack` | 协议无关的源描述：轨道 ID、类型、编码、音频采样率/声道与源引用 |
+| `TrackPublicationInfo` | `TrackMetadata` | 发布信息值快照，包含业务 ID、名称、静音等元数据 |
+| `TrackPublication` | `MediaTrack` | 加锁存储和更新发布信息，不表示媒体接收器已经就绪 |
+| `TrackPublicationPtr` | `MediaTrackPtr` | 发布信息对象的共享引用 |
+| `MediaTrackSubscription` | `MediaTrackConsumer` | 某个消费者到源轨道的关系句柄及投递闸门 |
+
+`TrackPublicationInfo` 为兼容现有信令保留 MID、CID、编码层等字段，不能用作内核注册的通用源描述。
+`MediaStreamRegistry` 的 `AttachConsumer`、`SetConsumerPaused`、`DetachConsumer` 仍描述消费者操作，
+句柄使用 `MediaTrackSubscription`。房间业务订阅与内核消费关系分别管理权限意图和实际投递，二者不互相替代。
+
+`packetia_media_core` 编译 `core/` 与 `frame/`，依赖基础类型、共享内存和线程库；
+`media` 是包含协议适配的聚合目标。独立录制、混流和转码构建可直接编译
+`frame/EncodedFrameRouter.cpp`；需要注册表的订阅重载单独放在 `EncodedFrameRouterBinding.cpp`，
+不把全局目录依赖带入基础帧路由实现。
+
+`Room/TrackPublicationEvent.h` 定义 `room::TrackPublicationSnapshot`、`room::TrackPublishedEvent`
+和 `room::TrackUnpublishedEvent`，继续复用 `media::EventBus`。总线同步传播已提交结果，
+跨线程消费者复制值快照并投递到所属执行器；注册表锁和房间锁不覆盖网络 I/O 或业务回调。
+
+发布与响应链路为：
+
+```text
+WebSocket → WsSignalGateway → 请求通道 → 房间 owner / RoomSignalHandler
+  → WebRtcSession 协商 → 注册 MediaStream → Room::PublishTrack
+  → 房间 TrackPublishedEvent → Bus 更新版本槽
+  → Answer → 响应通道 → 连接执行器 → WebSocket
+  → 后续 owner Tick → tracks_changed → 同一响应出口 → 客户端刷新轨道列表
+```
+
+当前采用 UTF-8、LF、四空格缩进与 Allman 大括号风格；本轮整理不新增编辑器格式配置文件。
+新增或移动文件时需同步维护引用、CMake、独立构建及文档；改名不改变客户端信令字段。
+
+## 统一发布流注册
+
+RTSP 和 WebRTC 的发布流统一进入进程内 `MediaStreamRegistry`。`Room` 继续管理成员、权限和
+发布/订阅关系，协议适配层继续持有 SDP、MID、PT、SSRC 等参数；注册表不处理协议协商或媒体包。
+
+```text
+RTSP ANNOUNCE/SETUP ── RtspMediaSession ──┐
+                                        ├─ MediaStreamRegistry → MediaStream → 通用轨道及 Endpoint 绑定
+WebRTC publish ── RoomSignalHandler ──────┘
+                         └─ Room/Participant → TrackPublicationInfo.media_track
+```
+
+- `scope + name` 定位逻辑流，采用分层索引，不拼接路径。RTSP 保留空 scope 和原 URL suffix；
+  WebRTC 使用房间 ID 作为 scope、参与者 ID 作为 name。不同协议不能抢占同一个逻辑流。
+- `MediaStream::Source` 保存协议、作用域和发布者信息。`stream_id` 是本次发布的进程内唯一实例 ID，
+  取消发布后不复用；`MediaTrackRef {stream_id, track_id}` 定位流内轨道，`track_id = 0` 有效。
+- `MediaStream::ReplaceTracks` 为每条 `MediaTrackDescription.ref` 自动赋值；复制描述到新发布流时重新生成引用。
+  消费端使用源轨道的 `ref`，无需自行拼接标识或注册另一份源轨道。
+- WebRTC 轨道 ID 使用 Endpoint 分配的稳定索引，房间业务轨道通过 `TrackPublicationInfo.media_track`
+  引用它。RTSP/WebRTC 产生的编码帧携带 `source.media_stream_id` 和 `source.track_id`，
+  可回查相同的内核轨道；原有字符串来源标识保留。
+- `FindById`、`FindByName(name, scope)` 查询流，`FindTrack(ref)` 返回通用描述、Endpoint ID、
+  可用性状态和消费关系快照；`GetSnapshot()` 同时枚举注册流和全局轨道。快照返回后可能过期，
+  不能替代 owner 上的操作前检查。
+- `Events()` 发布 `StreamRegisteredEvent`、`StreamUnregisteredEvent`。事件带流快照及注册版本
+  `revision`，回调在注册表锁外同步执行；跨线程消费者须复制数据、投递到自己的执行器并处理通知乱序。
+  `MediaTrackStateEvent` 报告源轨道暂停、恢复及单轨道移除；整条源流移除通过 `StreamUnregisteredEvent` 报告。
+  `revision` 跟踪目录和显式轨道可用性变化，不覆盖消费关系及其暂停状态、所有业务状态或首帧到达。
+
+WebRTC 发布在房间 owner 上建立轨道描述与 Endpoint 绑定、启动媒体并注册，再登记房间发布关系；
+失败走原有回滚，先停止传输和 Endpoint，再按对象身份注销。只加入会议或订阅不会新增发布流。
+信令断连等待恢复、成功 resume 和 ICE restart 保留流实例；取消发布、离会、恢复到期及停服回收实例。
+RTSP 保留原有的接入线程和释放顺序；各协议 owner 负责生命周期，其他模块通过快照和事件观察。
+显式 `Clear()` 用于协议资源停止后的统一清理；注册表析构只关闭残留流，不调用业务订阅者。
+
+后续协议可复用 `MediaStream` 的通用轨道描述、注册、Endpoint 绑定及注销接口，无需构造 SDP。
+当前接通 RTSP/WebRTC 发布注册框架、受管理消费关系以及进程内轨道控制接口；
+RTMP/SRT 媒体接入、跨协议输出、在线新增轨道和跨 SFU 节点目录尚未实现。
+媒体热路径不查询注册表，也不会通过全局锁串行转发。
+
+### 全局轨道引用与消费关系
+
+源轨道只注册一次，消费者保存 `MediaTrackSubscription` 句柄。注册表以弱引用记录消费关系，
+每条轨道最多 4096 个存活句柄；句柄释放或 `Close()` 后关系失效，过期索引在下次建立关系时清理。
+
+```cpp
+auto& registry = media::MediaStreamRegistry::Instance();
+const auto ref = stream->GetTracks().front().ref;
+auto consumer = registry.AttachConsumer(ref, "recorder");
+if (consumer && consumer->CanDeliver()) {
+    // 交给自己的有界、非阻塞处理入口。
+}
+registry.SetTrackPaused(ref, true);                 // 暂停该源的所有受管理消费
+registry.SetTrackPaused(ref, false);                // 恢复，不重建关系
+if (consumer) registry.SetConsumerPaused(consumer->Id(), true); // 仅暂停此消费者
+if (consumer) registry.DetachConsumer(consumer->Id());         // 解除此关系
+registry.RemoveTrack(ref);                         // 撤销此源轨道及其消费关系
+```
+
+- 源状态是 `Open / Paused / Closed`，消费者另有自己的暂停状态。源恢复不会覆盖消费者的暂停设置。
+- `RemoveTrack`、流 `Remove` 和 `Clear` 先关闭原子闸门，再于管理器锁外调用消费端的 `on_close`；
+  关闭不可逆，旧句柄和旧回调不会重新绑定同名新发布。析构只关闭闸门，不调用业务回调。
+- 闸门阻止后续投递，不等待已进入发送器、网络队列或业务队列的工作；队列取消与排空仍由消费者负责。
+  `on_close` 必须非阻塞，通常只投递到消费者 owner；投递失败时闸门仍关闭，资源回收由 owner 的后续检查或 Stop 兜底。
+- 房间 RTP 订阅已接入：`Room::SubscribeTrack` 引用业务轨道的 `media_track`，源和目标执行器继续使用现有模型。
+  发送出口同时检查闸门，覆盖普通 RTP、缓存重传及发送器 RTCP；暂停不会销毁发送器及重传缓存。
+- WebRTC owner 用一个脏标志合并全局事件，在 `Tick` 中核对当前源实例：单轨道移除调用房间取消发布、
+  解除下行并移除接收器，随后产生原有 `tracks_changed` 通知；最后一条轨道或整条流移除后关闭该媒体会话，保留会议成员。
+- 管理器不直接关闭协议连接，也不修改房间权限。RTSP 尚未接入这套动态单轨道控制的 owner 清理；
+  其他协议或业务服务必须显式承接通知。当前没有新增面向客户端或跨节点的轨道控制 API。
+
+### 按流与轨道订阅编码帧
+
+`EncodedFrameRouter` 已归入 `packetia_media_core`，不依赖 RTP、SDP、房间或协议传输。
+录制、AI 等现有全量订阅仍可使用 `Subscribe(sink)`；已知发布实例的业务可以直接订阅流或轨道：
+
+```cpp
+auto& registry = media::MediaStreamRegistry::Instance();
+const auto track = registry.FindTrack({stream_id, track_id});
+if (track) {
+    const auto id = router->Subscribe(sink, track->description.ref, registry, "recording");
+    // 业务结束时保存并退订该 id：router->Unsubscribe(id)。
+}
+```
+
+- `ForStream(stream_id)` 选择本次发布的全部轨道，`ForTrack(ref)` 选择一条轨道；流 ID 必须非零，
+  轨道 0 有效。同名重发产生新流 ID，旧订阅不会自动跟随。订阅者须自行持有 sink 的共享引用。
+- `EncodedFrameFilter` 可同时约束内核流 ID、Endpoint、轨道、原有 session/stream 字符串和 SSRC，
+  各条件按 AND 匹配。单独的流内轨道编号不足以订阅，必须同时指定发布实例或 Endpoint。
+- 控制操作串行构建不可变路由快照，发布帧时只读取该快照和匹配索引桶，不逐帧复制订阅列表，
+  不获取注册表锁或路由写锁；编码帧仍共享只读存储。该设计不意味着所有操作都无锁或已经完成性能压测。
+- `Dispatch(event)` 返回 `accepted`、`rejected`、`failed`：分别表示消费者接收、业务拒绝/队列背压、
+  消费者抛出异常。异常不阻断其他消费者，路由器不重试或增加缓存。`Publish(event)` 保留原接收数量返回值。
+- 分发仍在发布者线程同步调用，多个媒体 worker 可并发回调同一 sink，不提供跨线程到达顺序保证。
+  消费者应迅速投递到自己的有界队列；退订不等待已开始的回调，关闭入口和排空队列仍由消费者负责。
+
+转码任务已将输入条件交给路由器筛选；`TranscodeSource.media_stream_id` 非零时额外绑定内核发布实例，
+原有 Endpoint/轨道匹配规则保留。输出投递异常由转码、混流任务依据 `Dispatch` 结果处理。
+验证链路包括注册表轨道引用 → 真实 H264 RTP 分片乱序组帧 → 指定轨道路由 → 有界转码队列 → worker 编码输出。
+
+上面的受管理订阅跟随源暂停、恢复和关闭；可传入非阻塞 `on_close` 回调通知业务服务，主动退订后不再通知。
+关闭后的槽位停止投递，路由控制操作会回收失效快照条目。原有 `Subscribe(sink)` 和纯 filter 重载保持独立，
+不会隐式绑定注册表；录制、转码等现有旧接口也不会自动停止任务或取消已排队的工作。
+编码帧订阅不替代房间权限校验，也不替代直接 RTP 转发。
+
 ## 参与者与连接数据结构
 
 `Room` 管理房间成员和跨参与者的轨道转发关系；`Participant` 管理一个参会者的身份、
@@ -1010,12 +1360,12 @@ SFU 的双栈监听与双地址 SDP 候选发布尚未在这一功能中实现�
 `BindSignaling` 每次绑定都会增加代数；`UnbindSignaling` 同时匹配连接 ID 和代数，
 避免旧连接的迟到关闭通知清除新绑定。解绑信令不等于离开房间。
 
-`RoomTypes.h`、`RoomCommand.h`、`ParticipantTypes.h` 和 `media/track/TrackMetadata.h`
+`RoomTypes.h`、`RoomCommand.h`、`ParticipantTypes.h` 和 `media/track/TrackPublicationInfo.h`
 分别定义房间描述、业务命令、参与者描述和轨道元数据；对象接口通过前置声明引用实现。
-`MediaTrack.h` 定义轨道对象，调用方按需包含 `TrackMetadata.h` 或 `MediaTrackFwd.h`。
-通用轨道描述保留在 `media/track`，RTP/SDP 参数转换位于 `media/rtp`，目录职责见
-[媒体模块说明](media/README.md)。房间模型的详细边界见
-[房间模型与资源归属](Room/README.md)。
+`TrackPublication.h` 定义轨道对象，调用方按需包含 `TrackPublicationInfo.h` 或 `TrackPublicationFwd.h`。
+通用轨道描述保留在 `media/track`，RTP/SDP 参数转换位于 `Rtsp/Rtp`，目录职责见
+[RTP 参数与 SDP 适配](#媒体层结构与命名)。房间模型的详细边界见
+[房间模型与资源归属](#参与者与连接数据结构)。
 
 媒体创建成功后，服务层创建 `ParticipantSession` 绑定，并通过 `BindPublishSession` 或
 `BindSubscribeSession` 交给参与者。两个角色分别持有端点，同一角色不允许覆盖；房间发布和
@@ -1034,6 +1384,21 @@ SFU 的双栈监听与双地址 SDP 候选发布尚未在这一功能中实现�
 主动离开或恢复超时才移除房间成员。当前仍使用单条发布或订阅连接。
 `subject_id` 来自已验证 JWT 的 `sub`；显示名称来自签名声明，操作权限由成员绑定的鉴权上下文决定。
 
+### WebRTC 房间 owner
+
+`WebRtcService::Start` 选定网络执行器，将其余 I/O 调度器用作房间 owner；只有一个调度器时复用它。
+`SignalSessionCoordinator::SelectOwner` 根据房间 ID 选择固定 owner。同一房间的入会、成员更新、
+发布订阅、通知和清理在该 owner 上串行推进；多个房间可能共享一个 owner，不为每个房间创建线程。
+
+`RoomOwner` 组合执行器、`RoomSignalHandler`、所属统计及有界管理通道；
+`RoomCapacity` 共享服务级人数和媒体额度，避免分片后放大会话上限。
+信令请求经通道转给房间 owner，响应回连接执行器统一发送；共享 UDP 入站按当前路由投递，
+出站经 `UdpSendQueue` 回网络执行器发送，迟到数据检查连接或路由代次。
+
+网络 owner 不等待房间业务或数据库；媒体处理继续由现有 MediaWorker 执行。
+停止时先取消接入和信令任务，再清理各房间及媒体关系，最后取消发送并关闭 UDP 和网络资源。
+不同 owner 的房间可以独立推进，但共享网络出口和媒体资源仍可能成为容量瓶颈，需要单独压测。
+
 ### 信令恢复与 ICE restart
 
 `webrtc.reconnect_timeout_ms` 默认 15000，允许配置 1..120000 毫秒。断开的参与者仍计入
@@ -1046,11 +1411,11 @@ WebSocket 建连后须在 `webrtc.admission_timeout_ms` 内成功 join 或 resum
 控制底层 WebSocket 探测与无有效接收超时，超时关闭后才开始参与者恢复窗口。
 服务端超时通知使用默认 250 毫秒的限时排空，慢客户端到期强制断开。
 接入与恢复计数、处理耗时及实时状态可通过 `WebRtcService::GetStats()` 查询；
-队列排空结果通过 `WsServer::GetStats()` 查询。详见[信令生命周期](docs/signaling-lifecycle.md)。
+队列排空结果通过 `WsServer::GetStats()` 查询。详见[信令生命周期](#信令恢复与-ice-restart)。
 
 加入房间的 `joined` 回复增加 `resume_token` 和 `reconnect_timeout_ms`。恢复凭据是服务端生成的
 256 位随机值，只对应当前房间中的当前参与者，不由参与者 ID 推导；客户端须同时提供仍有效、
-身份和权限与原成员匹配的房间 JWT。凭据保存在客户端内存中，线上经反向代理提供 WSS，
+身份、房间和绑定代次与原成员匹配的房间 JWT。凭据保存在客户端内存中，线上经反向代理提供 WSS，
 不放在 URL 或日志里。
 
 新 WebSocket 建连后发送：
@@ -1065,7 +1430,7 @@ WebSocket 建连后须在 `webrtc.admission_timeout_ms` 内成功 join 或 resum
 }
 ```
 
-服务端校验 JWT 身份与权限、房间、恢复凭据、断线状态和截止时间，再把成员及会话索引迁移到新连接，增加信令绑定代数。
+服务端校验 JWT 身份、入房授权、房间绑定代次、恢复凭据、断线状态和截止时间，再把成员及会话索引迁移到新连接，增加信令绑定代数。
 `resumed` 回复的 `ice_restart` 表示是否存在需要恢复的媒体连接。仍在线的参与者不能被新连接接管；
 错误凭据、跨房间恢复、主动离开后的恢复和过期恢复都会拒绝。恢复凭据在参与者离开时失效。
 
@@ -1082,7 +1447,7 @@ WebSocket 建连后须在 `webrtc.admission_timeout_ms` 内成功 join 或 resum
 核心 C++ 已接通 `WebRtcSession → WebRtcMediaTransport → SendSideController` 的路径状态通知：
 restart 等待期间禁用发送控制；新路径可用后清除旧反馈历史和带宽估计，保留 TWCC 分配器及会话身份。
 同代次地址重绑定也触发路径更新，重复提名不重复重置；旧路径排队的发送任务按 epoch 作废。
-阅读顺序、测试边界与关键帧/统计的后续任务见[服务端切网恢复框架](docs/network-handover-framework.md)。
+阅读顺序、测试边界与关键帧/统计的后续任务见[服务端切网恢复框架](#信令恢复与-ice-restart)。
 
 `examples/webrtc-room` 自动重连信令，按指数退避重试恢复，再完成 ICE restart；ICE 状态变成 `failed`
 且信令仍在线时也会尝试 restart。恢复超时、已终止的媒体会话、页面刷新或服务端重启需要重新加入房间。
@@ -1113,7 +1478,7 @@ npm start
 打开 `http://127.0.0.1:18000`，两个浏览器使用相同房间名，A 选择 Publisher 后发布，
 B 选择 Viewer 并勾选 Force TURN 后订阅。启动器生成临时 API key/secret 与 TURN 凭证并启动 C++ 示例；
 回环地址的开发签发接口按角色生成各自 JWT，浏览器只在 join/resume 时携带 JWT。
-恢复时开发签发端提供同一身份和权限的新 JWT；生产签发端需要接入登录和房间授权。
+恢复时开发签发端提供同一身份和房间的新 JWT；生产签发端需要接入登录和房间授权。
 默认 WebSocket 18080、SFU UDP 19000、TURN UDP 13478，均用于本机演示。
 其他构建目录通过 `PACKETIA_ROOM_DEMO_BINARY` 指定二进制。
 示例 TURN 只允许转发至该 SFU 的回环媒体地址。
@@ -1161,9 +1526,9 @@ Apple M5 / macOS 26.5.1 上完成修改前后各 72 次试验，包含确定性�
 
 输出率包含注入的网络丢包。上述故障参数用于边界验证，尚未按真实业务网络分布校准；
 试验使用合成 RTP 数据，未测量视频冻结、完整转码/SFU 播放链路、公网表现或并发容量。
-策略与统计口径见[排序队列设计](docs/rtp-reorder-queue.md)，原始数据见
-[基线报告](docs/benchmarks/rtp-reorder-macos-2026-10-21/report.md)与
-[重同步后报告](docs/benchmarks/rtp-reorder-resync-macos-2026-10-21/report.md)。
+策略与统计口径见[排序队列设计](#rtp-接收排序与弱网恢复)，原始数据见
+基线报告（历史记录，报告文件未随仓库保留）与
+重同步后报告（历史记录，报告文件未随仓库保留）。
 
 在已配置 `BUILD_TESTING=ON` 的 macOS/Linux 构建目录复现：
 
@@ -1206,14 +1571,21 @@ SRTP 发送端允许重新保护缓存的原 RTP 序号及 payload，重传重�
 WebRTC 会话的 100 ms 定时器向媒体池投递恢复任务，停止收包后仍能推进重试与超时。
 
 业务可通过 `SetUpdateCallback` 消费控制输出。目前还没有实际 Pacer 和媒体码率策略执行，
-带宽算法测试通过不代表真实浏览器弱网质量已经验收。详见[丢包恢复说明](docs/weak-network.md)。
+带宽算法测试通过不代表真实浏览器弱网质量已经验收。详见[丢包恢复说明](#弱网与带宽控制)。
 
 ## 本轮验证
+
+2026-10-29 提交前验证（macOS）：当前 `build/webrtc-integration` 配置完整构建通过，包含
+`Packetia`、`PacketiaControl`、`PacketiaSfu` 和全部测试目标；**67/67 组 CTest 通过，无跳过**，
+总耗时约 104 秒。覆盖会议服务生命周期、鉴权、成员管理、控制面与双 SFU 集成、房间 owner、
+信令通道、全局轨道与编码帧路由，以及 RTP、WebRTC、TURN、网络、转码、混流和监控回归。
+修改的浏览器 JavaScript 和 Python 脚本通过语法检查，README 本地文件链接及暂存区 diff 格式检查通过。
+本次没有重跑真实浏览器媒体互通，也未进行公网、商业容量或长稳验证；构建仍有既有重复库链接警告。
 
 2026-10-23 服务端切网框架验证：`Packetia` 及相关测试目标构建成功，六个 CTest 入口通过，
 覆盖会话、媒体适配、发送控制、业务服务、DTLS/SRTP 和 UDP mux。
 核心已接通路径状态通知、旧估计重置和旧队列发送作废；恢复关键帧、耗时统计及真实手机切网仍待完成。
-改动清单、复现命令和验证边界见[2026-10-23 变更说明](docs/changes/2026-10-23.md)。
+改动清单、复现命令和验证边界见2026-10-23 变更说明（历史记录，报告文件未随仓库保留）。
 
 2026-10-21 多编码与接收恢复验证（Apple M5 / macOS 26.5.1）：完整构建成功，
 现有 `build/webrtc-integration` 配置下 **54/54 组 CTest 通过，无跳过**。
@@ -1221,7 +1593,7 @@ WebRTC 会话的 100 ms 定时器向媒体池投递恢复任务，停止收包�
 多编码测试覆盖五种输入各生成五种输出的 25 种组合。
 24 个队列用例和 23 个 H264 组帧/期限用例另有 ASan/UBSan 验证。
 本机 FFmpeg 未提供 libaom，相应候选尚未实测；软件计算验证不代表五种格式的浏览器互通或时延验收。
-完整改动与两轮弱网报告入口见[当天变更说明](docs/changes/2026-10-21.md)。
+完整改动与两轮弱网报告入口见当天变更说明（历史记录，报告文件未随仓库保留）。
 
 ```sh
 cmake --build build/webrtc-integration -j4
@@ -1233,7 +1605,7 @@ ctest --test-dir build/webrtc-integration --output-on-failure --timeout 120
 2026-10-15 控制服务与 SFU 拆分验证（macOS）：`PacketiaControl`、`PacketiaSfu` 和原 `Packetia`
 均编译通过；13 个相关 CTest 入口通过，包含一控两 SFU 的真实进程故障测试及原有账号、鉴权、
 HTTP、WebRTC 回归。本地启动脚本连续启停两轮，账号与密钥正常保留。Docker Compose 配置已提供，
-当前环境无 Docker，尚未验证容器构建；复现命令与边界见[控制服务与 SFU 节点](docs/distributed-services.md)。
+当前环境无 Docker，尚未验证容器构建；复现命令与边界见[会议控制与节点调度](#会议控制与节点调度)。
 
 2026-10-15 C++ 账号业务验证（macOS）：`Packetia` 编译通过，
 `AccountBusinessUnitTest`、`AccountFrameworkUnitTest`、`AccountApiFrameworkUnitTest`、
@@ -1307,6 +1679,63 @@ build/webrtc-integration/Rtsp/Test/test_rtp_input \
 
 以下记录描述各次修改当时的状态；其中的待实现能力和限制可能已在后续完成，当前状态以上文为准。
 
+### 2026-10-29：媒体层目录与轨道命名统一
+
+- 区分源描述、发布信息对象和消费句柄，更新为 `MediaTrackDescription`、`TrackPublicationInfo`、`TrackPublication` 与 `MediaTrackSubscription`。
+- 将帧类型和编码帧路由集中到 `media/frame`，将质量测试统一为 `media/quality/tests`，规范 BWE 文件名和相关头文件保护宏。
+- 房间发布事件移至 `Room/TrackPublicationEvent.h` 与 `room` 命名空间；同步更新房间、信令、RTSP、录制、转码和混流引用。
+- 更新主工程与独立构建的 CMake 源文件和头文件路径；媒体层规范集中记录在本 README。
+- 目录命名检查覆盖 `media` 下 102 个 C++ 文件；三个主程序和 9 组相关 CTest 通过，独立转码 3 组、混流 1 组测试通过。
+- 尚未验证商业容量、长稳、公网部署或新增协议互通；这些结果不作为生产就绪结论。
+
+### 2026-10-29：全局轨道引用与消费控制
+
+- 源流为 `MediaTrackDescription.ref` 赋予进程内全局引用，描述克隆到新发布时更换实例身份；消费者不重复注册源轨道。
+- 注册表增加轨道索引、消费关系快照、源与单消费者暂停/恢复、解除消费、单轨道移除和可用性事件。
+- 消费句柄使用原子闸门与弱引用登记，关闭先停止后续投递，再于管理器锁外通知清理；每条源轨道限制 4096 个存活句柄。
+- 房间 RTP 订阅和受管理编码帧订阅接入控制；RTP 发送出口覆盖缓存重传，暂停保留发送器与消费关系。
+- 全局移除通过脏标志回到 WebRTC owner，在原有房间链路中清理接收器、订阅与媒体会话并通知客户端，成员身份保留。
+- 补充引用生成、未就绪拒绝、暂停隔离、关闭重入、容量限制、并发移除、真实 RTP/NACK 及 WebRTC owner 清理测试。
+- `Packetia`、`PacketiaControl`、`PacketiaSfu` 构建通过；媒体核心、RTP、RTSP UDP、WebRTC、转码、混流及流服务 7 组 CTest 全部通过。
+- RTSP 动态单轨道 owner 清理、旧全量帧订阅的任务联动、动态新增轨道、跨节点控制和容量压测仍未实现。
+
+### 2026-10-29：编码帧按流与轨道路由
+
+- 将编码帧路由归入 `packetia_media_core`，新增按发布实例、轨道或 Endpoint 等来源条件订阅，保留原有全量订阅。
+- 使用不可变路由快照和来源索引；逐帧分发不再复制全部订阅列表，不持有路由写锁调用消费者。
+- 新增接收、拒收、异常的投递结果，隔离消费者异常；退订使旧快照条目失效，已开始的回调仍由消费者入口和队列收尾。
+- 转码任务接入来源过滤和内核发布实例 ID；真实 RTP 分片乱序组帧经过指定轨道路由，完成 12 帧输入到两档共 24 帧输出的验证。
+- 清理已删除媒体测试的失效 CMake 引用，新增独立 `media_core` 测试；三个服务入口构建及 8 组相关 CTest 通过。
+- 未新增全局轨道控制命令、源注销自动停止业务、跨协议输出或容量压测。
+
+### 2026-10-29：统一发布流注册框架
+
+- RTSP/WebRTC 发布统一进入 `MediaStreamRegistry`，按 scope/name 查找逻辑流，按发布实例 ID 和流内轨道 ID 解析轨道及 Endpoint。
+- 补齐来源信息、全局值快照及注册/注销事件；房间业务轨道、编码帧关联同一内核发布实例，原有客户端信令字段保持不变。
+- WebRTC 发布失败、取消发布、离会、恢复到期及停服注销流，resume/ICE restart 保留实例；订阅不重复注册发布流。
+- 三个服务入口构建通过，9 组相关 CTest 通过，包含多 owner 注册并发、旧发布清理隔离、注册冲突回滚、RTSP UDP 收帧溯源和一控两 SFU 集成。
+- 本次仅打通进程内注册框架；未实现 RTMP/SRT 接入、跨协议输出、全局轨道控制命令或跨节点流目录，未新增浏览器、公网和容量验证。
+
+### 2026-10-29：会议控制面统一服务生命周期
+
+- 新增 `MeetingModule : ServiceBase`，内部组合会议业务、准入、管理和共享节点路由；`ControlApp` 将会议和监控注册到 `ServiceManager`。
+- 补齐 `ServiceBase` 生命周期实现和 `ServiceManager::MakeKey`，拆出独立的 `packetia_service_core`，新增 `ServiceType::Meeting`。
+- 公共会议和内部节点 API 均经过模块准入检查；停止时拒绝新操作，等待已接收操作完成，HTTP worker 排空后再释放数据库。
+- 数据库从构造阶段移至 `Init`，失败自动回滚；支持 `Stop → Start` 和 `Shutdown → Init → Start`，健康检查报告会议模块状态。
+- 三个运行入口构建通过，11 个相关 CTest 入口通过，包含生命周期失败回滚、停止排空、旧路由保护及一控两 SFU 集成；未新增公网或容量验证。
+
+### 2026-10-29：会议业务与节点调度拆分
+
+- 将混合的 `ClusterController` 拆为公共 `RoomController`、内部 `NodeController` 和 SFU 的 `RoomControlController`。
+- 抽出 `MeetingService`、`RoomAdmissionService`、`RoomAdminService`；`Coordinator` 只管理节点租约和房间绑定。
+- 后台成员管理经过目标 SFU 的有界 owner 通道，复用 WebSocket 的资料校验、撤权、媒体回收与通知。
+- 增加房间绑定代次、空房间回收与 `closing → ended` 流程；长期角色在下一次新入会生效，重连保留会内权限。
+- 修复后端踢出最后一人时房间索引被删除导致的悬空引用；覆盖排队命令超时和迟到回收隔离。
+- `Packetia`、`PacketiaControl`、`PacketiaSfu` 构建通过；9 个相关 CTest 入口全部通过，包含一控两 SFU 的真实进程测试。
+- 本地启动脚本验证可生成 64 个节点的不冲突端口配置；这不代表已完成 64 节点运行或容量测试。
+
+具体接口、线程归属、升级和失败语义见[会议控制与节点调度](#会议控制与节点调度)。
+
 ### 2026-10-23：服务端切网路径状态与媒体控制恢复
 
 将切网路径状态接入核心 C++ 源码，使 ICE restart 或地址重绑定后，发送控制能切换到新路径的状态。
@@ -1343,8 +1772,8 @@ git diff --check
 构建仍有既有重复库链接等警告。
 
 后续任务：恢复后的关键帧请求、路径恢复耗时统计、客户端有界重试及信令黑洞检测；异步发送历史仍需进一步
-对齐真实 socket 完成回执。阅读顺序及接入契约见[服务端切网恢复框架](docs/network-handover-framework.md)，
-完整清单见[当天变更说明](docs/changes/2026-10-23.md)。
+对齐真实 socket 完成回执。阅读顺序及接入契约见[服务端切网恢复框架](#信令恢复与-ice-restart)，
+完整清单见当天变更说明（历史记录，报告文件未随仓库保留）。
 
 本轮提交日志：
 
@@ -1367,7 +1796,7 @@ feat(webrtc): 接入服务端切网路径状态与媒体控制恢复
 - 完成修改前后各 72 次本机弱网试验，保留 CSV、JSONL、缓存采样及环境；完整构建和 54 组 CTest 通过。
 - 整理格式兼容规划、实际适配边界与验证数据；下一步优先打通转码输出的协议适配和播放链路。
 
-详细清单及实测结论见[2026-10-21 变更说明](docs/changes/2026-10-21.md)。
+详细清单及实测结论见2026-10-21 变更说明（历史记录，报告文件未随仓库保留）。
 
 ### 2026-10-14：HTTP 接入、API 路由与统一线程管理
 
@@ -2072,7 +2501,7 @@ RTCP SR
 - 补充序号回绕匹配、重复反馈过滤和断线状态重置。
 - 保留 TWCC 带宽估计，避免 RTT 更新额外改变目标码率。
 - 拆出 `media_quality` 库，明确发送轨与控制器的链接依赖。
-- 新增 8 个发送侧链路测试及[接入文档](media/quality/README.md)。
+- 新增 8 个发送侧链路测试及[接入文档](#弱网与带宽控制)。
 
 #### 验证情况
 
@@ -2088,7 +2517,7 @@ RTCP SR
 
 #### 本次完成
 
-- 将 SDP 媒体描述统一转换为现有 RTP Track 参数，现由 `media/rtp` 中的 `RtpStreamContext` 和 `SdpTrackBinding` 承接。
+- 将 SDP 媒体描述统一转换为现有 RTP Track 参数，现由 `Rtsp/Rtp` 中的 `RtpStreamContext` 和 `SdpTrackBinding` 承接。
 - 支持单个 `SfuEndpoint` 管理多条发布轨道，按 MID、SSRC 和轨道提示分流。
 - 将接收 Track 归属发布端点、发送 Track 归属订阅端点，通过工作线程投递完成跨端点转发。
 - 接通房间发布、订阅、取消订阅、取消发布和参与者退出的媒体生命周期。
@@ -2134,7 +2563,7 @@ RTCP SR
 - ICE 建立与存活超时仍共用配置；会话级 ICE restart、完整主动检查及真实浏览器互通仍待完善。
 - RTMP、AI 和公共服务生命周期尚未迁移至状态机组件。
 
-SFU 信令模块划分、线程与双向通道、失败回滚和测试记录见 [重构说明](docs/sfu-signaling-refactor.md)。
+SFU 信令模块划分、线程与双向通道、失败回滚和测试记录见 [重构说明](#媒体层结构与命名)。
 
 ### 2026-10-27 — 统一媒体参数分层、RTSP 鉴权与房间轨道事件
 
@@ -2154,8 +2583,8 @@ SFU 信令模块划分、线程与双向通道、失败回滚和测试记录见 
 - `RtspMediaSession` 保留 RTSP control、TCP channel 和接入生命周期职责；补齐重复发布拒绝、失败回滚、断连清理及 TEARDOWN 后下一次发布的资源边界。
 - SFU 端点通过通用编码帧发布接口对接帧路由，移除不再使用的 `Rtsp/Media.h`、`MediaSource.h`。
 - 新增 `media/types/MediaTypes.h`、`CodecNames.h`，统一媒体类型、编码身份、流向及编码名称别名，清理重复的基础枚举。
-- 业务轨道元信息统一为 `TrackMetadata`；`MediaTrack` 加锁读取并返回自有值，`MediaTrackFwd.h` 仅保留前置声明及共享句柄。
-- `MediaStreamTrack` 仅保存通用轨道 ID、媒体类型、编码及音频采样率/声道，不再混入 PT、RTP 时钟和头扩展编号。
+- 业务轨道元信息统一为 `TrackPublicationInfo`；`TrackPublication` 加锁读取并返回自有值，`TrackPublicationFwd.h` 仅保留前置声明及共享句柄。
+- `MediaTrackDescription` 仅保存通用轨道 ID、媒体类型、编码及音频采样率/声道，不再混入 PT、RTP 时钟和头扩展编号。
 - `media/rtp` 拆分纯数据 `RtpStreamContext`、候选选择/通用描述转换 `RtpTrackBinding` 和 SDP 适配 `SdpTrackBinding`。
 - 新增 `Rtsp/RtpTrackAdapter`，将选中的 RTP 参数转换为旧接收器所需的 `::TrackInfo`，将兼容代码留在协议适配层。
 - RTSP 的 SDP 一次解析为只读 RTP 快照，只保存选中 payload 的索引；通用轨道和旧接收器参数均从同一份选择派生，避免重复参数表漂移。
@@ -2194,7 +2623,7 @@ WebRTC 发布请求
 - Bus 本身不切换线程、不排队重放事件；异步消费者必须复制事件数据并投递到所属执行器。
 - 房间和 Endpoint 的直接调用继续保证路由清理顺序，Bus 传播结果，不依赖订阅者顺序完成必需清理。
 
-实现细节见[媒体模块边界](media/README.md)和[房间信令与轨道事件](server/signaling/README.md)。
+现有目录职责见[RTP 参数与 SDP 适配](#媒体层结构与命名)和[房间信令与轨道事件](#媒体层结构与命名)。
 
 #### 验证情况
 
@@ -2214,3 +2643,41 @@ WebRTC 发布请求
 - 轨道级 Open/Closing/Closed、订阅意图与重试、动态权限、静音转发控制、通用 MediaStream/RTSP 流状态事件尚未接入。
 - `MediaStatsCore` 的 RTP/RTCP/帧事件处理仍为空实现，接口隔离不等于已经接通实时统计。
 - 本次未新增 RTMP/SRT 接入或跨协议输出，也未引入 RTX、simulcast 层选择或新的拥塞控制算法。
+
+### 2026-10-28 — 将 RTP 参数与 SDP 适配移回协议目录
+
+- 将 `RtpStreamContext`、`RtpTrackBinding`、`SdpTrackBinding` 共 5 个文件从 `media/rtp` 迁入现有 `Rtsp/Rtp`。
+- 在 `Rtsp/Rtp/CMakeLists.txt` 定义 `packetia_rtp_binding`、`packetia_sdp_rtp_adapter`，替代前一日的 `packetia_media_rtp`、`packetia_sdp_media_adapter`。
+- 同步调整头文件搜索目录、媒体端点及参数测试的目标依赖；保留短名称 include 和原有调用接口。
+- 通用轨道仍位于 `media/track`，RTP/SDP 转换供 RTSP 与 WebRTC 复用；共享传输抽象继续位于 `media/transport`。
+- 仅整理目录和构建归属，不修改协商参数选择、轨道 ID 或媒体处理算法。
+- 验证：`Packetia`、`PacketiaControl`、`PacketiaSfu` 构建通过；`media_parameters`、`test_rtp_input`、`test_udp_binding`、`webrtc_service` 共 4 组 CTest 通过。纯 RTP 选择实现仅使用协议目录及通用媒体头文件即可独立语法编译。
+
+### 2026-10-28 — 留在会议中停止媒体并重新发起
+
+- 新增 `unpublish` / `unsubscribe` 信令，停止整个当前发布或订阅媒体会话，保留参与者、房间、信令连接和恢复凭据；可在同一次入房后重新发布或订阅。
+- 请求必须携带媒体 Answer 中的正整数 `session_id`，并通过对应权限、当前编号和媒体角色检查。重复停止在没有当前媒体时返回 `changed:false`；已有新媒体时拒绝旧编号，避免误清理。
+- 复用 `RemoveMediaSession`，在服务 owner 执行器回收轨道/路由、Participant 媒体绑定、RTC、传输、UDP mux 登记及 Endpoint。停止发布通过现有 Bus 推送 `tracks_changed`；响应沿原通道串行发送。
+- 示例页面增加 Stop publishing / Stop watching，确认后关闭 PeerConnection，发布端释放摄像头与麦克风。补充无媒体恢复及旧连接候选/统计回调的过滤。
+- 真实 WebSocket 集成测试覆盖权限与参数拒绝、角色检查、重复停止、旧编号保护、资源及下游路由回收、移除/重发通知、重新订阅和停止媒体后的身份恢复。
+- 验证：`Packetia`、`PacketiaControl`、`PacketiaSfu` 构建通过；`webrtc_service`、`signal_channel` 两组 CTest 通过；页面及浏览器回归脚本的 `node --check`、`git diff --check` 通过。
+- 浏览器回归脚本已补充停止/重建流程，但未运行媒体互通：当前源码缺少可选的 `server/examples/WebRtcRoomDemo.cpp`，无法重建对应演示服务。未验证公网和容量。
+- 当前仍为每连接一个媒体会话，操作作用于整会话；源轨道重发后，观看端需显式停止旧订阅并重新订阅，不自动恢复路由。协议详情见[房间信令说明](#媒体层结构与命名)。
+
+### 2026-10-29 — WebRTC 房间固定 owner
+
+- 根据房间 ID 固定分配执行器，同一房间的成员、协商、发布、订阅和清理串行处理；不同 owner 的房间可独立推进。
+- 网络执行器保留 WebSocket 和一个共享 UDP 端口；信令、通知和数据报通过异步通道跨 owner 转发。
+- 异步请求完成前保留预算并暂停下一条请求，保证同连接离房后跨 owner 入房的顺序；成员和媒体会话额度仍按全服务限制。
+- 增加 UDP 队列与旧路由代次过滤；执行器拒收断连清理时由 Tick 重试，停服按接入、房间、网络顺序回收。
+- 原 `Packetia` 入口配置 `server.io_threads: 3` 可使用 1 个网络执行器和 2 个房间 owner；独立 `PacketiaSfu` 入口当前仍为单 I/O 线程。
+- `Packetia`、`PacketiaControl`、`PacketiaSfu` 构建通过；`server_app`、`test_datagram_transport`、`webrtc_service`、`signal_channel` 共 4 组 CTest 全部通过，`git diff --check` 通过。
+- 未重新验证浏览器媒体、公网或容量；线程模型、实际文件和调用链见[房间 owner 说明](#webrtc-房间-owner)。
+
+### 2026-10-29 — 分离通用队列与 UDP 发送职责
+
+- 将通用排队、预算、门控和异步完成机制提取到 `utils/BoundedChannel.h`；`SignalChannel` 保留信令接口与首响通知顺序。
+- 新增 `network/transport/UdpSendQueue`，队列保存目标地址、独立缓冲区与传输弱引用；网络执行器负责实际发送。
+- `WebRtcService::Start` 只组装发送队列和 UDP mux；UDP 入站任务也改用公共队列，移除对信令队列的依赖。
+- UDP 默认 4 MiB / 4096 条限制集中定义，原有预算、关闭检查及排队顺序保持；新增真实 UDP 缓冲区、背压和取消回归。
+- 验证：三个运行入口与相关测试构建成功，`server_app`、`test_datagram_transport`、`webrtc_service`、`signal_channel` 共 4 组 CTest 通过；公共队列独立语法编译及 `git diff --check` 通过。

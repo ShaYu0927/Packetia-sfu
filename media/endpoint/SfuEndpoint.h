@@ -59,7 +59,7 @@ public:
     bool ConfigureSubscription(const std::string& id, const rtsp::RtpSenderTrackConfig& config,
                                std::shared_ptr<IMediaTransport> transport, CodecId codec);
     bool Subscribe(const std::string& id, const std::shared_ptr<SfuEndpoint>& source,
-                   const std::string& source_track_id);
+                   const std::string& source_track_id, MediaTrackRef track = {});
     bool Unsubscribe(const std::string& id);
 
     void OnRtp(WorkJob& job) override;
@@ -90,6 +90,7 @@ protected:
     // Source identity attached to encoded-frame events by RTSP/WebRTC owners.
     std::string session_id_;
     std::string stream_id_;
+    uint32_t media_stream_id_ = 0;
 
 private:
     struct Subscription;
@@ -110,6 +111,11 @@ private:
         std::string source_track_id;
         std::optional<uint32_t> source_ssrc; // Selected encoding, protected by source endpoint.
         std::shared_ptr<rtsp::RtpSenderTrack> sender;
+        MediaTrackSubscription::Ptr consumer;
+        std::shared_ptr<IMediaTransport> send_transport;
+        bool Closed() const { return !active.load() || (consumer && consumer->Closed()); }
+        bool CanDeliver() const { return active.load() && (!consumer || consumer->CanDeliver()); }
+        void Close() { active.store(false); if (consumer) consumer->Close(); }
     };
     struct SubscriptionParameters
     {

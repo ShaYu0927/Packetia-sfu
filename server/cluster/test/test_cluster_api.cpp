@@ -1,4 +1,7 @@
-#include "ClusterController.h"
+#include "NodeController.h"
+#include "RoomController.h"
+#include "MeetingModule.h"
+#include "ServiceManager.h"
 #include "ApiServer.h"
 #include "ApiResponse.h"
 #include "ScryptPasswordHasher.h"
@@ -16,9 +19,13 @@ class ClusterApiTest : public ::testing::Test
 {
 protected:
     std::shared_ptr<service::account::AccountService> accounts;
-    std::shared_ptr<service::cluster::Coordinator> coordinator;
+    std::shared_ptr<service::meeting::MeetingModule> meetings;
+    service::ServiceManager services;
     std::unique_ptr<ApiRouter> public_routes, internal_routes;
     std::string session, user;
+    Json sent_command;
+    service::cluster::RoomAssignment sent_route;
+    uint16_t command_status = 200;
     const std::string node_secret = std::string(40, 'n'), jwt_secret = std::string(40, 'j');
     void SetUp() override
     {
@@ -32,13 +39,21 @@ protected:
         ASSERT_TRUE(registered.Succeeded()); user = registered.value->id;
         auto login = accounts->Login({"alice", "correct-password-123"});
         ASSERT_TRUE(login.Succeeded()); session = login.value->session_token;
-        coordinator = std::make_shared<service::cluster::Coordinator>(":memory:");
-        server::cluster::ClusterController controller(accounts, coordinator, {{"sfu-a", node_secret}}, "test", jwt_secret);
+        meetings = std::make_shared<service::meeting::MeetingModule>(
+            service::meeting::MeetingModuleOptions{":memory:", "test", jwt_secret}, [this](const auto& route, const auto& command) {
+                sent_route = route; sent_command = command;
+                return service::meeting::RoomCommandResult{command_status, {{"type", command_status == 200 ? "ok" : "error"}}};
+            });
+        ASSERT_TRUE(services.Register(meetings));
+        ASSERT_TRUE(services.InitAll() && services.StartAll());
+        server::meeting::RoomController rooms(accounts, meetings);
+        server::cluster::NodeController nodes(meetings, {{"sfu-a", node_secret}});
         ApiRouter::Builder public_builder, internal_builder;
-        controller.RegisterPublic(public_builder); controller.RegisterInternal(internal_builder);
+        rooms.RegisterRoutes(public_builder); nodes.RegisterRoutes(internal_builder);
         public_routes = std::make_unique<ApiRouter>(public_builder.Build());
         internal_routes = std::make_unique<ApiRouter>(internal_builder.Build());
     }
+    void TearDown() override { services.StopAll(); services.ShutdownAll(); accounts->Stop(); }
     protocol::http::HttpResponse Post(const ApiRouter& router, std::string path, const Json& body, const std::string& token = "")
     {
         return router.Dispatch({"POST", std::move(path), body.dump(),
@@ -63,7 +78,7 @@ TEST_F(ClusterApiTest, PublicAndInternalRoutesHaveSeparateAuthentication)
 }
 TEST_F(ClusterApiTest, IdentityAndGrantsComeFromSessionAndMembership)
 {
-    coordinator->Register({"sfu-a", "boot-a", "ws://localhost:30000/webrtc", 100, 0});
+    meetings->RegisterNode({"sfu-a", "boot-a", "ws://localhost:30000/webrtc", 100, 0});
     EXPECT_EQ(Post(*public_routes, "/api/v1/rooms", Json::object()).status, 401);
     EXPECT_EQ(Post(*public_routes, "/api/v1/rooms", {{"owner", "mallory"}}, session).status, 400);
     auto room_reply = Post(*public_routes, "/api/v1/rooms", Json::object(), session);
@@ -79,12 +94,63 @@ TEST_F(ClusterApiTest, IdentityAndGrantsComeFromSessionAndMembership)
     EXPECT_EQ(token.context->subject_id, user);
     EXPECT_EQ(token.context->node_id, "sfu-a");
     EXPECT_EQ(token.context->instance_id, "boot-a");
+    EXPECT_FALSE(token.context->assignment_id.empty());
     EXPECT_TRUE(token.context->video.can_publish);
+    EXPECT_TRUE(token.context->video.room_admin);
+    EXPECT_TRUE(token.context->video.can_update_own_metadata);
     EXPECT_EQ(Post(*public_routes, "/api/v1/room-admissions", {{"room_id", room}, {"can_publish", true}}, session).status, 400);
     EXPECT_EQ(Post(*public_routes, "/api/v1/room-admissions", {{"room_id", room}, {"user_id", "mallory"}}, session).status, 400);
     EXPECT_EQ(Post(*public_routes, "/api/v1/room-admissions", {{"room_id", "private-room"}}, session).status, 403);
     ASSERT_TRUE(accounts->Logout(session).Succeeded());
     EXPECT_EQ(Post(*public_routes, "/api/v1/room-admissions", {{"room_id", room}}, session).status, 401);
+}
+TEST_F(ClusterApiTest, OwnerManagementRoutesToAssignedNodeAndPropagatesFailures)
+{
+    meetings->RegisterNode({"sfu-a", "boot-a", "ws://localhost:30000/webrtc", 100, 0, "http://localhost:19080"});
+    const auto response = Post(*public_routes, "/api/v1/rooms", Json::object(), session);
+    const auto room = Json::parse(response.body).at("room_id").get<std::string>();
+    const Json request{{"room_id", room}};
+    auto empty = Post(*public_routes, "/api/v1/rooms/participants", request, session);
+    ASSERT_EQ(empty.status, 200);
+    EXPECT_TRUE(Json::parse(empty.body).at("participants").empty());
+    EXPECT_TRUE(sent_command.is_null());
+    const auto route = meetings->Admit(room, user, "Alice").assignment;
+    EXPECT_EQ(Post(*public_routes, "/api/v1/rooms/participants", request).status, 401);
+    ASSERT_TRUE(accounts->CreateAccount({"bob", "correct-password-123", "Bob"}).Succeeded());
+    const auto bob = accounts->Login({"bob", "correct-password-123"}).value->session_token;
+    EXPECT_EQ(Post(*public_routes, "/api/v1/rooms/participants", request, bob).status, 403);
+    EXPECT_EQ(Post(*public_routes, "/api/v1/rooms/participants", request, session).status, 200);
+    EXPECT_EQ(sent_route.assignment_id, route.assignment_id);
+    EXPECT_EQ(sent_route.node.management_url, "http://localhost:19080");
+    EXPECT_EQ(sent_command.value("type", ""), "participants");
+    command_status = 503;
+    EXPECT_EQ(Post(*public_routes, "/api/v1/rooms/participants/remove",
+        {{"room_id", room}, {"participant_id", "target"}}, session).status, 503);
+    EXPECT_EQ(sent_command.value("type", ""), "remove_participant");
+    EXPECT_EQ(Post(*public_routes, "/api/v1/rooms/end", request, session).status, 503);
+    EXPECT_EQ(Post(*public_routes, "/api/v1/room-admissions", request, session).status, 410);
+    EXPECT_EQ(meetings->State(), service::ServiceState::Running);
+    command_status = 200;
+    EXPECT_EQ(Post(*public_routes, "/api/v1/rooms/end", request, session).status, 200);
+    sent_command = nullptr;
+    EXPECT_EQ(Post(*public_routes, "/api/v1/rooms/end", request, session).status, 200);
+    EXPECT_TRUE(sent_command.is_null());
+}
+TEST_F(ClusterApiTest, ExistingRoutesRejectOperationsAfterModuleStopsAndCanRestart)
+{
+    meetings->RegisterNode({"sfu-a", "boot-a", "ws://localhost:30000/webrtc", 100, 0});
+    services.StopAll();
+    EXPECT_EQ(Post(*public_routes, "/api/v1/rooms", Json::object(), session).status, 503);
+    EXPECT_EQ(Post(*internal_routes, "/internal/v1/nodes/heartbeat", {{"node_id", "sfu-a"},
+        {"instance_id", "boot-a"}, {"participants", 0}}, node_secret).status, 503);
+    EXPECT_FALSE(services.HealthSnapshot().front().healthy);
+    ASSERT_TRUE(services.StartAll());
+    EXPECT_EQ(Post(*public_routes, "/api/v1/rooms", Json::object(), session).status, 201);
+    services.ShutdownAll();
+    EXPECT_EQ(Post(*public_routes, "/api/v1/rooms", Json::object(), session).status, 503);
+    EXPECT_EQ(meetings->State(), service::ServiceState::Created);
+    ASSERT_TRUE(services.InitAll() && services.StartAll());
+    EXPECT_EQ(Post(*public_routes, "/api/v1/rooms", Json::object(), session).status, 201);
 }
 class FakeTransport : public protocol::http::IHttpServer
 {

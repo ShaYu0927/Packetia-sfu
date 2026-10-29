@@ -19,7 +19,24 @@ uint32_t NextStreamId()
 }
 }
 
-MediaStream::MediaStream(std::string name) : id_(NextStreamId()), name_(std::move(name)) {}
+MediaStream::MediaStream(std::string name) : MediaStream(std::move(name), {}) {}
+
+MediaStream::MediaStream(std::string name, Source source)
+    : id_(NextStreamId()), name_(std::move(name)), source_(std::move(source)) {}
+
+MediaStream::Snapshot MediaStream::GetSnapshot() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    Snapshot snapshot{id_, name_, source_, state_, {}};
+    snapshot.tracks.reserve(tracks_.size());
+    for (const auto& track : tracks_)
+    {
+        const auto endpoint = endpoints_.find(track.id);
+        snapshot.tracks.push_back({track.ref, track,
+            endpoint == endpoints_.end() ? 0 : endpoint->second});
+    }
+    return snapshot;
+}
 
 MediaStream::State MediaStream::GetState() const
 {
@@ -27,7 +44,7 @@ MediaStream::State MediaStream::GetState() const
     return state_;
 }
 
-bool MediaStream::ReplaceTracks(std::vector<MediaStreamTrack> tracks, std::string* error)
+bool MediaStream::ReplaceTracks(std::vector<MediaTrackDescription> tracks, std::string* error)
 {
     const auto fail = [&](const char* message) {
         if (error) *error = message;
@@ -42,19 +59,21 @@ bool MediaStream::ReplaceTracks(std::vector<MediaStreamTrack> tracks, std::strin
             return fail("invalid media track parameters");
     }
     std::lock_guard<std::mutex> lock(mutex_);
-    if (state_ == State::Closed || !endpoints_.empty()) return fail("media stream is closed or bound");
+    if (state_ == State::Closed || registry_ || !endpoints_.empty()) return fail("media stream is closed, registered or bound");
+    // 克隆描述到新发布流时，重新赋予实例身份，不能沿用旧 ref。
+    for (auto& track : tracks) track.ref = {id_, track.id};
     tracks_ = std::move(tracks);
     if (error) error->clear();
     return true;
 }
 
-std::vector<MediaStreamTrack> MediaStream::GetTracks() const
+std::vector<MediaTrackDescription> MediaStream::GetTracks() const
 {
     std::lock_guard<std::mutex> lock(mutex_);
     return tracks_;
 }
 
-bool MediaStream::GetTrack(TrackId id, MediaStreamTrack* out) const
+bool MediaStream::GetTrack(TrackId id, MediaTrackDescription* out) const
 {
     if (!out) return false;
     std::lock_guard<std::mutex> lock(mutex_);

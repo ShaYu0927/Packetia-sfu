@@ -22,6 +22,7 @@ if(PACKETIA_WITH_LIBWEBSOCKETS)
     add_library(packetia_signaling STATIC
         WebRtcService.cpp
         signaling/SignalMessages.cpp
+        signaling/ParticipantMessages.cpp
         signaling/AdmissionValidator.cpp
         signaling/RoomSignalHandler.cpp
         signaling/SignalSessionCoordinator.cpp
@@ -43,8 +44,13 @@ if(PACKETIA_WITH_LIBWEBSOCKETS AND PACKETIA_SRTP_AVAILABLE AND
 endif()
 
 if(PACKETIA_WITH_LIBWEBSOCKETS)
-    add_library(packetia_cluster_api STATIC cluster/ClusterController.cpp)
-    target_link_libraries(packetia_cluster_api PUBLIC packetia_account_api packetia_cluster packetia_auth)
+    find_package(CURL REQUIRED)
+    add_library(packetia_control_http STATIC cluster/ControlHttpClient.cpp)
+    target_include_directories(packetia_control_http PUBLIC ${PROJECT_SOURCE_DIR})
+    target_link_libraries(packetia_control_http PUBLIC CURL::libcurl)
+    add_library(packetia_cluster_api STATIC cluster/NodeController.cpp cluster/NodeCommandClient.cpp meeting/RoomController.cpp)
+    target_include_directories(packetia_cluster_api PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/meeting ${CMAKE_CURRENT_SOURCE_DIR}/cluster)
+    target_link_libraries(packetia_cluster_api PUBLIC packetia_account_api packetia_cluster packetia_auth packetia_meeting packetia_control_http)
     if(BUILD_TESTING)
         add_executable(test_cluster_api cluster/test/test_cluster_api.cpp)
         target_link_libraries(test_cluster_api PRIVATE packetia_cluster_api GTest::gtest_main)
@@ -55,21 +61,19 @@ if(PACKETIA_WITH_LIBWEBSOCKETS)
     target_link_libraries(PacketiaControl PRIVATE packetia_cluster_api packetia_monitoring_api)
     if(PACKETIA_SRTP_AVAILABLE)
         find_package(CURL REQUIRED)
-        add_executable(PacketiaSfu cluster/ProcessMain.cpp cluster/SfuApp.cpp cluster/NodeClient.cpp)
+        add_executable(PacketiaSfu cluster/ProcessMain.cpp cluster/SfuApp.cpp cluster/NodeClient.cpp meeting/RoomControlController.cpp)
+        target_include_directories(PacketiaSfu PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/meeting)
         target_link_libraries(PacketiaSfu PRIVATE
             "$<$<PLATFORM_ID:Linux>:-Wl,--start-group>"
-            server packetia_signaling ROOM_LIB media network utils WebRtc LOGGER packetia_auth packetia_cluster packetia_monitoring_api CURL::libcurl
+            server packetia_signaling ROOM_LIB media network utils WebRtc LOGGER packetia_auth packetia_cluster packetia_meeting packetia_control_http packetia_monitoring_api CURL::libcurl
             "$<$<PLATFORM_ID:Linux>:-Wl,--end-group>")
         if(BUILD_TESTING)
             find_package(Python3 COMPONENTS Interpreter)
             if(Python3_Interpreter_FOUND)
-                add_test(NAME ClusterLauncherUnitTest COMMAND ${Python3_EXECUTABLE}
-                    ${PROJECT_SOURCE_DIR}/scripts/test_cluster_launcher.py)
-                set_tests_properties(ClusterLauncherUnitTest PROPERTIES TIMEOUT 30)
-                add_test(NAME ClusterProcessIntegrationTest COMMAND ${Python3_EXECUTABLE}
-                    ${PROJECT_SOURCE_DIR}/scripts/test_cluster.py
+                add_test(NAME MeetingControlIntegrationTest COMMAND ${Python3_EXECUTABLE}
+                    ${PROJECT_SOURCE_DIR}/scripts/test_meeting_control.py
                     --control $<TARGET_FILE:PacketiaControl> --sfu $<TARGET_FILE:PacketiaSfu>)
-                set_tests_properties(ClusterProcessIntegrationTest PROPERTIES TIMEOUT 90)
+                set_tests_properties(MeetingControlIntegrationTest PROPERTIES TIMEOUT 90)
             endif()
         endif()
     endif()

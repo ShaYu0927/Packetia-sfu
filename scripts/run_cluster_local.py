@@ -155,6 +155,9 @@ def runtime_configs(root, data, names):
                         udp_port=first['udp_port'] + index)
             if 'metrics_http_port' in first:
                 node['metrics_http_port'] = first['metrics_http_port'] + index
+            if 'internal_http_port' in first:
+                node['internal_http_port'] = first['internal_http_port'] + index
+                node['management_url'] = f'http://{node.get("internal_listen_ip", "127.0.0.1")}:{node["internal_http_port"]}'
             host = node['public_ip']
             if ':' in host:
                 host = f'[{host}]'
@@ -181,6 +184,11 @@ def runtime_configs(root, data, names):
             if not 1 <= metrics[1] <= 65535 or metrics in tcp:
                 raise RuntimeError(f'{name}: invalid or conflicting metrics HTTP port')
             tcp.add(metrics)
+        if node.get('management_url'):
+            management = (node.get('internal_listen_ip', '127.0.0.1'), node['internal_http_port'])
+            if not 1 <= management[1] <= 65535 or management in tcp:
+                raise RuntimeError(f'{name}: invalid or conflicting internal HTTP port')
+            tcp.add(management)
     result = []
     for name, config in configs:
         directory = data / name

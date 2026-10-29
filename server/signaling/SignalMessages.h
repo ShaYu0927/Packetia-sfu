@@ -20,14 +20,19 @@ struct SignalKey
 // 沿用现有 type 协议；消息拥有 JSON 数据，跨异步任务不借用接收缓冲。
 struct SignalRequest
 {
-    enum class Type { Unknown, Leave, Join, Resume, Tracks, Publish, Subscribe, Offer, Answer, Rollback, RestartIce };
+    enum class Type { Unknown, Leave, Join, Resume, Tracks, Participants, Participant, UpdateParticipant,
+                      RemoveParticipant, Publish, Subscribe, Unpublish, Unsubscribe, Offer, Answer, Rollback, RestartIce };
 
     static Type ParseType(std::string_view name)
     {
         static constexpr std::pair<std::string_view, Type> types[] = {
             {"close", Type::Leave}, {"leave", Type::Leave},
             {"join", Type::Join}, {"resume", Type::Resume}, {"tracks", Type::Tracks},
+            {"participants", Type::Participants}, {"participant", Type::Participant},
+            {"update_participant", Type::UpdateParticipant}, {"remove_participant", Type::RemoveParticipant},
+            {"kick", Type::RemoveParticipant},
             {"publish", Type::Publish}, {"subscribe", Type::Subscribe},
+            {"unpublish", Type::Unpublish}, {"unsubscribe", Type::Unsubscribe},
             {"offer", Type::Offer}, {"answer", Type::Answer}, {"rollback", Type::Rollback},
             {"restart_ice", Type::RestartIce}
         };

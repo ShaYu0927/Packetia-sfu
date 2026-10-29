@@ -60,5 +60,12 @@ TEST(TranscodeDomain, SourceMatchesIdentityAndOnlySpecifiedConstraints)
     other = actual;
     other.ssrc = 100;
     EXPECT_FALSE(filter.Matches(other));
+    filter.media_stream_id = 7;
+    EXPECT_FALSE(filter.Matches(actual));
+    other = actual;
+    other.media_stream_id = 7;
+    EXPECT_TRUE(filter.Matches(other));
+    other.media_stream_id = 8;
+    EXPECT_FALSE(filter.Matches(other));
 }
 } // namespace

@@ -22,9 +22,10 @@ public:
         deadline_.store(request_started_ms + (lease_seconds - 2) * 1000);
     }
     void Revoke() { deadline_.store(0); }
+    bool IsLive() const { return NowMs() < deadline_.load(); }
     bool Allows(const auth::AuthContext& context) const
     {
-        return context.node_id == node_ && context.instance_id == instance_ && NowMs() < deadline_.load();
+        return context.node_id == node_ && context.instance_id == instance_ && !context.assignment_id.empty() && IsLive();
     }
 private:
     const std::string node_, instance_;

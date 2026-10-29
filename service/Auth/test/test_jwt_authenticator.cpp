@@ -196,7 +196,7 @@ TEST_F(JwtTest, RejectsMalformedClaimTypesAndIdentity)
         claims[field] = 123;
         EXPECT_EQ(Verify(claims).error, AuthError::InvalidToken);
     }
-    for (const auto* field : {"roomJoin", "canPublish", "canSubscribe"})
+    for (const auto* field : {"roomJoin", "canPublish", "canSubscribe", "roomAdmin", "canUpdateOwnMetadata"})
     {
         auto claims = Claims();
         claims["video"][field] = "true";
@@ -279,6 +279,30 @@ TEST(RoomAccessPolicy, ScopesActionsToExactlyOneRoomAndAudience)
     room.room_id.clear();
     caller.audience = Audience::Control;
     EXPECT_FALSE(policy.Check(caller, Action::JoinRoom, room).Allowed());
+}
+
+TEST_F(JwtTest, MemberManagementRequiresExplicitVerifiedRoomGrants)
+{
+    auto claims = Claims();
+    auto verified = Verify(claims);
+    ASSERT_TRUE(verified.Succeeded());
+    RoomAccessPolicy policy;
+    ResourceContext resource;
+    resource.id = "room-a";
+    EXPECT_TRUE(policy.Check(*verified.context, Action::ListParticipants, resource).Allowed());
+    EXPECT_FALSE(policy.Check(*verified.context, Action::UpdateOwnParticipant, resource).Allowed());
+    EXPECT_FALSE(policy.Check(*verified.context, Action::ManageParticipants, resource).Allowed());
+    claims["video"]["canUpdateOwnMetadata"] = true;
+    verified = Verify(claims);
+    ASSERT_TRUE(verified.Succeeded());
+    EXPECT_TRUE(policy.Check(*verified.context, Action::UpdateOwnParticipant, resource).Allowed());
+    EXPECT_FALSE(policy.Check(*verified.context, Action::ManageParticipants, resource).Allowed());
+    claims["video"]["roomAdmin"] = true;
+    verified = Verify(claims);
+    ASSERT_TRUE(verified.Succeeded());
+    EXPECT_TRUE(policy.Check(*verified.context, Action::ManageParticipants, resource).Allowed());
+    resource.id = "room-b";
+    EXPECT_FALSE(policy.Check(*verified.context, Action::ManageParticipants, resource).Allowed());
 }
 
 TEST(RoomAccessPolicy, TrackPermissionsUseTrustedContainingRoom)

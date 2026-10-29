@@ -1,0 +1,11 @@
+add_library(packetia_meeting STATIC MeetingService.cpp RoomAdmissionService.cpp RoomAdminService.cpp MeetingModule.cpp)
+target_compile_features(packetia_meeting PUBLIC cxx_std_17)
+target_include_directories(packetia_meeting PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(packetia_meeting PUBLIC packetia_service_core packetia_cluster packetia_auth)
+
+if(BUILD_TESTING)
+    add_executable(test_meeting_module test/test_meeting_module.cpp)
+    target_link_libraries(test_meeting_module PRIVATE packetia_meeting GTest::gtest_main)
+    add_test(NAME MeetingModuleUnitTest COMMAND test_meeting_module)
+    set_tests_properties(MeetingModuleUnitTest PROPERTIES TIMEOUT 15)
+endif()

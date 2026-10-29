@@ -16,6 +16,13 @@ public:
                   std::shared_ptr<SignalBudget> budget)
         : key_(std::move(key)), requests_(std::move(room_post), std::move(request), budget),
           responses_(std::move(connection_post), std::move(response), std::move(budget), 4 * 1024 * 1024, 64, true) {}
+    SignalSession(SignalKey key, SignalChannel<SignalRequest>::Post room_post,
+                  SignalChannel<SignalResponse>::Post connection_post,
+                  SignalChannel<SignalRequest>::AsyncConsume request,
+                  SignalChannel<SignalResponse>::Consume response,
+                  std::shared_ptr<SignalBudget> budget)
+        : key_(std::move(key)), requests_(std::move(room_post), std::move(request), budget),
+          responses_(std::move(connection_post), std::move(response), std::move(budget), 4 * 1024 * 1024, 64, true) {}
     const SignalKey& Key() const { return key_; }
     SignalResult Request(SignalRequest request, std::size_t bytes)
     {

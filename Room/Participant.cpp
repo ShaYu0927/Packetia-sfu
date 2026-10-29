@@ -1,6 +1,6 @@
 #include "Participant.h"
 #include "SfuEndpoint.h"
-#include "MediaTrack.h"
+#include "TrackPublication.h"
 
 #include <limits>
 #include <utility>
@@ -13,8 +13,8 @@ Participant::Participant(std::string participant_id, std::string name)
 {
 }
 
-Participant::Participant(ParticipantIdentity identity)
-    : identity_(std::move(identity))
+Participant::Participant(ParticipantIdentity identity, ParticipantProperties properties, ParticipantPermissions permissions)
+    : identity_(std::move(identity)), properties_(std::move(properties)), permissions_(permissions)
 {
 }
 
@@ -25,6 +25,8 @@ ParticipantInfo Participant::GetInfo() const
     std::lock_guard<std::mutex> lock(mutex_);
     ParticipantInfo info;
     info.identity = identity_;
+    info.properties = properties_;
+    info.permissions = permissions_;
     info.state = state_;
     info.signaling = signaling_;
     info.publish_session_id = publish_session_ ? publish_session_->Id() : 0;
@@ -143,6 +145,15 @@ void Participant::SetName(const std::string& name)
     identity_.name = name;
 }
 
+void Participant::UpdateInfo(std::string name, ParticipantProperties properties, ParticipantPermissions permissions)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    identity_.name.swap(name);
+    properties_.metadata.swap(properties.metadata);
+    properties_.attributes.swap(properties.attributes);
+    permissions_ = permissions;
+}
+
 void Participant::SetState(ParticipantState state)
 {
     StateCallback cb;
@@ -185,7 +196,7 @@ bool Participant::IsActive() const
     return state_ == ParticipantState::Active;
 }
 
-bool Participant::AddPublishedTrack(const media::MediaTrackPtr& track, bool notify)
+bool Participant::AddPublishedTrack(const media::TrackPublicationPtr& track, bool notify)
 {
     if (!track) {
         return false;
@@ -219,14 +230,14 @@ bool Participant::AddPublishedTrack(const media::MediaTrackPtr& track, bool noti
     return true;
 }
 
-void Participant::NotifyTrackPublished(const media::MediaTrackPtr& track)
+void Participant::NotifyTrackPublished(const media::TrackPublicationPtr& track)
 {
     if (auto callback = GetOnTrackPublished()) callback(shared_from_this(), track);
 }
 
 bool Participant::RemovePublishedTrack(const std::string& track_id)
 {
-    media::MediaTrackPtr removed_track;
+    media::TrackPublicationPtr removed_track;
     TrackCallback cb;
 
     {
@@ -251,7 +262,7 @@ bool Participant::RemovePublishedTrack(const std::string& track_id)
     return true;
 }
 
-media::MediaTrackPtr Participant::GetPublishedTrack(const std::string& track_id) const
+media::TrackPublicationPtr Participant::GetPublishedTrack(const std::string& track_id) const
 {
     std::lock_guard<std::mutex> lock(mutex_);
 
@@ -264,11 +275,11 @@ media::MediaTrackPtr Participant::GetPublishedTrack(const std::string& track_id)
     return it->second;
 }
 
-std::vector<media::MediaTrackPtr> Participant::GetPublishedTracks() const
+std::vector<media::TrackPublicationPtr> Participant::GetPublishedTracks() const
 {
     std::lock_guard<std::mutex> lock(mutex_);
 
-    std::vector<media::MediaTrackPtr> result;
+    std::vector<media::TrackPublicationPtr> result;
     result.reserve(published_tracks_.size());
 
     for (const auto& item : published_tracks_) 

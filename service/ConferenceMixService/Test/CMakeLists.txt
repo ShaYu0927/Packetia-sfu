@@ -15,7 +15,7 @@ add_executable(conference_mix_tests
     ../ConferenceMixer.cpp
     ../ConferenceMixService.cpp
     ${PACKETIA_MIX_ROOT}/server/ServerLauncher.cpp
-    ${PACKETIA_MIX_ROOT}/media/core/EncodedFrameRouter.cpp
+    ${PACKETIA_MIX_ROOT}/media/frame/EncodedFrameRouter.cpp
     ${PACKETIA_MIX_ROOT}/log/logger.cpp
 )
 target_include_directories(conference_mix_tests PRIVATE
@@ -24,7 +24,7 @@ target_include_directories(conference_mix_tests PRIVATE
     ${PACKETIA_MIX_ROOT}/service/core
     ${PACKETIA_MIX_ROOT}/service/ConferenceMixService
     ${PACKETIA_MIX_ROOT}/media/core
-    ${PACKETIA_MIX_ROOT}/media/MediaFrame
+    ${PACKETIA_MIX_ROOT}/media/frame
     ${PACKETIA_MIX_ROOT}/media/types
     ${PACKETIA_MIX_ROOT}/Common/memory)
 target_compile_features(conference_mix_tests PRIVATE cxx_std_17)

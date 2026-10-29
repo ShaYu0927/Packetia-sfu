@@ -20,7 +20,13 @@ AuthDecision RoomAccessPolicy::Check(const AuthContext& caller, Action action,
     {
     case Action::JoinRoom:
     case Action::ListTracks:
+    case Action::ListParticipants:
         return resource.type == ResourceType::Room ? AuthDecision::Allow() : AuthDecision::Deny();
+    case Action::ManageParticipants:
+        return resource.type == ResourceType::Room && caller.video.room_admin ? AuthDecision::Allow() : AuthDecision::Deny();
+    case Action::UpdateOwnParticipant:
+        return resource.type == ResourceType::Room &&
+            (caller.video.room_admin || caller.video.can_update_own_metadata) ? AuthDecision::Allow() : AuthDecision::Deny();
     case Action::Publish:
         return caller.video.can_publish ? AuthDecision::Allow() : AuthDecision::Deny();
     case Action::Subscribe:

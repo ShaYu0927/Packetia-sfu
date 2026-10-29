@@ -27,6 +27,7 @@ enum class ServiceType : uint16_t
 
     Record  = 500,
     ConferenceMix = 501,
+    Meeting = 502,
     Monitor = 600
 };
 

@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 
 #include <functional>
+#include <future>
 #include <utility>
 #include <vector>
 
@@ -276,6 +277,60 @@ TEST_F(WebRtcUdpMuxTest, CallbackMayUnregisterItsOwnSessionAndCloseClearsAllAdap
         EXPECT_FALSE(mux->Register(3, "third"));
         EXPECT_FALSE(mux->BindPeer("second", alice));
     });
+}
+
+TEST_F(WebRtcUdpMuxTest, DeferredDeliveryDropsOldIceGenerationAndUnregisteredSession)
+{
+    std::vector<std::function<void()>> queued;
+    auto sink = std::make_shared<DatagramCollector>();
+    const auto dispatch = [&](std::function<void()> task, size_t bytes) {
+        EXPECT_GT(bytes, 0u); queued.push_back(std::move(task)); return true;
+    };
+    auto transport = mux->Register(10, "oldlocal", dispatch);
+    ASSERT_TRUE(transport);
+    transport->SetDatagramSink(sink);
+    auto packet = BindingRequest("oldlocal:remote");
+    Deliver(alice, packet);
+    packet.assign(packet.size(), 0); // 跨线程任务必须持有独立数据。
+    ASSERT_EQ(queued.size(), 1u);
+    ASSERT_TRUE(mux->Restart("oldlocal", "newlocal"));
+    queued.front()(); queued.clear();
+    EXPECT_TRUE(sink->packets.empty());
+    Deliver(alice, BindingRequest("newlocal:remote"));
+    ASSERT_EQ(queued.size(), 1u);
+    queued.front()(); queued.clear();
+    ASSERT_EQ(sink->packets.size(), 1u);
+    Deliver(alice, BindingRequest("newlocal:remote"));
+    mux->Unregister("newlocal");
+    auto replacement = mux->Register(11, "newlocal", dispatch);
+    ASSERT_TRUE(replacement);
+    replacement->SetDatagramSink(sink);
+    queued.front()();
+    EXPECT_EQ(sink->packets.size(), 1u);
+}
+
+TEST_F(WebRtcUdpMuxTest, DeliveryRunsOnAssignedOwnerAndMayChangeMuxRoutes)
+{
+    EventLoop roomLoop(1);
+    ASSERT_TRUE(roomLoop.Start());
+    const auto owner = roomLoop.GetTaskScheduler();
+    auto sink = std::make_shared<DatagramCollector>();
+    std::promise<bool> delivered;
+    auto result = delivered.get_future();
+    sink->on_packet = [&] {
+        const bool correctOwner = owner->IsCurrentThread();
+        mux->Unregister("roomowner");
+        delivered.set_value(correctOwner);
+    };
+    auto transport = mux->Register(20, "roomowner", [owner](auto task, size_t) { return owner->Post(std::move(task)); });
+    ASSERT_TRUE(transport);
+    transport->SetDatagramSink(sink);
+    scheduler->Invoke([&] { Deliver(alice, BindingRequest("roomowner:remote")); });
+    const auto ready = result.wait_for(std::chrono::seconds(3));
+    EXPECT_EQ(ready, std::future_status::ready);
+    if (ready == std::future_status::ready) EXPECT_TRUE(result.get());
+    roomLoop.Stop();
+    EXPECT_FALSE(transport->IsWritable());
 }
 
 } // namespace

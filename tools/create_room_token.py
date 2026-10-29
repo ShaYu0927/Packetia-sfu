@@ -23,6 +23,8 @@ def main():
     parser.add_argument("--ttl", type=int, default=3600, help="Admission lifetime in seconds (default: 3600)")
     parser.add_argument("--can-publish", action="store_true", help="Permit publishing audio/video")
     parser.add_argument("--can-subscribe", action="store_true", help="Permit subscribing to room tracks")
+    parser.add_argument("--room-admin", action="store_true", help="Permit managing members of this room")
+    parser.add_argument("--can-update-own-metadata", action="store_true", help="Permit editing own name, attributes and metadata")
     parser.add_argument("--name", help="Participant display name")
     args = parser.parse_args()
     key = os.environ.get("PACKETIA_WEBRTC_API_KEY", "")
@@ -42,7 +44,8 @@ def main():
         "iss": key, "sub": args.identity, "aud": "packetia-webrtc",
         "iat": now, "nbf": now, "exp": now + args.ttl,
         "video": {"room": args.room, "roomJoin": True,
-                  "canPublish": args.can_publish, "canSubscribe": args.can_subscribe},
+                  "canPublish": args.can_publish, "canSubscribe": args.can_subscribe,
+                  "roomAdmin": args.room_admin, "canUpdateOwnMetadata": args.can_update_own_metadata},
     }
     if args.name is not None:
         claims["name"] = args.name

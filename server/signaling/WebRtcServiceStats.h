@@ -7,10 +7,10 @@ namespace server
 {
 // Snapshot collected on the service executor; no internal synchronization.
 // Counters and timings persist across Stop/Start on the same service instance.
-// Durations include failed requests but exclude queueing and network I/O.
+// Durations include failed requests and room dispatch, but exclude response delivery.
 struct WebRtcServiceStats
 {
-    std::size_t active_signaling = 0;           // Registered sessions, including pending and closing sessions.
+    std::size_t active_signaling = 0;           // Connected sessions, including pending and closing sessions.
     std::size_t pending_admissions = 0;         // Awaiting join/resume initial response confirmation; excludes closing.
     std::size_t reconnecting_participants = 0;  // Disconnected participants retained for recovery.
 

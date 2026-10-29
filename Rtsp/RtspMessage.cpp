@@ -677,6 +677,7 @@ std::string RtspRequest::HandleCmdSetup(RtspRequestInfo& req, const SetupTranspo
         media::EncodedFrameSource source;
         source.session_id = std::to_string(media_session->GetId());
         source.stream_id = media_session->GetRtspSuffix();
+        source.media_stream_id = media_session->GetId();
         endpoint = std::make_shared<media::SfuEndpoint>(
             endpoint_id, track, source, media_session->GetMediaStream()->GetFramePublisher());
         if (!endpoint->Start()) return BuildStatusResponse(req.cseq, "500 Internal Server Error");

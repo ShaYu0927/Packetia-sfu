@@ -10,7 +10,7 @@
 #include <unordered_set>
 #include <vector>
 
-#include "MediaTrackFwd.h"
+#include "TrackPublicationFwd.h"
 #include "ParticipantTypes.h"
 #include "ParticipantSession.h"
 
@@ -30,13 +30,14 @@ class Participant : public std::enable_shared_from_this<Participant>
 public:
     using Ptr = std::shared_ptr<Participant>;
 
-    using TrackCallback = std::function<void(Participant::Ptr, media::MediaTrackPtr)>;
+    using TrackCallback = std::function<void(Participant::Ptr, media::TrackPublicationPtr)>;
     using StateCallback = std::function<void(Participant::Ptr)>;
     using LeaveCallback = std::function<void(Participant::Ptr)>;
 
 public:
     Participant(std::string participant_id, std::string name);
-    explicit Participant(ParticipantIdentity identity);
+    explicit Participant(ParticipantIdentity identity, ParticipantProperties properties = {},
+                         ParticipantPermissions permissions = {});
 
     ~Participant();
 
@@ -101,9 +102,9 @@ public:
      * @brief 添加已发布 Track。
      *
      * 用户发布摄像头、麦克风、屏幕共享时，
-     * 可以把对应的 MediaTrack 添加到 Participant 中
+     * 可以把对应的 TrackPublication 添加到 Participant 中
      */
-    bool AddPublishedTrack(const media::MediaTrackPtr& track, bool notify = true);
+    bool AddPublishedTrack(const media::TrackPublicationPtr& track, bool notify = true);
 
     /**
      * @brief 移除已发布 Track。
@@ -113,12 +114,12 @@ public:
     /**
      * @brief 根据 Track ID 查找已发布 Track。
      */
-    media::MediaTrackPtr GetPublishedTrack(const std::string& track_id) const;
+    media::TrackPublicationPtr GetPublishedTrack(const std::string& track_id) const;
 
     /**
      * @brief 获取当前用户发布的所有 Track。
      */
-    std::vector<media::MediaTrackPtr> GetPublishedTracks() const;
+    std::vector<media::TrackPublicationPtr> GetPublishedTracks() const;
 
     /**
      * @brief 添加订阅 Track。
@@ -175,7 +176,8 @@ public:
 
 private:
     friend class Room;
-    void NotifyTrackPublished(const media::MediaTrackPtr& track);
+    void UpdateInfo(std::string name, ParticipantProperties properties, ParticipantPermissions permissions);
+    void NotifyTrackPublished(const media::TrackPublicationPtr& track);
     TrackCallback GetOnTrackPublished() const;
     TrackCallback GetOnTrackUnpublished() const;
     StateCallback GetOnStateChanged() const;
@@ -186,6 +188,8 @@ private:
     mutable std::mutex mutex_;
 
     ParticipantIdentity identity_;
+    ParticipantProperties properties_;
+    ParticipantPermissions permissions_;
     SignalingBinding signaling_;
 
     ParticipantState state_ = ParticipantState::Joining;
@@ -193,7 +197,7 @@ private:
     // Explicit compatibility binding for endpoint-only (non-WebRTC) adapters.
     std::shared_ptr<media::SfuEndpoint> legacy_endpoint_;
 
-    std::unordered_map<std::string, media::MediaTrackPtr> published_tracks_;
+    std::unordered_map<std::string, media::TrackPublicationPtr> published_tracks_;
     std::unordered_set<std::string> subscribed_track_ids_;
 
     ParticipantSession::Ptr publish_session_;

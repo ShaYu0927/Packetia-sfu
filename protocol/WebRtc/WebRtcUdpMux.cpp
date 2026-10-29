@@ -2,43 +2,49 @@
 
 #include "Stun.h"
 #include "DatagramProtocolClassifier.h"
+#include "SharedBuffer.h"
 
 #include <utility>
 
 namespace protocol::webrtc
 {
 
-WebRtcUdpMux::WebRtcUdpMux(std::weak_ptr<network::UdpServer> server)
-    : server_(std::move(server))
+WebRtcUdpMux::WebRtcUdpMux(std::weak_ptr<network::UdpServer> server,
+    network::transport::UdpDatagramTransport::Sender sender)
+    : server_(std::move(server)), sender_(std::move(sender))
 {
 }
 
 WebRtcUdpMux::~WebRtcUdpMux() { Close(); }
 
 std::shared_ptr<network::transport::UdpDatagramTransport> WebRtcUdpMux::Register(
-    uint64_t id, const std::string& localUfrag)
+    uint64_t id, const std::string& localUfrag, Dispatch dispatch)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (closed_ || id == 0 || server_.expired() || sessions_.count(localUfrag) ||
         localUfrag.size() < 4 || localUfrag.size() > 256 ||
         localUfrag.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+/") != std::string::npos)
         return {};
 
-    auto transport = std::make_shared<network::transport::UdpDatagramTransport>(id, server_);
-    sessions_.emplace(localUfrag, Entry{transport, {}});
+    auto transport = std::make_shared<network::transport::UdpDatagramTransport>(id, server_, sender_);
+    sessions_.emplace(localUfrag, Entry{transport, {}, std::move(dispatch)});
     return transport;
 }
 
 void WebRtcUdpMux::Unregister(const std::string& localUfrag)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     const auto session = sessions_.find(localUfrag);
     if (session == sessions_.end()) return;
     if (session->second.peer.len != 0) peers_.erase(session->second.peer);
+    session->second.active->store(false);
     session->second.transport->Close();
     sessions_.erase(session);
 }
 
 bool WebRtcUdpMux::Restart(const std::string& oldUfrag, const std::string& newUfrag)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     const auto previous = sessions_.find(oldUfrag);
     if (closed_ || previous == sessions_.end() || !previous->second.transport->IsWritable() ||
         sessions_.count(newUfrag) || newUfrag.size() < 4 || newUfrag.size() > 256 ||
@@ -47,7 +53,8 @@ bool WebRtcUdpMux::Restart(const std::string& oldUfrag, const std::string& newUf
     const auto transport = previous->second.transport;
     const auto peer = previous->second.peer;
     // Insertion may rehash; retain values and erase the previous entry by key.
-    sessions_.emplace(newUfrag, Entry{transport, {}});
+    sessions_.emplace(newUfrag, Entry{transport, {}, previous->second.dispatch});
+    sessions_.at(oldUfrag).active->store(false);
     if (peer.len) peers_.erase(peer);
     sessions_.erase(oldUfrag);
     return true;
@@ -55,6 +62,7 @@ bool WebRtcUdpMux::Restart(const std::string& oldUfrag, const std::string& newUf
 
 bool WebRtcUdpMux::BindPeer(const std::string& localUfrag, const network::SocketAddr& peer)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     const auto session = sessions_.find(localUfrag);
     if (closed_ || session == sessions_.end() || !session->second.transport->IsWritable() ||
         (!peer.IsV4() && !peer.IsV6()) || peer.Port() == 0 ||
@@ -81,9 +89,14 @@ bool WebRtcUdpMux::BindPeer(const std::string& localUfrag, const network::Socket
 
 void WebRtcUdpMux::Close()
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (closed_) return;
     closed_ = true;
-    for (const auto& session : sessions_) session.second.transport->Close();
+    for (const auto& session : sessions_)
+    {
+        session.second.active->store(false);
+        session.second.transport->Close();
+    }
     peers_.clear();
     sessions_.clear();
 }
@@ -92,7 +105,9 @@ void WebRtcUdpMux::OnDatagram(const network::SocketAddr& source,
                              const uint8_t* data, size_t size)
 try
 {
-    if (closed_ || !data || size == 0 || source.len == 0) return;
+    if (!data || size == 0 || source.len == 0) return;
+    std::unique_lock<std::mutex> lock(mutex_);
+    if (closed_) return;
     using Classifier = network::transport::DatagramProtocolClassifier;
     using Protocol = network::transport::DatagramProtocol;
     const auto protocol = Classifier::Classify(data, size);
@@ -114,9 +129,21 @@ try
         if (peer != peers_.end()) session = sessions_.find(peer->second);
     }
     if (session == sessions_.end()) return;
-    // Delivery may synchronously unregister the session; retain its adapter.
     auto transport = session->second.transport;
-    transport->OnDatagram(source, data, size);
+    auto dispatch = session->second.dispatch;
+    auto active = session->second.active;
+    lock.unlock();
+    if (!dispatch)
+    {
+        if (active->load()) transport->OnDatagram(source, data, size);
+        return;
+    }
+    const auto packet = common::SharedBuffer::TryCopy(data, size);
+    if (packet.Empty()) return;
+    // 有界投递，队列中的旧 ICE 代次或已注销会话不能再次交付。
+    dispatch([transport, active, source, packet] {
+        if (active->load()) transport->OnDatagram(source, packet.Data(), packet.Size());
+    }, packet.StorageSize());
 }
 catch (const std::bad_alloc&) {} // Drop under memory pressure; keep IO alive.
 

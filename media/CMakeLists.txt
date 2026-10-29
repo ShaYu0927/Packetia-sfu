@@ -1,8 +1,24 @@
 cmake_minimum_required(VERSION 3.16)
 
-file(GLOB QUALITY_SRC
-    "${CMAKE_CURRENT_SOURCE_DIR}/quality/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/quality/bwe/*.cpp"
+set(QUALITY_SRC
+    quality/GoogCcNetworkController.cpp
+    quality/NackContext.cpp
+    quality/NetworkController.cpp
+    quality/NetworkQualityEstimator.cpp
+    quality/NetworkStatsCollector.cpp
+    quality/PacketHistory.cpp
+    quality/PacketRecoveryController.cpp
+    quality/RtcpBweBridge.cpp
+    quality/SendSideController.cpp
+    quality/TransportFeedbackAdapter.cpp
+    quality/VideoRecoveryController.cpp
+    quality/WeakNetController.cpp
+    quality/bwe/DelayTrendDetector.cpp
+    quality/bwe/IncomingBitrateEstimator.cpp
+    quality/bwe/LossBasedController.cpp
+    quality/bwe/OUTrendDetect.cpp
+    quality/bwe/RemoteBitrateController.cpp
+    quality/bwe/TransportBweController.cpp
 )
 
 # Both RTP senders and transports use the controller. Keep it below media so
@@ -16,37 +32,27 @@ target_compile_features(media_quality PUBLIC cxx_std_17)
 target_link_libraries(media_quality PUBLIC Rtcp network utils LOGGER)
 target_link_libraries(rtp PUBLIC media_quality)
 
-add_library(packetia_media_core STATIC core/MediaStream.cpp core/MediaStreamRegistry.cpp)
+add_library(packetia_media_core STATIC
+    core/EventBus.cpp
+    core/MediaStream.cpp
+    core/MediaStreamRegistry.cpp
+    frame/EncodedFrameRouter.cpp
+    frame/EncodedFrameRouterBinding.cpp
+)
 target_include_directories(packetia_media_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/core
     ${CMAKE_CURRENT_SOURCE_DIR}/track
-    ${CMAKE_CURRENT_SOURCE_DIR}/MediaFrame)
+    ${CMAKE_CURRENT_SOURCE_DIR}/frame)
 target_compile_features(packetia_media_core PUBLIC cxx_std_17)
-target_link_libraries(packetia_media_core PUBLIC Threads::Threads packetia_media_types)
+target_link_libraries(packetia_media_core PUBLIC Threads::Threads packetia_media_types packetia_memory)
 target_link_libraries(rtsp PUBLIC packetia_media_core)
-
-add_library(packetia_media_rtp STATIC rtp/RtpTrackBinding.cpp)
-target_include_directories(packetia_media_rtp PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/rtp
-    ${CMAKE_CURRENT_SOURCE_DIR}/track)
-target_compile_features(packetia_media_rtp PUBLIC cxx_std_17)
-target_link_libraries(packetia_media_rtp PUBLIC packetia_media_types)
-
-add_library(packetia_sdp_media_adapter STATIC rtp/SdpTrackBinding.cpp)
-target_include_directories(packetia_sdp_media_adapter PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/rtp
-    ${CMAKE_SOURCE_DIR}/src/sdp)
-target_link_libraries(packetia_sdp_media_adapter PUBLIC packetia_media_rtp Interleaved LOGGER)
-target_link_libraries(rtp PUBLIC packetia_sdp_media_adapter)
 
 add_library(packetia_media_stats STATIC stats/MediaStatsCore.cpp stats/MetricsCalculator.cpp)
 target_include_directories(packetia_media_stats PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/stats)
 target_link_libraries(packetia_media_stats PUBLIC packetia_media_types Threads::Threads)
 
 add_library(media STATIC
-    core/EventBus.cpp
-    core/EncodedFrameRouter.h
-    core/EncodedFrameRouter.cpp
+    frame/EncodedFrameRouter.h
     endpoint/SfuEndpoint.h
     endpoint/SfuEndpoint.cpp
     endpoint/SfuEndpointTracks.cpp
@@ -61,19 +67,18 @@ add_library(media STATIC
     transport/RtspInterleavedTransport.cpp
     transport/UdpMediaTransport.h
     transport/UdpMediaTransport.cpp
-    track/TrackMetadata.h
-    track/MediaTrack.h
-    track/MediaTrackFwd.h
-    track/MediaStreamTrack.h
+    track/TrackPublicationInfo.h
+    track/TrackPublication.h
+    track/TrackPublicationFwd.h
+    track/MediaTrackDescription.h
 )
 
 target_include_directories(media
     PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/..
-    ${CMAKE_CURRENT_SOURCE_DIR}/MediaFrame
+    ${CMAKE_CURRENT_SOURCE_DIR}/frame
     ${CMAKE_CURRENT_SOURCE_DIR}/track
-    ${CMAKE_CURRENT_SOURCE_DIR}/rtp
     ${CMAKE_CURRENT_SOURCE_DIR}/quality
     ${CMAKE_CURRENT_SOURCE_DIR}/quality/bwe
     ${CMAKE_CURRENT_SOURCE_DIR}/endpoint
@@ -87,7 +92,7 @@ target_link_libraries(ROOM_LIB PUBLIC media)
 target_link_libraries(media
     PUBLIC
         packetia_media_core
-        packetia_sdp_media_adapter
+        packetia_sdp_rtp_adapter
         media_quality
         rtsp
         rtp
@@ -102,9 +107,8 @@ target_link_libraries(media
 )
 
 if(BUILD_TESTING)
-    add_executable(test_media_parameters test/test_media_parameters.cpp test/test_event_bus.cpp)
-    target_link_libraries(test_media_parameters PRIVATE packetia_media_core packetia_media_rtp
-        packetia_media_stats GTest::gtest_main)
-    add_test(NAME media_parameters COMMAND test_media_parameters)
-    set_tests_properties(media_parameters PROPERTIES TIMEOUT 10)
+    add_executable(test_media_core tests/test_encoded_frame_router.cpp tests/test_media_track_subscriptions.cpp)
+    target_link_libraries(test_media_core PRIVATE packetia_media_core GTest::gtest_main)
+    add_test(NAME media_core COMMAND test_media_core)
+    set_tests_properties(media_core PROPERTIES TIMEOUT 15)
 endif()

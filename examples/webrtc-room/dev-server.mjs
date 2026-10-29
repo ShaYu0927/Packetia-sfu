@@ -84,7 +84,8 @@ server = createServer(async (request, response) => {
       }
       const now = Math.floor(Date.now() / 1000);
       const claims = {iss: apiKey, sub: input.identity, aud: 'packetia-webrtc', iat: now, nbf: now, exp: now + 3600,
-        video: {room: input.room, roomJoin: true, canPublish: input.role === 'publisher', canSubscribe: input.role === 'viewer'}};
+        video: {room: input.room, roomJoin: true, canPublish: input.role === 'publisher', canSubscribe: input.role === 'viewer',
+          canUpdateOwnMetadata: true}};
       const encode = value => Buffer.from(JSON.stringify(value)).toString('base64url');
       const signing = `${encode({alg: 'HS256', typ: 'JWT'})}.${encode(claims)}`;
       const token = `${signing}.${createHmac('sha256', apiSecret).update(signing).digest('base64url')}`;

@@ -4,6 +4,7 @@
 #include <chrono>
 #include <exception>
 #include <set>
+#include <stdexcept>
 #include <utility>
 
 namespace service::mix {
@@ -160,10 +161,11 @@ bool ConferenceMixer::PublishOutput(const media::EncodedFrame::ConstPtr& frame) 
         event.source.track_id = frame->info.track_id;
         event.source.ssrc = frame->rtp.ssrc;
         event.frame = frame;
-        const auto accepted = output_->Publish(event);
+        const auto result = output_->Dispatch(event);
+        if (result.failed) throw std::runtime_error("output frame delivery failed");
         std::lock_guard<std::mutex> lock(mutex_);
         ++stats_.published;
-        return accepted != 0;
+        return result.accepted != 0;
     } catch (...) {
         // In particular, do not propagate sink exceptions into noexcept Stop.
         std::lock_guard<std::mutex> lock(mutex_);

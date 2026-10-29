@@ -26,7 +26,7 @@ add_executable(test_memory_model
     "${PACKETIA_MEMORY_ROOT}/utils/MediaLatency.cpp"
     "${PACKETIA_MEMORY_ROOT}/utils/EndpointBase.cpp"
     "${PACKETIA_MEMORY_ROOT}/media/transport/MediaEndpointIngress.cpp"
-    "${PACKETIA_MEMORY_ROOT}/media/core/EncodedFrameRouter.cpp"
+    "${PACKETIA_MEMORY_ROOT}/media/frame/EncodedFrameRouter.cpp"
     "${PACKETIA_MEMORY_ROOT}/Common/Depacketizer/AudioDepacketizer.cpp"
     "${PACKETIA_MEMORY_ROOT}/Common/Depacketizer/AudioRtpDepacketizerFactory.cpp")
 target_compile_features(test_memory_model PRIVATE cxx_std_17)
@@ -41,7 +41,7 @@ target_include_directories(test_memory_model PRIVATE
     "${PACKETIA_MEMORY_ROOT}/media/quality"
     "${PACKETIA_MEMORY_ROOT}/log"
     "${PACKETIA_MEMORY_ROOT}/Common/Depacketizer"
-    "${PACKETIA_MEMORY_ROOT}/media/MediaFrame"
+    "${PACKETIA_MEMORY_ROOT}/media/frame"
     "${PACKETIA_MEMORY_ROOT}/media/types")
 target_link_libraries(test_memory_model PRIVATE packetia_threads packetia_memory packetia_monitoring)
 

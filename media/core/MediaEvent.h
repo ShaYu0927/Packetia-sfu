@@ -22,7 +22,11 @@ enum class MediaEventType
     StreamTimeout,
     StreamStateChanged,
     TrackPublished,
-    TrackUnpublished
+    TrackUnpublished,
+    ParticipantChanged,
+    StreamRegistered,
+    StreamUnregistered,
+    TrackAvailabilityChanged
 };
 
 

@@ -16,6 +16,7 @@
 #include "RoomTypes.h"
 #include "EventBus.h"
 #include "TrackPublicationEvent.h"
+#include "ParticipantEvent.h"
 
 namespace room 
 {
@@ -44,9 +45,14 @@ public:
     std::shared_ptr<Participant> GetParticipant(const std::string& participant_id) const;
     std::vector<std::shared_ptr<Participant>> GetParticipants() const;
     std::size_t ParticipantCount() const;
+    uint64_t ParticipantRevision() const;
+    bool UpdateParticipant(const std::string& id, std::string name,
+                           ParticipantProperties properties, ParticipantPermissions permissions);
+    // 状态由房间 owner 修改后提交通知，Bus 回调始终在房间锁外执行。
+    void NotifyParticipantChanged(const std::string& id);
 
     // Room IDs may be global while an endpoint's source track ID is a local MID.
-    bool PublishTrack(const std::string& participant_id, const media::MediaTrackPtr& track, uint32_t ssrc,
+    bool PublishTrack(const std::string& participant_id, const media::TrackPublicationPtr& track, uint32_t ssrc,
                       uint8_t payload_type, const std::string& source_track_id = {});
 
     bool UnpublishTrack(const std::string& track_id);
@@ -59,7 +65,7 @@ public:
     std::vector<SubscriptionInfo> GetSubscriptionsBySubscriber(const std::string& subscriber_id) const;
     std::vector<std::shared_ptr<Participant>> GetSubscribers(const std::string& track_id) const;
 
-    media::MediaTrackPtr ResolveTrackForSubscriber(const std::string& subscriber_id, const std::string& track_id);
+    media::TrackPublicationPtr ResolveTrackForSubscriber(const std::string& subscriber_id, const std::string& track_id);
 
     void Close();
 
@@ -74,7 +80,7 @@ private:
     void UpdateStateLocked();
     bool SubscribeTrackLocked(const std::string& subscriber_id, const std::string& track_id);
     void UnsubscribeTrackLocked(const std::string& subscriber_id, const std::string& track_id);
-    media::TrackPublicationSnapshot TrackSnapshotLocked(const std::string& track_id, const PublishedTrackInfo& info);
+    room::TrackPublicationSnapshot TrackSnapshotLocked(const std::string& track_id, const PublishedTrackInfo& info);
     void NotifyTrackEvent(const media::MediaEvent& event);
 
 private:
@@ -85,6 +91,7 @@ private:
     media::EventBus events_;
     uint64_t next_publication_id_ = 0;
     uint64_t track_revision_ = 0;
+    uint64_t participant_revision_ = 0;
 
     std::unordered_map<std::string, std::shared_ptr<Participant>> participants_;
     std::unordered_map<std::string, PublishedTrackInfo> published_tracks_;

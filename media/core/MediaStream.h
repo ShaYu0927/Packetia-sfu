@@ -1,7 +1,7 @@
 #ifndef PACKETIA_MEDIA_STREAM_H_
 #define PACKETIA_MEDIA_STREAM_H_
 
-#include "MediaStreamTrack.h"
+#include "MediaTrackDescription.h"
 #include <memory>
 #include <mutex>
 #include <string>
@@ -19,13 +19,37 @@ public:
     using Ptr = std::shared_ptr<MediaStream>;
     enum class State { Announced, Publishing, Closed };
 
+    struct Source
+    {
+        std::string protocol;
+        std::string scope;
+        std::string publisher_id;
+    };
+    struct TrackSnapshot
+    {
+        MediaTrackRef ref;
+        MediaTrackDescription description;
+        uint64_t endpoint_id = 0;
+    };
+    struct Snapshot
+    {
+        uint32_t id = 0;
+        std::string name;
+        Source source;
+        State state = State::Announced;
+        std::vector<TrackSnapshot> tracks;
+    };
+
     explicit MediaStream(std::string name);
+    MediaStream(std::string name, Source source);
     uint32_t GetId() const noexcept { return id_; }
     const std::string& GetName() const noexcept { return name_; }
+    const Source& GetSource() const noexcept { return source_; }
+    Snapshot GetSnapshot() const;
     State GetState() const;
-    bool ReplaceTracks(std::vector<MediaStreamTrack> tracks, std::string* error = nullptr);
-    std::vector<MediaStreamTrack> GetTracks() const;
-    bool GetTrack(TrackId id, MediaStreamTrack* out) const;
+    bool ReplaceTracks(std::vector<MediaTrackDescription> tracks, std::string* error = nullptr);
+    std::vector<MediaTrackDescription> GetTracks() const;
+    bool GetTrack(TrackId id, MediaTrackDescription* out) const;
     bool BindTrackEndpoint(TrackId track, uint64_t endpoint);
     void UnbindTrackEndpoint(uint64_t endpoint);
     uint64_t FindEndpointByTrack(TrackId track) const;
@@ -38,9 +62,10 @@ private:
     void Close();
     const uint32_t id_;
     const std::string name_;
+    const Source source_;
     mutable std::mutex mutex_;
     State state_ = State::Announced;
-    std::vector<MediaStreamTrack> tracks_;
+    std::vector<MediaTrackDescription> tracks_;
     std::unordered_map<TrackId, uint64_t> endpoints_;
     std::shared_ptr<IEncodedFramePublisher> publisher_;
     const MediaStreamRegistry* registry_ = nullptr;

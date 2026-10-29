@@ -17,7 +17,8 @@ std::string NormalizeControlKey(std::string value)
 }
 
 RtspMediaSession::RtspMediaSession(std::string suffix)
-    : stream_(std::make_shared<media::MediaStream>(std::move(suffix))) {}
+    : stream_(std::make_shared<media::MediaStream>(std::move(suffix),
+        media::MediaStream::Source{"rtsp", {}, {}})) {}
 
 RtspMediaSession::Ptr RtspMediaSession::CreateNew(const std::string& suffix)
 {
@@ -56,7 +57,7 @@ RtspMediaSession::Ptr RtspMediaSession::CreateNextPublication() const
 bool RtspMediaSession::ApplySdp(const sdp::SdpSession& sdp, std::string* error)
 {
     constexpr std::size_t kMaxTracks = 5;
-    std::vector<media::MediaStreamTrack> tracks;
+    std::vector<media::MediaTrackDescription> tracks;
     std::unordered_map<std::string, int> controls;
     std::unordered_map<int, std::string> track_controls;
     std::vector<std::size_t> selections;
@@ -70,7 +71,7 @@ bool RtspMediaSession::ApplySdp(const sdp::SdpSession& sdp, std::string* error)
         }
         const auto index = static_cast<int>(tracks.size());
         std::size_t selected = 0;
-        media::MediaStreamTrack track;
+        media::MediaTrackDescription track;
         if (!media::SelectRtpPayload(context, selected, error) ||
             !media::DescribeMediaTrack(context, selected, track, error)) return false;
         auto control = NormalizeControlKey(sdp.medias[index].GetAttribute("control"));
@@ -97,7 +98,7 @@ bool RtspMediaSession::ApplySdp(const sdp::SdpSession& sdp, std::string* error)
 bool RtspMediaSession::GetTrackInfo(int track_id, TrackInfo* out) const
 {
     if (track_id < 0 || !out) return false;
-    media::MediaStreamTrack track;
+    media::MediaTrackDescription track;
     if (!stream_->GetTrack(static_cast<media::TrackId>(track_id), &track)) return false;
     const auto index = static_cast<std::size_t>(track_id);
     if (!negotiated_ || index >= negotiated_->tracks.size() || index >= selected_payloads_.size()) return false;

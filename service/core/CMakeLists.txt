@@ -1,0 +1,11 @@
+add_library(packetia_service_core STATIC ServiceBase.cpp ServiceManager.cpp)
+target_compile_features(packetia_service_core PUBLIC cxx_std_17)
+target_include_directories(packetia_service_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(packetia_service_core PUBLIC Threads::Threads)
+
+if(BUILD_TESTING)
+    add_executable(test_service_core test/test_service_core.cpp)
+    target_link_libraries(test_service_core PRIVATE packetia_service_core GTest::gtest_main)
+    add_test(NAME ServiceCoreUnitTest COMMAND test_service_core)
+    set_tests_properties(ServiceCoreUnitTest PROPERTIES TIMEOUT 10)
+endif()

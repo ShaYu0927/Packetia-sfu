@@ -3,11 +3,15 @@
 #include "JwtAuthenticator.h"
 #include "KeyProvider.h"
 #include "RoomAccessPolicy.h"
+#include "Room.h"
+#include "Participant.h"
 #include <deque>
 #include "EventLoop.h"
 #include "EndpointBase.h"
 #include "Sdp.h"
 #include "SfuEndpoint.h"
+#include "MediaStreamRegistry.h"
+#include "Stun.h"
 #include "third/nlohmann/json.hpp"
 
 #include <arpa/inet.h>
@@ -21,6 +25,7 @@
 #include <chrono>
 #include <csignal>
 #include <iostream>
+#include <future>
 #include <stdexcept>
 #include <thread>
 
@@ -59,20 +64,23 @@ std::string Base64Url(const unsigned char* bytes, size_t size)
 
 std::string RoomToken(const std::string& identity, const std::string& room,
     bool publish = true, bool subscribe = true, int64_t expires = 0,
-    const std::string& issuer = kApiKey, const std::string& secret = kApiSecret)
+    const std::string& issuer = kApiKey, const std::string& secret = kApiSecret,
+    bool admin = false, bool updateOwn = false, const std::string& assignment = "")
 {
     const auto now = UnixNow();
     const auto expiration = expires ? expires : now + 3600;
     const auto issued = std::min(now, expiration - 60);
     const auto header = Json{{"alg", "HS256"}, {"typ", "JWT"}}.dump();
-    const auto claims = Json{{"iss", issuer}, {"sub", identity}, {"aud", "packetia-webrtc"},
+    auto claims = Json{{"iss", issuer}, {"sub", identity}, {"aud", "packetia-webrtc"},
         {"iat", issued}, {"nbf", issued - 1}, {"exp", expiration},
         {"name", "Display " + identity}, {"video", {{"room", room}, {"roomJoin", true},
-            {"canPublish", publish}, {"canSubscribe", subscribe}}}}.dump();
+            {"canPublish", publish}, {"canSubscribe", subscribe},
+            {"roomAdmin", admin}, {"canUpdateOwnMetadata", updateOwn}}}};
+    if (!assignment.empty()) claims["assignment_id"] = assignment;
     const auto encode = [](const std::string& value) {
         return Base64Url(reinterpret_cast<const unsigned char*>(value.data()), value.size());
     };
-    const auto signingInput = encode(header) + "." + encode(claims);
+    const auto signingInput = encode(header) + "." + encode(claims.dump());
     unsigned char signature[EVP_MAX_MD_SIZE];
     unsigned int signatureSize = 0;
     Require(HMAC(EVP_sha256(), secret.data(), static_cast<int>(secret.size()),
@@ -145,6 +153,11 @@ public:
     }
 
     void Close() { socket_.Close(); }
+    bool HasReadable()
+    {
+        pollfd descriptor{socket_.Get(), POLLIN, 0};
+        return ::poll(&descriptor, 1, 0) > 0;
+    }
 
     void ExpectClosed()
     {
@@ -170,23 +183,34 @@ public:
         for (;;)
         {
             auto message = ReceiveFrame();
-            if (message.value("type", "") != "tracks_changed") return message;
-            notifications_.push_back(std::move(message));
+            if (!StoreNotification(message)) return message;
         }
     }
 
-    Json ReceiveTrackChange()
+    bool StoreNotification(const Json& message)
     {
-        if (!notifications_.empty())
+        const auto type = message.value("type", "");
+        if (type == "tracks_changed") notifications_.push_back(message);
+        else if (type == "participants_changed") member_notifications_.push_back(message);
+        else if (type == "permissions_changed") permission_notifications_.push_back(message);
+        else return false;
+        return true;
+    }
+
+    Json ReceiveNotification(const std::string& type, std::deque<Json>& queue)
+    {
+        while (queue.empty())
         {
-            auto message = std::move(notifications_.front());
-            notifications_.pop_front();
-            return message;
+            auto message = ReceiveFrame();
+            Require(StoreNotification(message), ("expected unsolicited " + type + " notification").c_str());
         }
-        auto message = ReceiveFrame();
-        Require(message.value("type", "") == "tracks_changed", "expected unsolicited track notification");
+        auto message = std::move(queue.front());
+        queue.pop_front();
         return message;
     }
+    Json ReceiveTrackChange() { return ReceiveNotification("tracks_changed", notifications_); }
+    Json ReceiveMemberChange() { return ReceiveNotification("participants_changed", member_notifications_); }
+    Json ReceivePermissionsChange() { return ReceiveNotification("permissions_changed", permission_notifications_); }
     std::size_t PendingTrackChanges() const { return notifications_.size(); }
 
     Json ReceiveFrame()
@@ -262,7 +286,7 @@ private:
     }
 
     Socket socket_;
-    std::deque<Json> notifications_;
+    std::deque<Json> notifications_, member_notifications_, permission_notifications_;
 };
 
 Json Join(Client& client, const std::string& identity, const std::string& room,
@@ -696,6 +720,9 @@ void RunRoom()
     const auto recovered = resumedPublisher.Request(resume);
     Require(recovered.value("type", "") == "resumed" && recovered.at("participant_id") == publisherId &&
         recovered.at("signaling_generation") == 2 && recovered.at("ice_restart") == true, "publisher recovery failed");
+    const auto recoveredStream = media::MediaStreamRegistry::Instance().FindByName(publisherId, "demo");
+    Require(recoveredStream && recoveredStream->GetState() == media::MediaStream::State::Publishing,
+        "signaling recovery lost the core publication");
     Require(list(b).size() == 4 && destination->SubscriptionCount() == 2, "signaling disconnect lost room routes");
     auto restartOffer = ParseDescription({{"sdp", Offer()}}, sdp::SdpType::Offer);
     restartOffer.origin.sess_version = "2";
@@ -706,6 +733,8 @@ void RunRoom()
         {"sdp", sdp::Sdp::Serialize(restartOffer)}});
     CheckAnswer(restarted, config.udp_port);
     Require(restarted.at("session_id") == publication.at("session_id"), "ICE restart replaced media endpoint");
+    Require(media::MediaStreamRegistry::Instance().FindByName(publisherId, "demo") == recoveredStream,
+        "ICE restart replaced the core publication");
     const auto previousIce = ParseDescription(publication, sdp::SdpType::Answer).medias.front().ice;
     const auto nextIce = ParseDescription(restarted, sdp::SdpType::Answer).medias.front().ice;
     Require(previousIce.ufrag != nextIce.ufrag && previousIce.pwd != nextIce.pwd, "server ICE credentials did not rotate");
@@ -753,6 +782,8 @@ void RunRoom()
         std::this_thread::sleep_for(5ms);
     }
     Require(destination->SubscriptionCount() == 0, "publisher disconnect retained downstream routes");
+    Require(!media::MediaStreamRegistry::Instance().FindById(recoveredStream->GetId()),
+        "recovery expiry retained the core publication");
     Client expiredPublisher(config.websocket_port);
     Require(expiredPublisher.Request(resume).value("type", "") == "error", "expired participant recovered");
     Require(resumedViewer.Request({{"type", "leave"}}).value("type", "") == "closed", "explicit leave failed");
@@ -763,6 +794,567 @@ void RunRoom()
     secondPublisher.Close(); resumedViewer.Close(); resumedOutsider.Close();
     WaitForEndpoints(baseline);
     service->Stop(); loop.Stop();
+}
+
+void RunMembers()
+{
+    // Bus 发布的是已提交的值快照；成员更新、状态和移除共享一个版本序列。
+    auto coreRoom = std::make_shared<room::Room>(room::RoomInfo{"member-events", "events"});
+    std::vector<uint64_t> versions;
+    bool removedEvent = false;
+    bool privateBinding = false;
+    auto observation = coreRoom->Events().Subscribe<room::ParticipantChangedEvent>([&](const auto& event) {
+        versions.push_back(event.revision);
+        removedEvent = event.removed;
+        privateBinding = privateBinding || !event.participant.signaling.connection_id.empty();
+    });
+    auto coreMember = std::make_shared<room::Participant>("member-1", "Original");
+    Require(coreMember->BindSignaling("private-connection"), "core member signaling bind failed");
+    Require(coreRoom->Join(coreMember), "core member join failed");
+    Require(coreRoom->UpdateParticipant("member-1", "Updated", {"metadata", {{"key", "value"}}}, {}),
+        "core member update failed");
+    Require(coreRoom->Leave("member-1") && removedEvent && !privateBinding && versions == std::vector<uint64_t>{1, 2, 3},
+        "member bus did not publish committed lifecycle revisions");
+
+    const auto baseline = utils::EndpointManager::Instance().Size();
+    EventLoop loop(3);
+    Require(loop.Start(), "member loop did not start");
+    config::AppConfig config;
+    config.listen_ip = config.webrtc.public_ip = "127.0.0.1";
+    config.udp_port = AvailablePort(SOCK_DGRAM);
+    config.websocket_port = AvailablePort(SOCK_STREAM);
+    config.webrtc.enabled = true;
+    config.webrtc.api_keys = {{kApiKey, kApiSecret}};
+    config.webrtc.max_sessions = 8;
+    config.webrtc.reconnect_timeout_ms = 5000;
+    auto service = std::make_shared<server::WebRtcService>(&loop, config, nullptr);
+    Require(service->Start(), "member service did not start");
+    Client admin(config.websocket_port), user(config.websocket_port), observer(config.websocket_port), outsider(config.websocket_port);
+    for (const auto* type : {"participants", "participant", "update_participant", "kick"})
+        Require(observer.Request({{"type", type}}).value("code", "") == "unauthenticated", "member command bypassed admission");
+    const auto adminToken = RoomToken("owner", "members", true, true, 0, kApiKey, kApiSecret, true, true);
+    admin.Send(1, Json{{"type", "join"}, {"room_id", "members"}, {"token", adminToken},
+        {"name", "Owner"}, {"metadata", "room creator"}, {"attributes", {{"team", "media"}}}}.dump());
+    const auto ownerJoined = admin.ReceiveFrame();
+    Require(ownerJoined.value("type", "") == "joined" && ownerJoined.at("participant").at("name") == "Owner",
+        "initial response did not precede member notifications or lost admission profile");
+    const auto adminId = ownerJoined.at("participant_id");
+    const auto userToken = RoomToken("member", "members", true, true, 0, kApiKey, kApiSecret, false, true);
+    const auto userJoined = user.Request({{"type", "join"}, {"room_id", "members"}, {"token", userToken}});
+    Require(userJoined.value("type", "") == "joined", "member admission failed");
+    const auto userId = userJoined.at("participant_id");
+    Require(observer.Request({{"type", "join"}, {"room_id", "members"},
+        {"token", RoomToken("reader", "members")}, {"name", "untrusted"}}).value("code", "") == "forbidden",
+        "admission profile bypassed self-update grant");
+    const auto readerJoined = Join(observer, "reader", "members", false, false);
+    const auto outsiderJoined = Join(outsider, "outsider", "elsewhere");
+    const auto changed = admin.ReceiveMemberChange();
+    Require(changed.at("room_id") == "members" && changed.contains("revision") && !changed.contains("participants"),
+        "member changes did not use bounded invalidation notifications");
+
+    const auto query = [&](const Json& id) { return admin.Request({{"type", "participant"}, {"participant_id", id}}); };
+    const auto roster = admin.Request({{"type", "participants"}});
+    Require(roster.at("total") == 3 && roster.at("participants").size() == 3, "room roster leaked another room or failed admission");
+    for (const auto& item : roster.at("participants"))
+        Require(!item.contains("resume_token") && !item.contains("signaling") && !item.contains("connection_id"),
+            "roster exposed private binding or recovery credentials");
+    const auto first = admin.Request({{"type", "participants"}, {"limit", 1}});
+    const auto second = admin.Request({{"type", "participants"}, {"limit", 1}, {"cursor", first.at("next_cursor")},
+        {"revision", first.at("revision")}});
+    Require(first.at("participants").size() == 1 && second.at("participants").size() == 1 &&
+        first.at("participants")[0].at("participant_id") < second.at("participants")[0].at("participant_id"),
+        "stable roster pagination repeated a participant");
+    Require(admin.Request({{"type", "participants"}, {"cursor", first.at("next_cursor")}}).value("type", "") == "error",
+        "pagination accepted unversioned continuation");
+    for (const auto& limit : Json::array({0, -1, 101, 1.5, "1", nullptr, 18446744073709551615ull}))
+        Require(admin.Request({{"type", "participants"}, {"limit", limit}}).value("type", "") == "error", "invalid roster limit accepted");
+    Require(query(outsiderJoined.at("participant_id")).value("type", "") == "error", "single member query crossed rooms");
+    Require(admin.Request({{"type", "kick"}, {"participant_id", outsiderJoined.at("participant_id")}}).value("type", "") == "error",
+        "administrator kicked a different room's participant");
+    Require(user.Request({{"type", "update_participant"}, {"participant_id", adminId}, {"name", "attacker"}})
+        .value("code", "") == "forbidden", "member edited another participant");
+    Require(user.Request({{"type", "kick"}, {"participant_id", adminId}}).value("code", "") == "forbidden", "member kicked administrator");
+    Require(user.Request({{"type", "update_participant"}, {"permissions", {{"room_admin", true}}}})
+        .value("code", "") == "forbidden", "member elevated own privileges");
+    Require(observer.Request({{"type", "update_participant"}, {"name", "not permitted"}}).value("code", "") == "forbidden",
+        "missing self-update grant was ignored");
+
+    const auto original = query(userId);
+    Require(user.Request({{"type", "update_participant"}, {"name", "partial"}, {"attributes", {{"bad", 7}}}})
+        .value("type", "") == "error", "invalid attribute type accepted");
+    Require(admin.Request({{"type", "update_participant"}, {"participant_id", userId}, {"name", "partial"},
+        {"permissions", {{"can_publish", false}, {"unknown", true}}}}).value("type", "") == "error", "unknown permission accepted");
+    Require(user.Request({{"type", "update_participant"}, {"metadata", std::string(4097, 'x')}}).value("type", "") == "error",
+        "oversize metadata accepted");
+    Require(query(userId) == original, "failed participant patch partially committed data or revision");
+    // 资料可包含 JSON 转义字符，分页按编码后字节数收敛，而不是只按人数限制。
+    Json attributes = Json::object();
+    for (int i = 0; i < 16; ++i) attributes["key" + std::to_string(i)] = std::string(500, '\x01');
+    for (const auto& id : {adminId, userId, readerJoined.at("participant_id")})
+        Require(admin.Request({{"type", "update_participant"}, {"participant_id", id},
+            {"metadata", std::string(4096, '\x01')}, {"attributes", attributes}}).value("type", "") == "participant_updated",
+            "bounded escaped participant profile rejected");
+    // 六位转义会让三人的资料超过页面预算，仍须可通过游标读完。
+    const auto bounded = admin.Request({{"type", "participants"}, {"limit", 100}});
+    Require(bounded.dump().size() <= server::signaling::kMaxMessageBytes &&
+        bounded.at("participants").size() < 3 && !bounded.at("next_cursor").get<std::string>().empty(),
+        "roster encoding exceeded bounded response budget");
+    Json deletions = Json::object();
+    for (auto it = attributes.begin(); it != attributes.end(); ++it) deletions[it.key()] = nullptr;
+    for (const auto& id : {adminId, userId, readerJoined.at("participant_id")})
+        Require(admin.Request({{"type", "update_participant"}, {"participant_id", id},
+            {"metadata", ""}, {"attributes", deletions}}).value("type", "") == "participant_updated", "profile cleanup failed");
+    const auto updated = user.Request({{"type", "update_participant"}, {"name", "Alice"}, {"metadata", "profile-v1"},
+        {"attributes", {{"team", "audio"}, {"remove_me", "yes"}}}});
+    Require(updated.value("type", "") == "participant_updated" && updated.at("participant").at("name") == "Alice",
+        "self profile update failed");
+    const auto deleted = user.Request({{"type", "update_participant"}, {"attributes", {{"remove_me", nullptr}, {"empty", ""}}}});
+    Require(!deleted.at("participant").at("attributes").contains("remove_me") &&
+        deleted.at("participant").at("attributes").at("empty") == "" && deleted.at("participant").at("metadata") == "profile-v1",
+        "attribute merge/delete or omitted field preservation failed");
+    Require(admin.Request({{"type", "participants"}, {"cursor", first.at("next_cursor")}, {"revision", first.at("revision")}})
+        .value("code", "") == "snapshot_changed", "pagination mixed roster versions");
+
+    const auto publication = user.Request({{"type", "publish"}, {"sdp", Offer()}});
+    CheckAnswer(publication, config.udp_port);
+    const auto publishedId = publication.at("session_id").get<uint64_t>();
+    const auto revoked = admin.Request({{"type", "update_participant"}, {"participant_id", userId},
+        {"permissions", {{"can_publish", false}, {"can_update_own_metadata", false}}}});
+    Require(revoked.at("media_stopped") == true && !utils::EndpointManager::Instance().Find(publishedId),
+        "publication continued after permission revocation");
+    Require(user.ReceivePermissionsChange().at("media_stopped") == true, "permission revocation notification missing");
+    Require(user.Request({{"type", "publish"}, {"sdp", Offer()}}).value("code", "") == "forbidden",
+        "revoked publish permission allowed a new session");
+    Require(user.Request({{"type", "update_participant"}, {"name", "revoked"}}).value("code", "") == "forbidden",
+        "revoked self-update permission remained effective");
+    const auto ownerPublication = admin.Request({{"type", "publish"}, {"sdp", Offer()}});
+    CheckAnswer(ownerPublication, config.udp_port);
+    auto browser = ParseDescription({{"sdp", Offer()}}, sdp::SdpType::Offer);
+    Json bindings = Json::array();
+    for (auto& media : browser.medias)
+    {
+        media.direction = sdp::MediaDirection::RecvOnly;
+        media.ssrcs.clear(); media.ssrcGroups.clear();
+        bindings.push_back({{"track_id", adminId.get<std::string>() + ":" + media.mid}, {"mid", media.mid}});
+    }
+    const auto subscription = user.Request({{"type", "subscribe"}, {"sdp", sdp::Sdp::Serialize(browser)}, {"tracks", bindings}});
+    Require(subscription.value("type", "") == "answer", "member subscription failed");
+    const auto subscribedId = subscription.at("session_id").get<uint64_t>();
+    Require(admin.Request({{"type", "update_participant"}, {"participant_id", userId},
+        {"permissions", {{"can_subscribe", false}}}}).at("media_stopped") == true &&
+        !utils::EndpointManager::Instance().Find(subscribedId), "subscription continued after permission revocation");
+    Require(user.ReceivePermissionsChange().at("media_stopped") == true, "subscription revoke notification missing");
+
+    const auto waitReconnecting = [&](std::size_t expected) {
+        const auto deadline = std::chrono::steady_clock::now() + 2s;
+        while (service->GetStats().reconnecting_participants != expected && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(10ms);
+        Require(service->GetStats().reconnecting_participants == expected, "disconnect did not enter recovery state");
+    };
+    user.Close(); waitReconnecting(1);
+    Require(query(userId).at("participant").at("state") == "reconnecting", "member query lost recovery state");
+    Client resumed(config.websocket_port);
+    const Json resume = {{"type", "resume"}, {"room_id", "members"}, {"token", userToken},
+        {"participant_id", userId}, {"resume_token", userJoined.at("resume_token")}};
+    const auto recovered = resumed.Request(resume);
+    Require(recovered.value("type", "") == "resumed" && !recovered.at("participant").at("permissions").at("can_publish").get<bool>() &&
+        recovered.at("participant").at("name") == "Alice" && recovered.at("ice_restart") == false,
+        "resume restored stale token grants or discarded profile");
+    Require(resumed.Request({{"type", "subscribe"}, {"sdp", Offer()}, {"tracks", bindings}}).value("code", "") == "forbidden",
+        "resume restored revoked subscription permission");
+    Require(admin.Request({{"type", "remove_participant"}, {"participant_id", userId}}).value("type", "") == "participant_removed",
+        "administrator kick failed");
+    Require(resumed.Receive().value("type", "") == "removed", "kicked client did not receive terminal notification");
+    Client kickedRecovery(config.websocket_port);
+    Require(kickedRecovery.Request(resume).value("type", "") == "error", "kick left usable recovery credentials");
+    // 断线保留的成员也可被移除，旧连接清理不能影响后来重新入会的同身份成员。
+    observer.Close(); waitReconnecting(1);
+    Require(admin.Request({{"type", "kick"}, {"participant_id", readerJoined.at("participant_id")}}).value("type", "") == "participant_removed",
+        "administrator could not remove reconnecting participant");
+    const auto rejoined = Join(kickedRecovery, "member", "members");
+    const auto kickedMedia = kickedRecovery.Request({{"type", "publish"}, {"sdp", Offer()}});
+    Require(kickedMedia.value("type", "") == "answer", "fresh member could not publish after previous removal");
+    Require(admin.Request({{"type", "kick"}, {"participant_id", rejoined.at("participant_id")}}).value("type", "") == "participant_removed" &&
+        !utils::EndpointManager::Instance().Find(kickedMedia.at("session_id").get<uint64_t>()), "kick retained active media endpoint");
+    Require(kickedRecovery.Receive().value("type", "") == "removed", "active publisher did not receive kick notification");
+    Client voluntary(config.websocket_port);
+    Join(voluntary, "voluntary", "members");
+    Require(voluntary.Request({{"type", "leave"}}).value("type", "") == "closed", "member leave failed");
+    Require(admin.Request({{"type", "participants"}}).at("total") == 1 && query(userId).value("type", "") == "error",
+        "kick or leave retained room membership");
+    Require(admin.Request({{"type", "leave"}}).value("type", "") == "closed", "owner leave failed");
+    outsider.Request({{"type", "leave"}});
+    WaitForEndpoints(baseline);
+    service->Stop(); loop.Stop();
+}
+
+void RunMediaControls()
+{
+    const auto baseline = utils::EndpointManager::Instance().Size();
+    auto& streams = media::MediaStreamRegistry::Instance();
+    const auto streamBaseline = streams.Size();
+    EventLoop loop(2);
+    Require(loop.Start(), "media controls event loop did not start");
+    config::AppConfig config;
+    config.listen_ip = config.webrtc.public_ip = "127.0.0.1";
+    config.udp_port = AvailablePort(SOCK_DGRAM);
+    config.websocket_port = AvailablePort(SOCK_STREAM);
+    config.webrtc.enabled = true;
+    config.webrtc.api_keys = {{kApiKey, kApiSecret}};
+    config.webrtc.max_sessions = 3;
+    config.webrtc.reconnect_timeout_ms = 1200;
+    auto service = std::make_shared<server::WebRtcService>(&loop, config, nullptr);
+    Require(service->Start(), "media controls service did not start");
+    Client a(config.websocket_port), b(config.websocket_port), observer(config.websocket_port);
+    Require(observer.Request({{"type", "unpublish"}, {"session_id", 1}}).value("code", "") == "unauthenticated",
+        "media stop bypassed admission");
+    const auto joined = Join(a, "controls-publisher", "controls");
+    const auto publisherId = joined.at("participant_id").get<std::string>();
+    Join(b, "controls-viewer", "controls");
+    Join(observer, "controls-observer", "controls", false, false);
+    Require(streams.Size() == streamBaseline, "joining registered an unpublished media stream");
+    for (const auto* type : {"unpublish", "unsubscribe"})
+        Require(observer.Request({{"type", type}, {"session_id", 1}}).value("code", "") == "forbidden",
+            "media stop bypassed action permission");
+
+    const auto publication = a.Request({{"type", "publish"}, {"sdp", Offer()}});
+    CheckAnswer(publication, config.udp_port);
+    const auto sourceId = publication.at("session_id").get<uint64_t>();
+    auto source = std::dynamic_pointer_cast<media::SfuEndpoint>(utils::EndpointManager::Instance().Find(sourceId));
+    Require(source && source->PublishedTrackCount() == 2, "media controls publication missing");
+    const auto core = streams.FindByName(publisherId, "controls");
+    Require(core && streams.Size() == streamBaseline + 1 && core->GetSource().protocol == "webrtc" &&
+        core->GetSource().publisher_id == publisherId && core->GetState() == media::MediaStream::State::Publishing,
+        "WebRTC publication did not enter the shared stream registry");
+    const auto coreTracks = core->GetSnapshot().tracks;
+    Require(coreTracks.size() == 2, "core publication lost negotiated tracks");
+    for (const auto& track : coreTracks)
+    {
+        const auto resolved = streams.FindTrack(track.ref);
+        Require(resolved && resolved->endpoint_id == sourceId && track.description.Valid(),
+            "core track reference did not resolve to the publishing endpoint");
+    }
+    const auto published = b.ReceiveTrackChange();
+    Require(published.at("tracks").size() == 2, "media controls publish event missing");
+    Require(a.Request({{"type", "unpublish"}}).value("type", "") == "error", "missing stop session_id accepted");
+    const Json invalidIds = Json::array({nullptr, false, 0, -1, 1.0, "1", Json::object(), Json::array()});
+    for (const auto& id : invalidIds)
+        Require(a.Request({{"type", "unpublish"}, {"session_id", id}}).value("type", "") == "error",
+            "malformed stop session_id accepted");
+    Require(a.RequestText("{\"type\":\"unpublish\",\"session_id\":18446744073709551616}").value("type", "") == "error",
+        "overflowing stop session_id accepted");
+    Require(a.Request({{"type", "unsubscribe"}, {"session_id", sourceId}}).value("type", "") == "error",
+        "unsubscribe stopped a publishing session");
+    Require(utils::EndpointManager::Instance().Find(sourceId) == source && source->PublishedTrackCount() == 2,
+        "invalid stop request removed publication");
+
+    auto browser = ParseDescription({{"sdp", Offer()}}, sdp::SdpType::Offer);
+    Json bindings = Json::array();
+    for (auto& media : browser.medias)
+    {
+        media.direction = sdp::MediaDirection::RecvOnly;
+        media.ssrcs.clear(); media.ssrcGroups.clear();
+        bindings.push_back({{"track_id", publisherId + ":" + media.mid}, {"mid", media.mid}});
+    }
+    const Json subscription = {{"type", "subscribe"}, {"sdp", sdp::Sdp::Serialize(browser)}, {"tracks", bindings}};
+    const auto subscribe = [&] {
+        const auto reply = b.Request(subscription);
+        Require(reply.value("type", "") == "answer", reply.dump().c_str());
+        const auto id = reply.at("session_id").get<uint64_t>();
+        auto endpoint = std::dynamic_pointer_cast<media::SfuEndpoint>(utils::EndpointManager::Instance().Find(id));
+        Require(endpoint && endpoint->SubscriptionCount() == 2, "resubscribe did not bind forwarding routes");
+        return endpoint;
+    };
+    auto destination = subscribe();
+    Require(streams.Size() == streamBaseline + 1, "subscription registered a duplicate source stream");
+    for (const auto& track : coreTracks)
+    {
+        const auto resolved = streams.FindTrack(track.ref);
+        Require(resolved && resolved->description.ref == track.ref && resolved->consumers.size() == 1,
+            "room RTP subscription did not reference the global source track");
+    }
+    const auto oldDestinationId = destination->Id();
+    Require(b.Request({{"type", "unpublish"}, {"session_id", oldDestinationId}}).value("type", "") == "error",
+        "unpublish stopped a subscribing session");
+    Require(b.Request({{"type", "unsubscribe"}, {"session_id", sourceId}}).value("type", "") == "error" &&
+        destination->SubscriptionCount() == 2, "another participant's session_id stopped local media");
+    const Json stopWatching = {{"type", "unsubscribe"}, {"session_id", oldDestinationId}};
+    const auto stoppedViewer = b.Request(stopWatching);
+    Require(stoppedViewer.value("type", "") == "unsubscribed" && stoppedViewer.at("changed") == true &&
+        stoppedViewer.at("session_id") == oldDestinationId, "unsubscribe acknowledgement incorrect");
+    Require(!utils::EndpointManager::Instance().Find(oldDestinationId) && destination->SubscriptionCount() == 0 &&
+        source->PublishedTrackCount() == 2, "unsubscribe did not isolate downstream cleanup");
+    Require(b.Request(stopWatching).at("changed") == false, "repeated unsubscribe was not idempotent");
+    destination = subscribe();
+    Require(destination->Id() != oldDestinationId && b.Request(stopWatching).value("type", "") == "error" &&
+        destination->SubscriptionCount() == 2, "stale unsubscribe removed replacement media");
+
+    const Json stopPublishing = {{"type", "unpublish"}, {"session_id", sourceId}};
+    const auto stoppedPublisher = a.Request(stopPublishing);
+    Require(stoppedPublisher.value("type", "") == "unpublished" && stoppedPublisher.at("changed") == true &&
+        stoppedPublisher.at("session_id") == sourceId, "unpublish acknowledgement incorrect");
+    Require(!utils::EndpointManager::Instance().Find(sourceId) && destination->SubscriptionCount() == 0,
+        "unpublish retained source endpoint or downstream routes");
+    Require(!streams.FindById(core->GetId()) && !streams.FindTrack(coreTracks.front().ref) &&
+        core->GetState() == media::MediaStream::State::Closed && streams.Size() == streamBaseline,
+        "unpublish retained the old core publication");
+    const auto unpublished = b.ReceiveTrackChange();
+    Require(unpublished.at("tracks").empty() && unpublished.at("revision") > published.at("revision"),
+        "unpublish did not notify track removal");
+    Require(a.Request(stopPublishing).at("changed") == false, "repeated unpublish was not idempotent");
+    const auto beforeFailure = utils::EndpointManager::Instance().Size();
+    Require(b.Request({{"type", "unsubscribe"}, {"session_id", destination->Id()}}).at("changed") == true,
+        "viewer could not stop after source disappeared");
+    Require(b.Request(subscription).value("type", "") == "error" &&
+        utils::EndpointManager::Instance().Size() + 1 == beforeFailure, "unavailable source left a partial subscriber");
+
+    const auto replacement = a.Request({{"type", "publish"}, {"sdp", Offer()}});
+    CheckAnswer(replacement, config.udp_port);
+    const auto replacementId = replacement.at("session_id").get<uint64_t>();
+    const auto nextCore = streams.FindByName(publisherId, "controls");
+    Require(nextCore && nextCore->GetId() != core->GetId() && !streams.Remove(core) &&
+        streams.FindByName(publisherId, "controls") == nextCore, "stale cleanup removed the replacement core stream");
+    Require(replacementId != sourceId && a.Request(stopPublishing).value("type", "") == "error" &&
+        utils::EndpointManager::Instance().Find(replacementId), "stale unpublish removed replacement media");
+    const auto republished = b.ReceiveTrackChange();
+    Require(republished.at("tracks").size() == 2 && republished.at("revision") > unpublished.at("revision"),
+        "republish did not notify room peers");
+    for (const auto& track : republished.at("tracks"))
+        Require(track.at("publisher_id") == publisherId, "republish changed participant identity");
+    destination = subscribe();
+    const auto removedTrack = nextCore->GetTracks().front().ref;
+    Require(streams.RemoveTrack(removedTrack), "global track removal failed");
+    const auto changed = b.ReceiveTrackChange();
+    Require(changed.at("tracks").size() == 1 && destination->SubscriptionCount() == 1,
+        "global removal did not reconcile room notification and downstream route");
+    auto replacementEndpoint = std::dynamic_pointer_cast<media::SfuEndpoint>(
+        utils::EndpointManager::Instance().Find(replacementId));
+    Require(replacementEndpoint && replacementEndpoint->PublishedTrackCount() == 1 &&
+        nextCore->GetTracks().size() == 1, "global removal did not release the source receiver on its owner");
+    Require(a.Request({{"type", "unpublish"}, {"session_id", replacementId}}).at("changed") == true,
+        "second publication could not stop");
+    Require(b.Request({{"type", "unsubscribe"}, {"session_id", destination->Id()}}).at("changed") == true,
+        "second subscription could not stop");
+    Require(utils::EndpointManager::Instance().Size() == baseline, "media stops leaked endpoints");
+
+    // 停止媒体后仍可用原身份和凭据恢复信令，无需 ICE restart。
+    a.Close();
+    std::this_thread::sleep_for(50ms);
+    Client resumed(config.websocket_port);
+    const auto recovery = resumed.Request({{"type", "resume"}, {"token", RoomToken("controls-publisher", "controls")},
+        {"room_id", "controls"}, {"participant_id", publisherId}, {"resume_token", joined.at("resume_token")}});
+    Require(recovery.value("type", "") == "resumed" && recovery.at("participant_id") == publisherId &&
+        recovery.at("ice_restart") == false, "media stop removed recoverable membership");
+    const auto resumedPublication = resumed.Request({{"type", "publish"}, {"sdp", Offer()}});
+    CheckAnswer(resumedPublication, config.udp_port);
+    const auto resumedId = resumedPublication.at("session_id").get<uint64_t>();
+    const auto resumedCore = streams.FindByName(publisherId, "controls");
+    Require(resumedCore && streams.Remove(resumedCore), "global stream removal failed");
+    for (unsigned i = 0; i < 200 && utils::EndpointManager::Instance().Find(resumedId); ++i)
+        std::this_thread::sleep_for(10ms);
+    Require(!utils::EndpointManager::Instance().Find(resumedId) &&
+        resumed.Request({{"type", "unpublish"}, {"session_id", resumedId}}).at("changed") == false,
+        "global stream removal did not clean the owner's media session");
+    CheckAnswer(resumed.Request({{"type", "publish"}, {"sdp", Offer()}}), config.udp_port);
+    for (auto* client : {&resumed, &b, &observer})
+        Require(client->Request({{"type", "leave"}}).value("type", "") == "closed", "leave after media stop failed");
+    WaitForEndpoints(baseline);
+    service->Stop(); loop.Stop();
+    Require(streams.Size() == streamBaseline, "media controls leaked core streams");
+}
+
+void RunRoomOwners()
+{
+    using server::signaling::SignalSessionCoordinator;
+    const auto baseline = utils::EndpointManager::Instance().Size();
+    EventLoop loop(3);
+    Require(loop.Start(), "room owners loop did not start");
+    const auto executors = loop.GetTaskSchedulers();
+    config::AppConfig config;
+    config.listen_ip = config.webrtc.public_ip = "127.0.0.1";
+    config.udp_port = AvailablePort(SOCK_DGRAM);
+    config.websocket_port = AvailablePort(SOCK_STREAM);
+    config.webrtc.enabled = true;
+    config.webrtc.api_keys = {{kApiKey, kApiSecret}};
+    config.webrtc.max_sessions = 3;
+    config.webrtc.reconnect_timeout_ms = 100;
+    auto service = std::make_shared<server::WebRtcService>(&loop, config, nullptr);
+    Require(service->Start(), "room owners service did not start");
+    std::string firstRoom, secondRoom;
+    for (int i = 0; firstRoom.empty() || secondRoom.empty(); ++i)
+    {
+        const auto name = "owner-" + std::to_string(i);
+        (SignalSessionCoordinator::SelectOwner(name, 2) == 0 ? firstRoom : secondRoom) = name;
+    }
+    Client a(config.websocket_port), peer(config.websocket_port), b(config.websocket_port), extra(config.websocket_port);
+    Join(a, "owner-a", firstRoom); Join(peer, "owner-peer", firstRoom); Join(b, "owner-b", secondRoom);
+    Require(extra.Request({{"type", "join"}, {"room_id", secondRoom}, {"token", RoomToken("extra", secondRoom)}})
+        .value("type", "") == "error", "room sharding multiplied the participant limit");
+    const auto first = a.Request({{"type", "publish"}, {"sdp", Offer()}});
+    const auto second = b.Request({{"type", "publish"}, {"sdp", Offer()}});
+    CheckAnswer(first, config.udp_port); CheckAnswer(second, config.udp_port);
+    Require(peer.ReceiveTrackChange().at("tracks").size() == 2, "same-owner publication notification missing");
+    const auto checkIce = [&](const Json& answer) {
+        const auto description = ParseDescription(answer, sdp::SdpType::Answer);
+        const auto ice = description.medias.front().ice;
+        protocol::IceRequestParams request;
+        request.username = ice.ufrag + ":peer";
+        request.password = ice.pwd;
+        request.controlling = true; request.tie_breaker = 42; request.priority = 1234;
+        std::vector<uint8_t> bytes(1500);
+        size_t length = 0;
+        Require(protocol::StunCodec::BuildIceBindingRequest(request, bytes.data(), bytes.size(), length), "ICE request build failed");
+        Socket socket(SOCK_DGRAM);
+        Require(socket.Bind(0), "ICE test socket bind failed");
+        sockaddr_in target{};
+        target.sin_family = AF_INET; target.sin_addr.s_addr = htonl(INADDR_LOOPBACK); target.sin_port = htons(config.udp_port);
+        Require(::sendto(socket.Get(), bytes.data(), length, 0, reinterpret_cast<sockaddr*>(&target), sizeof(target)) ==
+            static_cast<ssize_t>(length), "ICE request send failed");
+        pollfd descriptor{socket.Get(), POLLIN, 0};
+        Require(::poll(&descriptor, 1, 3000) > 0, "room owner did not return an ICE response through the shared UDP listener");
+        const auto received = ::recv(socket.Get(), bytes.data(), bytes.size(), 0);
+        protocol::StunMessageInfo response;
+        Require(received > 0 && protocol::StunCodec::Parse(bytes.data(), received, response) && response.IsBindingResponse() &&
+            protocol::StunCodec::VerifyMessageIntegrity(response, ice.pwd), "ICE response belonged to the wrong room session");
+    };
+    checkIce(first); checkIce(second);
+    a.Request({{"type", "tracks"}}); peer.Request({{"type", "tracks"}});
+
+    std::promise<void> entered, release;
+    auto enteredFuture = entered.get_future();
+    const auto gate = release.get_future().share();
+    Require(executors[1]->Post([&entered, gate] { entered.set_value(); gate.wait_for(5s); }), "owner gate post failed");
+    Require(enteredFuture.wait_for(3s) == std::future_status::ready, "owner gate did not start");
+    a.Send(1, Json{{"type", "tracks"}}.dump());
+    peer.Send(1, Json{{"type", "tracks"}}.dump());
+    auto independent = std::async(std::launch::async, [&] { return b.Request({{"type", "tracks"}}); });
+    const bool progressed = independent.wait_for(1500ms) == std::future_status::ready;
+    const bool stayedOnOwner = !a.HasReadable() && !peer.HasReadable();
+    release.set_value();
+    const auto otherTracks = independent.get();
+    Require(progressed && otherTracks.at("tracks").size() == 2, "blocked room owner stalled another owner or the network loop");
+    Require(stayedOnOwner, "same-room state escaped its assigned owner");
+    Require(a.Receive().at("tracks").size() == 2 && peer.Receive().at("tracks").size() == 2, "queued same-room requests were lost");
+
+    // 同一连接离开后跨 owner 入房，必须先处理完上一条请求。
+    a.Send(1, Json{{"type", "leave"}}.dump());
+    a.Send(1, Json{{"type", "join"}, {"room_id", secondRoom}, {"token", RoomToken("moved", secondRoom)}}.dump());
+    a.Send(1, Json{{"type", "tracks"}}.dump());
+    Require(a.Receive().value("type", "") == "closed" && a.Receive().value("type", "") == "joined" &&
+        a.Receive().at("tracks").size() == 2, "cross-owner leave/join pipeline reordered or retained the old room");
+    Require(peer.Request({{"type", "tracks"}}).at("tracks").empty(), "room move retained the old publication");
+
+    // 房间任务队列已满时，断连清理须在后续 Tick 重试，不能丢失。
+    std::promise<void> saturatedEntered, saturatedRelease;
+    auto saturatedFuture = saturatedEntered.get_future();
+    const auto saturatedGate = saturatedRelease.get_future().share();
+    executors[1]->Post([&saturatedEntered, saturatedGate] { saturatedEntered.set_value(); saturatedGate.wait_for(5s); });
+    Require(saturatedFuture.wait_for(3s) == std::future_status::ready, "saturation gate did not start");
+    std::size_t queued = 0;
+    while (queued < 100000 && executors[1]->Post([] {})) ++queued;
+    const auto closedBefore = service->GetStats().signaling_closed;
+    peer.Close();
+    const auto closedDeadline = std::chrono::steady_clock::now() + 2s;
+    while (service->GetStats().signaling_closed == closedBefore && std::chrono::steady_clock::now() < closedDeadline)
+        std::this_thread::sleep_for(2ms);
+    const bool closedWhileFull = service->GetStats().signaling_closed == closedBefore + 1;
+    saturatedRelease.set_value();
+    Require(queued > 0 && queued < 100000 && closedWhileFull, "full room executor blocked or lost network close handling");
+    const auto cleanupDeadline = std::chrono::steady_clock::now() + 3s;
+    while (service->ParticipantCount() != 2 && std::chrono::steady_clock::now() < cleanupDeadline)
+        std::this_thread::sleep_for(2ms);
+    Require(service->ParticipantCount() == 2, "rejected room detach was not retried after queue recovery");
+    Client pending(config.websocket_port);
+    Join(pending, "owner-pending", firstRoom);
+
+    std::promise<void> stoppingEntered, stopRelease;
+    auto stoppingFuture = stoppingEntered.get_future();
+    const auto stopGate = stopRelease.get_future().share();
+    executors[1]->Post([&stoppingEntered, stopGate] { stoppingEntered.set_value(); stopGate.wait_for(5s); });
+    Require(stoppingFuture.wait_for(3s) == std::future_status::ready, "stop gate did not start");
+    pending.Send(1, Json{{"type", "publish"}, {"sdp", Offer()}}.dump());
+    auto stopped = std::async(std::launch::async, [&] { service->Stop(); });
+    stopRelease.set_value();
+    Require(stopped.wait_for(3s) == std::future_status::ready, "multi-owner shutdown did not finish");
+    stopped.get();
+    Require(utils::EndpointManager::Instance().Size() == baseline && service->ParticipantCount() == 0 &&
+        service->GetStats().active_signaling == 0, "multi-owner shutdown retained sessions");
+    Socket released(SOCK_DGRAM);
+    Require(released.Bind(config.udp_port), "multi-owner shutdown leaked UDP listener");
+    loop.Stop();
+}
+
+void RunBackendControls()
+{
+    const auto baseline = utils::EndpointManager::Instance().Size();
+    EventLoop loop(3);
+    Require(loop.Start(), "control loop did not start");
+    config::AppConfig config;
+    config.listen_ip = config.webrtc.public_ip = "127.0.0.1";
+    config.udp_port = AvailablePort(SOCK_DGRAM); config.websocket_port = AvailablePort(SOCK_STREAM);
+    config.webrtc.enabled = true; config.webrtc.api_keys = {{kApiKey, kApiSecret}};
+    config.webrtc.reconnect_timeout_ms = 5000;
+    auto service = std::make_shared<server::WebRtcService>(&loop, config, nullptr);
+    Require(service->Start(), "control service did not start");
+    const auto token = [](const std::string& identity, const std::string& epoch) {
+        return RoomToken(identity, "backend", true, true, 0, kApiKey, kApiSecret, false, true, epoch);
+    };
+    Client member(config.websocket_port), peer(config.websocket_port), stale(config.websocket_port);
+    const auto join = [&](Client& client, const std::string& identity, const std::string& epoch) {
+        return client.Request({{"type", "join"}, {"room_id", "backend"}, {"token", token(identity, epoch)}});
+    };
+    const auto joined = join(member, "member", "epoch-one");
+    Require(joined.value("type", "") == "joined", "assigned join failed");
+    Require(join(peer, "peer", "epoch-one").value("type", "") == "joined", "assigned peer join failed");
+    Require(service->ControlRoom("backend", "epoch-wrong", {{"type", "end_room"}}).value("code", "") == "stale_assignment",
+        "wrong epoch ended active room");
+    Require(service->ControlRoom("backend", "epoch-one", {{"type", "reclaim_room"}}).at("released") == false,
+        "reclaimed occupied room");
+    const auto roster = service->ControlRoom("backend", "epoch-one", {{"type", "participants"}});
+    Require(roster.at("participants").size() == 2, "backend list lost members");
+    const auto publication = member.Request({{"type", "publish"}, {"sdp", Offer()}});
+    CheckAnswer(publication, config.udp_port);
+    const auto updated = service->ControlRoom("backend", "epoch-one", {{"type", "update_participant"},
+        {"participant_id", joined.at("participant_id")}, {"name", "backend name"}, {"permissions", {{"can_publish", false}}}});
+    Require(updated.at("media_stopped") == true && !utils::EndpointManager::Instance().Find(publication.at("session_id").get<uint64_t>()),
+        "backend revoke retained media");
+    member.Close();
+    const auto deadline = std::chrono::steady_clock::now() + 2s;
+    while (!service->GetStats().reconnecting_participants && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(10ms);
+    Require(service->ControlRoom("backend", "epoch-one", {{"type", "reclaim_room"}}).at("released") == false,
+        "reclaimed room during recovery grace");
+    Require(service->ControlRoom("backend", "epoch-one", {{"type", "end_room"}}).at("released") == true, "backend end failed");
+    Require(peer.Receive().value("type", "") == "removed", "end omitted terminal notification");
+    Require(stale.Request({{"type", "resume"}, {"room_id", "backend"}, {"token", token("member", "epoch-one")},
+        {"participant_id", joined.at("participant_id")}, {"resume_token", joined.at("resume_token")}}).value("type", "") == "error",
+        "ended room recovered participant");
+    Require(join(stale, "stale", "epoch-one").value("type", "") == "error", "retired JWT recreated room");
+    Require(service->ControlRoom("backend", "epoch-one", {{"type", "end_room"}}).at("released") == true, "duplicate end failed");
+    const auto freshJoined = join(stale, "fresh", "epoch-two");
+    Require(freshJoined.value("type", "") == "joined", "new epoch join failed");
+    Require(service->ControlRoom("backend", "epoch-one", {{"type", "end_room"}}).value("code", "") == "stale_assignment",
+        "old end removed new room");
+    // 超时尚未开始的命令不能在 owner 恢复后迟到执行。
+    const auto executors = loop.GetTaskSchedulers();
+    const auto owner = executors[1 + server::signaling::SignalSessionCoordinator::SelectOwner("backend", executors.size() - 1)];
+    std::promise<void> entered, release;
+    auto gate = release.get_future().share(); auto ready = entered.get_future();
+    owner->Post([&entered, gate] { entered.set_value(); gate.wait_for(4s); });
+    Require(ready.wait_for(2s) == std::future_status::ready, "control gate failed");
+    const auto timeout = service->ControlRoom("backend", "epoch-two", {{"type", "end_room"}});
+    release.set_value();
+    Require(timeout.value("code", "") == "unavailable", "blocked owner falsely confirmed command");
+    Require(service->ControlRoom("backend", "epoch-two", {{"type", "participants"}}).at("participants").size() == 1,
+        "cancelled command executed after deadline");
+    Require(service->ControlRoom("backend", "epoch-two", {{"type", "remove_participant"},
+        {"participant_id", freshJoined.at("participant_id")}}).value("type", "") == "participant_removed", "last backend removal failed");
+    Require(stale.Receive().value("type", "") == "removed", "last member removal omitted notification");
+    Client late(config.websocket_port);
+    Require(join(late, "late", "epoch-two").value("type", "") == "error", "last removal did not retire assignment");
+    Require(service->ControlRoom("unused", "reserved", {{"type", "reclaim_room"}}).at("released") == true,
+        "unused reservation did not reclaim");
+    service->Stop(); loop.Stop();
+    Require(utils::EndpointManager::Instance().Size() == baseline, "backend controls leaked media");
 }
 
 void RunAuthorization()
@@ -833,17 +1425,15 @@ void RunAuthorization()
     Require(stranger.Request(recovery).value("type", "") == "error", "different subject resumed participant");
     recovery["token"] = RoomToken("observer", "secure", false, false, 0, kOtherApiKey);
     Require(stranger.Request(recovery).value("type", "") == "error", "different issuer resumed participant");
-    recovery["token"] = RoomToken("observer", "secure", true, false);
-    Require(stranger.Request(recovery).value("type", "") == "error", "resume changed original publish grant");
-    recovery["token"] = RoomToken("observer", "secure", false, true);
-    Require(stranger.Request(recovery).value("type", "") == "error", "resume changed original subscribe grant");
     recovery["token"] = RoomToken("observer", "secure", false, false, UnixNow() - 120);
     Require(stranger.Request(recovery).value("code", "") == "token_expired", "expired JWT resumed participant");
-    recovery["token"] = RoomToken("observer", "secure", false, false);
+    recovery["token"] = RoomToken("observer", "secure", true, true);
     const auto resumed = stranger.Request(recovery);
     Require(resumed.value("type", "") == "resumed" && resumed.value("subject_id", "") == "observer" &&
-        resumed.at("participant_id") == joined.at("participant_id"), "same identity and grants could not resume");
+        resumed.at("participant_id") == joined.at("participant_id"), "same identity could not resume with refreshed admission");
     Require(stranger.Request(publication).value("code", "") == "forbidden", "resume lost publish restriction");
+    Require(stranger.Request({{"type", "subscribe"}, {"sdp", Offer()}, {"tracks", Json::array()}}).value("code", "") == "forbidden",
+        "refreshed JWT elevated runtime subscription permission");
 
     // Admission-token expiry does not silently revoke an established participant.
     Client shortLived(config.websocket_port);
@@ -864,6 +1454,8 @@ void RunAuthorization()
 
 void Run()
 {
+    auto& streams = media::MediaStreamRegistry::Instance();
+    const auto streamBaseline = streams.Size();
     class ExistingEndpoint final : public utils::EndpointBase
     {
     public:
@@ -913,7 +1505,7 @@ void Run()
     Require(first.Request(bad).value("type", "") == "error", "wrong token accepted");
     Require(first.Request(offer).value("type", "") == "error", "bare offer bypassed room admission");
     Require(first.RequestText("{").value("type", "") == "error", "invalid JSON accepted");
-    Join(first, "first", "admission");
+    const auto firstJoined = Join(first, "first", "admission");
     const Json publication = {{"type", "publish"}, {"sdp", Offer()}};
     bad = publication;
     bad["sdp"] = "not SDP";
@@ -930,6 +1522,16 @@ void Run()
     Require(service->ParticipantCount() == 1 && first.Request({{"type", "tracks"}}).value("type", "") == "tracks",
         "failed media creation removed joined participant");
     Require(utils::EndpointManager::Instance().Size() == baseline, "failed media creation leaked endpoint");
+    // 在媒体已启动、房间发布前制造注册冲突，验证整条创建链的失败回滚。
+    auto occupied = std::make_shared<media::MediaStream>(firstJoined.at("participant_id").get<std::string>(),
+        media::MediaStream::Source{"test", "admission", {}});
+    Require(occupied->ReplaceTracks({{0, media::MediaType::Video, media::CodecType::H264}}) && streams.Register(occupied),
+        "could not reserve test stream identity");
+    Require(first.Request(publication).value("type", "") == "error" &&
+        utils::EndpointManager::Instance().Size() == baseline && streams.Size() == streamBaseline + 1 &&
+        streams.FindById(occupied->GetId()) == occupied && service->ParticipantCount() == 1,
+        "failed publication leaked resources or removed an existing stream");
+    Require(streams.Remove(occupied), "test stream identity was removed by failed publication");
     CheckAnswer(first.Request(publication), config.udp_port);
     Require(utils::EndpointManager::Instance().Size() == baseline + 1, "accepted publication did not register endpoint");
     Require(first.Request(offer).value("type", "") == "error", "room reoffer bypassed negotiation guard");
@@ -976,21 +1578,32 @@ void Run()
     Require(utils::EndpointManager::Instance().Find(existing->Id()) == existing,
         "WebRTC replaced or removed another protocol's endpoint");
     utils::EndpointManager::Instance().Remove(existing->Id());
+    Require(streams.Size() == streamBaseline, "service shutdown leaked core publications");
 }
 }
 
-int main()
+int main(int argc, char** argv)
 {
     std::signal(SIGPIPE, SIG_IGN);
     try
     {
+        if (argc == 2 && std::string(argv[1]) == "--members")
+        {
+            RunMembers();
+            std::cout << "PASS meeting membership, profiles, permissions, notifications, recovery and removal\n";
+            return 0;
+        }
+        if (argc == 2 && std::string(argv[1]) == "--control")
+        { RunBackendControls(); std::cout << "PASS backend room controls, epochs, reclamation and deadlines\n"; return 0; }
         Run();
         RunSignalingLifecycle();
         RunCoordinatorChannels();
         RunNegotiationGuards();
         RunRoom();
+        RunMediaControls();
+        RunRoomOwners();
         RunAuthorization();
-        std::cout << "PASS WebRTC service JWT authorization, rooms, subscriptions, renegotiation, admission, cleanup and restart\n";
+        std::cout << "PASS WebRTC service JWT authorization, rooms, media stop/retry, subscriptions, renegotiation, admission, cleanup and restart\n";
         return 0;
     }
     catch (const std::exception& error)

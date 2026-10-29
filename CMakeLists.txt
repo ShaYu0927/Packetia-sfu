@@ -73,9 +73,8 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/media/endpoint
     ${CMAKE_SOURCE_DIR}/media/core
     ${CMAKE_SOURCE_DIR}/media/track
-    ${CMAKE_SOURCE_DIR}/media/rtp
     ${CMAKE_SOURCE_DIR}/media/types
-    ${CMAKE_SOURCE_DIR}/media/MediaFrame
+    ${CMAKE_SOURCE_DIR}/media/frame
     ${CMAKE_SOURCE_DIR}/media/transport
     ${CMAKE_SOURCE_DIR}/media/quality
     ${CMAKE_SOURCE_DIR}/media/quality/bwe
@@ -108,6 +107,7 @@ add_library(network STATIC
     network/UdpSession.cpp
     network/transport/DatagramProtocolClassifier.cpp
     network/transport/UdpDatagramTransport.cpp
+    network/transport/UdpSendQueue.cpp
     network/transport/TlsContext.cpp
     network/transport/TlsTransport.cpp
 )
@@ -163,6 +163,7 @@ else()
 endif()
 
 add_library(utils STATIC
+    utils/BoundedChannel.h
     utils/StringUtil.h
     utils/HttpUtil.h
     utils/CryptoUtil.cpp
@@ -252,6 +253,7 @@ add_library(Interleaved STATIC
 add_library(ROOM_LIB STATIC
     ${ROOM_SRC}
 )
+add_subdirectory(Rtsp/Rtp)
 add_subdirectory(protocol)
 add_subdirectory(media)
 add_subdirectory(service)
@@ -274,7 +276,7 @@ if(BUILD_TESTING)
     endif()
     add_subdirectory(network/Test)
     add_subdirectory(Common/Depacketizer/Test)
-    add_subdirectory(media/quality/Test)
+    add_subdirectory(media/quality/tests)
     add_subdirectory(Rtsp/Test)
     add_subdirectory(utils/test)
     add_subdirectory(utils/test/latency)

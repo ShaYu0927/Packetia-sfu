@@ -23,6 +23,7 @@ SfuEndpoint::SfuEndpoint(uint64_t id, std::shared_ptr<RtpTrackDescription> track
 {
     session_id_ = source.session_id;
     stream_id_ = source.stream_id;
+    media_stream_id_ = source.media_stream_id;
     if (track_description)
         AddPublishedTrack(std::to_string(track_description->getTrackIndex()), track_description);
 }
@@ -365,6 +366,7 @@ void SfuEndpoint::DispatchEncodedFrame(const media::EncodedFrame::Ptr& frame)
         event.source.ssrc = frame->rtp.ssrc;
         event.source.session_id = session_id_;
         event.source.stream_id = stream_id_;
+        event.source.media_stream_id = media_stream_id_;
         event.frame = immutable_frame;
         const size_t accepted = frame_publisher_->Publish(event);
         const uint64_t count = published_frame_count_.fetch_add(1) + 1;
@@ -459,6 +461,7 @@ void SfuEndpoint::TickRecovery()
 {
     std::lock_guard<std::recursive_mutex> guard(runtime_mutex_);
     if (!IsRunning()) return;
+    PruneSubscriptions();
     const auto now_ms = SteadyNowMs();
     std::vector<rtsp::RtpVideoTracker::Ptr> videos;
     {
@@ -659,7 +662,7 @@ void SfuEndpoint::ForwardRtpToSubscribers(uint32_t source_ssrc, const uint8_t* d
         auto& routes = published_tracks_.at(binding->second).subscribers;
         routes.erase(std::remove_if(routes.begin(), routes.end(), [](const auto& weak) {
             const auto route = weak.lock();
-            return !route || !route->active.load();
+            return !route || route->Closed();
         }), routes.end());
         if (trace) {
             media_latency::Count(routes.empty() ? media_latency::Counter::NoSubscribers : media_latency::Counter::ForwardInputs);
@@ -669,7 +672,7 @@ void SfuEndpoint::ForwardRtpToSubscribers(uint32_t source_ssrc, const uint8_t* d
         if (!packet.Empty()) for (const auto& weak : routes) 
         {
             const auto route = weak.lock();
-            if (!route || !route->active.load()) continue;
+            if (!route || !route->CanDeliver()) continue;
             if (!route->source_ssrc) route->source_ssrc = source_ssrc;
             if (*route->source_ssrc != source_ssrc) continue;
             if (auto destination = route->destination.lock()) 

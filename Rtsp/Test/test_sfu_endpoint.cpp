@@ -2,7 +2,8 @@
 #include "SfuEndpoint.h"
 #include "Room.h"
 #include "Participant.h"
-#include "MediaTrack.h"
+#include "TrackPublication.h"
+#include "MediaStreamRegistry.h"
 #include "SdpTrackBinding.h"
 #include "Sdp.h"
 #include "RtpTrackAdapter.h"
@@ -122,6 +123,84 @@ struct RegisteredReceiver
         utils::EndpointManager::Instance().Remove(endpoint->Id());
     }
 };
+
+TEST_F(SfuConference, GlobalTrackControlsGateRtpRetransmissionAndIndependentConsumers)
+{
+    auto source = std::make_shared<media::SfuEndpoint>(9100001);
+    auto b = std::make_shared<media::SfuEndpoint>(9100002);
+    auto c = std::make_shared<media::SfuEndpoint>(9100003);
+    ASSERT_TRUE(source->AddPublishedTrack("camera", Description(0, false, 102)));
+    ASSERT_TRUE(source->Start());
+    ASSERT_TRUE(b->Start());
+    ASSERT_TRUE(c->Start());
+    auto& streams = media::MediaStreamRegistry::Instance();
+    const auto baseline = streams.Size();
+    auto stream = std::make_shared<media::MediaStream>("global-track-control-test");
+    ASSERT_TRUE(stream->ReplaceTracks({{0, media::MediaType::Video, media::CodecType::H264}}));
+    ASSERT_TRUE(stream->BindTrackEndpoint(0, source->Id()));
+    ASSERT_TRUE(stream->StartPublishing());
+    ASSERT_TRUE(streams.Register(stream));
+    struct Registration
+    {
+        media::MediaStream::Ptr stream;
+        ~Registration() { media::MediaStreamRegistry::Instance().Remove(stream); }
+    } cleanup{stream};
+    const auto ref = stream->GetTracks()[0].ref;
+    auto toB = std::make_shared<CaptureTransport>(), toC = std::make_shared<CaptureTransport>();
+    Configure(b, "camera", toB, false, 777, 96);
+    Configure(c, "camera", toC, false, 778, 96);
+    auto imposter = std::make_shared<media::SfuEndpoint>(9100004);
+    ASSERT_TRUE(imposter->AddPublishedTrack("camera", Description(0, false, 102)));
+    ASSERT_TRUE(imposter->Start());
+    EXPECT_FALSE(b->Subscribe("camera", imposter, "camera", ref));
+    EXPECT_FALSE(b->Subscribe("camera", source, "camera", {ref.stream_id, 1}));
+    ASSERT_TRUE(b->Subscribe("camera", source, "camera", ref));
+    ASSERT_TRUE(c->Subscribe("camera", source, "camera", ref));
+    ASSERT_EQ(streams.FindTrack(ref)->consumers.size(), 2U);
+    EXPECT_EQ(streams.Size(), baseline + 1);
+    const auto bConsumer = streams.FindTrack(ref)->consumers[0].id;
+    const auto drain = [&] {
+        Drain(media_affinity::MakeStreamKey(b->Id(), 777));
+        Drain(media_affinity::MakeStreamKey(c->Id(), 778));
+    };
+    Input(source, Packet(11, 102, 1));
+    drain();
+    ASSERT_EQ(toB->Count(), 1U);
+    ASSERT_EQ(toC->Count(), 1U);
+    const auto sent = toB->Last();
+    const uint16_t seq = uint16_t(sent[2] << 8) | sent[3];
+    const auto nack = rtcpx::RtRtcpNack::Build(888, 777, {seq});
+
+    ASSERT_TRUE(streams.SetTrackPaused(ref, true));
+    Input(source, Packet(11, 102, 2));
+    Input(b, nack, {}, true); // 暂停也必须阻止发送器绕过转发入口重传缓存包。
+    drain();
+    EXPECT_EQ(toB->Count(), 1U);
+    EXPECT_EQ(toC->Count(), 1U);
+    EXPECT_EQ(b->SubscriptionCount(), 1U);
+    ASSERT_TRUE(streams.SetTrackPaused(ref, false));
+    ASSERT_TRUE(streams.SetConsumerPaused(bConsumer, true));
+    Input(source, Packet(11, 102, 3));
+    Input(b, nack, {}, true);
+    drain();
+    EXPECT_EQ(toB->Count(), 1U);
+    EXPECT_EQ(toC->Count(), 2U);
+    ASSERT_TRUE(streams.SetConsumerPaused(bConsumer, false));
+    Input(b, nack, {}, true);
+    EXPECT_EQ(toB->Count(), 2U); // 恢复使用原发送器及重传缓存。
+    ASSERT_TRUE(streams.DetachConsumer(bConsumer));
+    Drain(b->Id());
+    EXPECT_EQ(b->SubscriptionCount(), 0U);
+    EXPECT_EQ(c->SubscriptionCount(), 1U);
+    ASSERT_TRUE(streams.RemoveTrack(ref));
+    Drain(c->Id());
+    Input(source, Packet(11, 102, 4));
+    drain();
+    EXPECT_EQ(toC->Count(), 2U);
+    EXPECT_EQ(c->SubscriptionCount(), 0U);
+    EXPECT_FALSE(streams.FindTrack(ref));
+    source->Stop(); b->Stop(); c->Stop();
+}
 
 TEST_F(SfuConference, IdleAudioGapExpiresOnOwningWorkerWithoutAnotherPacket)
 {
@@ -568,9 +647,9 @@ TEST_F(SfuConference, RoomRoutesMultipleTracksAndLeaveCleansOtherParticipants)
     ASSERT_TRUE(conference.Join(b));
     a->OnTrackPublished([&](auto, auto) { EXPECT_EQ(conference.ParticipantCount(), 2U); });
     for (const auto& id : {"camera", "mic"}) {
-        media::TrackMetadata business;
+        media::TrackPublicationInfo business;
         business.sid = id;
-        ASSERT_TRUE(conference.PublishTrack("a", std::make_shared<media::MediaTrack>(business),
+        ASSERT_TRUE(conference.PublishTrack("a", std::make_shared<media::TrackPublication>(business),
             std::string(id) == "camera" ? 11 : 22, std::string(id) == "camera" ? 102 : 111));
     }
     EXPECT_FALSE(conference.SubscribeTrack("b", "camera")); // No negotiated sender yet.
@@ -611,9 +690,9 @@ TEST_F(SfuConference, RoomTrackIdentityCanDifferFromPublisherMid)
     ASSERT_TRUE(source->Start()); ASSERT_TRUE(destination->Start());
     ASSERT_TRUE(a->BindEndpoint(source)); ASSERT_TRUE(b->BindEndpoint(destination));
     ASSERT_TRUE(conference.Join(a)); ASSERT_TRUE(conference.Join(b));
-    media::TrackMetadata business;
+    media::TrackPublicationInfo business;
     business.sid = "a:0";
-    ASSERT_TRUE(conference.PublishTrack("a", std::make_shared<media::MediaTrack>(business), 11, 102, "0"));
+    ASSERT_TRUE(conference.PublishTrack("a", std::make_shared<media::TrackPublication>(business), 11, 102, "0"));
     auto transport = std::make_shared<CaptureTransport>();
     Configure(destination, "a:0", transport, false, 777, 120);
     ASSERT_TRUE(conference.SubscribeTrack("b", "a:0"));
@@ -656,13 +735,13 @@ TEST_F(SfuConference, RoomKeepsPublishAndSubscribeEndpointsIsolatedDuringRouting
     ASSERT_TRUE(conference.Join(b));
     for (const auto& id : {"a:camera", "a:mic", "b:camera"})
     {
-        media::TrackMetadata info;
+        media::TrackPublicationInfo info;
         info.sid = id;
         const bool microphone = info.sid == "a:mic";
         const bool from_a = info.sid.front() == 'a';
         info.type = microphone ? media::MediaType::Audio : media::MediaType::Video;
         ASSERT_TRUE(conference.PublishTrack(from_a ? "a" : "b",
-            std::make_shared<media::MediaTrack>(info), microphone ? 22 : (from_a ? 11 : 33),
+            std::make_shared<media::TrackPublication>(info), microphone ? 22 : (from_a ? 11 : 33),
             microphone ? 111 : (from_a ? 102 : 103), microphone ? "mic" : "camera"));
     }
     auto to_a = std::make_shared<CaptureTransport>();
@@ -749,9 +828,9 @@ TEST_F(SfuConference, MissingPublishRoleDoesNotFallBackToMetadataOnlyRoom)
     auto b = std::make_shared<room::Participant>("b", "B");
     ASSERT_TRUE(conference.Join(a));
     ASSERT_TRUE(conference.Join(b));
-    media::TrackMetadata info;
+    media::TrackPublicationInfo info;
     info.sid = "metadata-camera";
-    ASSERT_TRUE(conference.PublishTrack("a", std::make_shared<media::MediaTrack>(info), 11, 102));
+    ASSERT_TRUE(conference.PublishTrack("a", std::make_shared<media::TrackPublication>(info), 11, 102));
 
     auto subscribe = std::make_shared<media::SfuEndpoint>(1311);
     // Even a matching physical track cannot substitute for the missing role.
@@ -763,7 +842,7 @@ TEST_F(SfuConference, MissingPublishRoleDoesNotFallBackToMetadataOnlyRoom)
     EXPECT_FALSE(a->GetPublishEndpoint());
     EXPECT_EQ(a->GetSubscribeEndpoint(), subscribe);
     info.sid = "camera";
-    EXPECT_FALSE(conference.PublishTrack("a", std::make_shared<media::MediaTrack>(info), 11, 102));
+    EXPECT_FALSE(conference.PublishTrack("a", std::make_shared<media::TrackPublication>(info), 11, 102));
     EXPECT_FALSE(a->GetPublishedTrack("camera"));
     // Both selected endpoints are null, but the source has a media binding.
     EXPECT_FALSE(conference.SubscribeTrack("b", "metadata-camera"));
@@ -786,9 +865,9 @@ TEST_F(SfuConference, MissingSubscribeRoleDoesNotFallBackToMetadataOnlyRoom)
         1312, room::ParticipantSessionRole::Publish, publish)));
     ASSERT_TRUE(conference.Join(a));
     ASSERT_TRUE(conference.Join(b));
-    media::TrackMetadata info;
+    media::TrackPublicationInfo info;
     info.sid = "camera";
-    ASSERT_TRUE(conference.PublishTrack("a", std::make_shared<media::MediaTrack>(info), 11, 102));
+    ASSERT_TRUE(conference.PublishTrack("a", std::make_shared<media::TrackPublication>(info), 11, 102));
     ASSERT_TRUE(b->HasMediaBinding());
     EXPECT_EQ(b->GetPublishEndpoint(), publish);
     EXPECT_FALSE(b->GetSubscribeEndpoint());
@@ -811,9 +890,9 @@ TEST(SfuRoomCommands, MetadataOnlyRoomStillPublishesAndSubscribesWithoutMediaBin
     ASSERT_TRUE(conference.Join(b));
     EXPECT_FALSE(a->HasMediaBinding());
     EXPECT_FALSE(b->HasMediaBinding());
-    media::TrackMetadata info;
+    media::TrackPublicationInfo info;
     info.sid = "camera";
-    auto track = std::make_shared<media::MediaTrack>(info);
+    auto track = std::make_shared<media::TrackPublication>(info);
     ASSERT_TRUE(conference.PublishTrack("a", track, 11, 102));
     ASSERT_TRUE(conference.SubscribeTrack("b", "camera"));
     EXPECT_EQ(conference.ResolveTrackForSubscriber("b", "camera"), track);
@@ -951,9 +1030,9 @@ TEST(SfuRoomCommands, SubscribeUsesTrackIdAndCloseDoesNotCreateAnotherRoom)
     auto b = std::make_shared<room::Participant>("b", "B");
     ASSERT_TRUE(conference->Join(a));
     ASSERT_TRUE(conference->Join(b));
-    media::TrackMetadata info;
+    media::TrackPublicationInfo info;
     info.sid = "camera";
-    ASSERT_TRUE(conference->PublishTrack("a", std::make_shared<media::MediaTrack>(info), 11, 96));
+    ASSERT_TRUE(conference->PublishTrack("a", std::make_shared<media::TrackPublication>(info), 11, 96));
     ASSERT_TRUE(conference->UnsubscribeTrack("b", "camera"));
     room::RoomCommandHandler handler(manager);
     room::RoomCommand command{};

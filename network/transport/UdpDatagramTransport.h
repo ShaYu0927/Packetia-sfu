@@ -5,6 +5,7 @@
 #include "UdpServer.h"
 
 #include <atomic>
+#include <functional>
 #include <mutex>
 
 namespace network::transport
@@ -15,11 +16,15 @@ namespace network::transport
  * The owner installs this object as UdpServer's handler.
  */
 class UdpDatagramTransport final : public IDatagramTransport,
-                                   public network::IUdpHandler
+                                   public network::IUdpHandler,
+                                   public std::enable_shared_from_this<UdpDatagramTransport>
 {
 public:
+    // 可选的有界异步发送出口；Ok 表示入队，实际 socket 发送在网络执行器完成。
+    using Sender = std::function<DatagramSendResult(const network::SocketAddr&, const uint8_t*, size_t,
+                                                  std::weak_ptr<UdpDatagramTransport>)>;
     UdpDatagramTransport(uint64_t id,
-                         std::weak_ptr<network::UdpServer> server) noexcept;
+                         std::weak_ptr<network::UdpServer> server, Sender sender = {}) noexcept;
 
     uint64_t Id() const noexcept override;
     bool IsWritable() const noexcept override;
@@ -38,6 +43,7 @@ public:
 private:
     const uint64_t id_;
     std::weak_ptr<network::UdpServer> server_;
+    const Sender sender_;
     std::atomic<bool> closed_{false};
     std::mutex sink_mutex_;
     std::weak_ptr<IDatagramSink> sink_;

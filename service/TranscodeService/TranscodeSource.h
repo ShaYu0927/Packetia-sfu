@@ -14,6 +14,8 @@ struct TranscodeSource
     std::string session_id;
     std::string stream_id;
     uint32_t ssrc = 0;
+    // 非零时绑定内核发布实例；同名重发不会自动成为此任务的新输入。
+    uint32_t media_stream_id = 0;
 
     bool Valid() const noexcept { return endpoint_id != 0; }
     bool SameTrack(const TranscodeSource& other) const noexcept
@@ -23,7 +25,8 @@ struct TranscodeSource
     bool Matches(const TranscodeSource& actual) const noexcept
     {
         return SameTrack(actual) && (session_id.empty() || session_id == actual.session_id) &&
-            (stream_id.empty() || stream_id == actual.stream_id) && (!ssrc || ssrc == actual.ssrc);
+            (stream_id.empty() || stream_id == actual.stream_id) && (!ssrc || ssrc == actual.ssrc) &&
+            (!media_stream_id || media_stream_id == actual.media_stream_id);
     }
 };
 

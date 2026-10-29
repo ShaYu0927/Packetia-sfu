@@ -11,6 +11,7 @@ namespace protocol::webrtc { class WebRtcSession; }
 namespace media
 {
 class SfuEndpoint;
+class MediaStream;
 namespace transport
 {
 class WebRtcMediaTransport;
@@ -21,7 +22,7 @@ class MediaEndpointIngress;
 namespace server
 {
 
-// WebRTC resources belong to the application service's owner scheduler.
+// WebRTC resources belong to the room's fixed owner scheduler.
 // Room objects receive only the immutable binding, never this context.
 struct WebRtcSessionContext
 {
@@ -31,6 +32,8 @@ struct WebRtcSessionContext
     std::shared_ptr<media::transport::WebRtcMediaTransport> transport;
     std::shared_ptr<media::transport::MediaEndpointIngress> ingress;
     std::shared_ptr<media::SfuEndpoint> endpoint;
+    // 仅发布端拥有流；订阅端引用源轨道，不注册成新的发布流。
+    std::shared_ptr<media::MediaStream> media_stream;
     std::shared_ptr<room::ParticipantSession> room_binding;
 
     std::string pending_offer_id;
@@ -38,6 +41,7 @@ struct WebRtcSessionContext
     bool endpoint_registered = false;
     bool room_managed = false;
     bool subscriber = false;
+    bool capacity_reserved = false;
     // 仅记录本次媒体创建的房间资源，失败回滚不得移除已有参与者。
     std::vector<std::string> room_tracks;
     std::vector<std::string> room_subscriptions;

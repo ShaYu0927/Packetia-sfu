@@ -82,7 +82,6 @@ struct WorkerOptions
 {
     uint32_t media_threads = 4;
     uint32_t endpoint_threads = 4;
-    // Zero selects min(max(hardware_concurrency / 2, 1), 4).
     uint32_t transcode_threads = 0;
     size_t media_queue_len = 4096;
     size_t endpoint_queue_len = 4096;

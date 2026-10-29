@@ -9,8 +9,8 @@ namespace network::transport
 
 UdpDatagramTransport::UdpDatagramTransport(
     uint64_t id,
-    std::weak_ptr<network::UdpServer> server) noexcept
-    : id_(id), server_(std::move(server))
+    std::weak_ptr<network::UdpServer> server, Sender sender) noexcept
+    : id_(id), server_(std::move(server)), sender_(std::move(sender))
 {
     closed_.store(id_ == 0 || server_.expired(), std::memory_order_release);
 }
@@ -35,7 +35,7 @@ DatagramSendResult UdpDatagramTransport::SendDatagram(
     {
         return DatagramSendResult::Closed;
     }
-    if (!data || size == 0 || remote.len == 0)
+    if (!data || size == 0 || size > 65507 || remote.len == 0 || remote.len > sizeof(remote.ss))
     {
         return DatagramSendResult::Failed;
     }
@@ -46,6 +46,7 @@ DatagramSendResult UdpDatagramTransport::SendDatagram(
         closed_.store(true, std::memory_order_release);
         return DatagramSendResult::Closed;
     }
+    if (sender_) return sender_(remote, data, size, weak_from_this());
     switch (server->TrySendTo(remote, data, size))
     {
         case network::UdpServer::SendResult::Sent: return DatagramSendResult::Ok;

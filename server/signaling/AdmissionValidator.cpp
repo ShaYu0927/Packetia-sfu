@@ -1,4 +1,5 @@
 #include "AdmissionValidator.h"
+#include "ParticipantMessages.h"
 
 namespace server::signaling
 {
@@ -22,6 +23,14 @@ AdmissionValidation AdmissionValidator::Validate(const SignalRequest& request) c
     init.caller = std::move(*verified.context);
     init.room_id = std::move(room);
     init.reconnect = request.type == SignalRequest::Type::Resume;
+    if (body.contains("permissions")) return {{}, Error("Participant permissions must come from a verified grant")};
+    const bool profile = body.contains("name") || body.contains("metadata") || body.contains("attributes");
+    if (profile && (init.reconnect || !auth_->Authorize(init.caller, auth::Action::UpdateOwnParticipant, RoomResource(init.room_id)).Allowed()))
+        return {{}, AuthError(auth::AuthError::Forbidden)};
+    init.participant.identity.name = init.caller.name.empty() ? init.caller.subject_id : init.caller.name;
+    init.participant.permissions = ParticipantPermissions(init.caller.video);
+    Json error;
+    if (!ApplyParticipantPatch(body, init.participant, error)) return {{}, std::move(error)};
     if (init.reconnect)
     {
         if (!body.contains("participant_id") || !body["participant_id"].is_string() ||

@@ -30,9 +30,10 @@ std::string SignJoinToken(const AuthContext& c, const std::string& secret, int64
     using Json = nlohmann::json;
     const auto claims = Json{{"iss", c.issuer}, {"sub", c.subject_id}, {"name", c.name},
         {"aud", "packetia-webrtc"}, {"iat", issued_at}, {"exp", c.expires_at_unix_seconds},
-        {"jti", c.token_id}, {"node_id", c.node_id}, {"instance_id", c.instance_id},
+        {"jti", c.token_id}, {"node_id", c.node_id}, {"instance_id", c.instance_id}, {"assignment_id", c.assignment_id},
         {"video", {{"room", c.video.room}, {"roomJoin", true},
-                   {"canPublish", c.video.can_publish}, {"canSubscribe", c.video.can_subscribe}}}};
+                   {"canPublish", c.video.can_publish}, {"canSubscribe", c.video.can_subscribe},
+                   {"roomAdmin", c.video.room_admin}, {"canUpdateOwnMetadata", c.video.can_update_own_metadata}}}};
     const auto content = Encode(Json{{"alg", "HS256"}, {"typ", "JWT"}}.dump()) + "." + Encode(claims.dump());
     unsigned char digest[EVP_MAX_MD_SIZE];
     unsigned size = 0;

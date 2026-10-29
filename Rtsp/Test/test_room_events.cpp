@@ -1,16 +1,16 @@
 #include <gtest/gtest.h>
 #include "Room.h"
 #include "Participant.h"
-#include "MediaTrack.h"
+#include "TrackPublication.h"
 
 namespace
 {
-media::MediaTrackPtr Camera()
+media::TrackPublicationPtr Camera()
 {
-    media::TrackMetadata metadata;
+    media::TrackPublicationInfo metadata;
     metadata.sid = "camera";
     metadata.type = media::MediaType::Video;
-    return std::make_shared<media::MediaTrack>(metadata);
+    return std::make_shared<media::TrackPublication>(metadata);
 }
 }
 
@@ -23,13 +23,13 @@ TEST(RoomEvents, NotifyOnlyCommittedChangesAndCallbacksCanQueryRoom)
     auto viewer = std::make_shared<room::Participant>("b", "Bob");
     ASSERT_TRUE(room.Join(publisher));
     ASSERT_TRUE(room.Join(viewer));
-    std::vector<media::TrackPublicationSnapshot> published, removed;
-    auto onPublish = room.Events().Subscribe<media::TrackPublishedEvent>([&](const auto& event) {
+    std::vector<room::TrackPublicationSnapshot> published, removed;
+    auto onPublish = room.Events().Subscribe<room::TrackPublishedEvent>([&](const auto& event) {
         EXPECT_EQ(room.ParticipantCount(), 2U); // 若仍持有房间锁，这里会死锁。
         EXPECT_TRUE(publisher->GetPublishedTrack(event.snapshot.track.sid));
         published.push_back(event.snapshot);
     });
-    auto onRemove = room.Events().Subscribe<media::TrackUnpublishedEvent>([&](const auto& event) {
+    auto onRemove = room.Events().Subscribe<room::TrackUnpublishedEvent>([&](const auto& event) {
         EXPECT_TRUE(room.GetSubscriptionsByTrack(event.snapshot.track.sid).empty());
         EXPECT_FALSE(publisher->GetPublishedTrack(event.snapshot.track.sid));
         removed.push_back(event.snapshot);
@@ -61,13 +61,13 @@ TEST(RoomEvents, NotifyOnlyCommittedChangesAndCallbacksCanQueryRoom)
 TEST(RoomEvents, CloseRemovesEveryPublicationOnceAndObserverCanOutliveRoom)
 {
     media::EventBus::Subscription subscription;
-    std::vector<media::TrackPublicationSnapshot> removed;
+    std::vector<room::TrackPublicationSnapshot> removed;
     {
         room::Room room({"close-events", "close-events"});
         auto publisher = std::make_shared<room::Participant>("a", "Alice");
         ASSERT_TRUE(room.Join(publisher));
         ASSERT_TRUE(room.PublishTrack("a", Camera(), 0, 96));
-        subscription = room.Events().Subscribe<media::TrackUnpublishedEvent>([&](const auto& event) {
+        subscription = room.Events().Subscribe<room::TrackUnpublishedEvent>([&](const auto& event) {
             EXPECT_TRUE(room.IsClosed());
             EXPECT_EQ(room.ParticipantCount(), 0U);
             EXPECT_TRUE(publisher->GetPublishedTracks().empty());

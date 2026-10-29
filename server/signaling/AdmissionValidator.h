@@ -1,6 +1,7 @@
 #pragma once
 #include "SignalMessages.h"
 #include "AuthService.h"
+#include "ParticipantTypes.h"
 #include <functional>
 #include <optional>
 
@@ -9,6 +10,7 @@ namespace server::signaling
 struct ParticipantInit
 {
     service::auth::AuthContext caller;
+    room::ParticipantInfo participant;
     std::string room_id;
     bool reconnect = false;
     std::string participant_id;

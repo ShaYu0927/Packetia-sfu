@@ -1,5 +1,6 @@
 #include "SfuApp.h"
 #include "NodeClient.h"
+#include "RoomControlController.h"
 #include "RuntimeConfig.h"
 #include "WebRtcService.h"
 #include "EventLoop.h"
@@ -16,17 +17,17 @@ struct SfuApp::Impl
 {
     monitoring::MetricsContext metrics_context{false};
     std::shared_ptr<service::MonitorService> monitor = std::make_shared<service::MonitorService>(metrics_context.Registry());
-    EventLoop loop{1};
+    EventLoop loop{3};
     WorkerRegistry workers;
     std::shared_ptr<WebRtcService> rtc;
     std::shared_ptr<service::cluster::NodeLease> lease;
     std::unique_ptr<NodeClient> client;
-    std::unique_ptr<api::ApiServer> metrics_api;
+    std::unique_ptr<api::ApiServer> metrics_api, control_api;
     explicit Impl(const std::string& path)
     {
         const auto json = ReadConfig(path, {"node_id", "control_url", "signaling_url", "max_rooms",
             "listen_ip", "public_ip", "websocket_port", "udp_port", "max_participants",
-            "metrics_http_port", "metrics_listen_ip"});
+            "metrics_http_port", "metrics_listen_ip", "management_url", "internal_listen_ip", "internal_http_port"});
         if (json.contains("metrics_http_port"))
         {
             protocol::http::HttpServerOptions http;
@@ -43,6 +44,9 @@ struct SfuApp::Impl
         node.id = json.at("node_id").get<std::string>();
         node.instance = service::cluster::Coordinator::RandomId();
         node.signaling_url = json.at("signaling_url").get<std::string>();
+        node.management_url = json.value("management_url", std::string{});
+        if (!node.management_url.empty() && !service::cluster::Coordinator::ValidManagementUrl(node.management_url))
+            throw std::runtime_error("invalid node management URL");
         node.max_rooms = Bounded(json, "max_rooms", 1, 10000);
         if (!service::cluster::Coordinator::ValidId(node.id) ||
             !service::cluster::Coordinator::ValidSignalingUrl(node.signaling_url)) throw std::runtime_error("invalid node config");
@@ -59,13 +63,25 @@ struct SfuApp::Impl
         lease = std::make_shared<service::cluster::NodeLease>(node.id, node.instance);
         rtc = std::make_shared<WebRtcService>(&loop, std::move(config), nullptr,
             [lease = lease](const service::auth::AuthContext& context) { return lease->Allows(context); });
+        const auto credential = Env("PACKETIA_NODE_SECRET", 32);
+        if (!node.management_url.empty())
+        {
+            protocol::http::HttpServerOptions http;
+            http.enabled = true; http.listen_ip = json.value("internal_listen_ip", std::string("127.0.0.1"));
+            http.listen_port = Port(json, "internal_http_port"); http.max_body_bytes = 256 * 1024;
+            api::ApiRouter::Builder routes;
+            meeting::RoomControlController(node, credential, lease, rtc).RegisterRoutes(routes);
+            control_api = std::make_unique<api::ApiServer>(http, routes.Build(http.max_body_bytes),
+                std::make_shared<protocol::http::HttpServer>(&loop), 2, 64);
+        }
         client = std::make_unique<NodeClient>(node, json.at("control_url").get<std::string>(),
-            Env("PACKETIA_NODE_SECRET", 32), lease, [rtc = rtc] { return rtc->ParticipantCount(); });
+            credential, lease, rtc);
         workers.Add({POOL_MEDIA, 2, 4096, ShardedWorkerPool::DropPolicy::DropHead},
             std::make_shared<utils::EndpointJobHandler>(&utils::EndpointManager::Instance()));
     }
     void Stop() noexcept
     {
+        if (control_api) control_api->Stop();
         if (metrics_api) metrics_api->Stop();
         if (client) client->Stop();
         if (rtc) rtc->Stop();
@@ -81,7 +97,7 @@ SfuApp::~SfuApp() { Stop(); }
 bool SfuApp::Start()
 {
     if (!impl_->metrics_context.Activate() || !impl_->monitor->Init() || !impl_->monitor->Start() || !impl_->loop.Start() ||
-        impl_->workers.Start() != 0 || !impl_->rtc->Start() || !impl_->client->Start() ||
+        impl_->workers.Start() != 0 || !impl_->rtc->Start() || (impl_->control_api && !impl_->control_api->Start()) || !impl_->client->Start() ||
         (impl_->metrics_api && !impl_->metrics_api->Start()))
     {
         Stop();

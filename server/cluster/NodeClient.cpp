@@ -1,32 +1,16 @@
 #include "NodeClient.h"
 #include "third/nlohmann/json.hpp"
 #include "logger.h"
-#include <curl/curl.h>
+#include "ControlHttpClient.h"
 #include <stdexcept>
 
 namespace server::cluster
 {
-namespace
-{
-struct CurlRuntime
-{
-    CurlRuntime() { if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) throw std::runtime_error("curl init failed"); }
-    ~CurlRuntime() { curl_global_cleanup(); }
-};
-std::size_t Write(char* data, std::size_t size, std::size_t count, void* output)
-{
-    const auto bytes = size * count;
-    auto& body = *static_cast<std::string*>(output);
-    if (bytes > 8192 || body.size() > 8192 - bytes) return 0;
-    try { body.append(data, bytes); return bytes; } catch (...) { return 0; }
-}
-}
 NodeClient::NodeClient(service::cluster::Node node, std::string control_url, std::string credential,
-    std::shared_ptr<service::cluster::NodeLease> lease, std::function<std::size_t()> load)
+    std::shared_ptr<service::cluster::NodeLease> lease, std::shared_ptr<WebRtcService> rtc)
     : node_(std::move(node)), control_url_(std::move(control_url)), credential_(std::move(credential)),
-      lease_(std::move(lease)), load_(std::move(load))
+      lease_(std::move(lease)), rtc_(std::move(rtc))
 {
-    static CurlRuntime runtime;
     if ((control_url_.rfind("http://", 0) != 0 && control_url_.rfind("https://", 0) != 0) ||
         control_url_.find_first_of("?#@\r\n ") != std::string::npos || control_url_.back() == '/' ||
         credential_.size() < 32 || credential_.size() > 4096 || credential_.find_first_of("\r\n") != std::string::npos)
@@ -37,44 +21,49 @@ long NodeClient::Send(bool registration)
 {
     using Json = nlohmann::json;
     const auto request_start = service::cluster::NodeLease::NowMs();
-    Json body{{"node_id", node_.id}, {"instance_id", node_.instance}, {"participants", load_()}};
+    Json body{{"node_id", node_.id}, {"instance_id", node_.instance}, {"participants", rtc_->ParticipantCount()}};
     if (registration) { body["signaling_url"] = node_.signaling_url; body["max_rooms"] = node_.max_rooms; }
-    const auto encoded = body.dump();
+    if (registration && !node_.management_url.empty()) body["management_url"] = node_.management_url;
     const auto url = control_url_ + (registration ? "/internal/v1/nodes/register" : "/internal/v1/nodes/heartbeat");
-    const auto authorization = "Authorization: Bearer " + credential_;
-    std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> curl(curl_easy_init(), curl_easy_cleanup);
-    if (!curl) return 0;
-    curl_slist* raw_headers = nullptr;
-    raw_headers = curl_slist_append(raw_headers, "Content-Type: application/json");
-    if (!raw_headers) return 0;
-    std::unique_ptr<curl_slist, decltype(&curl_slist_free_all)> headers(raw_headers, curl_slist_free_all);
-    const auto appended = curl_slist_append(raw_headers, authorization.c_str());
-    if (!appended) return 0;
-    std::string response;
-    curl_easy_setopt(curl.get(), CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl.get(), CURLOPT_HTTPHEADER, headers.get());
-    curl_easy_setopt(curl.get(), CURLOPT_POSTFIELDS, encoded.c_str());
-    curl_easy_setopt(curl.get(), CURLOPT_POSTFIELDSIZE, static_cast<long>(encoded.size()));
-    curl_easy_setopt(curl.get(), CURLOPT_CONNECTTIMEOUT_MS, 1000L);
-    curl_easy_setopt(curl.get(), CURLOPT_TIMEOUT_MS, 1500L);
-    curl_easy_setopt(curl.get(), CURLOPT_NOSIGNAL, 1L);
-    curl_easy_setopt(curl.get(), CURLOPT_PROXY, "");
-    curl_easy_setopt(curl.get(), CURLOPT_FOLLOWLOCATION, 0L);
-    curl_easy_setopt(curl.get(), CURLOPT_WRITEFUNCTION, Write);
-    curl_easy_setopt(curl.get(), CURLOPT_WRITEDATA, &response);
-    const auto result = curl_easy_perform(curl.get());
-    if (result != CURLE_OK) return 0;
-    long status = 0;
-    curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &status);
+    const auto reply = PostControlJson(url, credential_, body);
+    const auto status = reply.status;
     if (status == 200)
     {
-        const auto json = Json::parse(response, nullptr, false);
+        const auto& json = reply.body;
         if (!json.is_object() || !json.contains("lease_seconds") || !json["lease_seconds"].is_number_integer() ||
             json["lease_seconds"] != service::cluster::Coordinator::kLeaseSeconds) return 0;
         lease_->Renew(request_start, service::cluster::Coordinator::kLeaseSeconds);
+        Reclaim(json, request_start);
     }
     else if (status == 401 || status == 409) lease_->Revoke();
     return status;
+}
+void NodeClient::Reclaim(const nlohmann::json& reply, int64_t started)
+{
+    using Json = nlohmann::json;
+    const auto release = [&](const std::string& room, const std::string& assignment) {
+        const auto ack = PostControlJson(control_url_ + "/internal/v1/rooms/release", credential_,
+            {{"node_id", node_.id}, {"instance_id", node_.instance}, {"room_id", room}, {"assignment_id", assignment}});
+        if (ack.status == 200) rtc_->ControlRoom(room, assignment, {{"type", "release_ack"}});
+    };
+    // 每轮限定工作时间；回收不能拖延下一次节点续租。
+    for (const auto& room : rtc_->ReleasedRooms())
+    {
+        if (service::cluster::NodeLease::NowMs() - started > 2500) return;
+        release(room.room_id, room.assignment_id);
+    }
+    const auto candidates = reply.find("reclaim");
+    if (candidates == reply.end() || !candidates->is_array() || candidates->size() > 16) return;
+    for (const auto& room : *candidates)
+    {
+        if (service::cluster::NodeLease::NowMs() - started > 2500) return;
+        if (!room.is_object() || !room.contains("room_id") || !room["room_id"].is_string() ||
+            !room.contains("assignment_id") || !room["assignment_id"].is_string() ||
+            !room.contains("closing") || !room["closing"].is_boolean()) continue;
+        const auto id = room["room_id"].get<std::string>(), assignment = room["assignment_id"].get<std::string>();
+        const auto result = rtc_->ControlRoom(id, assignment, {{"type", room["closing"].get<bool>() ? "end_room" : "reclaim_room"}});
+        if (result.value("released", false)) release(id, assignment);
+    }
 }
 bool NodeClient::Start()
 {

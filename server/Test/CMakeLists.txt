@@ -50,7 +50,7 @@ add_executable(test_stream_services
     ${PACKETIA_SERVER_ROOT}/service/AIService/AIService.cpp
     ${PACKETIA_SERVER_ROOT}/service/AIService/AIOrchestrator.cpp
     ${PACKETIA_SERVER_ROOT}/service/AIService/UnavailableModelProvider.cpp
-    ${PACKETIA_SERVER_ROOT}/media/core/EncodedFrameRouter.cpp
+    ${PACKETIA_SERVER_ROOT}/media/frame/EncodedFrameRouter.cpp
     ${PACKETIA_SERVER_ROOT}/utils/WorkerRegistry.cpp
     ${PACKETIA_SERVER_ROOT}/utils/ShardedWorkerPool.cpp
     ${PACKETIA_SERVER_ROOT}/utils/MediaLatency.cpp
@@ -61,7 +61,7 @@ target_include_directories(test_stream_services PRIVATE
 target_include_directories(test_stream_services PRIVATE
     ${PACKETIA_SERVER_ROOT}/service/core
     ${PACKETIA_SERVER_ROOT}/service/AIService
-    ${PACKETIA_SERVER_ROOT}/media/MediaFrame
+    ${PACKETIA_SERVER_ROOT}/media/frame
     ${PACKETIA_SERVER_ROOT}/media/types
     ${PACKETIA_SERVER_ROOT}/Common/memory)
 if(NOT TARGET packetia_recording_index)
@@ -78,6 +78,10 @@ if(TARGET media AND PACKETIA_WITH_LIBWEBSOCKETS AND PACKETIA_SRTP_AVAILABLE)
         server packetia_signaling ROOM_LIB media network utils WebRtc LOGGER packetia_auth
         "$<$<PLATFORM_ID:Linux>:-Wl,--end-group>")
     add_test(NAME webrtc_service COMMAND test_webrtc_service)
+    add_test(NAME webrtc_control COMMAND test_webrtc_service --control)
+    set_tests_properties(webrtc_control PROPERTIES TIMEOUT 20)
+    add_test(NAME webrtc_members COMMAND test_webrtc_service --members)
+    set_tests_properties(webrtc_members PROPERTIES TIMEOUT 30)
     set_tests_properties(webrtc_service PROPERTIES TIMEOUT 60)
 endif()
 

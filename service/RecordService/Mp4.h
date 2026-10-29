@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-#include "TrackMetadata.h"
+#include "TrackPublicationInfo.h"
 #include "MediaFrame.h"
 
 namespace service
@@ -55,7 +55,7 @@ class IMediaSink
 public:
     virtual ~IMediaSink() = default;
 
-    virtual bool AddTrack(const std::shared_ptr<media::TrackMetadata>& track) = 0;
+    virtual bool AddTrack(const std::shared_ptr<media::TrackPublicationInfo>& track) = 0;
 
     virtual bool InputFrame(const media::EncodedFrame::Ptr& frame) = 0;
 

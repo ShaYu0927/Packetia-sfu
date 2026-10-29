@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <map>
 
 namespace room
 {
@@ -32,10 +33,26 @@ struct SignalingBinding
     uint64_t generation = 0;
 };
 
+struct ParticipantProperties
+{
+    std::string metadata;
+    std::map<std::string, std::string> attributes;
+};
+
+struct ParticipantPermissions
+{
+    bool can_publish = false;
+    bool can_subscribe = false;
+    bool room_admin = false;
+    bool can_update_own_metadata = false;
+};
+
 // A value snapshot, containing no live protocol objects or credentials.
 struct ParticipantInfo
 {
     ParticipantIdentity identity;
+    ParticipantProperties properties;
+    ParticipantPermissions permissions;
     ParticipantState state = ParticipantState::Joining;
     SignalingBinding signaling;
     uint64_t media_session_id = 0;

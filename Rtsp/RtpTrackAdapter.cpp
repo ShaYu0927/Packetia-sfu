@@ -8,7 +8,7 @@ namespace media
 bool ToLegacyRtpTrackInfo(const RtpTrackContext& track, std::size_t selected,
                           ::TrackInfo& result, std::string* error)
 {
-    MediaStreamTrack description;
+    MediaTrackDescription description;
     if (!DescribeMediaTrack(track, selected, description, error)) return false;
     const auto& payload = track.payloads[selected];
     ::TrackInfo info;

@@ -4,6 +4,7 @@
 #include "Sdp.h"
 #include "RtpTrackAdapter.h"
 #include "RtpHeaderExtensions.h"
+#include "MediaStreamRegistry.h"
 
 #include <algorithm>
 #include <limits>
@@ -12,6 +13,31 @@ namespace media
 {
 namespace
 {
+// 每个发送轨道的出口闸门，覆盖普通 RTP、缓存重传及发送器产生的 RTCP。
+// 不关闭多个轨道共用的底层连接，也不接管底层接收入口。
+class ConsumerTransport final : public IMediaTransport
+{
+public:
+    ConsumerTransport(std::shared_ptr<IMediaTransport> transport, MediaTrackSubscription::Ptr consumer)
+        : transport_(std::move(transport)), consumer_(std::move(consumer)) {}
+    uint64_t Id() const noexcept override { return transport_->Id(); }
+    MediaTransportProtocol Protocol() const noexcept override { return transport_->Protocol(); }
+    MediaTransportState State() const noexcept override
+    { return consumer_->Closed() ? MediaTransportState::Closed : transport_->State(); }
+    SendResult Send(MediaPacketType type, const uint8_t* data, size_t size, bool retransmit) override
+    {
+        if (consumer_->Closed()) return SendResult::Closed;
+        if (!consumer_->CanDeliver()) return SendResult::NotWritable;
+        return transport_->Send(type, data, size, retransmit);
+    }
+    void SetPacketSink(std::weak_ptr<IMediaPacketSink>) override {}
+    void Close() override { consumer_->Close(); }
+    std::shared_ptr<media::SendSideController> GetSendSideController() override
+    { return transport_->GetSendSideController(); }
+private:
+    const std::shared_ptr<IMediaTransport> transport_;
+    const MediaTrackSubscription::Ptr consumer_;
+};
 
 /**
  * 比较影响媒体解码的编码参数。
@@ -206,7 +232,7 @@ bool SfuEndpoint::ReplacePublishedTracks(const std::vector<sdp::SdpMedia>& media
                 // 有活动订阅时拒绝编码变更，避免现有下游继续按旧编码解释 RTP。
                 if (!SameEncoding(oldInfo, candidate.info))
                     for (const auto& weak : previous->subscribers)
-                        if (const auto route = weak.lock(); route && route->active.load()) return false;
+                        if (const auto route = weak.lock(); route && !route->Closed()) return false;
                 // PT/TWCC 等接收参数改变后，旧接收状态不再继续沿用。
                 if (!SameReceiver(oldInfo, candidate.info)) reset.insert(id);
             }
@@ -242,7 +268,7 @@ bool SfuEndpoint::ReplacePublishedTracks(const std::vector<sdp::SdpMedia>& media
             // 活动路由如果已经锁定源 SSRC，新列表必须继续包含该源。
             // 当前实现不在这里完成源切换所需的输出序号、时间戳连续性映射。
             for (const auto& weak : track.subscribers)
-                if (const auto route = weak.lock(); route && route->active.load() && route->source_ssrc &&
+                if (const auto route = weak.lock(); route && !route->Closed() && route->source_ssrc &&
                     std::find(candidate.ssrcs.begin(), candidate.ssrcs.end(), *route->source_ssrc) == candidate.ssrcs.end())
                     // The current sender cannot translate a new source's
                     // sequence/timestamp base into the existing output SSRC.
@@ -259,7 +285,7 @@ bool SfuEndpoint::ReplacePublishedTracks(const std::vector<sdp::SdpMedia>& media
             for (const auto& binding : ssrc_bindings_)
                 if (binding.second == entry.first) saved.ssrcs.push_back(binding.first);
             for (const auto& weak : entry.second.subscribers)
-                if (const auto route = weak.lock(); route && route->active.load())
+                if (const auto route = weak.lock(); route && !route->Closed())
                 {
                     deactivate.push_back(route);
                     prune.push_back(route->destination);
@@ -279,7 +305,7 @@ bool SfuEndpoint::ReplacePublishedTracks(const std::vector<sdp::SdpMedia>& media
         // 提交：在当前端点状态锁保护下移除旧接收状态、停用路由并替换各个集合。
         // 这里的 active 标志先阻止后续投递，目标端发送器的回收可以稍后执行
         for (const auto ssrc : removeReceivers) RemoveMediaStreamOnOwner(ssrc);
-        for (const auto& route : deactivate) route->active.store(false);
+        for (const auto& route : deactivate) route->Close();
         published_tracks_.swap(tracks);
         paused_published_tracks_.swap(paused);
         ssrc_bindings_.swap(bindings);
@@ -334,7 +360,7 @@ size_t SfuEndpoint::SubscriptionCount() const
 {
     std::lock_guard<std::recursive_mutex> guard(runtime_mutex_);
     return std::count_if(subscriptions_.begin(), subscriptions_.end(),
-        [](const auto& entry) { return entry.second->active.load(); });
+        [](const auto& entry) { return !entry.second->Closed(); });
 }
 
 /**
@@ -352,7 +378,7 @@ bool SfuEndpoint::RemovePublishedTrack(const std::string& id, bool retire_identi
     {
         if (auto route = weak.lock()) 
         {
-            route->active.store(false);
+            route->Close();
             if (auto destination = route->destination.lock()) 
             {
                 const std::weak_ptr<SfuEndpoint> target = destination;
@@ -475,6 +501,7 @@ void SfuEndpoint::OnRtcp(WorkJob& job)
 {
     std::lock_guard<std::recursive_mutex> guard(runtime_mutex_);
     if (!IsRunning()) return;
+    PruneSubscriptions();
     if (!job.media_track_id.empty() && !published_tracks_.count(job.media_track_id)) return;
     // An explicit transport binding also lets an SR preceding the first RTP
     // establish the source. Never infer a source from a feedback media SSRC.
@@ -553,7 +580,8 @@ bool SfuEndpoint::ConfigureSubscription(const std::string& id, const rtsp::RtpSe
  * 同时锁住源端和目标端，创建目标专属发送器，并在两端登记同一条路由。
  * 本实现检查编码 ID 和时钟频率，但不在此处比较完整 FMTP/声道等参数。
  */
-bool SfuEndpoint::Subscribe(const std::string& id, const std::shared_ptr<SfuEndpoint>& source, const std::string& source_track_id)
+bool SfuEndpoint::Subscribe(const std::string& id, const std::shared_ptr<SfuEndpoint>& source,
+    const std::string& source_track_id, MediaTrackRef ref)
 {
     if (!source || source.get() == this) return false;
 
@@ -568,6 +596,8 @@ bool SfuEndpoint::Subscribe(const std::string& id, const std::shared_ptr<SfuEndp
     const auto& source_info = track->second.description->getTrackInfo();
     if (params->second.codec != source_info.codec_id ||
         params->second.config.sample_rate != static_cast<int>(source_info.clock_rate)) return false;
+    if (!ref.Valid() && source->media_stream_id_)
+        ref = {source->media_stream_id_, static_cast<TrackId>(source_info.track_index)};
 
     // route 记录发布源、订阅目标和源轨道；目标端持有路由，源轨道保存其弱引用。
     auto route = std::make_shared<Subscription>();
@@ -579,18 +609,41 @@ bool SfuEndpoint::Subscribe(const std::string& id, const std::shared_ptr<SfuEndp
     if (source_info.ssrc) route->source_ssrc = source_info.ssrc;
 
     // 每条订阅创建自己的 RTP 发送器，负责按目标配置改写、发送和处理发送侧状态。
-    route->sender = std::make_shared<rtsp::RtpSenderTrack>(params->second.config, params->second.transport);
     const std::weak_ptr<Subscription> weak = route;
+
+    if (ref.Valid())
+    {
+        auto& registry = MediaStreamRegistry::Instance();
+        const auto registered = registry.FindTrack(ref);
+        if (!registered || registered->endpoint_id != source->Id() ||
+            ref.track_id != static_cast<TrackId>(source_info.track_index)) return false;
+        const std::weak_ptr<SfuEndpoint> destination = weak_from_this();
+        route->consumer = registry.AttachConsumer(ref, "rtp:" + std::to_string(Id()) + ":" + id, [destination] {
+            // 清理回到目标端 Worker；即使队列拒收，原子闸门也已停止后续媒体。
+            if (const auto target = destination.lock())
+                WorkerService::post_fn(POOL_MEDIA, target->Id(), [destination] {
+                    if (const auto endpoint = destination.lock())
+                    {
+                        std::lock_guard<std::recursive_mutex> lock(endpoint->runtime_mutex_);
+                        endpoint->PruneSubscriptions();
+                    }
+                });
+        });
+        if (!route->consumer || route->consumer->Closed()) return false;
+    }
+    route->send_transport = route->consumer ?
+        std::make_shared<ConsumerTransport>(params->second.transport, route->consumer) : params->second.transport;
+    route->sender = std::make_shared<rtsp::RtpSenderTrack>(params->second.config, route->send_transport);
 
     // 下游发送器需要关键帧时，将请求转交发布端所属 Worker。
     // 使用弱引用并在异步任务执行时再次检查 active，避免取消订阅后继续请求。
     route->sender->SetKeyFrameRequestCallback([weak] {
-        if (const auto route = weak.lock(); route && route->active.load()) 
+        if (const auto route = weak.lock(); route && route->CanDeliver())
         {
             if (const auto upstream = route->source.lock()) 
             {
                 WorkerService::post_fn(POOL_MEDIA, upstream->Id(), [weak] {
-                    if (const auto current = weak.lock(); current && current->active.load())
+                    if (const auto current = weak.lock(); current && current->CanDeliver())
                         if (auto publisher = current->source.lock()) publisher->RequestKeyFrame(current->source_track_id);
                 });
             }
@@ -616,6 +669,7 @@ bool SfuEndpoint::Unsubscribe(const std::string& id)
     const auto it = subscriptions_.find(id);
     if (it == subscriptions_.end()) return false;
     it->second->active.store(false);
+    if (it->second->consumer) it->second->consumer->Close();
     if (rtcp_dispatcher_) rtcp_dispatcher_->RemoveSenderTrack(it->second->sender->GetSsrc());
     subscriptions_.erase(it);
     return true;
@@ -629,7 +683,7 @@ bool SfuEndpoint::Unsubscribe(const std::string& id)
 void SfuEndpoint::PruneSubscriptions()
 {
     for (auto it = subscriptions_.begin(); it != subscriptions_.end();) {
-        if (!it->second->active.load() || it->second->source.expired()) {
+        if (it->second->Closed() || it->second->source.expired()) {
             const auto id = it++->first;
             Unsubscribe(id);
         } else ++it;
@@ -645,7 +699,7 @@ void SfuEndpoint::PruneSubscriptions()
 void SfuEndpoint::Deliver(const std::shared_ptr<Subscription>& route, common::SharedBuffer packet)
 {
     std::lock_guard<std::recursive_mutex> guard(runtime_mutex_);
-    if (IsRunning() && route->active.load() && !packet.Empty()) 
+    if (IsRunning() && route->CanDeliver() && !packet.Empty())
     {
         media_latency::Count(media_latency::Counter::SenderAttempts);
         if (!route->sender->InputRtpPacket(packet.Data(), packet.Size()))

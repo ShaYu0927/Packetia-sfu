@@ -90,7 +90,7 @@ TEST(SdpTrackBinding, SelectsPayloadInMediaOrderAndMatchingFmtp)
     EXPECT_EQ(info.channels, 2);
     EXPECT_EQ(info.fmtp, "minptime=10");
     EXPECT_EQ(info.transport_cc_extension_id, 3);
-    media::MediaStreamTrack track;
+    media::MediaTrackDescription track;
     ASSERT_TRUE(session->GetMediaStream()->GetTrack(0, &track));
     EXPECT_EQ(track.codec, media::CodecType::Opus);
     EXPECT_EQ(track.sample_rate, 48000U);
@@ -114,7 +114,7 @@ TEST(SdpTrackBinding, AacAliasesAgreeAcrossSnapshotCoreAndLegacyReceiver)
         EXPECT_EQ(info.codec_name, name);
         EXPECT_EQ(info.clock_rate, 44100U);
         EXPECT_EQ(info.fmtp, "config=1210;mode=AAC-hbr");
-        media::MediaStreamTrack track;
+        media::MediaTrackDescription track;
         ASSERT_TRUE(session->GetMediaStream()->GetTrack(0, &track));
         EXPECT_EQ(track.codec, payload.codec);
         EXPECT_EQ(track.sample_rate, 44100U);
@@ -143,7 +143,7 @@ TEST(SdpTrackBinding, VideoRtpParametersSurviveRepublishWithoutEnteringCoreDescr
     ASSERT_TRUE(next);
     EXPECT_NE(next->GetId(), session->GetId());
     ASSERT_TRUE(next->Register());
-    media::MediaStreamTrack track;
+    media::MediaTrackDescription track;
     ASSERT_TRUE(next->GetMediaStream()->GetTrack(0, &track));
     EXPECT_EQ(track.type, media::MediaType::Video);
     EXPECT_EQ(track.codec, media::CodecType::H264);

@@ -7,14 +7,14 @@ add_library(packetia_transcode_domain STATIC TranscodeTask.cpp TranscodeTypes.cp
 target_include_directories(packetia_transcode_domain PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../../media/codec
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../media/MediaFrame
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../media/frame
     ${CMAKE_CURRENT_SOURCE_DIR}/../../media/types)
 target_compile_features(packetia_transcode_domain PUBLIC cxx_std_17)
 
 add_library(packetia_video_transcoder STATIC VideoTranscoder.cpp)
 target_include_directories(packetia_video_transcoder PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../media/MediaFrame
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../media/frame
     ${CMAKE_CURRENT_SOURCE_DIR}/../../media/types)
 target_compile_features(packetia_video_transcoder PUBLIC cxx_std_17)
 target_link_libraries(packetia_video_transcoder PUBLIC

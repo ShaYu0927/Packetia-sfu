@@ -2,7 +2,7 @@
 
 #include "Participant.h"
 #include "SfuEndpoint.h"
-#include "MediaTrack.h"
+#include "TrackPublication.h"
 
 TEST(Participant, StaleSignalingCloseCannotDetachReplacement)
 {
@@ -64,9 +64,9 @@ TEST(Participant, LeaveDetachesBindingsBeforeCallbackAndCannotRebind)
         8003, room::ParticipantSessionRole::Publish, endpoint);
     ASSERT_TRUE(participant->BindMediaSession(session));
     ASSERT_TRUE(participant->BindSignaling("ws-1"));
-    media::TrackMetadata track;
+    media::TrackPublicationInfo track;
     track.sid = "camera";
-    ASSERT_TRUE(participant->AddPublishedTrack(std::make_shared<media::MediaTrack>(track)));
+    ASSERT_TRUE(participant->AddPublishedTrack(std::make_shared<media::TrackPublication>(track)));
     ASSERT_TRUE(participant->SubscribeTrack("remote-camera"));
     std::weak_ptr<const room::ParticipantSession> weak_session = session;
     session.reset();
@@ -195,9 +195,9 @@ TEST(Participant, LeaveDetachesBothRolesAndPreservesPriorSnapshot)
     ASSERT_TRUE(participant->BindPublishSession(publication));
     ASSERT_TRUE(participant->BindSubscribeSession(subscription));
     ASSERT_TRUE(participant->BindSignaling("ws-1"));
-    media::TrackMetadata track;
+    media::TrackPublicationInfo track;
     track.sid = "camera";
-    ASSERT_TRUE(participant->AddPublishedTrack(std::make_shared<media::MediaTrack>(track)));
+    ASSERT_TRUE(participant->AddPublishedTrack(std::make_shared<media::TrackPublication>(track)));
     ASSERT_TRUE(participant->SubscribeTrack("remote-camera"));
     const auto active = participant->GetInfo();
     std::weak_ptr<const room::ParticipantSession> weak_publication = publication;

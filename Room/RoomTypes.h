@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <string>
 
-#include "MediaTrackFwd.h"
+#include "TrackPublicationFwd.h"
 
 namespace room
 {
@@ -41,7 +41,7 @@ struct PublishedTrackInfo
     uint64_t publication_id = 0;
     std::string publisher_id;
     std::string source_track_id;
-    media::MediaTrackPtr track;
+    media::TrackPublicationPtr track;
     uint32_t ssrc = 0;
     uint8_t payload_type = 0;
 };

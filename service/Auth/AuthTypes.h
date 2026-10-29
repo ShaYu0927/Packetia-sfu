@@ -23,6 +23,9 @@ enum class Action
 {
     JoinRoom,
     ListTracks,
+    ListParticipants,
+    UpdateOwnParticipant,
+    ManageParticipants,
     Publish,
     Subscribe,
     ControlRecording,
@@ -42,6 +45,8 @@ struct RoomGrant
     bool room_join = false;       /* 是否允许加入该房间 */
     bool can_publish = false;     /* 是否允许发布音视频 */
     bool can_subscribe = false;   /* 是否允许订阅他人的音视频 */
+    bool room_admin = false;      /* 是否允许管理当前房间的成员 */
+    bool can_update_own_metadata = false; /* 是否允许修改自己的姓名、属性及元数据 */
 };
 
 
@@ -56,6 +61,7 @@ struct AuthContext
     RoomGrant video;                /* 音视频房间权限 */
     std::string node_id;
     std::string instance_id;
+    std::string assignment_id;
     std::vector<StreamGrant> streams;
 };
 

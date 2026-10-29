@@ -4,21 +4,24 @@
 #include "UdpDatagramTransport.h"
 
 #include <string>
+#include <mutex>
+#include <atomic>
 #include <unordered_map>
 
 namespace protocol::webrtc
 {
 
-// Shared ICE-lite UDP listener. The owner serializes registration, packet
-// callbacks, peer selection and cleanup on the UdpServer's TaskScheduler.
+// 共享 ICE-lite UDP 入口。路由表由短锁保护，消息在锁外投递到会话所属执行器。
 class WebRtcUdpMux final : public network::IUdpHandler
 {
 public:
-    explicit WebRtcUdpMux(std::weak_ptr<network::UdpServer> server);
+    using Dispatch = std::function<bool(std::function<void()>, size_t)>;
+    explicit WebRtcUdpMux(std::weak_ptr<network::UdpServer> server,
+                         network::transport::UdpDatagramTransport::Sender sender = {});
     ~WebRtcUdpMux() override;
 
     std::shared_ptr<network::transport::UdpDatagramTransport> Register(
-        uint64_t id, const std::string& localUfrag);
+        uint64_t id, const std::string& localUfrag, Dispatch dispatch = {});
     void Unregister(const std::string& localUfrag);
     // Atomically replace the ICE generation without closing its adapter.
     bool Restart(const std::string& oldUfrag, const std::string& newUfrag);
@@ -38,9 +41,13 @@ private:
     {
         std::shared_ptr<network::transport::UdpDatagramTransport> transport;
         network::SocketAddr peer;
+        Dispatch dispatch;
+        std::shared_ptr<std::atomic<bool>> active = std::make_shared<std::atomic<bool>>(true);
     };
 
     std::weak_ptr<network::UdpServer> server_;
+    const network::transport::UdpDatagramTransport::Sender sender_;
+    std::mutex mutex_;
     std::unordered_map<std::string, Entry> sessions_;
     std::unordered_map<network::SocketAddr, std::string, network::SocketAddrHash> peers_;
     bool closed_ = false;

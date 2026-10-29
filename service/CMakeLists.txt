@@ -1,4 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
+add_subdirectory(core)
 add_subdirectory(Auth)
 add_subdirectory(Account)
 add_subdirectory(Cluster)
@@ -7,10 +8,6 @@ add_subdirectory(RecordService/Index)
 add_subdirectory(TranscodeService)
 
 add_library(service STATIC
-    core/IService.h
-    core/ServiceBase.h
-    core/ServiceManager.h
-    core/ServiceManager.cpp
     ConferenceMixService/MixTypes.h
     ConferenceMixService/IMixBackend.h
     ConferenceMixService/ConferenceMixer.h
@@ -60,8 +57,10 @@ target_include_directories(service
 
 target_compile_features(service PUBLIC cxx_std_17)
 
-target_link_libraries(service PUBLIC media LOGGER packetia_config packetia_recording_index packetia_transcode_service ${FFMPEG_LIBRARIES})
+target_link_libraries(service PUBLIC packetia_service_core media LOGGER packetia_config packetia_recording_index packetia_transcode_service ${FFMPEG_LIBRARIES})
 
 if(MSVC)
     target_compile_options(service PRIVATE /utf-8)
 endif()
+
+add_subdirectory(meeting)

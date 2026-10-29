@@ -1,7 +1,12 @@
 #include "ControlApp.h"
-#include "ClusterController.h"
+#include "NodeController.h"
+#include "RoomController.h"
+#include "NodeCommandClient.h"
+#include "MeetingModule.h"
+#include "ServiceManager.h"
 #include "RuntimeConfig.h"
 #include "AccountController.h"
+#include "ApiResponse.h"
 #include "ApiServer.h"
 #include "HttpServer.h"
 #include "SqliteAccountStore.h"
@@ -18,7 +23,8 @@ struct ControlApp::Impl
     std::shared_ptr<service::MonitorService> monitor = std::make_shared<service::MonitorService>(metrics_context.Registry());
     EventLoop loop{1};
     std::shared_ptr<service::account::AccountService> accounts;
-    std::shared_ptr<service::cluster::Coordinator> coordinator;
+    std::shared_ptr<service::meeting::MeetingModule> meetings;
+    service::ServiceManager services;
     std::unique_ptr<api::ApiServer> public_api, internal_api;
     explicit Impl(const std::string& path)
     {
@@ -31,37 +37,45 @@ struct ControlApp::Impl
         if (!options.IsValid()) throw std::runtime_error("invalid account config");
         const auto cluster_path = config.at("cluster_database").get<std::string>();
         if (cluster_path.empty()) throw std::runtime_error("invalid cluster database");
-        accounts = std::make_shared<service::account::AccountService>(options,
-            std::make_shared<service::account::SqliteAccountStore>(),
-            std::make_shared<service::account::ScryptPasswordHasher>());
-        coordinator = std::make_shared<service::cluster::Coordinator>(cluster_path);
-        ClusterController controller(accounts, coordinator, NodeSecrets(), JwtIssuer(), JwtSecret());
+        accounts = std::make_shared<service::account::AccountService>(options,std::make_shared<service::account::SqliteAccountStore>(), std::make_shared<service::account::ScryptPasswordHasher>());
+        meetings = std::make_shared<service::meeting::MeetingModule>(service::meeting::MeetingModuleOptions{cluster_path, JwtIssuer(), JwtSecret()}, MakeNodeCommandSender(NodeSecrets()));
+        if (!services.Register(monitor) || !services.Register(meetings))
+            throw std::runtime_error("cannot register control services");
+        meeting::RoomController rooms(accounts, meetings);
+        NodeController nodes(meetings, NodeSecrets());
         protocol::http::HttpServerOptions http;
         http.enabled = true;
         http.listen_ip = config.at("listen_ip").get<std::string>();
         http.listen_port = Port(config, "http_port");
+        http.max_body_bytes = 256 * 1024;
         api::ApiRouter::Builder routes;
         api::AccountController(accounts).RegisterRoutes(routes);
         api::MetricsController(monitor).RegisterRoutes(routes);
-        controller.RegisterPublic(routes);
+        routes.Get("/healthz", [module = meetings](const auto&) {
+            const auto health = module->Health();
+            return api::JsonResponse(health.healthy ? 200 : 503,
+                {{"status", health.healthy ? "ok" : "unavailable"}, {"role", "control"},
+                 {"meeting_state", static_cast<uint8_t>(health.state)}, {"meeting_error", health.error_code}});
+        });
+        rooms.RegisterRoutes(routes);
         public_api = std::make_unique<api::ApiServer>(http, routes.Build(http.max_body_bytes),
             std::make_shared<protocol::http::HttpServer>(&loop));
         http.listen_ip = config.at("internal_listen_ip").get<std::string>();
         http.listen_port = Port(config, "internal_http_port");
         http.max_connections = 512;
         api::ApiRouter::Builder internal;
-        controller.RegisterInternal(internal);
+        nodes.RegisterRoutes(internal);
         internal_api = std::make_unique<api::ApiServer>(http, internal.Build(http.max_body_bytes),
             std::make_shared<protocol::http::HttpServer>(&loop), 2, 512);
     }
     void Stop() noexcept
     {
+        services.StopAll();
         if (public_api) public_api->Stop();
         if (internal_api) internal_api->Stop();
         if (accounts) accounts->Stop();
         loop.Stop();
-        monitor->Stop();
-        monitor->Shutdown();
+        services.ShutdownAll();
         metrics_context.Deactivate();
     }
 };
@@ -69,8 +83,9 @@ ControlApp::ControlApp(const std::string& path) : impl_(std::make_unique<Impl>(p
 ControlApp::~ControlApp() { Stop(); }
 bool ControlApp::Start()
 {
-    if (!impl_->metrics_context.Activate() || !impl_->monitor->Init() || !impl_->monitor->Start() ||
+    if (!impl_->metrics_context.Activate() || !impl_->services.InitAll() ||
         !impl_->accounts->Start().Succeeded() || !impl_->loop.Start() ||
+        !impl_->services.StartAll() ||
         !impl_->internal_api->Start() || !impl_->public_api->Start())
     {
         Stop();

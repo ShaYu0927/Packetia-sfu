@@ -2,6 +2,8 @@
 
 namespace service 
 {
+uint16_t ServiceManager::MakeKey(ServiceType type) { return ToServiceId(type); }
+
 bool ServiceManager::Register(std::shared_ptr<IService> service)
 {
     if(!service)

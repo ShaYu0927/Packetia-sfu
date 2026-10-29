@@ -3,7 +3,7 @@
 
 #include "NetworkController.h"
 #include "NetworkControllerInterface.h"
-#include "transport_bwe_controller.h"
+#include "TransportBweController.h"
 #include <optional>
 
 namespace media

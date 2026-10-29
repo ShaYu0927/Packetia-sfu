@@ -39,7 +39,14 @@ bool TranscodeSession::Start()
         status_.state = TranscodeTaskState::Starting;
     }
     try {
-        subscription_ = input_->Subscribe(self);
+        media::EncodedFrameFilter filter;
+        filter.media_stream_id = config_.input.media_stream_id;
+        filter.endpoint_id = config_.input.endpoint_id;
+        filter.track_id = config_.input.track_id;
+        filter.session_id = config_.input.session_id;
+        filter.stream_id = config_.input.stream_id;
+        filter.ssrc = config_.input.ssrc;
+        subscription_ = input_->Subscribe(self, std::move(filter));
         if (!subscription_) throw std::runtime_error("could not subscribe to input frames");
         worker_ = utils::ThreadManager::Instance().Start(
             {"transcode", "transcode-" + config_.task_id, utils::ThreadModel::Dedicated},
@@ -84,7 +91,8 @@ void TranscodeSession::Stop()
 bool TranscodeSession::Matches(const media::EncodedFrameEvent& event) const
 {
     const auto& source = event.source;
-    return config_.input.Matches({source.endpoint_id, source.track_id, source.session_id, source.stream_id, source.ssrc});
+    return config_.input.Matches({source.endpoint_id, source.track_id, source.session_id,
+        source.stream_id, source.ssrc, source.media_stream_id});
 }
 
 void TranscodeSession::RecoverLocked(std::string reason)
@@ -150,10 +158,11 @@ bool TranscodeSession::Publish(const std::vector<TranscodedFrame>& frames)
         event.source.stream_id = config_.output.StreamFor(frame.rendition_id);
         event.source.track_id = frame.frame->info.track_id;
         event.frame = frame.frame;
-        const auto accepted = output_->Publish(event);
+        const auto result = output_->Dispatch(event);
+        if (result.failed) throw std::runtime_error("output frame delivery failed");
         std::lock_guard<std::mutex> lock(mutex_);
         ++status_.stats.published;
-        if (!accepted) ++status_.stats.output_unaccepted;
+        if (!result.accepted) ++status_.stats.output_unaccepted;
     }
     return true;
 }

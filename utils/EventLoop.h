@@ -32,6 +32,7 @@ public:
     // Round-robin assignment at object creation/start. Retain the result and
     // use that scheduler for the object's channels, tasks and timers.
     std::shared_ptr<TaskScheduler> GetTaskScheduler();
+    std::vector<std::shared_ptr<TaskScheduler>> GetTaskSchedulers() const;
 
     
     // Legacy convenience methods target scheduler 0, not the last assignment.

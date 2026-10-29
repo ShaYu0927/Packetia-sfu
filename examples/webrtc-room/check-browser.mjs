@@ -93,10 +93,42 @@ try {
   if (await b.evaluate(() => document.documentElement.scrollWidth > innerWidth)) throw new Error('Mobile horizontal overflow');
   if (errors.length) throw new Error(`Browser errors: ${errors.join('; ')}`);
   console.log(JSON.stringify({publisher, viewer, pixels}, null, 2));
+
+  // 保持同一房间身份，停止观看、重建订阅，再停止发布并重新发布。
+  await b.locator('#stop-media').click();
+  await b.waitForFunction(() => !document.getElementById('watch').disabled);
+  const idleViewer = await b.evaluate(() => window.demo.stats());
+  if (idleViewer.participant !== viewer.participant || idleViewer.mode !== '') throw new Error('Stop watching lost room membership');
+  await b.locator('#watch').click();
+  await until(async () => {
+    const stats = await b.evaluate(() => window.demo.stats());
+    return stats.frames >= 15 && stats.audioBytes > 0 && stats.sessionId !== viewer.sessionId && stats.participant === viewer.participant;
+  }, 30000);
+  await a.evaluate(() => {window.cameraTracks = document.getElementById('local').srcObject.getTracks();});
+  await a.locator('#stop-media').click();
+  await a.waitForFunction(() => !document.getElementById('publish').disabled);
+  if (!await a.evaluate(() => window.cameraTracks.every(track => track.readyState === 'ended')))
+    throw new Error('Stop publishing retained camera or microphone');
+  await until(async () => (await b.evaluate(() => window.demo.refreshTracks())).length === 0, 10000);
+  const idlePublisher = await a.evaluate(() => window.demo.stats());
+  if (idlePublisher.participant !== publisher.participant || idlePublisher.mode !== '') throw new Error('Stop publishing lost room membership');
+  await b.locator('#stop-media').click();
+  await b.waitForFunction(() => document.getElementById('stop-media').disabled);
+  await a.locator('#publish').click();
+  await a.waitForFunction(() => document.getElementById('local-status').textContent === 'Publishing', null, {timeout: 30000});
+  await b.waitForFunction(() => !document.getElementById('watch').disabled);
+  await b.locator('#watch').click();
+  await until(async () => {
+    const stats = await b.evaluate(() => window.demo.stats());
+    return stats.frames >= 15 && stats.audioBytes > 0 && stats.participant === viewer.participant && stats.candidateType === 'relay';
+  }, 30000);
+  if ((await a.evaluate(() => window.demo.stats())).participant !== publisher.participant)
+    throw new Error('Republish changed participant identity');
+  if (errors.length) throw new Error(`Browser errors: ${errors.join('; ')}`);
   await a.locator('#leave').click();
   await until(async () => (await b.evaluate(() => window.demo.refreshTracks())).length === 0, 10000);
   await b.locator('#leave').click();
-  console.log('Browser room/TURN/recovery check passed; both participants resumed with ICE restart.');
+  console.log('Browser room/TURN/recovery/media stop check passed; republish and resubscribe preserved room identities.');
 } catch (error) {
   if (b && !b.isClosed()) {
     console.error(JSON.stringify(await b.evaluate(async () => ({stats: await window.demo.stats(),

@@ -189,6 +189,7 @@ AuthResult JwtAuthenticator::Authenticate(std::string_view token, Audience expec
             !ReadString(claims, "name", context.name, false) ||
             !ReadString(claims, "node_id", context.node_id, false) ||
             !ReadString(claims, "instance_id", context.instance_id, false) ||
+            !ReadString(claims, "assignment_id", context.assignment_id, false) ||
             !ReadTimestamp(claims, "exp", context.expires_at_unix_seconds, true) ||
             context.expires_at_unix_seconds == 0)
             return AuthResult::Failure(AuthError::InvalidToken);
@@ -208,7 +209,9 @@ AuthResult JwtAuthenticator::Authenticate(std::string_view token, Audience expec
             !ReadString(*video, "room", context.video.room, false) ||
             !ReadPermission(*video, "roomJoin", context.video.room_join) ||
             !ReadPermission(*video, "canPublish", context.video.can_publish) ||
-            !ReadPermission(*video, "canSubscribe", context.video.can_subscribe)))
+            !ReadPermission(*video, "canSubscribe", context.video.can_subscribe) ||
+            !ReadPermission(*video, "roomAdmin", context.video.room_admin) ||
+            !ReadPermission(*video, "canUpdateOwnMetadata", context.video.can_update_own_metadata)))
             return AuthResult::Failure(AuthError::InvalidToken);
         context.audience = expected_audience;
         return AuthResult::Success(std::move(context));

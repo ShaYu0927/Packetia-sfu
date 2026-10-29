@@ -39,6 +39,7 @@ add_executable(test_datagram_transport
     test_rtmp_transport.cpp
     test_webrtc_transport.cpp
     test_webrtc_udp_mux.cpp
+    test_udp_send_queue.cpp
     test_network_lifecycle.cpp
 )
 

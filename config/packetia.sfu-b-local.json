@@ -9,5 +9,8 @@
   "udp_port": 19101,
   "max_participants": 128,
   "metrics_listen_ip": "127.0.0.1",
-  "metrics_http_port": 18085
+  "metrics_http_port": 18085,
+  "management_url": "http://127.0.0.1:19081",
+  "internal_listen_ip": "127.0.0.1",
+  "internal_http_port": 19081
 }
