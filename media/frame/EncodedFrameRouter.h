@@ -5,6 +5,7 @@
 #include "MediaTrackSubscription.h"
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -168,20 +169,51 @@ class EncodedFrameRouter final : public IEncodedFramePublisher
 {
 public:
     using SubscriptionId = uint64_t;
+    struct Options
+    {
+        size_t max_subscriptions = 4096;
+    };
+    enum class SubscribeStatus { Accepted, Invalid, Full, Closed, SourceRejected, Exhausted };
+    struct SubscribeResult
+    {
+        SubscribeStatus status = SubscribeStatus::Invalid;
+        SubscriptionId id = 0;
+        explicit operator bool() const noexcept { return status == SubscribeStatus::Accepted; }
+    };
     struct DispatchResult
     {
         size_t accepted = 0;
         size_t rejected = 0;
         size_t failed = 0;
+        size_t examined = 0; // 索引选中的候选关系数，包括后续被状态或过滤条件排除的关系。
+    };
+    struct Stats
+    {
+        size_t active_subscriptions = 0;
+        size_t max_subscriptions = 0;
+        bool closed = false;
+        uint64_t frames = 0, invalid_frames = 0;
+        uint64_t accepted = 0, rejected = 0, failed = 0, examined = 0;
     };
 
+    EncodedFrameRouter();
+    explicit EncodedFrameRouter(Options options);
+    ~EncodedFrameRouter() override;
+
+    // 兼容入口：失败返回 0；需要区分原因时使用 TrySubscribe。
     SubscriptionId Subscribe(std::shared_ptr<IEncodedFrameSink> sink);
     SubscriptionId Subscribe(std::shared_ptr<IEncodedFrameSink> sink, EncodedFrameFilter filter);
     // 受管理的轨道消费：源暂停/移除会同步影响投递，不重复注册发布流。
-    SubscriptionId Subscribe(std::shared_ptr<IEncodedFrameSink> sink, MediaTrackRef track,
-        MediaStreamRegistry& registry, std::string name, std::function<void()> on_close = {});
+    SubscriptionId Subscribe(std::shared_ptr<IEncodedFrameSink> sink, MediaTrackRef track, MediaStreamRegistry& registry, std::string name, std::function<void()> on_close = {});
+    SubscribeResult TrySubscribe(std::shared_ptr<IEncodedFrameSink> sink, EncodedFrameFilter filter = {});
+    // SourceRejected 表示源未就绪、已移除或源消费额度不足；失败不保留新建的存活消费关系。
+    SubscribeResult TrySubscribe(std::shared_ptr<IEncodedFrameSink> sink, MediaTrackRef track, MediaStreamRegistry& registry, std::string name, std::function<void()> on_close = {});
     // 不等待已开始的回调；消费者关闭时仍须在自己的队列入口拒绝新帧。
     void Unsubscribe(SubscriptionId id);
+    // 幂等关闭并撤销全部关系；拒绝后续订阅，不等待已开始的消费者回调。
+    void Close();
+    // 控制路径查询；累计投递指标为并发采样值，不是跨字段原子快照。
+    Stats GetStats() const;
     size_t Publish(const EncodedFrameEvent& event) override;
     // 同步投递，不重试、不增加缓存；拒收包括背压和业务拒绝，异常不影响其他消费者。
     DispatchResult Dispatch(const EncodedFrameEvent& event);
@@ -204,17 +236,23 @@ private:
     {
         std::vector<std::shared_ptr<Slot>> all;
         std::unordered_map<uint32_t, std::vector<std::shared_ptr<Slot>>> streams;
+        std::unordered_map<uint64_t, std::vector<std::shared_ptr<Slot>>> tracks;
         std::unordered_map<uint64_t, std::vector<std::shared_ptr<Slot>>> endpoints;
     };
     static std::shared_ptr<const Routes> BuildRoutes(const Slots& slots);
-    SubscriptionId SubscribeImpl(std::shared_ptr<IEncodedFrameSink> sink, EncodedFrameFilter filter,
+    SubscribeResult SubscribeImpl(std::shared_ptr<IEncodedFrameSink> sink, EncodedFrameFilter filter,
         MediaTrackSubscription::Ptr consumer);
+    static uint64_t TrackKey(MediaTrackRef track)
+    { return (uint64_t(track.stream_id) << 32) | track.track_id; }
 
-    // 控制操作串行更新不可变路由快照；Publish 不复制列表，也不获取此写锁。
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
+    const size_t max_subscriptions_;
+    bool closed_ = false;
     Slots slots_;
     std::shared_ptr<const Routes> routes_ = std::make_shared<const Routes>();
     SubscriptionId next_id_ = 1;
+    std::atomic<uint64_t> frames_{0}, invalid_frames_{0};
+    std::atomic<uint64_t> accepted_{0}, rejected_{0}, failed_{0}, examined_{0};
 };
 
 } // namespace media

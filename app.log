@@ -1,0 +1,4 @@
+2026-11-04 15:46:25.861 [pid=53828 tid=0x1f77c1e80] [INFO]: [ReceiveQualityMonitor.cpp:40] [WEAK_NET] quality changed  ssrc= 1  from= Unknown  to= Excellent  loss= 0  jitter_ms= 10  sender_bitrate_bps= 1000000  target_bitrate_bps= 840000
+2026-11-04 15:46:25.861 [pid=53828 tid=0x1f77c1e80] [INFO]: [ReceiveQualityMonitor.cpp:40] [WEAK_NET] quality changed  ssrc= 2  from= Unknown  to= Weak  loss= 0  jitter_ms= 10  sender_bitrate_bps= 1000000  target_bitrate_bps= 680000
+2026-11-04 15:46:25.861 [pid=53828 tid=0x1f77c1e80] [INFO]: [ReceiveQualityMonitor.cpp:40] [WEAK_NET] quality changed  ssrc= 1  from= Excellent  to= Weak  loss= 0  jitter_ms= 10  sender_bitrate_bps= 1000000  target_bitrate_bps= 680000
+2026-11-04 15:46:25.861 [pid=53828 tid=0x1f77c1e80] [INFO]: [ReceiveQualityMonitor.cpp:40] [WEAK_NET] quality changed  ssrc= 1  from= Unknown  to= Weak  loss= 0  jitter_ms= 10  sender_bitrate_bps= 1000000  target_bitrate_bps= 680000

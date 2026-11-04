@@ -5,6 +5,7 @@
 #include "PacketHistory.h"
 #include "TransportFeedbackAdapter.h"
 #include "TransportSequenceAllocator.h"
+#include "DownlinkBandwidthAllocator.h"
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -32,8 +33,15 @@ public:
     void OnNetworkRouteChanged();
     void SetUpdateCallback(UpdateCallback callback);
     NetworkControlUpdate GetNetworkState() const;
+    // Independent listeners avoid replacing the application's update callback.
+    // Notifications run outside mutex_; listeners should only schedule work.
+    using BudgetObserverId = uint64_t;
+    BudgetObserverId AddBudgetObserver(std::function<void()> observer);
+    void RemoveBudgetObserver(BudgetObserverId id);
+    DownlinkBandwidthBudget GetBandwidthBudget() const;
 
 private:
+    void NotifyBudgetObservers();
     bool IsTwccRecent(uint64_t now_ms) const
     {
         if (!has_twcc_)
@@ -56,6 +64,9 @@ private:
     bool has_twcc_ = false;
     uint64_t last_valid_twcc_receive_time_ms_ = 0;
     UpdateCallback update_callback_;
+    uint64_t path_epoch_ = 1;
+    BudgetObserverId next_observer_id_ = 1;
+    std::unordered_map<BudgetObserverId, std::function<void()>> budget_observers_;
     std::unordered_map<uint32_t, uint32_t> sender_clock_rates_;
 };
 }

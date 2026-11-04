@@ -42,7 +42,7 @@ TURN UDP 中继及录像模块。支持原有 `Packetia` 单进程入口，以�
 | 断线恢复 | 默认 15 秒保留成员、媒体会话和转发关系，凭恢复凭据绑定新信令连接 | 仅同页面、同进程内恢复；刷新页面、服务重启或媒体终止后需重新加入 |
 | TURN/STUN | UDP 长期凭证认证、中继、权限、通道、到期清理、配额/ACL、IPv4/IPv6 | 不支持 TURN TCP/TLS、双地址族 Allocation 或完整 coturn 功能 |
 | TCP/TLS | 有界 TCP 缓冲、所属线程调度、TLS 1.2/1.3 服务端传输组件 | TLS 尚未接入 TURN 或 WSS 监听、应用配置 |
-| 弱网与带宽控制 | NACK 重传、PLI/FIR、TWCC/RR、时延/接收速率/RTT/丢包联合码率控制 | 输出控制建议；实际 Pacer、媒体降码率、分层选择、FEC 与主动探测尚未接入 |
+| 弱网与带宽控制 | NACK 重传、PLI/FIR、TWCC/RR、联合码率估计、按 Transport 分配订阅带宽、视频暂停/关键帧恢复及受限 padding 探测 | 单编码整轨准入；实际 Pacer、编码器调码率、simulcast/SVC 选层与 FEC 尚未接入 |
 | RTP 接收排序 | 按 SSRC 隔离、乱序/回绕处理、有界缓存与等待、连续包验证后的前向重同步；H264 独立组帧期限 | 等待预算受 worker 调度影响；不保证端到端时延；后退重启和半周期歧义需会话重置 |
 | 视频编解码 | FFmpeg 软件适配 H264/H265/VP8/VP9/AV1，按格式、方向、参数和实现偏好创建实例 | 取决于本机 FFmpeg 实现；当前输出 SDR 8-bit I420；硬件、音频转码尚未接入 |
 | 多档转码 | 一次解码、多档缩放编码；默认 H264 → 720p/360p H264；有界输入队列、任务启停与状态统计 | 原 `Packetia` 入口集成；独立 `PacketiaSfu` 尚未接入；缺少任务 HTTP API、派生流 RTP 输出及浏览器播放闭环 |
@@ -1215,10 +1215,37 @@ SFU 的双栈监听与双地址 SDP 候选发布尚未在这一功能中实现�
 `MediaStreamRegistry` 的 `AttachConsumer`、`SetConsumerPaused`、`DetachConsumer` 仍描述消费者操作，
 句柄使用 `MediaTrackSubscription`。房间业务订阅与内核消费关系分别管理权限意图和实际投递，二者不互相替代。
 
-`packetia_media_core` 编译 `core/` 与 `frame/`，依赖基础类型、共享内存和线程库；
+`packetia_media_core` 编译 `core/` 与 `frame/`，依赖基础类型、共享内存、线程库和日志库；
 `media` 是包含协议适配的聚合目标。独立录制、混流和转码构建可直接编译
 `frame/EncodedFrameRouter.cpp`；需要注册表的订阅重载单独放在 `EncodedFrameRouterBinding.cpp`，
 不把全局目录依赖带入基础帧路由实现。
+
+### SFU 端点职责
+
+`SfuEndpoint` 使用组合管理下行发送、帧分发和接收质量，保留原有公开入口供房间和协议层调用。
+
+| 组件 | 拥有的状态与职责 |
+| --- | --- |
+| `SfuEndpoint` | 发布轨道、MID/SSRC 绑定、接收器、RTP/RTCP 入口、跨端点关系登记与运行状态 |
+| `DownlinkTrackManager` | 下行协商参数、订阅表、RTP 发送器、消费出口闸门、RTCP 发送器注册及退订清理 |
+| `frame/EncodedFrameDispatcher` | 来源描述、帧回调快照、公共发布器和发布计数；不依赖端点类型 |
+| `quality/ReceiveQualityMonitor` | 按接收 SSRC 管理独立控制器，输入统计数据，输出质量及控制建议；不访问接收器或网络 |
+| `endpoint/ReceiveFeedbackHandler` | 推进接收器 NACK、采集统计、生成并发送 RR，将统计交给质量模块，返回关键帧请求建议 |
+
+订阅链路为 `Room::SubscribeTrack` → `SfuEndpoint::Subscribe` → `DownlinkTrackManager::Subscribe`，
+端点统一取得源端和目标端的状态锁，管理器创建发送器，成功后在源轨道登记同一关系的弱引用。
+完整帧则从接收器回到 `frame/EncodedFrameDispatcher`，再进入 `EncodedFrameRouter` 和帧回调。
+接收反馈链路为 `SfuEndpoint` → `endpoint/ReceiveFeedbackHandler` → `quality/ReceiveQualityMonitor`
+→ `WeakNetController`；反馈协调器提取视频关键帧请求，由端点执行。RR 仍通过原有 RTCP 出口发送。
+WebRTC 在创建端点时通过构造参数传入来源描述，信令层不再通过派生类修改端点内部来源字段。
+
+组件复用现有媒体 Worker。下行管理器的可变状态由端点的 `runtime_mutex_` 保护，
+RTCP 分发器比下行管理器存活更久；清理先关闭关系闸门，再注销 RTCP 索引，最后释放发送器引用。
+已排队任务即使仍持有旧关系，也会在投递前检查关闭状态。
+帧回调和被移除回调的捕获对象在帧分发器锁外调用或释放；接收质量状态使用组件内部锁。
+`SfuEndpointTypes.h` 只保存端点发布/订阅关系；帧回调类型由帧分发器声明，质量控制状态由质量模块持有，
+删除没有读取方的重复 RR 与质量快照缓存。发布协商、接收器生命周期与恢复调度仍由 `SfuEndpoint` 协调，
+接收侧 NACK 推进和 RR 发送由反馈协调器执行；组件拆分不改变房间 owner 和网络执行器归属。
 
 `Room/TrackPublicationEvent.h` 定义 `room::TrackPublicationSnapshot`、`room::TrackPublishedEvent`
 和 `room::TrackUnpublishedEvent`，继续复用 `media::EventBus`。总线同步传播已提交结果，
@@ -1317,8 +1344,11 @@ registry.RemoveTrack(ref);                         // 撤销此源轨道及其�
 auto& registry = media::MediaStreamRegistry::Instance();
 const auto track = registry.FindTrack({stream_id, track_id});
 if (track) {
-    const auto id = router->Subscribe(sink, track->description.ref, registry, "recording");
-    // 业务结束时保存并退订该 id：router->Unsubscribe(id)。
+    const auto result = router->TrySubscribe(sink, track->description.ref, registry, "recording");
+    if (result) {
+        // 保存 result.id，业务结束时调用 router->Unsubscribe(result.id)。
+    }
+    // 失败时依据 result.status 返回业务错误，不继续启动消费任务。
 }
 ```
 
@@ -1326,12 +1356,23 @@ if (track) {
   轨道 0 有效。同名重发产生新流 ID，旧订阅不会自动跟随。订阅者须自行持有 sink 的共享引用。
 - `EncodedFrameFilter` 可同时约束内核流 ID、Endpoint、轨道、原有 session/stream 字符串和 SSRC，
   各条件按 AND 匹配。单独的流内轨道编号不足以订阅，必须同时指定发布实例或 Endpoint。
-- 控制操作串行构建不可变路由快照，发布帧时只读取该快照和匹配索引桶，不逐帧复制订阅列表，
+- 每个路由器默认最多保留 4096 条存活订阅，可通过构造参数 `Options.max_subscriptions` 配置正数上限。
+  暂停关系仍占额度；退订、源关闭或 sink 过期后可回收额度。该限制针对关系数量，路由器不缓存帧数据。
+- `TrySubscribe` 区分 `Accepted`、`Invalid`、`Full`、`Closed`、`SourceRejected` 和 `Exhausted`，
+  分别表示接纳、参数错误、路由满额、路由已关闭、源不可消费及 ID 耗尽。`SourceRejected` 包含源尚未就绪、
+  已移除或源侧消费额度不足；失败会撤销本次新建的消费句柄，已有关系保留。内存分配异常继续向调用者传播。
+  旧 `Subscribe` 接口保持成功返回 ID、失败返回 0。
+- 控制操作串行构建不可变路由快照，发布帧时按发布实例与轨道、整流、Endpoint 或全量订阅查找索引桶，不逐帧复制订阅列表，
   不获取注册表锁或路由写锁；编码帧仍共享只读存储。该设计不意味着所有操作都无锁或已经完成性能压测。
-- `Dispatch(event)` 返回 `accepted`、`rejected`、`failed`：分别表示消费者接收、业务拒绝/队列背压、
-  消费者抛出异常。异常不阻断其他消费者，路由器不重试或增加缓存。`Publish(event)` 保留原接收数量返回值。
+- `Dispatch(event)` 返回 `accepted`、`rejected`、`failed` 和 `examined`：分别表示消费者接收、业务拒绝/队列背压、
+  消费者抛出异常及索引选中的候选关系数。异常不阻断其他消费者，路由器不重试或增加缓存。`Publish(event)` 保留原接收数量返回值。
+- `GetStats()` 提供活动关系数、容量、关闭状态，以及有效/无效输入帧、接收、拒收、异常和候选检查的累计计数。
+  接收等计数以关系投递次数为单位，一帧可投递多次；暂停关系计入活动关系数。指标为并发采样值，尚未接入监控 HTTP 接口。
 - 分发仍在发布者线程同步调用，多个媒体 worker 可并发回调同一 sink，不提供跨线程到达顺序保证。
   消费者应迅速投递到自己的有界队列；退订不等待已开始的回调，关闭入口和排空队列仍由消费者负责。
+- `Close()` 幂等且不可逆，撤销全部关系并拒绝后续订阅与帧输入；析构时也执行关闭。
+  已通过状态检查的回调仍可完成，消费者入口和队列仍需自行收尾。源关闭通知、退订及快照捕获对象释放均不持有路由写锁。
+  路由关闭本身不会停止录制、转码或混流任务，相关服务仍按自身生命周期停机。
 
 转码任务已将输入条件交给路由器筛选；`TranscodeSource.media_stream_id` 非零时额外绑定内核发布实例，
 原有 Endpoint/轨道匹配规则保留。输出投递异常由转码、混流任务依据 `Dispatch` 结果处理。
@@ -1570,10 +1611,84 @@ SRTP 发送端允许重新保护缓存的原 RTP 序号及 payload，重传重�
 回退到 PLI。下行重传默认限制原包年龄为 500 ms，发布轨道合并不同订阅者的 PLI 请求。
 WebRTC 会话的 100 ms 定时器向媒体池投递恢复任务，停止收包后仍能推进重试与超时。
 
-业务可通过 `SetUpdateCallback` 消费控制输出。目前还没有实际 Pacer 和媒体码率策略执行，
-带宽算法测试通过不代表真实浏览器弱网质量已经验收。详见[丢包恢复说明](#弱网与带宽控制)。
+业务可通过 `SetUpdateCallback` 消费控制输出。订阅管理器使用独立观察者获取预算，不覆盖业务回调；
+通知合并后回到订阅端媒体 Worker 读取最新状态，周期恢复任务继续推进分配和超时。
+
+### 指标采样与平滑
+
+`NetworkStatsCollector` 已接入上行每个 SSRC 的 `WeakNetController` 和下行每条 Transport 的
+`GoogCcNetworkController`，对实际收到的 RTT、丢包率、jitter、收发码率样本进行 EWMA 平滑。
+接收侧在 `GetOrCreateReceiverTrack()` 建立实际接收轨道时，通过 `RegisterSource(ssrc)` 同步创建评估器，
+覆盖 RTP 先到和 SR 先到的入口。注册本身不产生样本或发送 RTCP；尚无反馈时质量为 `Unknown`。
+反馈只更新已注册来源，重复注册保留历史，删除接收轨道及端点停止会清理对应状态。
+`GetReceiveQualitySnapshot(ssrc)` 可读取状态，尚未创建接收器或已移除时返回 `nullopt`。
+接收侧评估和 RR 发送当前仍由 SR 触发，创建时机独立于评估周期；公共 Tick 尚未接入周期质量评估。
+
+默认时间常数 1000 ms，权重按 `exp(-采样间隔 / 时间常数)` 计算；重复、倒序及非有限样本不参与更新。
+每个指标独立记录新鲜度，超过 3000 ms 返回 `nullopt`，下一个有效样本重新初始化该指标。
+RTT-only 事件只更新 RTT，TWCC 只更新确认接收码率和反馈丢包率，不刷新其他指标的年龄；
+旧接口中为 0 的 RTT/码率按缺失样本处理。断网、路由变更及接收源移除会丢弃对应滤波历史。
+
+控制输出的 `target_rate.estimate.smoothed` 和上行 `NetworkStatsSnapshot.smoothed` 保存平滑值，
+与原始字段同时提供。jitter 在 RTP 层原有的 RFC 3550 计算及 TWCC 排队趋势算法继续使用原始采样；
+质量降级、NACK/PLI 和拥塞控制继续读取原始反馈，平滑结果用于观察指标趋势。
+
+订阅需求的 `SourceBitrateEstimator` 也复用 `EwmaFilter`，以约 1750 ms 时间常数处理至少 500 ms 的码率样本，
+常规间隔下新样本权重约 25%。源停止发包期间保留最后一次需求码率，超过 3000 ms 的采样空档后重建滤波历史，
+避免观众暂停或源静默将需求错误测成零。通用平滑器编入 `media_quality`，无需调用方单独链接。
+
+### 将带宽估计落实到订阅
+
+`DownlinkBandwidthAllocator` 为每条 Transport 分配预算，同一连接的音视频竞争同一预算，不同观众互不影响。
+默认使用目标码率的 85%，预留重传和传输开销；先保留音频及显式豁免轨道，再按优先级从高到低准入视频。
+同优先级优先保持当前转发状态，并按订阅 ID 确定顺序。放不下的大轨道跳过，剩余预算可用于较小轨道。
+单条需求来自发布源 RTP 字节速率的平滑估计，暂停某个观众不会把需求测成零；无有效样本时使用业务提示，
+仍未配置时视频按 500 kbit/s、音频按 32 kbit/s 估算。
+
+预算持续不足 300 ms 才暂停视频；恢复要求多留 20% 余量且持续满足 1000 ms，减少反复开关。
+仅初始化完成且最近 1500 ms 内有有效 TWCC 的估计用于自动分配；启动阶段、反馈过期及 RR-only 连接冻结原分配，
+不将初始目标码率当作已测容量。音频始终保留，预算不足时无法保证所有保留轨道的总需求都能满足。
+
+订阅建立后，可通过 C++ 接口调整策略并读取带宽状态：
+
+```cpp
+media::DownlinkSubscriptionPolicy policy;
+policy.priority = 200;              // 0..255，数值越大越优先
+policy.bitrate_hint_bps = 800000;   // 发布源速率尚未测出时使用
+viewer->SetSubscriptionBandwidthPolicy("camera", policy);
+auto status = viewer->GetSubscriptionBandwidthStatus("camera");
+// status: state、policy、required_bps；未知或已关闭的订阅返回 nullopt。
+// policy.enabled = false 可豁免该订阅的自动带宽暂停，其需求仍从预算中扣除。
+```
+
+带宽状态独立于用户暂停和发布源暂停：`Forwarding` → `Paused` → `WaitingKeyFrame` → `Forwarding`。
+带宽暂停保留订阅身份和发送器，阻止媒体及缓存重传；恢复时每秒最多请求一次关键帧，等待完整的 H264 IDR 或
+H265 IDR（19/20，不接受 CRA）后再打开媒体出口。恢复缓冲支持常用单 NAL、聚合及 FU 分片、序号回绕和乱序，
+单帧最多 512 包、2 MiB、200 ms，缓存并重放暂停期间的参数集。恢复时清空旧重传缓存、重建下游序号映射，
+跳过有意丢弃的区间，保留后续真实网络丢包形成的序号缺口；RTP 时间戳保留源时钟的时间间隔。
+路径切换清理旧预算及恢复缓存，活动视频重新等待关键帧，原本暂停的视频继续等待新路径预算。
+
+为使视频暂停后仍能探测恢复空间，管理器选择最高优先级且协商 TWCC 的暂停视频发送纯 padding：
+每 3 秒最多一个 500 ms 探测簇，每簇计费上限 128 KiB，单次 Tick 突发上限约 16 KiB。
+探测总目标受控制器最大码率及当前目标的增长上限约束，并扣除活动媒体需求；padding 使用新 RTP/TWCC 序号，
+不进入 NACK 缓存。用户暂停或源暂停期间不发送探测；最后一条订阅移除时注销对应观察者。
+
+当前执行的是单编码视频的整轨暂停/恢复，尚未接入 simulcast/SVC 选层、编码器动态调码率或实际 Pacer；
+受限 padding 探测也不等同于完整的探测与 pacing 系统。策略接口目前仅提供 C++ API，未新增信令字段。
+组件及 Worker 集成测试不代表真实浏览器弱网质量已经验收。
 
 ## 本轮验证
+
+2026-11-04 指标平滑接入验证（macOS）：新增 9 个用例通过，覆盖按时间加权、异常与重复采样、
+指标独立过期、RTT-only/TWCC 事件隔离、切网和接收源清理、源码率静默保留，以及原始拥塞反馈立即生效。
+`Packetia` 及相关测试目标构建通过；下述相同 6 组 CTest 回归全部通过，本轮未进行真实浏览器弱网验证。
+
+2026-11-04 订阅带宽策略验证（macOS）：`Packetia` 及相关测试目标构建通过；
+`media_core`、`test_webrtc_crypto`、`test_weak_network_manual`、`test_rtp_input`、
+`test_udp_binding`、`webrtc_service` 共 6 组 CTest 全部通过。新增 19 个用例覆盖预算分配与滞回、
+反馈过期、用户/源暂停隔离、关键帧组装和参数集重放、RTP 序号及时间戳回绕、padding、观察者回收、
+切网，以及实际 Worker 上由 TWCC 反馈触发的订阅暂停/恢复和观众隔离。
+本轮未进行真实浏览器弱网或公网验证，构建仍有既有重复库链接警告。
 
 2026-10-29 提交前验证（macOS）：当前 `build/webrtc-integration` 配置完整构建通过，包含
 `Packetia`、`PacketiaControl`、`PacketiaSfu` 和全部测试目标；**67/67 组 CTest 通过，无跳过**，
@@ -1678,6 +1793,32 @@ build/webrtc-integration/Rtsp/Test/test_rtp_input \
 ## 开发记录
 
 以下记录描述各次修改当时的状态；其中的待实现能力和限制可能已在后续完成，当前状态以上文为准。
+
+### 2026-10-30：整理帧分发与接收质量的模块边界
+
+- 编码帧分发迁入 `media/frame` 和 `packetia_media_core`，解除对 `SfuEndpointTypes.h` 的依赖；帧回调重入测试归入媒体核心测试。
+- `media/quality/ReceiveQualityMonitor` 仅接收统计、保存各源控制器并返回控制建议。
+- `media/endpoint/ReceiveFeedbackHandler` 衔接 RTP 接收器、RR 发送和质量评估，保持原有反馈与关键帧路径。
+- 端点类型头删除质量状态和帧回调声明；质量模块新增多源隔离、移除与清空后的状态重置测试。
+- `Packetia`、`PacketiaControl`、`PacketiaSfu` 构建通过；媒体核心、弱网、RTP/组件、RTSP UDP、流服务和 WebRTC 共 6 组 CTest 全部通过。
+
+### 2026-10-30：拆分 SFU 端点职责
+
+- 下行参数、订阅和发送器生命周期移入 `DownlinkTrackManager`，端点保留源/目标加锁与跨端点通知。
+- 编码帧来源、回调和发布交给 `EncodedFrameDispatcher`；接收报告与质量评估交给 `ReceiveQualityMonitor`。
+- WebRTC 显式传入帧来源，删除只为修改内部字段而存在的 `PublishedEndpoint` 派生类。
+- 补充组件销毁后旧路由失效、RTCP 注册撤销、帧回调重入和实际音频收包后 RR 身份的回归测试。
+- `Packetia`、`PacketiaControl`、`PacketiaSfu` 构建通过；媒体核心、RTP/组件、RTSP UDP、流服务和 WebRTC 共 5 组 CTest 全部通过。
+- 保留现有客户端协议与执行器归属；发布协商和接收器管理仍由端点协调。
+
+### 2026-10-30：编码帧转发准入、索引与关闭
+
+- 编码帧路由增加可配置订阅上限、明确准入结果和失败回滚，保留旧订阅接口。
+- 按发布实例与轨道建立独立索引；同一流 256 条轨道的测试中，单帧仅检查目标轨道及三条通用关系，共 4 个候选。
+- 新增幂等关闭与累计投递统计；旧快照会检查关系是否失效，控制路径在锁外释放回调捕获，允许重入。
+- 增加满额、过期回收、回调异常、关闭并发、失败清理及析构重入测试。
+- `Packetia`、`PacketiaControl`、`PacketiaSfu` 构建通过；媒体核心、RTP、WebRTC、转码、混流和流服务 6 组 CTest，以及独立转码构建的 3 组 CTest 全部通过。
+- 本次范围为编码帧路由，不改变直接 RTP 转发算法、消费者队列策略或客户端信令；未做容量与长稳压测。
 
 ### 2026-10-29：媒体层目录与轨道命名统一
 
@@ -2681,3 +2822,35 @@ WebRTC 发布请求
 - `WebRtcService::Start` 只组装发送队列和 UDP mux；UDP 入站任务也改用公共队列，移除对信令队列的依赖。
 - UDP 默认 4 MiB / 4096 条限制集中定义，原有预算、关闭检查及排队顺序保持；新增真实 UDP 缓冲区、背压和取消回归。
 - 验证：三个运行入口与相关测试构建成功，`server_app`、`test_datagram_transport`、`webrtc_service`、`signal_channel` 共 4 组 CTest 通过；公共队列独立语法编译及 `git diff --check` 通过。
+
+### 2026-11-04 — 下行订阅带宽策略、指标平滑与接收评估器生命周期
+
+#### 本次完成
+
+- 新增 `DownlinkBandwidthAllocator`，将每条 Transport 的带宽估计转为订阅准入策略：默认使用目标码率的 85%，优先保留音频及豁免轨道，再按订阅优先级分配视频预算；不同观众独立分配。
+- 支持通过 `SetSubscriptionBandwidthPolicy` 设置订阅优先级、需求码率提示及自动暂停豁免，通过 `GetSubscriptionBandwidthStatus` 查询分配状态。优先级属于观众的一条订阅关系。
+- 发布轨道共享 `SourceBitrateEstimator`，根据源 RTP 字节速率估算需求；某个观众暂停时仍保留源需求，避免按暂停后的发送速率错误分配。
+- 带宽不足持续 300 ms 才暂停视频，恢复要求额外 20% 余量并持续满足 1000 ms。带宽状态独立维护 `Forwarding`、`Paused`、`WaitingKeyFrame`，暂停期间保留订阅和发送器，阻止媒体及缓存重传。
+- 新增 `VideoResumeBuffer`，恢复时等待完整 H264/H265 IDR，支持分片、乱序和序号回绕；接通发送序号连续化、padding 探测及媒体 Worker 上的分配与恢复调度。
+- 拆分 `DownlinkTrackManager`、`ReceiveFeedbackHandler`、`ReceiveQualityMonitor` 和 `EncodedFrameDispatcher`，分别管理下行订阅、接收反馈、按 SSRC 的质量状态和编码帧投递。
+- 将通用 `EwmaFilter` 接入实际指标采样：上行按 SSRC、下行按 Transport 独立保存统计；RTT、丢包率、jitter 和码率按实际采样间隔平滑，每项指标独立过期，缺失样本不刷新其他指标。
+- 接收轨道在 `GetOrCreateReceiverTrack()` 成功创建时，通过 `RegisterSource(ssrc)` 同步创建评估器，覆盖 RTP 先到与 SR 先到；初始为 `Unknown`，注册不产生统计样本或发送 RTCP。
+- 反馈只更新已注册评估器，重复注册保留历史；轨道删除调用 `Remove(ssrc)`，端点停止调用 `Clear()`，迟到反馈不会重建已删除状态。新增 `GetReceiveQualitySnapshot` 查询接口，并补齐初始化异常回滚。
+- 根目录 `.gitignore` 增加 `/test/`，忽略根目录本地测试目录，保留 `Rtsp/Test/`、`media/tests/` 和 `media/quality/tests/` 中的项目测试源码。
+
+实现与接口示例见[弱网与带宽控制](#弱网与带宽控制)，主要代码位于
+`media/quality/DownlinkBandwidthAllocator.*`、`media/quality/NetworkStatsCollector.*`、
+`media/quality/ReceiveQualityMonitor.*`、`media/endpoint/` 和 `Rtsp/Rtp/VideoResumeBuffer.*`。
+
+#### 验证情况
+
+- `Packetia` 及相关测试目标构建通过。
+- 新增订阅预算、视频暂停恢复、指标平滑与采样测试；另新增 4 项接收评估器生命周期测试，覆盖重复注册、无样本初始状态、创建失败、SR 先到、删除及停止清理。
+- 最终回归中，`test_weak_network_manual`、`test_rtp_input`、`test_udp_binding`、`media_core`、`test_webrtc_crypto`、`webrtc_service` 共 6 组 CTest 全部通过。
+
+#### 当前边界
+
+- 自动分配只使用初始化完成且最近 1500 ms 内有有效 TWCC 的估计；启动阶段、反馈过期和 RR-only 连接保持原分配。
+- 当前支持整条视频订阅暂停与恢复，尚未实现 simulcast/SVC 层选择；保留音频不代表预算不足时仍能满足全部音频需求。
+- 接收侧质量评估及 RR 发送仍由 SR 触发，公共 Tick 尚未接入周期质量评估；本次提前的是评估器创建时机。
+- 平滑质量指标用于观察趋势，质量降级、NACK/PLI 和拥塞控制仍读取原始反馈；源码率的平滑结果用于订阅需求估算。

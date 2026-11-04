@@ -5,6 +5,8 @@ add_executable(test_rtp_input
     test_audio_depacketizer.cpp
     test_video_depacketizer.cpp
     test_sfu_endpoint.cpp
+    test_endpoint_components.cpp
+    test_downlink_bandwidth.cpp
     test_participant.cpp
     test_room_events.cpp
     test_webrtc_media_adapter.cpp

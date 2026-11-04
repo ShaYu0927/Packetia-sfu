@@ -150,6 +150,10 @@ public:
 
     void SetKeyFrameRequestCallback(KeyFrameRequestCallback cb);
     void SetPacketSentCallback(PacketSentCallback cb);
+    // Start a new forwarding epoch after intentional packet suppression. The
+    // first recovery packet follows the last sent RTP sequence, including pads.
+    void BeginDiscontinuity();
+    bool SendPadding(size_t padding_bytes);
 
     uint32_t GetSsrc() const { return _config.local_ssrc; }
 
@@ -230,6 +234,14 @@ private:
      * rewrite offsets.
      */
     bool _started = false;
+    bool _has_sent = false;
+    bool _rebase_pending = false;
+    bool _has_resume_floor = false;
+    uint16_t _last_out_seq = 0;
+    uint32_t _last_out_timestamp = 0;
+    uint16_t _resume_floor_seq = 0;
+    int64_t _resume_floor_timestamp = 0;
+    int64_t _latest_source_timestamp = 0;
 
     /*
      * Base sequence number from the upstream RTP stream.

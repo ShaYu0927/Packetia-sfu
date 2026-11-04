@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 set(QUALITY_SRC
+    quality/DownlinkBandwidthAllocator.cpp
     quality/GoogCcNetworkController.cpp
     quality/NackContext.cpp
     quality/NetworkController.cpp
@@ -13,6 +14,8 @@ set(QUALITY_SRC
     quality/TransportFeedbackAdapter.cpp
     quality/VideoRecoveryController.cpp
     quality/WeakNetController.cpp
+    quality/ReceiveQualityMonitor.cpp
+    quality/estimator/EwmaFilter.cpp
     quality/bwe/DelayTrendDetector.cpp
     quality/bwe/IncomingBitrateEstimator.cpp
     quality/bwe/LossBasedController.cpp
@@ -37,6 +40,7 @@ add_library(packetia_media_core STATIC
     core/MediaStream.cpp
     core/MediaStreamRegistry.cpp
     frame/EncodedFrameRouter.cpp
+    frame/EncodedFrameDispatcher.cpp
     frame/EncodedFrameRouterBinding.cpp
 )
 target_include_directories(packetia_media_core PUBLIC
@@ -44,7 +48,7 @@ target_include_directories(packetia_media_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/track
     ${CMAKE_CURRENT_SOURCE_DIR}/frame)
 target_compile_features(packetia_media_core PUBLIC cxx_std_17)
-target_link_libraries(packetia_media_core PUBLIC Threads::Threads packetia_media_types packetia_memory)
+target_link_libraries(packetia_media_core PUBLIC Threads::Threads packetia_media_types packetia_memory LOGGER)
 target_link_libraries(rtsp PUBLIC packetia_media_core)
 
 add_library(packetia_media_stats STATIC stats/MediaStatsCore.cpp stats/MetricsCalculator.cpp)
@@ -53,9 +57,14 @@ target_link_libraries(packetia_media_stats PUBLIC packetia_media_types Threads::
 
 add_library(media STATIC
     frame/EncodedFrameRouter.h
+    endpoint/SfuEndpointTypes.h
     endpoint/SfuEndpoint.h
     endpoint/SfuEndpoint.cpp
     endpoint/SfuEndpointTracks.cpp
+    endpoint/DownlinkTrackManager.h
+    endpoint/DownlinkTrackManager.cpp
+    endpoint/ReceiveFeedbackHandler.h
+    endpoint/ReceiveFeedbackHandler.cpp
     transport/IMediaPacketSink.h
     transport/MediaTransportPacket.h
     transport/MediaEndpointIngress.h
@@ -107,7 +116,10 @@ target_link_libraries(media
 )
 
 if(BUILD_TESTING)
-    add_executable(test_media_core tests/test_encoded_frame_router.cpp tests/test_media_track_subscriptions.cpp)
+    add_executable(test_media_core
+        tests/test_encoded_frame_router.cpp
+        tests/test_encoded_frame_dispatcher.cpp
+        tests/test_media_track_subscriptions.cpp)
     target_link_libraries(test_media_core PRIVATE packetia_media_core GTest::gtest_main)
     add_test(NAME media_core COMMAND test_media_core)
     set_tests_properties(media_core PROPERTIES TIMEOUT 15)

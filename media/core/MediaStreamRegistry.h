@@ -37,14 +37,10 @@ public:
     MediaStream::Ptr FindByName(const std::string& name, const std::string& scope = {}) const;
     Snapshot GetSnapshot() const;
     std::optional<TrackSnapshot> FindTrack(MediaTrackRef ref) const;
-    // 只登记消费关系；不增加流或源轨道。每条源轨道最多 4096 个存活句柄。
-    // on_close 在管理器锁外同步执行，必须非阻塞；投递失败时由消费端 owner 兜底清理。
-    MediaTrackSubscription::Ptr AttachConsumer(MediaTrackRef ref, std::string name,
-        std::function<void()> on_close = {});
+    MediaTrackSubscription::Ptr AttachConsumer(MediaTrackRef ref, std::string name,std::function<void()> on_close = {});
     bool SetTrackPaused(MediaTrackRef ref, bool paused);
     bool SetConsumerPaused(uint64_t id, bool paused);
     bool DetachConsumer(uint64_t id);
-    // 撤销目录与消费关系；源接收器、连接仍由协议 owner 负责关闭。
     bool RemoveTrack(MediaTrackRef ref);
     EventBus& Events() { return events_; }
     bool Remove(const MediaStream::Ptr& expected);
@@ -55,16 +51,13 @@ public:
 private:
     struct TrackEntry
     {
-        std::shared_ptr<std::atomic<MediaTrackState>> state =
-            std::make_shared<std::atomic<MediaTrackState>>(MediaTrackState::Open);
+        std::shared_ptr<std::atomic<MediaTrackState>> state = std::make_shared<std::atomic<MediaTrackState>>(MediaTrackState::Open);
         std::unordered_map<uint64_t, std::weak_ptr<MediaTrackSubscription>> consumers;
     };
-    static uint64_t TrackKey(MediaTrackRef ref)
-    { return (uint64_t(ref.stream_id) << 32) | ref.track_id; }
+    static uint64_t TrackKey(MediaTrackRef ref) { return (uint64_t(ref.stream_id) << 32) | ref.track_id; }
     void CloseTracksLocked(const MediaStream::Ptr& stream, std::vector<MediaTrackSubscription::Ptr>& retired);
     void PruneConsumersLocked(TrackEntry& track, std::vector<MediaTrackSubscription::Ptr>& retained);
-    TrackSnapshot SnapshotTrackLocked(const MediaStream::TrackSnapshot& track, const TrackEntry& entry,
-        std::vector<MediaTrackSubscription::Ptr>& retained) const;
+    TrackSnapshot SnapshotTrackLocked(const MediaStream::TrackSnapshot& track, const TrackEntry& entry, std::vector<MediaTrackSubscription::Ptr>& retained) const;
     mutable std::mutex mutex_;
     std::unordered_map<uint32_t, MediaStream::Ptr> streams_;
     std::unordered_map<std::string, std::unordered_map<std::string, MediaStream::Ptr>> names_;

@@ -14,6 +14,7 @@ void WeakNetController::SetBitrateConstraints(const BitrateConstraints& constrai
 NetworkControlUpdate WeakNetController::OnFeedback(const WeakNetFeedback& feedback)
 {
     NetworkControlUpdate update;
+    stats_.OnFeedback(feedback);
 
     const auto quality = EstimateQuality(feedback);
     const uint32_t target = UpdateTargetBitrate(feedback, quality);
@@ -29,6 +30,7 @@ NetworkControlUpdate WeakNetController::OnFeedback(const WeakNetFeedback& feedba
     snapshot_.pli_count = feedback.pli_count;
     snapshot_.fir_count = feedback.fir_count;
     snapshot_.quality = quality;
+    snapshot_.smoothed = stats_.GetSnapshot(feedback.now_ms);
 
     update.has_target_rate = true;
     update.target_rate.update_time_ms = feedback.now_ms;
@@ -41,6 +43,7 @@ NetworkControlUpdate WeakNetController::OnFeedback(const WeakNetFeedback& feedba
     update.target_rate.estimate.jitter_ms = feedback.jitter_ms;
     update.target_rate.estimate.loss_rate = feedback.loss_rate;
     update.target_rate.estimate.quality = quality;
+    update.target_rate.estimate.smoothed = snapshot_.smoothed;
 
     update.has_pacer_config = true;
     update.pacer_config.update_time_ms = feedback.now_ms;

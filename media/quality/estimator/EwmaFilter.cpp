@@ -1,5 +1,6 @@
 #include "EwmaFilter.h"
 #include <cmath>
+#include <stdexcept>
 
 
 namespace media
@@ -8,10 +9,14 @@ namespace media
 EwmaFilter::EwmaFilter(double alpha)
     : alpha_(alpha)
 {
+    if (!std::isfinite(alpha) || alpha < 0.0 || alpha > 1.0)
+        throw std::invalid_argument("EWMA alpha must be in [0, 1]");
 }
 
 void EwmaFilter::AddSample(double sample, uint64_t timestamp_ms)
 {
+    if (!std::isfinite(sample)) return;
+    if (initialized_ && timestamp_ms <= last_timestamp_ms_) return;
     if(!initialized_)
     {
         value_ = sample;
@@ -20,13 +25,16 @@ void EwmaFilter::AddSample(double sample, uint64_t timestamp_ms)
         return;
     }
 
-    value_  = alpha_ * value_ + (1.0 - alpha_) * sample;
+    const double weight = time_constant_ms_ ?
+        -std::expm1(-static_cast<double>(timestamp_ms - last_timestamp_ms_) / *time_constant_ms_) :
+        1.0 - alpha_;
+    value_ = (1.0 - weight) * value_ + weight * sample;
     last_timestamp_ms_ = timestamp_ms;
 }
 
 std::optional<double> EwmaFilter::GetValue(uint64_t now_ms) const
 {
-    if (!initialized_)
+    if (!initialized_ || now_ms < last_timestamp_ms_)
     {
         return std::nullopt;
     }
@@ -39,12 +47,20 @@ bool EwmaFilter::SetTimeConstantMs(uint32_t time_constant_ms)
     {
         return false;
     }
-    /*
-       alpha = exp(-1/T)
-    */
-
-    alpha_ = std::exp(-1.0 / time_constant_ms);
+    time_constant_ms_ = time_constant_ms;
     return true;
+}
+
+void EwmaFilter::Reset()
+{
+    initialized_ = false;
+    value_ = 0.0;
+    last_timestamp_ms_ = 0;
+}
+
+std::optional<uint64_t> EwmaFilter::LastSampleTimeMs() const
+{
+    return initialized_ ? std::optional<uint64_t>(last_timestamp_ms_) : std::nullopt;
 }
 
 }

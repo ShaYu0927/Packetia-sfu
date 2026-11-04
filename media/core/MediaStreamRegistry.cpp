@@ -27,10 +27,9 @@ bool MediaStreamRegistry::Register(const MediaStream::Ptr& stream)
         std::lock_guard<std::mutex> lock(mutex_);
         const auto scope = names_.find(stream->GetSource().scope);
         if (scope != names_.end() && scope->second.count(stream->GetName())) return false;
-        // 统一按 registry -> stream 加锁；先构建快照和轨道控制，再提交索引。
+        
         std::lock_guard<std::mutex> stream_lock(stream->mutex_);
-        if (streams_.count(stream->GetId()) || stream->registry_ ||
-            stream->state_ == MediaStream::State::Closed || stream->tracks_.empty()) return false;
+        if (streams_.count(stream->GetId()) || stream->registry_ || stream->state_ == MediaStream::State::Closed || stream->tracks_.empty()) return false;
         snapshot = {stream->id_, stream->name_, stream->source_, stream->state_, {}};
         std::unordered_map<uint64_t, TrackEntry> additions;
         for (const auto& track : stream->tracks_)
@@ -63,7 +62,6 @@ bool MediaStreamRegistry::Register(const MediaStream::Ptr& stream)
         stream->registry_ = this;
         revision = ++revision_;
     }
-    // 不持有注册表锁执行订阅者；允许回调查询快照，线程切换由订阅者完成。
     events_.EmplacePublish<StreamRegisteredEvent>(std::move(snapshot), revision);
     return true;
 }

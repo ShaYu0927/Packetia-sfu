@@ -3,6 +3,7 @@
 #include "EncodedFrameRouter.h"
 #include "MediaStreamRegistry.h"
 #include <functional>
+#include <future>
 #include <stdexcept>
 #include <thread>
 
@@ -104,6 +105,14 @@ TEST(EncodedFrameRouter, ReportsBackpressureAndIsolatesConsumerExceptions)
     const auto ignored = router.Dispatch(invalid);
     EXPECT_EQ(ignored.accepted + ignored.rejected + ignored.failed, 0U);
     EXPECT_EQ(accepted->calls, 2U);
+    const auto stats = router.GetStats();
+    EXPECT_EQ(stats.frames, 2U);
+    EXPECT_EQ(stats.invalid_frames, 1U);
+    EXPECT_EQ(stats.accepted, 2U);
+    EXPECT_EQ(stats.rejected, 2U);
+    EXPECT_EQ(stats.failed, 2U);
+    EXPECT_EQ(stats.examined, 6U);
+    EXPECT_EQ(stats.active_subscriptions, 3U);
 }
 
 TEST(EncodedFrameRouter, InvalidTrackSelectorsCannotBecomeBroadcastSubscriptions)
@@ -212,4 +221,108 @@ TEST(EncodedFrameRouter, ConcurrentPublishersAndSubscriptionChangesKeepStableCon
     start.store(true);
     for (auto& worker : workers) worker.join();
     EXPECT_EQ(stable->calls, 2000U);
+}
+
+TEST(EncodedFrameRouter, AdmissionIsBoundedAndExpiredSinksReleaseCapacity)
+{
+    using Status = media::EncodedFrameRouter::SubscribeStatus;
+    EXPECT_THROW((media::EncodedFrameRouter{media::EncodedFrameRouter::Options{0}}), std::invalid_argument);
+    media::EncodedFrameRouter router({2});
+    auto stable = std::make_shared<Sink>(), temporary = std::make_shared<Sink>();
+    const auto first = router.TrySubscribe(stable);
+    ASSERT_TRUE(first);
+    ASSERT_TRUE(router.TrySubscribe(temporary));
+    const auto full = router.TrySubscribe(stable);
+    EXPECT_EQ(full.status, Status::Full);
+    EXPECT_EQ(full.id, 0U);
+    EXPECT_FALSE(full);
+    EXPECT_EQ(router.TrySubscribe(nullptr).status, Status::Invalid);
+    media::EncodedFrameFilter invalid;
+    invalid.track_id = 0;
+    EXPECT_EQ(router.TrySubscribe(stable, invalid).status, Status::Invalid);
+    temporary.reset();
+    EXPECT_EQ(router.GetStats().active_subscriptions, 1U);
+    EXPECT_TRUE(router.TrySubscribe(stable));
+    EXPECT_EQ(router.GetStats().active_subscriptions, 2U);
+    EXPECT_EQ(router.GetStats().max_subscriptions, 2U);
+    router.Unsubscribe(first.id);
+    const auto replacement = router.TrySubscribe(stable);
+    EXPECT_TRUE(replacement);
+    EXPECT_NE(replacement.id, first.id);
+    EXPECT_EQ(router.Publish(Frame()), 2U);
+}
+
+TEST(EncodedFrameRouter, ExactTrackIndexAvoidsExaminingUnrelatedTracks)
+{
+    media::EncodedFrameRouter router;
+    auto sink = std::make_shared<Sink>();
+    ASSERT_TRUE(router.TrySubscribe(sink));
+    ASSERT_TRUE(router.TrySubscribe(sink, media::EncodedFrameFilter::ForStream(7)));
+    media::EncodedFrameFilter endpoint;
+    endpoint.endpoint_id = 10;
+    ASSERT_TRUE(router.TrySubscribe(sink, endpoint));
+    for (media::TrackId track = 0; track < 256; ++track)
+        ASSERT_TRUE(router.TrySubscribe(sink, media::EncodedFrameFilter::ForTrack({7, track})));
+    ASSERT_TRUE(router.TrySubscribe(sink, media::EncodedFrameFilter::ForTrack({8, 0})));
+    endpoint.endpoint_id = 11;
+    ASSERT_TRUE(router.TrySubscribe(sink, endpoint));
+    const auto result = router.Dispatch(Frame(7, 0));
+    EXPECT_EQ(result.examined, 4U);
+    EXPECT_EQ(result.accepted, 4U);
+    EXPECT_EQ(sink->calls, 4U);
+    EXPECT_EQ(router.GetStats().active_subscriptions, 261U);
+}
+
+TEST(EncodedFrameRouter, CloseInsideCallbackInvalidatesCapturedRoutesAndIsIdempotent)
+{
+    using Status = media::EncodedFrameRouter::SubscribeStatus;
+    media::EncodedFrameRouter router;
+    auto controller = std::make_shared<Sink>(), target = std::make_shared<Sink>();
+    controller->callback = [&](const auto&) {
+        EXPECT_EQ(router.GetStats().active_subscriptions, 2U);
+        router.Close();
+        EXPECT_TRUE(router.GetStats().closed);
+        return true;
+    };
+    ASSERT_TRUE(router.TrySubscribe(controller));
+    ASSERT_TRUE(router.TrySubscribe(target, media::EncodedFrameFilter::ForTrack({1, 0})));
+    EXPECT_EQ(router.Publish(Frame()), 1U);
+    EXPECT_EQ(target->calls, 0U);
+    router.Close();
+    router.Unsubscribe(1);
+    EXPECT_EQ(router.TrySubscribe(target).status, Status::Closed);
+    EXPECT_EQ(router.Subscribe(target), 0U);
+    EXPECT_EQ(router.Publish(Frame()), 0U);
+    EXPECT_EQ(router.GetStats().active_subscriptions, 0U);
+    EXPECT_EQ(router.GetStats().frames, 1U);
+    EXPECT_EQ(router.GetStats().accepted, 1U);
+}
+
+TEST(EncodedFrameRouter, CloseRejectsNewWorkWhileAnExistingCallbackFinishes)
+{
+    using Status = media::EncodedFrameRouter::SubscribeStatus;
+    media::EncodedFrameRouter router;
+    auto sink = std::make_shared<Sink>();
+    std::promise<void> entered, release;
+    auto released = release.get_future();
+    sink->callback = [&](const auto&) {
+        entered.set_value();
+        released.wait();
+        return true;
+    };
+    ASSERT_TRUE(router.TrySubscribe(sink));
+    std::thread publisher([&] { EXPECT_EQ(router.Publish(Frame()), 1U); });
+    entered.get_future().wait();
+    // 关闭不等待正在执行的消费者；后续分发及并发订阅立即被拒绝。
+    router.Close();
+    std::thread subscriber([&] {
+        for (unsigned i = 0; i < 100; ++i)
+            EXPECT_EQ(router.TrySubscribe(sink).status, Status::Closed);
+    });
+    EXPECT_EQ(router.Publish(Frame()), 0U);
+    subscriber.join();
+    release.set_value();
+    publisher.join();
+    EXPECT_EQ(sink->calls, 1U);
+    EXPECT_EQ(router.GetStats().accepted, 1U);
 }

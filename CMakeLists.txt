@@ -201,6 +201,7 @@ add_library(rtp STATIC
     Rtsp/TrackClock.cpp
     Rtsp/TrackClock.h
     Rtsp/RtpSenderTrack.cpp
+    Rtsp/Rtp/VideoResumeBuffer.cpp
     Rtsp/RtpSenderTrack.h
     Rtsp/RtpTransportCcExtension.cpp
     Rtsp/RtpTransportCcExtension.h

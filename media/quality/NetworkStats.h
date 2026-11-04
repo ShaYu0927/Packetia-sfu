@@ -2,6 +2,7 @@
 #define _NET_WORK_STATS_H_
 
 #include <cstdint>
+#include <optional>
 #include <vector>
 namespace media 
 {
@@ -163,6 +164,17 @@ struct LossReport
     }
 };
 
+// Diagnostic trends. Missing/expired samples stay unknown, not zero.
+// Raw feedback remains available for immediate congestion/recovery decisions.
+struct SmoothedNetworkMetrics
+{
+    std::optional<double> send_bitrate_bps;
+    std::optional<double> recv_bitrate_bps;
+    std::optional<double> rtt_ms;
+    std::optional<double> jitter_ms;
+    std::optional<double> loss_rate;
+};
+
 struct NetworkEstimate
 {
     uint64_t update_time_ms = 0;
@@ -178,6 +190,7 @@ struct NetworkEstimate
     double loss_rate = 0.0;
 
     NetworkQualityLevel quality = NetworkQualityLevel::Unknown;
+    SmoothedNetworkMetrics smoothed;
 };
 
 struct TargetTransferRate
@@ -255,6 +268,7 @@ struct NetworkStatsSnapshot
     uint32_t data_in_flight_bytes = 0;
 
     NetworkQualityLevel quality = NetworkQualityLevel::Unknown;
+    SmoothedNetworkMetrics smoothed;
 };
 
 }

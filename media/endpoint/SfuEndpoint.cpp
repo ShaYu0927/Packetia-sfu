@@ -10,7 +10,6 @@
 #include <mutex>
 #include <algorithm>
 #include <chrono>
-#include <limits>
 #include "utils.h"
 
 namespace media 
@@ -19,10 +18,9 @@ namespace media
 SfuEndpoint::SfuEndpoint(uint64_t id, std::shared_ptr<RtpTrackDescription> track_description,
                          const EncodedFrameSource& source,
                          std::shared_ptr<IEncodedFramePublisher> frame_publisher)
-    : utils::EndpointBase(id, "SfuEndpoint"), frame_publisher_(std::move(frame_publisher))
+    : utils::EndpointBase(id, "SfuEndpoint"),
+      frames_(id, source, std::move(frame_publisher))
 {
-    session_id_ = source.session_id;
-    stream_id_ = source.stream_id;
     media_stream_id_ = source.media_stream_id;
     if (track_description)
         AddPublishedTrack(std::to_string(track_description->getTrackIndex()), track_description);
@@ -36,15 +34,6 @@ uint64_t SteadyNowMs()
     return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
 }
 
-uint32_t ClampToUint32(double value)
-{
-    if (value <= 0.0)
-    {
-        return 0;
-    }
-    const double maximum = static_cast<double>(std::numeric_limits<uint32_t>::max());
-    return static_cast<uint32_t>(std::min(value, maximum));
-}
 }
 
 static void DumpBytes(const uint8_t* data, size_t len, size_t max_dump = 16)
@@ -234,11 +223,18 @@ std::shared_ptr<rtsp::RtpReceiverTrack> SfuEndpoint::GetOrCreateReceiverTrack(ui
         }
     }
 
-    if (rtcp_dispatcher_)
+    try
     {
-        rtcp_dispatcher_->AddReceiverTrack(ssrc, new_track);
+        receive_feedback_.RegisterSource(ssrc);
+        if (rtcp_dispatcher_)
+            rtcp_dispatcher_->AddReceiverTrack(ssrc, new_track);
+        receiver_tick_keys_[media_affinity::MakeStreamKey(Id(), ssrc)] = new_track;
     }
-    receiver_tick_keys_[media_affinity::MakeStreamKey(Id(), ssrc)] = new_track;
+    catch (...)
+    {
+        RemoveMediaStreamOnOwner(ssrc);
+        throw;
+    }
 
     return new_track;
 }
@@ -289,11 +285,21 @@ bool SfuEndpoint::Start()
     {
         rtcp_dispatcher_ = std::make_unique<rtsp::RtcpDispatcher>();
     }
+    downlinks_.SetDispatcher(rtcp_dispatcher_.get());
     if (!rtcp_receiver_)
     {
         rtcp_receiver_ = std::make_unique<rtcpx::RtcpReceiverImpl>(rtcp_dispatcher_.get());
     }
     std::weak_ptr<SfuEndpoint> weak_self = weak_from_this();
+    const auto pending = std::make_shared<std::atomic<bool>>(false);
+    downlinks_.SetSchedule([weak_self, pending] {
+        const auto endpoint = weak_self.lock();
+        if (!endpoint || !endpoint->IsRunning() || pending->exchange(true)) return;
+        if (media_affinity::PostToMediaStream(endpoint->Id(), 0, [weak_self, pending] {
+            pending->store(false);
+            if (const auto current = weak_self.lock()) current->UpdateDownlinkBandwidth();
+        }) != 0) pending->store(false);
+    });
     rtcp_dispatcher_->SetSenderReportCallback(
         [weak_self](uint32_t media_ssrc) {
             if (auto self = weak_self.lock())
@@ -319,83 +325,17 @@ void SfuEndpoint::SetRtcpSendCallback(SendRtcpCallback cb)
 
 SfuEndpoint::FrameSubscriptionId SfuEndpoint::AddEncodedFrameCallback(EncodedFrameCallback cb)
 {
-    if (!cb)
-    {
-        return 0;
-    }
-
-    const FrameSubscriptionId id = next_frame_subscription_id_.fetch_add(1);
-    std::lock_guard<std::mutex> lock(frame_callbacks_mutex_);
-    frame_callbacks_[id] = std::move(cb);
-    return id;
+    return frames_.AddCallback(std::move(cb));
 }
 
 void SfuEndpoint::RemoveEncodedFrameCallback(FrameSubscriptionId id)
 {
-    if (id == 0)
-    {
-        return;
-    }
-    std::lock_guard<std::mutex> lock(frame_callbacks_mutex_);
-    frame_callbacks_.erase(id);
+    frames_.RemoveCallback(id);
 }
 
 void SfuEndpoint::DispatchEncodedFrame(const media::EncodedFrame::Ptr& frame)
 {
-    if (!frame || !frame->Valid())
-    {
-        return;
-    }
-
-    std::vector<EncodedFrameCallback> callbacks;
-    {
-        std::lock_guard<std::mutex> lock(frame_callbacks_mutex_);
-        callbacks.reserve(frame_callbacks_.size());
-        for (const auto& entry : frame_callbacks_)
-        {
-            callbacks.push_back(entry.second);
-        }
-    }
-
-    const media::EncodedFrame::ConstPtr immutable_frame = frame;
-    if (frame_publisher_)
-    {
-        EncodedFrameEvent event;
-        event.source.endpoint_id = Id();
-        event.source.track_id = frame->info.track_id;
-        event.source.ssrc = frame->rtp.ssrc;
-        event.source.session_id = session_id_;
-        event.source.stream_id = stream_id_;
-        event.source.media_stream_id = media_stream_id_;
-        event.frame = immutable_frame;
-        const size_t accepted = frame_publisher_->Publish(event);
-        const uint64_t count = published_frame_count_.fetch_add(1) + 1;
-        if (count == 1)
-        {
-            LOG_INFO("[FRAME_SOURCE] encoded frame published, count=", count,
-                     ", endpoint_id=", event.source.endpoint_id,
-                     ", session_id=", event.source.session_id,
-                     ", stream_id=", event.source.stream_id,
-                     ", track_id=", event.source.track_id,
-                     ", ssrc=", event.source.ssrc,
-                     ", media_type=", static_cast<int>(frame->info.media_type),
-                     ", codec=", static_cast<int>(frame->info.codec),
-                     ", bytes=", frame->Size(),
-                     ", accepted_sinks=", accepted);
-        }
-        else if (count % 300 == 0)
-        {
-            LOG_DEBUG("[FRAME_SOURCE] encoded frame published, count=", count,
-                      ", endpoint_id=", event.source.endpoint_id,
-                      ", track_id=", event.source.track_id,
-                      ", bytes=", frame->Size(),
-                      ", accepted_sinks=", accepted);
-        }
-    }
-    for (const auto& callback : callbacks)
-    {
-        callback(immutable_frame);
-    }
+    frames_.Dispatch(frame);
 }
 
 void SfuEndpoint::OnTrackNack(uint32_t media_ssrc, const std::vector<uint16_t>& lost_seqs)
@@ -463,6 +403,7 @@ void SfuEndpoint::TickRecovery()
     if (!IsRunning()) return;
     PruneSubscriptions();
     const auto now_ms = SteadyNowMs();
+    downlinks_.Tick(now_ms);
     std::vector<rtsp::RtpVideoTracker::Ptr> videos;
     {
         std::lock_guard<std::mutex> lock(track_mtx_);
@@ -478,6 +419,12 @@ void SfuEndpoint::TickRecovery()
     }
 }
 
+void SfuEndpoint::UpdateDownlinkBandwidth()
+{
+    std::lock_guard<std::recursive_mutex> guard(runtime_mutex_);
+    if (IsRunning()) downlinks_.Tick(SteadyNowMs(), true);
+}
+
 void SfuEndpoint::Stop()
 {
     std::lock_guard<std::recursive_mutex> guard(runtime_mutex_);
@@ -487,10 +434,10 @@ void SfuEndpoint::Stop()
         rtcp_dispatcher_->SetSenderReportCallback({});
     }
 
-    while (!subscriptions_.empty()) Unsubscribe(subscriptions_.begin()->first);
-    subscription_parameters_.clear();
+    downlinks_.Clear();
     while (!published_tracks_.empty()) RemovePublishedTrack(published_tracks_.begin()->first);
     receiver_tick_keys_.clear();
+    receive_feedback_.Clear();
     SetRtcpSendCallback({});
     SetState(State::kStopped);
 }
@@ -538,118 +485,20 @@ void SfuEndpoint::RemoveMediaStreamOnOwner(uint32_t source_ssrc)
     {
         rtcp_dispatcher_->RemoveReceiverTrack(source_ssrc);
     }
-    {
-        std::lock_guard<std::mutex> lock(quality_mutex_);
-        receive_quality_.erase(source_ssrc);
-    }
+    receive_feedback_.Remove(source_ssrc);
+}
+
+std::optional<NetworkStatsSnapshot> SfuEndpoint::GetReceiveQualitySnapshot(uint32_t source_ssrc) const
+{
+    std::lock_guard<std::recursive_mutex> guard(runtime_mutex_);
+    return receive_feedback_.GetSnapshot(source_ssrc, SteadyNowMs());
 }
 
 void SfuEndpoint::EvaluateReceiveQuality(uint32_t source_ssrc)
 {
-    auto track = FindReceiverTrackBySsrc(source_ssrc);
-    if (!track)
-    {
-        return;
-    }
-
-    const uint64_t now_ms = SteadyNowMs();
-    if (auto video = std::dynamic_pointer_cast<rtsp::RtpVideoTracker>(track))
-    {
-        video->UpdateNackRtt(track->GetRttMs());
-        video->TickNack(now_ms);
-    }
-    const auto report = track->BuildReceiverReport(now_ms);
-
-    auto send = RtcpSenderFor(source_ssrc);
-    if (send)
-    {
-        rtcpx::RrBlock block;
-        block.ssrc = report.media_ssrc;
-        block.fraction_lost = report.fraction_lost;
-        block.cumulative_lost = report.cumulative_lost;
-        block.extended_highest_seq = report.extended_highest_seq;
-        block.jitter = report.jitter;
-        block.lsr = report.lsr;
-        block.dlsr = report.dlsr;
-        auto rtcp_sender = rtcpx::CreateRtcpSender();
-        const auto packet = rtcp_sender->BuildReceiverReport(local_rtcp_ssrc_, block);
-        if (packet.empty() || !send(packet.data(), packet.size()))
-        {
-            LOG_ERROR("[RTCP][RR] send failed", " media_ssrc=", source_ssrc);
-        }
-    }
-
-    WeakNetFeedback feedback;
-    feedback.now_ms = now_ms;
-    feedback.send_bitrate_bps = ClampToUint32(track->GetSenderBitrateBps());
-    feedback.receive_bitrate_bps = ClampToUint32(track->GetReceiverBitrateBps(now_ms));
-    feedback.loss_rate = static_cast<double>(report.fraction_lost) / 256.0;
-    const uint32_t clock_rate = track->getTrackInfo().clock_rate;
-    if (clock_rate > 0)
-    {
-        feedback.jitter_ms = static_cast<uint32_t>(static_cast<uint64_t>(report.jitter) * 1000ULL / clock_rate);
-    }
-    feedback.rtt_ms = track->GetRttMs();
-    feedback.nack_count = track->GetNackCount();
-    feedback.pli_count = track->GetPliCount();
-    feedback.fir_count = track->GetFirCount();
-
-    LOG_DEBUG("[WEAK_NET][FEEDBACK] submit",
-             " ssrc=", source_ssrc,
-             " now_ms=", feedback.now_ms,
-             " sender_bitrate_bps=", feedback.send_bitrate_bps,
-             " receive_bitrate_bps=", feedback.receive_bitrate_bps,
-             " fraction_lost=", static_cast<uint32_t>(report.fraction_lost),
-             " loss_rate=", feedback.loss_rate,
-             " jitter_ticks=", report.jitter,
-             " jitter_ms=", feedback.jitter_ms,
-             " rtt_ms=", feedback.rtt_ms,
-             " nack_count=", feedback.nack_count,
-             " pli_count=", feedback.pli_count,
-             " fir_count=", feedback.fir_count);
-
-    NetworkControlUpdate update;
-    NetworkQualityLevel previous_quality = NetworkQualityLevel::Unknown;
-    NetworkQualityLevel current_quality = NetworkQualityLevel::Unknown;
-    {
-        std::lock_guard<std::mutex> lock(quality_mutex_);
-        auto& state = receive_quality_[source_ssrc];
-        previous_quality = state.quality;
-        update = state.controller.OnFeedback(feedback);
-        state.latest_report = report;
-        state.update_time_ms = now_ms;
-        current_quality = state.controller.GetSnapshot().quality;
-        state.quality = current_quality;
-    }
-
-    LOG_DEBUG("[WEAK_NET][CONTROL] update",
-             " ssrc=", source_ssrc,
-             " quality=", ToString(current_quality),
-             " has_target_rate=", update.has_target_rate,
-             " target_bitrate_bps=", update.target_rate.target_bitrate_bps,
-             " stable_target_bitrate_bps=", update.target_rate.stable_target_bitrate_bps,
-             " has_pacer_config=", update.has_pacer_config,
-             " pacing_bitrate_bps=", update.pacer_config.pacing_bitrate_bps,
-             " enable_nack=", update.enable_nack,
-             " enable_fec=", update.enable_fec,
-             " request_key_frame=", update.request_key_frame);
-
-    if (current_quality != previous_quality)
-    {
-        LOG_INFO("[WEAK_NET] quality changed",
-                 " ssrc=", source_ssrc,
-                 " from=", ToString(previous_quality),
-                 " to=", ToString(current_quality),
-                 " loss=", feedback.loss_rate,
-                 " jitter_ms=", feedback.jitter_ms,
-                 " sender_bitrate_bps=", feedback.send_bitrate_bps,
-                 " target_bitrate_bps=", update.target_rate.target_bitrate_bps);
-    }
-
-    if (update.request_key_frame && track->getTrackType() == TrackVideo)
-    {
+    const auto track = FindReceiverTrackBySsrc(source_ssrc);
+    if (receive_feedback_.Evaluate(track, SteadyNowMs(), local_rtcp_ssrc_, RtcpSenderFor(source_ssrc)))
         OnTrackPli(source_ssrc);
-    }
 }
 
 void SfuEndpoint::ForwardRtpToSubscribers(uint32_t source_ssrc, const uint8_t* data, size_t len)
@@ -659,6 +508,7 @@ void SfuEndpoint::ForwardRtpToSubscribers(uint32_t source_ssrc, const uint8_t* d
     const auto binding = ssrc_bindings_.find(source_ssrc);
     if (binding != ssrc_bindings_.end()) 
     {
+        published_tracks_.at(binding->second).source_bitrate->Observe(len, SteadyNowMs());
         auto& routes = published_tracks_.at(binding->second).subscribers;
         routes.erase(std::remove_if(routes.begin(), routes.end(), [](const auto& weak) {
             const auto route = weak.lock();

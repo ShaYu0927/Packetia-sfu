@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include "NetworkStats.h"
+#include "NetworkStatsCollector.h"
 
 namespace media {
 
@@ -44,7 +45,12 @@ public:
 
     NetworkControlUpdate OnFeedback(const WeakNetFeedback& feedback);
 
-    NetworkStatsSnapshot GetSnapshot() const { return snapshot_; }
+    NetworkStatsSnapshot GetSnapshot(uint64_t now_ms = 0) const
+    {
+        auto result = snapshot_;
+        result.smoothed = stats_.GetSnapshot(now_ms ? now_ms : snapshot_.update_time_ms);
+        return result;
+    }
 
 private:
     NetworkQualityLevel EstimateQuality(const WeakNetFeedback& feedback) const;
@@ -63,6 +69,7 @@ private:
     uint64_t keyframe_interval_ms_ = 1000;
 
     NetworkStatsSnapshot snapshot_;
+    NetworkStatsCollector stats_;
 };
 
 }

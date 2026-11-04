@@ -54,15 +54,20 @@ class EwmaFilter final : public SmoothingFilter
 {
 public:
 
+    // alpha is the old-value weight. SetTimeConstantMs enables time-based
+    // weighting; duplicate/backwards timestamps and nonfinite samples are ignored.
     explicit EwmaFilter(double alpha);
     void AddSample(double sample, uint64_t timestamp_ms) override;
     std::optional<double> GetValue(uint64_t now_ms) const override;
     bool SetTimeConstantMs(uint32_t time_constant_ms) override;
-
+    void Reset();
+    std::optional<uint64_t> LastSampleTimeMs() const;
 
 private:
 
     double alpha_;
+    // Unset preserves fixed-alpha mode; time mode uses exp(-elapsed / tau).
+    std::optional<uint32_t> time_constant_ms_;
     double value_{0};
     bool initialized_{false};
     uint64_t last_timestamp_ms_{0};

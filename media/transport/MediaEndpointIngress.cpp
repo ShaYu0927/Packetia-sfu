@@ -17,18 +17,19 @@ MediaPacketIngressResult MediaEndpointIngress::OnMediaPacket(ReceivedMediaPacket
     const auto trace = packet.type == MediaPacketType::Rtp
         ? media_latency::BeginPacket() : media_latency::PacketTrace{};
 
-    uint32_t media_ssrc = 0;
-    const bool has_media_ssrc = packet.type == MediaPacketType::Rtcp
-        ? media_affinity::TryGetRtcpMediaSsrc(
-              packet.Data(), packet.Size(), media_ssrc)
-        : media_affinity::TryGetRtpSsrc(
-              packet.Data(), packet.Size(), media_ssrc);
-
     WorkJob job{};
     job.target_id = endpoint_id_;
     job.media_track_id = track_id_;
-    job.key = has_media_ssrc ? media_affinity::MakeStreamHandle(endpoint_id_, media_ssrc).affinity_key : endpoint_id_;
-    job.type = packet.type == MediaPacketType::Rtcp ? WorkType::Rtcp : WorkType::Rtp;
+    if (packet.type == MediaPacketType::Rtcp)
+    {
+        job.type = WorkType::Rtcp;
+        job.key = media_affinity::ResolveRtcpKey(endpoint_id_, packet.Data(), packet.Size());
+    }
+    else
+    {
+        job.type = WorkType::Rtp;
+        job.key = media_affinity::ResolveRtpKey(endpoint_id_, packet.Data(), packet.Size());
+    }
     job.enqueue_ts = packet.receive_time_ms;
     job.media_trace = trace;
     job.payload = std::move(packet.payload);

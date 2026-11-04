@@ -4,7 +4,6 @@
 #include "Sdp.h"
 #include "RtpTrackAdapter.h"
 #include "RtpHeaderExtensions.h"
-#include "MediaStreamRegistry.h"
 
 #include <algorithm>
 #include <limits>
@@ -13,32 +12,6 @@ namespace media
 {
 namespace
 {
-// 每个发送轨道的出口闸门，覆盖普通 RTP、缓存重传及发送器产生的 RTCP。
-// 不关闭多个轨道共用的底层连接，也不接管底层接收入口。
-class ConsumerTransport final : public IMediaTransport
-{
-public:
-    ConsumerTransport(std::shared_ptr<IMediaTransport> transport, MediaTrackSubscription::Ptr consumer)
-        : transport_(std::move(transport)), consumer_(std::move(consumer)) {}
-    uint64_t Id() const noexcept override { return transport_->Id(); }
-    MediaTransportProtocol Protocol() const noexcept override { return transport_->Protocol(); }
-    MediaTransportState State() const noexcept override
-    { return consumer_->Closed() ? MediaTransportState::Closed : transport_->State(); }
-    SendResult Send(MediaPacketType type, const uint8_t* data, size_t size, bool retransmit) override
-    {
-        if (consumer_->Closed()) return SendResult::Closed;
-        if (!consumer_->CanDeliver()) return SendResult::NotWritable;
-        return transport_->Send(type, data, size, retransmit);
-    }
-    void SetPacketSink(std::weak_ptr<IMediaPacketSink>) override {}
-    void Close() override { consumer_->Close(); }
-    std::shared_ptr<media::SendSideController> GetSendSideController() override
-    { return transport_->GetSendSideController(); }
-private:
-    const std::shared_ptr<IMediaTransport> transport_;
-    const MediaTrackSubscription::Ptr consumer_;
-};
-
 /**
  * 比较影响媒体解码的编码参数。
  * channels 至少按 1 处理，因此 0 和 1 在这里视为等价。
@@ -353,14 +326,13 @@ size_t SfuEndpoint::PublishedTrackCount() const
 }
 
 /**
- * 统计本端 subscriptions_ 中 active 为真的路由数量。
+ * 返回下行管理器中尚未关闭的订阅数。
  * 此函数不会清理路由，也没有额外检查发布端弱引用是否已经失效。
  */
 size_t SfuEndpoint::SubscriptionCount() const
 {
     std::lock_guard<std::recursive_mutex> guard(runtime_mutex_);
-    return std::count_if(subscriptions_.begin(), subscriptions_.end(),
-        [](const auto& entry) { return !entry.second->Closed(); });
+    return downlinks_.Count();
 }
 
 /**
@@ -543,168 +515,85 @@ SfuEndpoint::SendRtcpCallback SfuEndpoint::RtcpSenderFor(uint32_t ssrc)
     return send_rtcp_cb_;
 }
 
-/**
- * 为一个尚未激活的订阅准备输出参数，保存在当前订阅端点上。
- * config 描述输出 SSRC、PT、时钟及头扩展；transport 是发往订阅者的传输对象。
- * 检查输出 SSRC 唯一、扩展 ID 范围、MID 长度以及 MID/TWCC 扩展 ID 不冲突。
- * 此函数仅保存参数，不建立源关系，也不创建 RtpSenderTrack。
- * 没有活动订阅时，同一个配置 ID 可以重新赋值。
- */
-bool SfuEndpoint::ConfigureSubscription(const std::string& id, const rtsp::RtpSenderTrackConfig& config, std::shared_ptr<IMediaTransport> transport, CodecId codec)
+bool SfuEndpoint::ConfigureSubscription(const std::string& id, const rtsp::RtpSenderTrackConfig& config,
+    std::shared_ptr<IMediaTransport> transport, CodecId codec)
 {
     std::lock_guard<std::recursive_mutex> guard(runtime_mutex_);
-    PruneSubscriptions();
-    if (id.empty() || !transport || codec == CodecId::Unknown || !config.local_ssrc || config.payload_type > 127 ||
-        config.sample_rate <= 0 || subscriptions_.count(id) || GetState() == State::kStopped) return false;
-
-    // 当前实现将扩展 ID 限制为 0..14，0 用作未配置标记；MID 最长 16 字节。
-    // 配置了 MID 扩展就必须有 MID；没有扩展 ID 时也不接受非空 MID。
-    if (config.transport_cc_extension_id > 14 || config.mid_extension_id > 14 ||
-        (config.mid_extension_id && (config.mid.empty() || config.mid.size() > 16 ||
-                                    config.mid_extension_id == config.transport_cc_extension_id)) ||
-        (!config.mid_extension_id && !config.mid.empty())) return false;
-    for (const auto& entry : subscription_parameters_)
-        if (entry.first != id && entry.second.config.local_ssrc == config.local_ssrc) return false;
-
-    // 转发出的 PT 和扩展必须服从订阅端配置，不能原样照搬发布端的协商编号。
-    subscription_parameters_[id] = {config, std::move(transport), codec};
-    subscription_parameters_[id].config.rewrite_payload_type = true;
-    subscription_parameters_[id].config.rewrite_header_extensions = true;
-    return true;
+    if (GetState() == State::kStopped) return false;
+    return downlinks_.Configure(id, config, std::move(transport), codec);
 }
 
-
-/**
- * 在当前端点建立对 source/source_track_id 的订阅，id 是本端订阅标识。
- * 先调用 ConfigureSubscription 准备本端输出参数，再调用本函数建立路由。
- * 同时锁住源端和目标端，创建目标专属发送器，并在两端登记同一条路由。
- * 本实现检查编码 ID 和时钟频率，但不在此处比较完整 FMTP/声道等参数。
- */
 bool SfuEndpoint::Subscribe(const std::string& id, const std::shared_ptr<SfuEndpoint>& source,
     const std::string& source_track_id, MediaTrackRef ref)
 {
     if (!source || source.get() == this) return false;
-
-     // 一次获取两把端点状态锁，避免两端交叉订阅时使用相反加锁顺序造成死锁。
+    // 源轨道登记与目标发送器创建作为一次操作，统一获取两端状态锁。
     std::scoped_lock lock(runtime_mutex_, source->runtime_mutex_);
-    PruneSubscriptions();
-    const auto params = subscription_parameters_.find(id);
     const auto track = source->published_tracks_.find(source_track_id);
-    if (!IsRunning() || !source->IsRunning() || subscriptions_.count(id) ||
-        params == subscription_parameters_.end() || track == source->published_tracks_.end()) return false;
-    
-    const auto& source_info = track->second.description->getTrackInfo();
-    if (params->second.codec != source_info.codec_id ||
-        params->second.config.sample_rate != static_cast<int>(source_info.clock_rate)) return false;
+    if (!IsRunning() || !source->IsRunning() || track == source->published_tracks_.end()) return false;
+    const auto& info = track->second.description->getTrackInfo();
     if (!ref.Valid() && source->media_stream_id_)
-        ref = {source->media_stream_id_, static_cast<TrackId>(source_info.track_index)};
-
-    // route 记录发布源、订阅目标和源轨道；目标端持有路由，源轨道保存其弱引用。
+        ref = {source->media_stream_id_, static_cast<TrackId>(info.track_index)};
     auto route = std::make_shared<Subscription>();
     route->source = source;
     route->destination = shared_from_this();
     route->source_track_id = source_track_id;
-
-    // 描述里已有来源 SSRC 时先锁定该来源；未知时的后续确定逻辑不在本函数中。
-    if (source_info.ssrc) route->source_ssrc = source_info.ssrc;
-
-    // 每条订阅创建自己的 RTP 发送器，负责按目标配置改写、发送和处理发送侧状态。
+    route->source_bitrate = track->second.source_bitrate;
     const std::weak_ptr<Subscription> weak = route;
-
-    if (ref.Valid())
-    {
-        auto& registry = MediaStreamRegistry::Instance();
-        const auto registered = registry.FindTrack(ref);
-        if (!registered || registered->endpoint_id != source->Id() ||
-            ref.track_id != static_cast<TrackId>(source_info.track_index)) return false;
-        const std::weak_ptr<SfuEndpoint> destination = weak_from_this();
-        route->consumer = registry.AttachConsumer(ref, "rtp:" + std::to_string(Id()) + ":" + id, [destination] {
-            // 清理回到目标端 Worker；即使队列拒收，原子闸门也已停止后续媒体。
-            if (const auto target = destination.lock())
-                WorkerService::post_fn(POOL_MEDIA, target->Id(), [destination] {
-                    if (const auto endpoint = destination.lock())
-                    {
-                        std::lock_guard<std::recursive_mutex> lock(endpoint->runtime_mutex_);
-                        endpoint->PruneSubscriptions();
-                    }
-                });
-        });
-        if (!route->consumer || route->consumer->Closed()) return false;
-    }
-    route->send_transport = route->consumer ?
-        std::make_shared<ConsumerTransport>(params->second.transport, route->consumer) : params->second.transport;
-    route->sender = std::make_shared<rtsp::RtpSenderTrack>(params->second.config, route->send_transport);
-
-    // 下游发送器需要关键帧时，将请求转交发布端所属 Worker。
-    // 使用弱引用并在异步任务执行时再次检查 active，避免取消订阅后继续请求。
-    route->sender->SetKeyFrameRequestCallback([weak] {
+    const auto destination = weak_from_this();
+    endpoint::DownlinkTrackManager::Callbacks callbacks;
+    callbacks.source_closed = [destination] {
+        // 先由消费闸门阻止投递，再回到目标 Worker 回收发送器。
+        if (const auto target = destination.lock())
+            WorkerService::post_fn(POOL_MEDIA, target->Id(), [destination] {
+                if (const auto endpoint = destination.lock())
+                {
+                    std::lock_guard<std::recursive_mutex> guard(endpoint->runtime_mutex_);
+                    endpoint->PruneSubscriptions();
+                }
+            });
+    };
+    callbacks.request_keyframe = [weak] {
         if (const auto route = weak.lock(); route && route->CanDeliver())
-        {
-            if (const auto upstream = route->source.lock()) 
-            {
+            if (const auto upstream = route->source.lock())
                 WorkerService::post_fn(POOL_MEDIA, upstream->Id(), [weak] {
                     if (const auto current = weak.lock(); current && current->CanDeliver())
                         if (auto publisher = current->source.lock()) publisher->RequestKeyFrame(current->source_track_id);
                 });
-            }
-        }
-    });
-
-    // 按输出 SSRC 注册发送器，使相关下游 RTCP 反馈能够被分发到该发送器。
-    // 具体反馈类型和处理路径由 RTCP dispatcher / RtpSenderTrack 的实现决定。
-    rtcp_dispatcher_->AddSenderTrack(route->sender->GetSsrc(), route->sender);
-    subscriptions_.emplace(id, route);
-    track->second.subscribers.push_back(route);
+    };
+    if (!downlinks_.Subscribe(id, info, ref, route, std::move(callbacks))) return false;
+    try { track->second.subscribers.push_back(route); }
+    catch (...) { downlinks_.Unsubscribe(id); throw; }
     return true;
 }
 
-/**
- * 取消本端指定订阅：先关闭路由，再移除 RTCP 注册和本端持有的路由对象。
- * 源轨道里的弱引用可能暂时留下，使用时 lock() 或 active 检查会过滤失效路由。
- * 此函数不会删除 subscription_parameters_ 中保存的配置，可供后续再次订阅使用。
- */
 bool SfuEndpoint::Unsubscribe(const std::string& id)
 {
     std::lock_guard<std::recursive_mutex> guard(runtime_mutex_);
-    const auto it = subscriptions_.find(id);
-    if (it == subscriptions_.end()) return false;
-    it->second->active.store(false);
-    if (it->second->consumer) it->second->consumer->Close();
-    if (rtcp_dispatcher_) rtcp_dispatcher_->RemoveSenderTrack(it->second->sender->GetSsrc());
-    subscriptions_.erase(it);
-    return true;
+    return downlinks_.Unsubscribe(id);
 }
 
-/**
- * 清理 inactive 路由和发布源已经销毁的路由。
- * 本函数不单独加锁，调用路径需持有当前端点的 runtime_mutex_。
- * 迭代器先前进，再由 Unsubscribe 删除旧元素，避免继续使用已失效的迭代器。
- */
+bool SfuEndpoint::SetSubscriptionBandwidthPolicy(const std::string& id, const DownlinkSubscriptionPolicy& policy)
+{
+    std::lock_guard<std::recursive_mutex> guard(runtime_mutex_);
+    return IsRunning() && downlinks_.SetPolicy(id, policy);
+}
+
+std::optional<endpoint::DownlinkBandwidthStatus> SfuEndpoint::GetSubscriptionBandwidthStatus(const std::string& id) const
+{
+    std::lock_guard<std::recursive_mutex> guard(runtime_mutex_);
+    return downlinks_.GetStatus(id);
+}
+
 void SfuEndpoint::PruneSubscriptions()
 {
-    for (auto it = subscriptions_.begin(); it != subscriptions_.end();) {
-        if (it->second->Closed() || it->second->source.expired()) {
-            const auto id = it++->first;
-            Unsubscribe(id);
-        } else ++it;
-    }
+    downlinks_.Prune();
 }
 
-/**
- * 向某条订阅路由投递一个 RTP 包，在目标端点一侧调用。
- * 端点运行、路由活动且数据非空时，交给该路由自己的 RtpSenderTrack。
- * 这里统计的是发送尝试和 InputRtpPacket 拒绝次数，不代表对端实际收包数。
- * route 非空等前置条件由调用方保证。
- */
 void SfuEndpoint::Deliver(const std::shared_ptr<Subscription>& route, common::SharedBuffer packet)
 {
     std::lock_guard<std::recursive_mutex> guard(runtime_mutex_);
-    if (IsRunning() && route->CanDeliver() && !packet.Empty())
-    {
-        media_latency::Count(media_latency::Counter::SenderAttempts);
-        if (!route->sender->InputRtpPacket(packet.Data(), packet.Size()))
-            media_latency::Count(media_latency::Counter::SenderRejected);
-    }
+    if (IsRunning()) downlinks_.Deliver(route, packet.View());
 }
 
 /**

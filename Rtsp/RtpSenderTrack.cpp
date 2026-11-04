@@ -113,6 +113,33 @@ bool RtpSenderTrack::InputRtpPacket(const uint8_t* data, size_t len)
         return false;
     }
 
+    int64_t source_timestamp = in_header.getTimestamp();
+    if (_has_resume_floor && !_rebase_pending)
+    {
+        // Unwrap against recent media, so a long call cannot cross the
+        // half-timestamp range and become permanently older than recovery.
+        const auto delta = uint32_t(in_header.getTimestamp() - uint32_t(_latest_source_timestamp));
+        source_timestamp = _latest_source_timestamp +
+            (delta < 0x80000000U ? int64_t(delta) : int64_t(delta) - 0x100000000LL);
+        if (source_timestamp < _resume_floor_timestamp ||
+            (source_timestamp == _resume_floor_timestamp &&
+             uint16_t(in_header.getSequence() - _resume_floor_seq) >= 0x8000))
+            return false;
+    }
+    if (_rebase_pending)
+    {
+        const auto mapped_timestamp = _started ?
+            _base_out_timestamp + (in_header.getTimestamp() - _base_in_timestamp) : in_header.getTimestamp();
+        // Padding before the first media packet has no source clock origin.
+        if (_started && _has_sent && uint32_t(mapped_timestamp - _last_out_timestamp) >= 0x80000000U) return false;
+        _base_in_seq = in_header.getSequence();
+        _base_out_seq = _has_sent ? uint16_t(_last_out_seq + 1) : _base_in_seq;
+        _resume_floor_seq = _base_in_seq;
+        _resume_floor_timestamp = in_header.getTimestamp();
+        _latest_source_timestamp = source_timestamp;
+        _has_resume_floor = true;
+    }
+
     common::ByteVector packet(data, data + len);
 
     uint16_t out_seq = 0;
@@ -137,6 +164,15 @@ bool RtpSenderTrack::InputRtpPacket(const uint8_t* data, size_t len)
     
     NotifyPacketSent(transport_sequence, out_seq, packet.size());
 
+    if (!_has_sent || uint16_t(out_seq - _last_out_seq) < 0x8000)
+    {
+        _last_out_seq = out_seq;
+        _last_out_timestamp = out_timestamp;
+    }
+    _has_sent = true;
+    _rebase_pending = false;
+    if (_has_resume_floor) _latest_source_timestamp = std::max(_latest_source_timestamp, source_timestamp);
+
     CacheRtpPacket(out_seq, packet);
     ++_packet_count;
 
@@ -146,6 +182,36 @@ bool RtpSenderTrack::InputRtpPacket(const uint8_t* data, size_t len)
         _octet_count += packet.size() - header_size;
     }
 
+    return true;
+}
+
+void RtpSenderTrack::BeginDiscontinuity()
+{
+    _rtp_cache.clear();
+    _cache_order.clear();
+    _rebase_pending = true;
+}
+
+bool RtpSenderTrack::SendPadding(size_t padding_bytes)
+{
+    if (!_config.transport_cc_extension_id || !padding_bytes || padding_bytes > 255) return false;
+    common::ByteVector packet(12 + padding_bytes, 0);
+    packet[0] = 0xa0;
+    packet[1] = _config.payload_type;
+    const auto sequence = _has_sent ? uint16_t(_last_out_seq + 1) : uint16_t(0);
+    WriteUint16(packet.data() + 2, sequence);
+    WriteUint32(packet.data() + 4, _last_out_timestamp);
+    WriteUint32(packet.data() + 8, _config.local_ssrc);
+    packet.back() = uint8_t(padding_bytes);
+    if (_config.rewrite_header_extensions && !RewriteHeaderExtensions(packet)) return false;
+    media::TransportSequenceNumber transport_sequence;
+    if (!PrepareTransportCc(packet, transport_sequence) || !SendRtpPacket(packet)) return false;
+    NotifyPacketSent(transport_sequence, sequence, packet.size());
+    // Padding occupies downstream sequence space, but no source sequence.
+    if (_started) ++_base_out_seq;
+    _last_out_seq = sequence;
+    _has_sent = true;
+    ++_packet_count;
     return true;
 }
 
@@ -507,10 +573,10 @@ void RtpSenderTrack::NotifyPacketSent(const media::TransportSequenceNumber& sequ
 
 uint16_t RtpSenderTrack::RewriteSeq(uint16_t in_seq)
 {
-    if (!_started)
+    if (!_started && !_rebase_pending)
     {
         _base_in_seq = in_seq;
-        _base_out_seq = in_seq;
+        _base_out_seq = _has_sent ? uint16_t(_last_out_seq + 1) : in_seq;
     }
 
     return static_cast<uint16_t>(_base_out_seq + static_cast<uint16_t>(in_seq - _base_in_seq));

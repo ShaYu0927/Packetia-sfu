@@ -54,6 +54,7 @@ private:
 
     // 当前项目已有的控制策略层，未来承接 loss based 与 pushback 融合。
     NetworkController policy_;
+    NetworkStatsCollector stats_;
 };
 
 }

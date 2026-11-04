@@ -156,6 +156,7 @@ bool SendSideController::OnRtcpPacket(const uint8_t* data, size_t size, uint64_t
     
 
     if (callback && update.HasUpdates()) callback(update);
+    if (update.HasUpdates()) NotifyBudgetObservers();
     return true;
 }
 
@@ -179,6 +180,7 @@ void SendSideController::OnReceiverFeedback(const WeakNetFeedback& feedback)
         callback = update_callback_;
     }
     if (callback && update.HasUpdates()) callback(update);
+    if (update.HasUpdates()) NotifyBudgetObservers();
 }
 
 void SendSideController::SetNetworkAvailable(bool available)
@@ -188,6 +190,7 @@ void SendSideController::SetNetworkAvailable(bool available)
         std::lock_guard<std::mutex> lock(mutex_);
         if (available_ == available) return;
         available_ = available;
+        ++path_epoch_;
         history_.Clear();
         adapter_ = TransportFeedbackAdapter{};
         has_twcc_ = false;
@@ -200,6 +203,7 @@ void SendSideController::SetNetworkAvailable(bool available)
     // Keep sequence allocation monotonic so delayed feedback cannot alias
     // freshly sent packets when the network becomes writable again.
     if (callback) callback(NetworkControlUpdate{});
+    NotifyBudgetObservers();
 }
 
 void SendSideController::OnNetworkRouteChanged()
@@ -207,6 +211,7 @@ void SendSideController::OnNetworkRouteChanged()
     UpdateCallback callback;
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        ++path_epoch_;
         history_.Clear();
         adapter_ = TransportFeedbackAdapter{};
         has_twcc_ = false;
@@ -218,6 +223,7 @@ void SendSideController::OnNetworkRouteChanged()
     // Do not reset sequence_allocator_ or sender_clock_rates_: old feedback
     // must not match a newly sent packet just because the route changed.
     if (callback) callback(NetworkControlUpdate{});
+    NotifyBudgetObservers();
 }
 
 void SendSideController::SetUpdateCallback(UpdateCallback callback)
@@ -229,6 +235,50 @@ void SendSideController::SetUpdateCallback(UpdateCallback callback)
 NetworkControlUpdate SendSideController::GetNetworkState() const
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    return controller_.GetNetworkState(0);
+    const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    return controller_.GetNetworkState(static_cast<uint64_t>(now_ms));
+}
+
+SendSideController::BudgetObserverId SendSideController::AddBudgetObserver(std::function<void()> observer)
+{
+    if (!observer) return 0;
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!next_observer_id_) return 0;
+    const auto id = next_observer_id_++;
+    budget_observers_.emplace(id, std::move(observer));
+    return id;
+}
+
+void SendSideController::RemoveBudgetObserver(BudgetObserverId id)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    budget_observers_.erase(id);
+}
+
+DownlinkBandwidthBudget SendSideController::GetBandwidthBudget() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto update = controller_.GetNetworkState(0);
+    DownlinkBandwidthBudget budget;
+    budget.path_epoch = path_epoch_;
+    budget.network_available = available_;
+    budget.measured_at_ms = last_valid_twcc_receive_time_ms_;
+    budget.estimate_valid = available_ && has_twcc_ && update.has_target_rate &&
+        update.target_rate.estimate.bandwidth_bps != 0;
+    budget.target_bps = update.target_rate.target_bitrate_bps;
+    budget.start_bps = config_.bitrate.start_bitrate_bps;
+    budget.max_bps = config_.bitrate.max_bitrate_bps;
+    return budget;
+}
+
+void SendSideController::NotifyBudgetObservers()
+{
+    std::vector<std::function<void()>> observers;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (const auto& entry : budget_observers_) observers.push_back(entry.second);
+    }
+    for (const auto& observer : observers) observer();
 }
 }

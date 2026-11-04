@@ -25,6 +25,13 @@ public:
     unsigned calls = 0;
 };
 
+struct OnDestroy
+{
+    explicit OnDestroy(std::function<void()> callback) : callback(std::move(callback)) {}
+    ~OnDestroy() { callback(); }
+    std::function<void()> callback;
+};
+
 media::EncodedFrameEvent Frame(media::MediaTrackRef ref)
 {
     auto frame = std::make_shared<media::EncodedFrame>();
@@ -224,4 +231,79 @@ TEST(MediaTrackSubscriptions, ConcurrentAttachAndSourceRemovalCannotLeaveAnOpenH
     attach.join();
     for (const auto& consumer : consumers) EXPECT_TRUE(consumer->Closed());
     EXPECT_FALSE(registry.AttachConsumer(ref, "late"));
+}
+
+TEST(MediaTrackSubscriptions, RouterAdmissionFailureRollsBackOnlyTheNewConsumer)
+{
+    using Status = media::EncodedFrameRouter::SubscribeStatus;
+    media::MediaStreamRegistry registry;
+    auto stream = Publish(registry);
+    const auto ref = stream->GetTracks()[0].ref;
+    auto sink = std::make_shared<Counter>();
+    unsigned closed = 0;
+    media::EncodedFrameRouter router({1});
+    ASSERT_TRUE(router.TrySubscribe(sink, ref, registry, "existing", [&] { ++closed; }));
+    for (unsigned i = 0; i < 10; ++i)
+        EXPECT_EQ(router.TrySubscribe(sink, ref, registry, "overflow", [&] { ++closed; }).status, Status::Full);
+    EXPECT_EQ(registry.FindTrack(ref)->consumers.size(), 1U);
+    EXPECT_EQ(router.Publish(Frame(ref)), 1U);
+    EXPECT_EQ(router.TrySubscribe(sink, ref, registry, "").status, Status::Invalid);
+    EXPECT_EQ(router.TrySubscribe(sink, {0, 0}, registry, "invalid").status, Status::Invalid);
+    EXPECT_EQ(router.TrySubscribe(sink, {stream->GetId(), 99}, registry, "absent").status, Status::SourceRejected);
+    router.Close();
+    EXPECT_TRUE(registry.FindTrack(ref)->consumers.empty());
+    EXPECT_EQ(router.TrySubscribe(sink, ref, registry, "closed", [&] { ++closed; }).status, Status::Closed);
+    EXPECT_TRUE(registry.FindTrack(ref)->consumers.empty());
+    EXPECT_TRUE(registry.Remove(stream));
+    EXPECT_EQ(closed, 0U);
+}
+
+TEST(MediaTrackSubscriptions, RetiredCallbackCapturesAreDestroyedOutsideRouterLock)
+{
+    media::MediaStreamRegistry registry;
+    auto stream = Publish(registry);
+    const auto ref = stream->GetTracks()[0].ref;
+    media::EncodedFrameRouter router({1});
+    auto sink = std::make_shared<Counter>();
+    unsigned destroyed = 0;
+    const auto subscribe = [&] {
+        auto marker = std::make_shared<OnDestroy>([&] {
+            ++destroyed;
+            router.GetStats();
+            router.Unsubscribe(0);
+        });
+        return router.TrySubscribe(sink, ref, registry, "consumer", [marker] {});
+    };
+    const auto first = subscribe();
+    ASSERT_TRUE(first);
+    router.Unsubscribe(first.id);
+    EXPECT_EQ(destroyed, 1U);
+    ASSERT_TRUE(subscribe());
+    sink.reset();
+    sink = std::make_shared<Counter>();
+    ASSERT_TRUE(subscribe()); // 清理 sink 已过期的旧槽及快照。
+    EXPECT_EQ(destroyed, 2U);
+    EXPECT_FALSE(subscribe()); // 满额失败也在写锁外释放回调捕获。
+    EXPECT_EQ(destroyed, 3U);
+    router.Close();
+    EXPECT_EQ(destroyed, 4U);
+    EXPECT_FALSE(subscribe());
+    EXPECT_EQ(destroyed, 5U);
+}
+
+TEST(MediaTrackSubscriptions, RouterDestructionClosesManagedConsumersWithoutSourceNotification)
+{
+    media::MediaStreamRegistry registry;
+    auto stream = Publish(registry);
+    const auto ref = stream->GetTracks()[0].ref;
+    auto sink = std::make_shared<Counter>();
+    unsigned closed = 0;
+    {
+        media::EncodedFrameRouter router;
+        ASSERT_TRUE(router.TrySubscribe(sink, ref, registry, "recorder", [&] { ++closed; }));
+        ASSERT_EQ(registry.FindTrack(ref)->consumers.size(), 1U);
+    }
+    EXPECT_TRUE(registry.FindTrack(ref)->consumers.empty());
+    EXPECT_TRUE(registry.Remove(stream));
+    EXPECT_EQ(closed, 0U);
 }

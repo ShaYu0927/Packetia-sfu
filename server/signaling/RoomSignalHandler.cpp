@@ -72,18 +72,6 @@ void CopyPrimarySources(const WebRtcMediaDescription& remote, WebRtcMediaDescrip
         if (source.ssrc && !repair.count(source.ssrc)) track.ssrcs.push_back(source);
 }
 
-class PublishedEndpoint final : public media::SfuEndpoint
-{
-public:
-    PublishedEndpoint(uint64_t id, std::shared_ptr<media::IEncodedFramePublisher> publisher,
-                      const media::MediaStream::Ptr& stream)
-        : media::SfuEndpoint(id, std::move(publisher))
-    {
-        session_id_ = "webrtc-" + std::to_string(id);
-        stream_id_ = "webrtc";
-        media_stream_id_ = stream ? stream->GetId() : 0;
-    }
-};
 }
 struct RoomSignalHandler::Membership
 {
@@ -414,7 +402,11 @@ Json RoomSignalHandler::CreateSession(const std::string& connection, const std::
         }
         session.media_stream = std::make_shared<media::MediaStream>(std::move(name), std::move(source));
     }
-    session.endpoint = std::make_shared<PublishedEndpoint>(session.id, publisher_, session.media_stream);
+    media::EncodedFrameSource frame_source;
+    frame_source.session_id = "webrtc-" + std::to_string(session.id);
+    frame_source.stream_id = "webrtc";
+    frame_source.media_stream_id = session.media_stream ? session.media_stream->GetId() : 0;
+    session.endpoint = std::make_shared<media::SfuEndpoint>(session.id, nullptr, frame_source, publisher_);
     const auto weakEndpoint = std::weak_ptr<media::SfuEndpoint>(session.endpoint);
     options.onNegotiated = [weakEndpoint, subscriptions](const auto& local, const auto& remote)
     {
