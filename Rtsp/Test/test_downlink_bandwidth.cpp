@@ -45,10 +45,11 @@ void Feedback(const std::shared_ptr<SendSideController>& controller, uint16_t se
 class BandwidthTransport : public IMediaTransport
 {
 public:
-    explicit BandwidthTransport(uint64_t id) : id_(id)
+    explicit BandwidthTransport(uint64_t id, uint64_t feedback_timeout_ms = 5000,
+                                NetworkControllerConfig config = {}) : id_(id)
     {
-        NetworkControllerConfig config;
         config.bitrate = {1000000, 1000000, 1000000};
+        config.feedback_timeout_ms = feedback_timeout_ms;
         controller = std::make_shared<SendSideController>(config);
     }
     uint64_t Id() const noexcept override { return id_; }
@@ -108,6 +109,137 @@ struct Downlinks
     void Input(const std::shared_ptr<endpoint::Subscription>& route, const std::vector<uint8_t>& packet)
     { manager.Deliver(route, common::BufferView(packet.data(), packet.size())); }
 };
+
+struct ProbeCalls
+{
+    ProbeDecision decision{true, std::nullopt};
+    std::vector<ProbeEvent> events;
+    std::vector<PacketSendInfo> feedback;
+    int resets = 0;
+};
+
+class InjectedProbes final : public IProbeController
+{
+public:
+    explicit InjectedProbes(std::shared_ptr<ProbeCalls> calls) : calls_(std::move(calls)) {}
+    ProbeDecision OnProcessInterval(const ProbeContext&) override { return calls_->decision; }
+    void OnFeedback(const TransportFeedback& feedback, const PacketGroupObservation&, const BweResult&) override
+    {
+        for (const auto& packet : feedback.packet_feedbacks)
+            if (packet.sent_packet.is_probe) calls_->feedback.push_back(packet.sent_packet);
+    }
+    void OnProbeEvent(const ProbeEvent& event) override { calls_->events.push_back(event); }
+    void Reset() override { ++calls_->resets; calls_->decision = {true, std::nullopt}; }
+private:
+    std::shared_ptr<ProbeCalls> calls_;
+};
+
+NetworkControllerConfig ProbeConfig(const std::shared_ptr<ProbeCalls>& calls)
+{
+    NetworkControllerConfig config;
+    config.probe_controller_factory = [calls] { return std::make_unique<InjectedProbes>(calls); };
+    return config;
+}
+
+void PauseVideo(Downlinks& links, const std::shared_ptr<BandwidthTransport>& transport,
+                const std::shared_ptr<endpoint::Subscription>& route, uint64_t now)
+{
+    DownlinkSubscriptionPolicy policy;
+    policy.bitrate_hint_bps = 2000000;
+    ASSERT_TRUE(links.manager.SetPolicy("video", policy));
+    links.Input(route, Packet(100, 1000));
+    Feedback(transport->controller, 10000, now - 2200);
+    Feedback(transport->controller, 10010, now);
+    links.manager.Tick(now, true);
+    links.manager.Tick(now + 301, true);
+    ASSERT_EQ(route->bandwidth_state.load(), endpoint::DownlinkBandwidthState::Paused);
+}
+
+TEST(DownlinkBandwidth, InjectedStrategyCanSuppressLegacyProbes)
+{
+    Downlinks links;
+    auto calls = std::make_shared<ProbeCalls>();
+    auto transport = std::make_shared<BandwidthTransport>(1, 5000, ProbeConfig(calls));
+    auto route = links.Add("video", transport, 11);
+    const auto now = Now();
+    PauseVideo(links, transport, route, now);
+    links.manager.Tick(now + 1000, true);
+    EXPECT_EQ(transport->packets.size(), 1U);
+    EXPECT_TRUE(calls->events.empty());
+}
+
+TEST(DownlinkBandwidth, CustomPlanIsBoundedAndWireFeedbackRetainsProbeIdentity)
+{
+    Downlinks links;
+    auto calls = std::make_shared<ProbeCalls>();
+    auto transport = std::make_shared<BandwidthTransport>(1, 5000, ProbeConfig(calls));
+    auto route = links.Add("video", transport, 11);
+    const auto now = Now();
+    PauseVideo(links, transport, route, now);
+    calls->decision = {true, ProbePlan{100000000, 10000, 1000000}};
+    links.manager.Tick(now + 302, true);
+    ASSERT_EQ(calls->events.size(), 1U);
+    const auto plan = calls->events[0].plan;
+    EXPECT_EQ(plan.bitrate_bps, 1000000U);
+    EXPECT_EQ(plan.duration_ms, 500U);
+    EXPECT_EQ(plan.max_bytes, 128U * 1024);
+    ASSERT_GT(transport->packets.size(), 1U);
+    const auto& padding = transport->packets.back();
+    ASSERT_TRUE(padding[0] & 0x20);
+    ASSERT_EQ(U16(padding.data() + 12), 0xbede);
+    ASSERT_EQ(padding[16], 0x31); // TWCC extension id=3, two-byte value.
+    const auto sequence = U16(padding.data() + 17);
+    std::vector<uint8_t> feedback(24, 0);
+    feedback[0] = 0x8f; feedback[1] = 205; feedback[3] = 5;
+    Put16(feedback.data() + 12, sequence);
+    Put16(feedback.data() + 14, 1);
+    Put16(feedback.data() + 20, 0x2001); // One received packet, small delta.
+    feedback[22] = 4;
+    ASSERT_TRUE(transport->controller->OnRtcpPacket(feedback.data(), feedback.size(), now + 303));
+    ASSERT_EQ(calls->feedback.size(), 1U);
+    EXPECT_EQ(calls->feedback[0].probe_cluster_id, plan.cluster_id);
+    EXPECT_EQ(calls->feedback[0].media_kind, MediaKind::Padding);
+    EXPECT_EQ(calls->feedback[0].size_bytes, padding.size());
+
+    calls->decision = {true, std::nullopt};
+    links.manager.Tick(now + 502, true);
+    links.manager.Tick(now + 802, true);
+    ASSERT_EQ(calls->events.size(), 2U);
+    EXPECT_EQ(calls->events.back().type, ProbeEventType::Finished);
+    EXPECT_GT(calls->events.back().accounted_bytes, 0U);
+    EXPECT_LE(calls->events.back().accounted_bytes, plan.max_bytes);
+    calls->decision = {true, ProbePlan{100000, 500, 10000}};
+    links.manager.Tick(now + 803, true);
+    ASSERT_EQ(calls->events.size(), 3U);
+    EXPECT_GT(calls->events.back().plan.cluster_id, plan.cluster_id);
+    ASSERT_TRUE(links.manager.Unsubscribe("video"));
+    ASSERT_EQ(calls->events.size(), 4U);
+    EXPECT_EQ(calls->events.back().type, ProbeEventType::Aborted);
+}
+
+TEST(DownlinkBandwidth, TimeoutCancelsExecutionAndResetsOnlyItsTransportAlgorithms)
+{
+    Downlinks links;
+    auto a = std::make_shared<ProbeCalls>();
+    auto b = std::make_shared<ProbeCalls>();
+    auto transport = std::make_shared<BandwidthTransport>(1, 5000, ProbeConfig(a));
+    auto other = std::make_shared<BandwidthTransport>(2, 5000, ProbeConfig(b));
+    auto route = links.Add("video", transport, 11);
+    links.Add("other", other, 21);
+    const auto now = Now();
+    PauseVideo(links, transport, route, now);
+    // Start just before expiration so the timeout interrupts an active cluster.
+    a->decision = {true, ProbePlan{100000, 500, 10000}};
+    links.manager.Tick(now + 4900, true);
+    ASSERT_EQ(a->events.size(), 1U);
+    const auto count = transport->packets.size();
+    links.manager.Tick(now + 5000, true);
+    EXPECT_EQ(transport->packets.size(), count);
+    EXPECT_EQ(a->resets, 1);
+    EXPECT_EQ(b->resets, 0);
+    EXPECT_EQ(a->events.size(), 1U); // Reset invalidates events from the old generation.
+    EXPECT_EQ(route->bandwidth_state.load(), endpoint::DownlinkBandwidthState::Paused);
+}
 
 TEST(DownlinkBandwidth, IsolatesTransportsBlocksMediaAndRetriesButAllowsBoundedProbes)
 {
@@ -294,6 +426,57 @@ TEST(DownlinkBandwidth, PathChangesInvalidateBudgetAndRequireANewKeyframe)
     EXPECT_EQ(transport->MediaCount(), 2U);
 }
 
+TEST(DownlinkBandwidth, IdleTickExpiresOnlyItsTransportAndKeepsExistingSubscriptionStates)
+{
+    Downlinks links;
+    auto idle = std::make_shared<BandwidthTransport>(1);
+    auto fresh = std::make_shared<BandwidthTransport>(2);
+    auto active_video = links.Add("active", idle, 11);
+    auto paused_video = links.Add("paused", idle, 12);
+    auto other_video = links.Add("other", fresh, 21);
+    DownlinkSubscriptionPolicy policy;
+    policy.bitrate_hint_bps = 2000000;
+    ASSERT_TRUE(links.manager.SetPolicy("paused", policy));
+    const auto now = Now();
+    Feedback(idle->controller, 10000, now - 2200);
+    Feedback(idle->controller, 10010, now);
+    Feedback(fresh->controller, 20000, now - 2200);
+    Feedback(fresh->controller, 20010, now);
+    links.manager.Tick(now, true);
+    links.manager.Tick(now + 301, true);
+    ASSERT_EQ(paused_video->bandwidth_state.load(), endpoint::DownlinkBandwidthState::Paused);
+    const auto epoch = idle->controller->GetBandwidthBudget().path_epoch;
+    Feedback(fresh->controller, 20020, now + 3500);
+    Feedback(fresh->controller, 20030, now + 5000);
+    links.manager.Tick(now + 5000, true); // No media arrived on the idle transport.
+    EXPECT_FALSE(idle->controller->GetNetworkState().HasUpdates());
+    EXPECT_FALSE(idle->controller->GetBandwidthBudget().estimate_valid);
+    EXPECT_TRUE(idle->controller->GetBandwidthBudget().network_available);
+    EXPECT_EQ(idle->controller->GetBandwidthBudget().path_epoch, epoch);
+    EXPECT_TRUE(fresh->controller->GetBandwidthBudget().estimate_valid);
+    EXPECT_EQ(active_video->bandwidth_state.load(), endpoint::DownlinkBandwidthState::Forwarding);
+    EXPECT_EQ(paused_video->bandwidth_state.load(), endpoint::DownlinkBandwidthState::Paused);
+    EXPECT_EQ(other_video->bandwidth_state.load(), endpoint::DownlinkBandwidthState::Forwarding);
+    EXPECT_EQ(links.manager.Count(), 3U);
+}
+
+TEST(DownlinkBandwidth, TimeoutCallbackCanUnsubscribeWhileTheManagerTicks)
+{
+    Downlinks links;
+    auto transport = std::make_shared<BandwidthTransport>(1);
+    auto route = links.Add("video", transport, 11);
+    const auto now = Now();
+    WeakNetFeedback rr;
+    rr.now_ms = now;
+    transport->controller->OnReceiverFeedback(rr);
+    transport->controller->SetUpdateCallback([&](const auto& update) {
+        if (!update.HasUpdates()) EXPECT_TRUE(links.manager.Unsubscribe("video"));
+    });
+    links.manager.Tick(now + 5000, true);
+    EXPECT_EQ(links.manager.Count(), 0U);
+    EXPECT_TRUE(route->Closed());
+}
+
 class ConcurrentBandwidthTransport final : public BandwidthTransport
 {
 public:
@@ -310,6 +493,56 @@ public:
     }
     std::mutex mutex;
 };
+
+TEST(DownlinkBandwidth, WorkerRecoveryTickExpiresFeedbackWithoutIncomingPackets)
+{
+    WorkerRegistry workers;
+    workers.Add({POOL_MEDIA, 2, 128, ShardedWorkerPool::DropPolicy::DropTail},
+        std::make_shared<utils::EndpointJobHandler>(&utils::EndpointManager::Instance()));
+    ASSERT_EQ(workers.Start(), 0);
+    auto source = std::make_shared<SfuEndpoint>(401);
+    auto viewer = std::make_shared<SfuEndpoint>(402);
+    auto transport = std::make_shared<BandwidthTransport>(1, 50);
+    ::TrackInfo info;
+    info.track_index = 0; info.type = TrackVideo; info.codec_id = CodecId::H264;
+    info.codec_name = "H264"; info.clock_rate = 90000; info.payload_type = 96; info.ssrc = 77;
+    ASSERT_TRUE(source->AddPublishedTrack("camera", std::make_shared<RtpTrackDescription>(info)));
+    ASSERT_TRUE(source->Start());
+    ASSERT_TRUE(viewer->Start());
+    rtsp::RtpSenderTrackConfig config;
+    config.local_ssrc = 11; config.transport_cc_extension_id = 3;
+    ASSERT_TRUE(viewer->ConfigureSubscription("video", config, transport, CodecId::H264));
+    ASSERT_TRUE(viewer->Subscribe("video", source, "camera"));
+    // Set up state before registering the observer callback; no packet or real
+    // sleep is needed to make the existing recovery worker observe expiration.
+    auto done = std::make_shared<std::promise<void>>();
+    auto result = done->get_future();
+    std::atomic<int> clears{0};
+    ASSERT_EQ(media_affinity::PostToMediaStream(viewer->Id(), 0, [&, done] {
+        WeakNetFeedback rr;
+        rr.now_ms = Now() - 100;
+        transport->controller->OnReceiverFeedback(rr);
+        transport->controller->SetUpdateCallback([&](const auto& update) {
+            if (!update.HasUpdates()) ++clears;
+        });
+        EXPECT_TRUE(transport->controller->GetNetworkState().HasUpdates());
+        done->set_value();
+    }), 0);
+    ASSERT_EQ(result.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    ASSERT_TRUE(viewer->ScheduleRecoveryTick());
+    auto drained = std::make_shared<std::promise<void>>();
+    auto drained_result = drained->get_future();
+    ASSERT_EQ(media_affinity::PostToMediaStream(viewer->Id(), 0, [drained] { drained->set_value(); }), 0);
+    ASSERT_EQ(drained_result.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_EQ(clears.load(), 1);
+    EXPECT_FALSE(transport->controller->GetNetworkState().HasUpdates());
+    const auto status = viewer->GetSubscriptionBandwidthStatus("video");
+    ASSERT_TRUE(status);
+    EXPECT_EQ(status->state, endpoint::DownlinkBandwidthState::Forwarding);
+    viewer->Stop(); source->Stop();
+    transport->controller->SetUpdateCallback({});
+    workers.Stop();
+}
 
 TEST(DownlinkBandwidth, WireFeedbackSchedulesEndpointAllocationAndKeepsOtherSubscribersFlowing)
 {

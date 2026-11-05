@@ -97,9 +97,11 @@ bool SendSideController::OnRtcpPacket(const uint8_t* data, size_t size, uint64_t
 
     NetworkControlUpdate update;
     UpdateCallback callback;
+    bool expired = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!available_) return true;
+        expired = ProcessIntervalLocked(receive_time_ms);
          /*
          * 处理 TWCC Transport Feedback。
          *
@@ -155,8 +157,8 @@ bool SendSideController::OnRtcpPacket(const uint8_t* data, size_t size, uint64_t
     }
     
 
-    if (callback && update.HasUpdates()) callback(update);
-    if (update.HasUpdates()) NotifyBudgetObservers();
+    if (callback && (expired || update.HasUpdates())) callback(update);
+    if (expired || update.HasUpdates()) NotifyBudgetObservers();
     return true;
 }
 
@@ -164,9 +166,11 @@ void SendSideController::OnReceiverFeedback(const WeakNetFeedback& feedback)
 {
     NetworkControlUpdate update;
     UpdateCallback callback;
+    bool expired = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!available_) return;
+        expired = ProcessIntervalLocked(feedback.now_ms);
         // RR is the fallback when TWCC is absent or stale. While TWCC is recent,
         // RR may supplement RTT but must not replace the transport loss/rate
         // with one track's summary (or drive another bitrate increase).
@@ -179,8 +183,36 @@ void SendSideController::OnReceiverFeedback(const WeakNetFeedback& feedback)
             update = controller_.OnReceiverFeedback(feedback);
         callback = update_callback_;
     }
-    if (callback && update.HasUpdates()) callback(update);
-    if (update.HasUpdates()) NotifyBudgetObservers();
+    if (callback && (expired || update.HasUpdates())) callback(update);
+    if (expired || update.HasUpdates()) NotifyBudgetObservers();
+}
+
+bool SendSideController::ProcessIntervalLocked(uint64_t now_ms)
+{
+    history_.RemoveExpired(now_ms, config_.feedback_timeout_ms);
+    const bool had_state = controller_.GetNetworkState(0).HasUpdates();
+    controller_.OnProcessInterval({now_ms});
+    if (has_twcc_ && now_ms >= last_valid_twcc_receive_time_ms_ &&
+        now_ms - last_valid_twcc_receive_time_ms_ >= config_.feedback_timeout_ms)
+    {
+        has_twcc_ = false;
+        last_valid_twcc_receive_time_ms_ = 0;
+    }
+    return had_state && !controller_.GetNetworkState(0).HasUpdates();
+}
+
+void SendSideController::OnProcessInterval(uint64_t now_ms)
+{
+    UpdateCallback callback;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!available_ || !ProcessIntervalLocked(now_ms)) return;
+        callback = update_callback_;
+    }
+    // Publish only the transition. Replaying cached actions on each tick would
+    // repeat PLI/probe requests and make application updates timer-dependent.
+    if (callback) callback(NetworkControlUpdate{});
+    NotifyBudgetObservers();
 }
 
 void SendSideController::SetNetworkAvailable(bool available)
@@ -269,7 +301,32 @@ DownlinkBandwidthBudget SendSideController::GetBandwidthBudget() const
     budget.target_bps = update.target_rate.target_bitrate_bps;
     budget.start_bps = config_.bitrate.start_bitrate_bps;
     budget.max_bps = config_.bitrate.max_bitrate_bps;
+    budget.probe_generation = controller_.ProbeGeneration();
     return budget;
+}
+
+ProbeDecision SendSideController::GetProbeDecision(const ProbeRequest& request)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!available_ || request.path_epoch != path_epoch_) return {true, std::nullopt};
+    return controller_.GetProbeDecision(request);
+}
+
+std::optional<ProbePlan> SendSideController::StartProbe(ProbePlan plan, uint64_t now_ms, uint64_t path_epoch)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!available_ || !plan.bitrate_bps || !plan.duration_ms || plan.max_bytes < 300 ||
+        path_epoch != path_epoch_ || plan.generation != controller_.ProbeGeneration() ||
+        next_probe_cluster_id_ == std::numeric_limits<int>::max()) return std::nullopt;
+    plan.cluster_id = next_probe_cluster_id_++;
+    controller_.OnProbeEvent({ProbeEventType::Started, plan, path_epoch_, now_ms, 0});
+    return plan;
+}
+
+void SendSideController::OnProbeEvent(const ProbeEvent& event)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (event.path_epoch == path_epoch_) controller_.OnProbeEvent(event);
 }
 
 void SendSideController::NotifyBudgetObservers()

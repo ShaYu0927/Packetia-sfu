@@ -317,6 +317,88 @@ TEST(SendSideTransportTest, ReceiverFeedbackFallsBackAtTwccTimeout)
     EXPECT_DOUBLE_EQ(controller.GetNetworkState().target_rate.estimate.loss_rate, 0.5);
 }
 
+TEST(SendSideTransportTest, PeriodicTimeoutNotifiesOnceAndRetainsRecentSendsAndSenderIdentity)
+{
+    media::SendSideController controller;
+    controller.RegisterSender(11, 90000);
+    auto send = [&](uint64_t at) {
+        media::PacketSendInfo packet;
+        packet.transport_sequence = controller.SequenceAllocator()->Allocate().extended_sequence;
+        packet.send_time_ms = at;
+        packet.size_bytes = 1200;
+        controller.OnPacketSent(packet);
+    };
+    send(1000); // TWCC sequence 0, acknowledged below.
+    auto twcc = Twcc(0, {true});
+    ASSERT_TRUE(controller.OnRtcpPacket(twcc.data(), twcc.size(), 2000));
+    send(1500); // Sequence 1: must expire before its late feedback arrives.
+    send(6900); // Sequence 2: still useful when feedback recovers.
+    const auto epoch = controller.GetBandwidthBudget().path_epoch;
+    int clears = 0, updates = 0, notifications = 0;
+    controller.SetUpdateCallback([&](const auto& update) {
+        ++updates;
+        if (!update.HasUpdates()) ++clears;
+        controller.GetNetworkState(); // Callback is outside the controller lock.
+    });
+    controller.AddBudgetObserver([&] {
+        ++notifications;
+        controller.GetBandwidthBudget();
+    });
+    controller.OnProcessInterval(6999);
+    EXPECT_EQ(updates, 0);
+    controller.OnProcessInterval(7000);
+    controller.OnProcessInterval(7001);
+    EXPECT_EQ(clears, 1);
+    EXPECT_EQ(notifications, 1);
+    EXPECT_FALSE(controller.GetNetworkState().HasUpdates());
+    EXPECT_TRUE(controller.GetBandwidthBudget().network_available);
+    EXPECT_EQ(controller.GetBandwidthBudget().path_epoch, epoch);
+    EXPECT_EQ(controller.SequenceAllocator()->PeekNextExtendedSequence(), 3);
+
+    twcc = Twcc(1, {true});
+    ASSERT_TRUE(controller.OnRtcpPacket(twcc.data(), twcc.size(), 7002));
+    EXPECT_EQ(updates, 1);
+    EXPECT_FALSE(controller.GetNetworkState().HasUpdates());
+    twcc = Twcc(2, {true});
+    ASSERT_TRUE(controller.OnRtcpPacket(twcc.data(), twcc.size(), 7010));
+    EXPECT_EQ(updates, 2);
+    EXPECT_EQ(notifications, 2);
+    ASSERT_TRUE(controller.GetNetworkState().HasUpdates());
+    EXPECT_EQ(controller.GetNetworkState().target_rate.estimate.bandwidth_bps, 0U);
+    const auto rr = Rr(11);
+    ASSERT_TRUE(controller.OnRtcpPacket(rr.data(), rr.size(), 8020));
+    EXPECT_DOUBLE_EQ(controller.GetNetworkState().target_rate.estimate.loss_rate, 0.25);
+}
+
+TEST(SendSideTransportTest, LateUnmatchedFeedbackCannotRenewStateOrResurrectExpiredSends)
+{
+    media::SendSideController controller;
+    media::PacketSendInfo packet;
+    packet.transport_sequence = 0;
+    packet.send_time_ms = 1000;
+    packet.size_bytes = 1200;
+    controller.OnPacketSent(packet);
+    const auto first = Twcc(0, {true});
+    ASSERT_TRUE(controller.OnRtcpPacket(first.data(), first.size(), 2000));
+    packet.transport_sequence = 1;
+    packet.send_time_ms = 2100;
+    controller.OnPacketSent(packet);
+    int clears = 0;
+    controller.SetUpdateCallback([&](const auto& update) { if (!update.HasUpdates()) ++clears; });
+    // Duplicate TWCC and unknown SSRCs are not valid liveness samples.
+    ASSERT_TRUE(controller.OnRtcpPacket(first.data(), first.size(), 5999));
+    const auto unknown = Rr(99);
+    ASSERT_TRUE(controller.OnRtcpPacket(unknown.data(), unknown.size(), 6999));
+    EXPECT_EQ(clears, 0);
+    // No timer call: the receive path must expire state before matching history.
+    const auto late = Twcc(1, {true});
+    ASSERT_TRUE(controller.OnRtcpPacket(late.data(), late.size(), 8000));
+    EXPECT_EQ(clears, 1);
+    EXPECT_FALSE(controller.GetNetworkState().HasUpdates());
+    controller.OnProcessInterval(9000);
+    EXPECT_EQ(clears, 1);
+}
+
 TEST(SendSideTransportTest, ConcurrentAudioVideoHistoryAcceptsTransportWideFeedback)
 {
     media::SendSideController controller;

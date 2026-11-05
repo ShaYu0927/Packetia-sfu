@@ -16,7 +16,8 @@ namespace media
  *     接收速率和时间/RTT 驱动的 RemoteBitrateController；
  *   - NetworkController 负责质量分级、目标码率和 Pacer 建议。
  *
- * 后续可以逐个加入 ProbeController、AcknowledgedBitrateEstimator、ALR、
+ *   - PacketGroupObserver 与 ProbeController 提供可替换算法接口，默认尚无新算法。
+ * 后续可以逐个加入 AcknowledgedBitrateEstimator、ALR、
  * LossBasedBwe 和 CongestionWindow，而 INetworkController 调用接口保持不变。
  * 本类只负责编排和状态汇合，不负责 RTCP 解析与实际发包。
  */
@@ -32,14 +33,22 @@ public:
     NetworkControlUpdate OnTransportPacketsFeedback(const TransportPacketsFeedbackMessage& msg) override;
     NetworkControlUpdate OnReceiverFeedback(const WeakNetFeedback& feedback) override;
     NetworkControlUpdate GetNetworkState(uint64_t at_time_ms) const override;
+    ProbeDecision GetProbeDecision(const ProbeRequest& request);
+    void OnProbeEvent(const ProbeEvent& event);
+    uint64_t ProbeGeneration() const { return probe_generation_; }
 
 private:
     // 返回不包含目标码率、Pacer、探测或关键帧请求的空动作。
     NetworkControlUpdate EmptyUpdate() const;
+    void ExpireFeedback(uint64_t now_ms);
+    void ResetFeedback();
 
     // 网络不可用时不推进估计，恢复后等待新路径反馈。
     bool network_available_ = true;
     BitrateConstraints bitrate_;
+    uint64_t feedback_timeout_ms_;
+    std::optional<uint64_t> last_feedback_time_ms_;
+    std::optional<uint64_t> last_twcc_time_ms_;
 
     // 最近一次 RR/弱网汇总反馈；TWCC 和 RTT 更新会补充这份状态。
     WeakNetFeedback latest_feedback_;
@@ -55,6 +64,8 @@ private:
     // 当前项目已有的控制策略层，未来承接 loss based 与 pushback 融合。
     NetworkController policy_;
     NetworkStatsCollector stats_;
+    std::unique_ptr<IProbeController> probe_controller_;
+    uint64_t probe_generation_ = 1;
 };
 
 }

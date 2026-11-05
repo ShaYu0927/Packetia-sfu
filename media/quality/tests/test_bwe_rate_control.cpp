@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <stdexcept>
 #include "utils.h"
 #include "GoogCcNetworkController.h"
 #include "SendSideController.h"
@@ -309,6 +310,72 @@ TEST(BweRateControlTest, RouteAndNetworkResetMatchFreshController)
     EXPECT_EQ(reset.target_rate.target_bitrate_bps, 32000U);
     EXPECT_EQ(reset.target_rate.estimate.bandwidth_bps, 0U);
     EXPECT_EQ(reset.target_rate.estimate.rtt_ms, 0U);
+}
+
+TEST(BweRateControlTest, FeedbackTimeoutWithdrawsOldStateAndRestartsLikeAFreshController)
+{
+    media::GoogCcNetworkController controller;
+    controller.OnTransportPacketsFeedback({Feedback(1000, 30000, 1700)});
+    const auto ready = controller.OnTransportPacketsFeedback({Feedback(4000, 30000, 4700)});
+    ASSERT_GT(ready.target_rate.estimate.bandwidth_bps, 0U);
+    controller.OnRoundTripTimeUpdate({9600, 300});
+    const auto before = controller.OnProcessInterval({9699});
+    EXPECT_EQ(before.target_rate.target_bitrate_bps, ready.target_rate.target_bitrate_bps);
+    EXPECT_EQ(before.target_rate.estimate.update_time_ms, 9600U);
+    // RTT updated the diagnostics but did not renew the throughput deadline.
+    EXPECT_FALSE(controller.OnProcessInterval({9700}).HasUpdates());
+    EXPECT_FALSE(controller.GetNetworkState(9701).HasUpdates());
+    EXPECT_FALSE(controller.OnProcessInterval({9800}).HasUpdates());
+
+    media::GoogCcNetworkController fresh;
+    const auto feedback = Feedback(10000, 0, 10700);
+    const auto recovered = controller.OnTransportPacketsFeedback({feedback});
+    const auto expected = fresh.OnTransportPacketsFeedback({feedback});
+    EXPECT_EQ(recovered.target_rate.target_bitrate_bps, expected.target_rate.target_bitrate_bps);
+    EXPECT_EQ(recovered.target_rate.stable_target_bitrate_bps, expected.target_rate.stable_target_bitrate_bps);
+    EXPECT_EQ(recovered.target_rate.estimate.recv_bitrate_bps, expected.target_rate.estimate.recv_bitrate_bps);
+    EXPECT_EQ(recovered.target_rate.estimate.bandwidth_bps, 0U);
+    EXPECT_EQ(recovered.target_rate.estimate.rtt_ms, 0U);
+    EXPECT_FALSE(recovered.target_rate.estimate.smoothed.rtt_ms);
+}
+
+TEST(BweRateControlTest, FreshReceiverReportsDoNotPreserveOldTwccEstimator)
+{
+    media::GoogCcNetworkController controller;
+    controller.OnTransportPacketsFeedback({Feedback(1000, 30000, 1700)});
+    ASSERT_GT(controller.OnTransportPacketsFeedback({Feedback(4000, 30000, 4700)})
+        .target_rate.estimate.bandwidth_bps, 0U);
+    media::WeakNetFeedback rr;
+    rr.now_ms = 7000;
+    rr.loss_rate = 0.03;
+    const auto fallback = controller.OnReceiverFeedback(rr);
+    const auto current = controller.OnProcessInterval({9700});
+    ASSERT_TRUE(current.HasUpdates());
+    EXPECT_EQ(current.target_rate.target_bitrate_bps, fallback.target_rate.target_bitrate_bps);
+    EXPECT_EQ(current.target_rate.estimate.bandwidth_bps, 0U);
+    const auto resumed = controller.OnTransportPacketsFeedback({Feedback(10000, 0, 10700)});
+    EXPECT_EQ(resumed.target_rate.estimate.bandwidth_bps, 0U);
+    EXPECT_EQ(resumed.target_rate.target_bitrate_bps, media::BitrateConstraints{}.start_bitrate_bps);
+    EXPECT_FALSE(controller.OnProcessInterval({15700}).HasUpdates());
+}
+
+TEST(BweRateControlTest, ConfiguredTimeoutHandlesTimeZeroAndDoesNotAdvanceOnQueries)
+{
+    media::NetworkControllerConfig config;
+    config.feedback_timeout_ms = 1000;
+    media::GoogCcNetworkController controller(config);
+    media::WeakNetFeedback rr;
+    rr.now_ms = 0;
+    rr.loss_rate = 0.25;
+    ASSERT_TRUE(controller.OnReceiverFeedback(rr).HasUpdates());
+    EXPECT_TRUE(controller.OnProcessInterval({999}).HasUpdates());
+    // Querying a later time must not mutate the control state.
+    EXPECT_TRUE(controller.GetNetworkState(5000).HasUpdates());
+    EXPECT_TRUE(controller.OnProcessInterval({500}).HasUpdates());
+    EXPECT_FALSE(controller.OnRoundTripTimeUpdate({1000, 50}).HasUpdates());
+    EXPECT_FALSE(controller.GetNetworkState(1000).HasUpdates());
+    config.feedback_timeout_ms = 0;
+    EXPECT_THROW(media::GoogCcNetworkController invalid(config), std::invalid_argument);
 }
 
 TEST(BweRateControlTest, PacerSuggestionSaturatesAtLargeConfiguredRate)

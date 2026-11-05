@@ -8,6 +8,7 @@
 #include "IncomingBitrateEstimator.h"
 #include "OUTrendDetect.h"
 #include "RemoteBitrateController.h"
+#include "PacketGroupObserver.h"
 
 class IBweObserver
 {
@@ -19,6 +20,7 @@ public:
 class TransportBweController
 {
 public:
+    explicit TransportBweController(std::unique_ptr<media::IPacketGroupObserver> groups = {});
     BweResult OnTransportFeedback(const media::TransportFeedback& feedback);
     void SetBitrateConstraints(const media::BitrateConstraints& constraints);
     void SetRtt(uint32_t rtt_ms);
@@ -27,7 +29,8 @@ public:
     void AddObserver(const std::shared_ptr<IBweObserver>& observer);
     void RemoveObserver(const std::shared_ptr<IBweObserver>& observer);
 
-    double delay_trend_ms() const { return trend_detector_.effective_trend_ms(); }
+    double delay_trend_ms() const { return last_delay_trend_ms_; }
+    const media::PacketGroupObservation& GroupObservation() const { return group_observation_; }
 
 private:
     void NotifyBweResult(const BweResult& result);
@@ -37,6 +40,9 @@ private:
     IncomingBitrateEstimator incoming_bitrate_;
     RemoteBitrateController bitrate_controller_;
     uint32_t rtt_ms_ = 0;
+    std::unique_ptr<media::IPacketGroupObserver> group_observer_;
+    media::PacketGroupObservation group_observation_;
+    double last_delay_trend_ms_ = 0.0;
 
     std::vector<std::weak_ptr<IBweObserver>> observers_;
 };

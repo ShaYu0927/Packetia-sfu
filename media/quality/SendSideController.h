@@ -27,6 +27,9 @@ public:
     void UnregisterSender(uint32_t ssrc);
     bool OnRtcpPacket(const uint8_t* data, size_t size, uint64_t receive_time_ms);
     void OnReceiverFeedback(const WeakNetFeedback& feedback);
+    // Driven by the owning media worker even when RTP/RTCP stops arriving.
+    // Like route changes, a timeout publishes one empty update to clear rates.
+    void OnProcessInterval(uint64_t now_ms);
     void SetNetworkAvailable(bool available);
     // Usable new ICE path, even if availability remained true (NAT rebind).
     // Clear old feedback/estimate while preserving sender and TWCC identity.
@@ -39,9 +42,13 @@ public:
     BudgetObserverId AddBudgetObserver(std::function<void()> observer);
     void RemoveBudgetObserver(BudgetObserverId id);
     DownlinkBandwidthBudget GetBandwidthBudget() const;
+    ProbeDecision GetProbeDecision(const ProbeRequest& request);
+    std::optional<ProbePlan> StartProbe(ProbePlan plan, uint64_t now_ms, uint64_t path_epoch);
+    void OnProbeEvent(const ProbeEvent& event);
 
 private:
     void NotifyBudgetObservers();
+    bool ProcessIntervalLocked(uint64_t now_ms);
     bool IsTwccRecent(uint64_t now_ms) const
     {
         if (!has_twcc_)
@@ -65,6 +72,7 @@ private:
     uint64_t last_valid_twcc_receive_time_ms_ = 0;
     UpdateCallback update_callback_;
     uint64_t path_epoch_ = 1;
+    int next_probe_cluster_id_ = 0;
     BudgetObserverId next_observer_id_ = 1;
     std::unordered_map<BudgetObserverId, std::function<void()>> budget_observers_;
     std::unordered_map<uint32_t, uint32_t> sender_clock_rates_;

@@ -1,4 +1,5 @@
 add_executable(test_weak_network_manual
+    test_bandwidth_framework.cpp
     test_downlink_bandwidth.cpp
     test_metric_sampling.cpp
     test_weak_network_manual.cpp

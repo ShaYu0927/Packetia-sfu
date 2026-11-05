@@ -21,6 +21,8 @@ public:
     // active feedback window must span fewer than 32768 transport sequences.
     bool GetPacketByWireSequence(uint16_t sequence, PacketSendInfo& packet) const;
     void RemovePacket(int64_t transport_sequence);
+    // Preserve recent in-flight sends so feedback can resume after a timeout.
+    void RemoveExpired(uint64_t now_ms, uint64_t max_age_ms);
     void Clear();
 
 private:

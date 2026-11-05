@@ -67,4 +67,17 @@ void PacketHistory::Clear()
     packets_.clear();
 }
 
+void PacketHistory::RemoveExpired(uint64_t now_ms, uint64_t max_age_ms)
+{
+    for (auto it = packets_.begin(); it != packets_.end();)
+    {
+        const auto sent_at = it->second.send_time_ms;
+        if (now_ms >= sent_at && now_ms - sent_at >= max_age_ms)
+            it = packets_.erase(it);
+        else
+            ++it;
+    }
+    while (!order_.empty() && !packets_.count(order_.front())) order_.pop_front();
+}
+
 }

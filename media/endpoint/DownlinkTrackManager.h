@@ -51,7 +51,8 @@ private:
         std::optional<uint64_t> last_probe_ms;
         std::optional<uint64_t> probe_started_ms;
         std::string probe_track;
-        uint32_t probe_bps = 0;
+        std::optional<ProbePlan> probe_plan;
+        uint64_t probe_generation = 0;
         uint64_t probe_bytes = 0;
     };
     std::unordered_map<uint64_t, TransportGroup> transports_;
@@ -60,6 +61,7 @@ private:
     uint32_t RequiredBitrate(const Subscription& route) const;
     void Probe(TransportGroup& group, const DownlinkBandwidthBudget& budget,
         const std::vector<DownlinkDemand>& demands, uint64_t now_ms);
+    void FinishProbe(TransportGroup& group, uint64_t now_ms, ProbeEventType type);
 };
 }
 #endif

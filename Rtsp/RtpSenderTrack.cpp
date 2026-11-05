@@ -192,7 +192,7 @@ void RtpSenderTrack::BeginDiscontinuity()
     _rebase_pending = true;
 }
 
-bool RtpSenderTrack::SendPadding(size_t padding_bytes)
+bool RtpSenderTrack::SendPadding(size_t padding_bytes, int probe_cluster_id)
 {
     if (!_config.transport_cc_extension_id || !padding_bytes || padding_bytes > 255) return false;
     common::ByteVector packet(12 + padding_bytes, 0);
@@ -206,7 +206,7 @@ bool RtpSenderTrack::SendPadding(size_t padding_bytes)
     if (_config.rewrite_header_extensions && !RewriteHeaderExtensions(packet)) return false;
     media::TransportSequenceNumber transport_sequence;
     if (!PrepareTransportCc(packet, transport_sequence) || !SendRtpPacket(packet)) return false;
-    NotifyPacketSent(transport_sequence, sequence, packet.size());
+    NotifyPacketSent(transport_sequence, sequence, packet.size(), probe_cluster_id, media::MediaKind::Padding);
     // Padding occupies downstream sequence space, but no source sequence.
     if (_started) ++_base_out_seq;
     _last_out_seq = sequence;
@@ -542,7 +542,7 @@ bool RtpSenderTrack::PrepareTransportCc(common::ByteVector& packet,
 
 void RtpSenderTrack::NotifyPacketSent(const media::TransportSequenceNumber& sequence,
                                       uint16_t rtp_sequence,
-                                      size_t packet_size)
+                                      size_t packet_size, int probe_cluster_id, media::MediaKind kind)
 {
     // No transport sequence exists unless the downstream negotiated TWCC.
     if (_config.transport_cc_extension_id == 0) return;
@@ -555,6 +555,9 @@ void RtpSenderTrack::NotifyPacketSent(const media::TransportSequenceNumber& sequ
         packet.rtp_sequence = rtp_sequence;
         packet.send_time_ms = sent_at_ms;
         packet.size_bytes = static_cast<uint32_t>(packet_size);
+        packet.media_kind = kind;
+        packet.is_probe = probe_cluster_id >= 0;
+        packet.probe_cluster_id = probe_cluster_id;
         _send_controller->OnPacketSent(packet);
     }
     // extended_sequence 是本地连续键；wire_sequence 是 RTP 中的 16 位值。

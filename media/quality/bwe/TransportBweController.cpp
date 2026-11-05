@@ -1,6 +1,13 @@
 #include "TransportBweController.h"
 #include <algorithm>
+#include <cmath>
 #include <limits>
+#include <utility>
+
+TransportBweController::TransportBweController(std::unique_ptr<media::IPacketGroupObserver> groups)
+    : group_observer_(groups ? std::move(groups) : std::make_unique<media::PacketGroupObserver>())
+{
+}
 
 void TransportBweController::SetBitrateConstraints(const media::BitrateConstraints& constraints)
 {
@@ -22,10 +29,15 @@ void TransportBweController::Reset()
     incoming_bitrate_.Reset();
     bitrate_controller_.Reset();
     rtt_ms_ = 0;
+    group_observer_->Reset();
+    group_observation_ = {};
+    last_delay_trend_ms_ = 0.0;
 }
 
 BweResult TransportBweController::OnTransportFeedback(const media::TransportFeedback& feedback)
 {
+    group_observation_ = group_observer_->OnFeedback(feedback,
+        {feedback.feedback_time_ms, bitrate_controller_.target_bitrate_bps(), rtt_ms_});
     trend_detector_.SetNetworkEstimate(bitrate_controller_.target_bitrate_bps(), rtt_ms_);
     trend_detector_.SetRateControlRegion(bitrate_controller_.region());
     BandwidthUsage usage = BandwidthUsage::kNormal;
@@ -73,12 +85,20 @@ BweResult TransportBweController::OnTransportFeedback(const media::TransportFeed
         incoming_bitrate_bps = incoming_bitrate_.Update(packet->sent_packet.size_bytes,
             static_cast<int64_t>(packet->receive_time_ms));
 
+    // 新算法尚未给出某项判断时，继续使用对应的现有逐包结果。
+    if (group_observation_.usage) usage = *group_observation_.usage;
+    if (group_observation_.receive_bitrate_bps)
+        incoming_bitrate_bps = *group_observation_.receive_bitrate_bps;
+    const double loss = group_observation_.loss_rate && std::isfinite(*group_observation_.loss_rate) ?
+        std::clamp(*group_observation_.loss_rate, 0.0, 1.0) : feedback.LossRate();
     BweResult result = bitrate_controller_.Update(usage,
                                                   incoming_bitrate_bps,
-                                                  feedback.LossRate(),
+                                                  loss,
                                                   static_cast<int64_t>(std::min<uint64_t>(feedback.feedback_time_ms,
                                                       std::numeric_limits<int64_t>::max())));
-    result.delay_trend_ms = trend_detector_.effective_trend_ms();
+    result.delay_trend_ms = group_observation_.delay_trend_ms && std::isfinite(*group_observation_.delay_trend_ms) ?
+        *group_observation_.delay_trend_ms : trend_detector_.effective_trend_ms();
+    last_delay_trend_ms_ = result.delay_trend_ms;
     NotifyBweResult(result);
     return result;
 }

@@ -20,6 +20,7 @@ struct DownlinkBandwidthBudget
     uint32_t target_bps = 0;          // Current target sending bitrate for this receiver, in bits per second.
     uint32_t start_bps = 500000;      // Initial sending bitrate before an estimate is available, in bits per second.
     uint32_t max_bps = 2000000;       // Maximum permitted sending bitrate for this receiver, in bits per second.
+    uint64_t probe_generation = 1;    // Invalidates probe execution when feedback state resets.
 };
 
 struct DownlinkSubscriptionPolicy

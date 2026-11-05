@@ -1602,7 +1602,7 @@ RtpSenderTrack 发送成功 → SendSideController 记录发送历史
 2 秒初始化估计；持续排队会提前降码率，轻微排队或丢包观察期间保持，路径稳定后逐步恢复。
 升码率按经过的时间和 RTT 推进，避免反馈频率越高、增长越快。
 接收速率与目标码率分别输出；估计尚未初始化时 `bandwidth_bps` 为 0，目标码率仍有效。
-网络断开或显式路由变化事件会清空旧估计；完全没有反馈时的周期超时处理仍待实现。
+网络断开或显式路由变化事件会清空旧估计；反馈中断时由下面的周期处理撤销过期状态。
 
 SRTP 发送端允许重新保护缓存的原 RTP 序号及 payload，重传重新分配 TWCC 序号；
 接收端继续执行认证和防重放。当前协商的保护配置为 `SRTP_AES128_CM_SHA1_80`。
@@ -1613,6 +1613,68 @@ WebRTC 会话的 100 ms 定时器向媒体池投递恢复任务，停止收包�
 
 业务可通过 `SetUpdateCallback` 消费控制输出。订阅管理器使用独立观察者获取预算，不覆盖业务回调；
 通知合并后回到订阅端媒体 Worker 读取最新状态，周期恢复任务继续推进分配和超时。
+
+### 反馈超时与重新估算
+
+`DownlinkTrackManager::Tick` 按 Transport 驱动 `SendSideController::OnProcessInterval`，
+复用 WebRTC 会话现有的约 100 ms 恢复调度，停收 RTP/RTCP 后也能检查反馈期限。
+独立使用发送控制器的调用方需要以本地单调时钟周期调用 `OnProcessInterval(now_ms)`。
+
+`NetworkControllerConfig::feedback_timeout_ms` 默认 5000 ms，必须大于 0。
+连续达到该期限没有有效 TWCC 或 RR 时，清空旧目标码率、Pacer 建议、质量状态及估算历史，
+向业务回调发送一次空 `NetworkControlUpdate`，并通知预算观察者；后续空闲 Tick 不重复通知或重放关键帧请求。
+RTT-only 更新、重复或无法匹配发送历史的 TWCC、未知发送 SSRC 的 RR 不延长期限。
+接收反馈时也先检查超时，避免定时任务延迟时继续沿用旧估计。
+
+超时不改变连接可用状态、路径代次、发送器登记或 RTP/TWCC 序号；已有订阅保持当前转发或暂停状态。
+发送历史只移除达到超时年龄的包，保留近期在途包，让恢复的反馈仍能匹配；过旧包的迟到 TWCC 无法重建估计。
+新反馈从配置的初始码率重新估算，带宽尚未初始化时保持原分配。
+即使 RR 持续到达，长期缺失的 TWCC 估算历史也会重置，防止恢复时跨越静默区间复用旧时延和速率窗口。
+
+自动订阅分配的 TWCC 新鲜度仍为 1500 ms：超过后先冻结分配；上述 5000 ms 期限用于撤销控制器旧状态，
+并不增加首次订阅等待时间，也不触发 ICE 断开、自动退订或周期接收质量评估。
+
+### 分组观测与主动探测算法扩展框架
+
+框架已接通，新增核心算法尚未实现。默认继续使用现有 OU 逐包估算和受限 padding 恢复探测。
+每条下行 Transport 独占观测器及探测控制器，同一连接的音视频共享它们，不为每条轨道重复估算。
+
+算法填写入口：
+
+| 文件与方法 | 输入 | 留给算法实现的内容 |
+| --- | --- | --- |
+| `media/quality/bwe/PacketGroupObserver.cpp`：`OnFeedback` | 已匹配发送历史的 TWCC、目标码率、RTT | 分组边界、跨反馈组装、去重、有界窗口、跨组趋势及拥塞判断 |
+| `media/quality/ProbeController.cpp`：`OnProcessInterval` | 活动媒体需求、候选视频需求、码率约束、当前估计及 RTT | 是否探测、退避、额外 padding 码率、时长和字节预算 |
+| `ProbeController::OnFeedback` | TWCC、完成的观测组及本轮 BWE | 按 `probe_cluster_id` 收集反馈并评估恢复空间 |
+| `ProbeController::OnProbeEvent` / 两个组件的 `Reset` | 执行起止、中止及重置 | 维护探测状态，清理历史与未完成结果 |
+
+`PacketGroupObservation` 的趋势、拥塞状态、接收速率、丢包率均为可选输出；某项未给出时使用对应的原有逐包结果。
+分组丢包率参与带宽估算，业务质量统计仍保留原始反馈丢包率。发送/反馈时间使用本机单调时钟，
+接收时间使用对端时钟；应比较各自时钟内的间隔，不能直接相减当作单向时延。
+
+`ProbeDecision` 区分三种情况：默认 `{}` 沿用原有探测策略；`{true, std::nullopt}` 接管策略但本轮不探测；
+`{true, ProbePlan{bps, duration_ms, max_bytes}}` 请求探测，三个参数均为活动媒体之外的额外 padding 预算。
+当前周期决策仅在存在可投递、协商 TWCC 的带宽暂停视频且没有执行中的探测时调用；仍使用现有媒体 Worker Tick。
+
+框架负责选择承载轨道、限制额外码率不超过最大码率扣除活动媒体需求后的余量、
+限制单簇至 500 ms / 128 KiB、限制单次 Tick 约 16 KiB，并分配不重复的簇编号。
+`RtpSenderTrack::SendPadding` 将簇编号及 `MediaKind::Padding` 存入发送历史，TWCC 匹配后回到算法。
+`Started`、`Finished`、`Aborted` 表示执行状态，`Finished` 不代表已经测出更高容量；容量判断由算法依据反馈完成。
+执行事件的字节数使用每包 300 字节的保守计费，反馈中保留实际 RTP 大小。
+
+删去承载订阅时中止执行；切网、断网及反馈超时时重置或重建算法，并以路径代次和探测代次过滤旧执行事件。
+重置后仍能匹配的近期在途反馈保留原簇编号，算法只应将自己已登记的簇计入探测结果。
+算法方法在 `SendSideController` 锁内串行运行，只做有界计算，不允许发包、IO、阻塞或回调外层控制器。
+
+可以直接补上述默认实现；也可通过工厂替换接口，每次工厂调用必须产生独立实例：
+
+```cpp
+media::NetworkControllerConfig config;
+config.packet_group_observer_factory = [] { return std::make_unique<MyPacketGroupObserver>(); };
+config.probe_controller_factory = [] { return std::make_unique<MyProbeController>(); };
+auto controller = std::make_shared<media::SendSideController>(config);
+// MyPacketGroupObserver / MyProbeController 分别实现 IPacketGroupObserver / IProbeController。
+```
 
 ### 指标采样与平滑
 
@@ -1669,7 +1731,7 @@ H265 IDR（19/20，不接受 CRA）后再打开媒体出口。恢复缓冲支持
 路径切换清理旧预算及恢复缓存，活动视频重新等待关键帧，原本暂停的视频继续等待新路径预算。
 
 为使视频暂停后仍能探测恢复空间，管理器选择最高优先级且协商 TWCC 的暂停视频发送纯 padding：
-每 3 秒最多一个 500 ms 探测簇，每簇计费上限 128 KiB，单次 Tick 突发上限约 16 KiB。
+默认策略每 3 秒最多一个 500 ms 探测簇，每簇计费上限 128 KiB，单次 Tick 突发上限约 16 KiB。
 探测总目标受控制器最大码率及当前目标的增长上限约束，并扣除活动媒体需求；padding 使用新 RTP/TWCC 序号，
 不进入 NACK 缓存。用户暂停或源暂停期间不发送探测；最后一条订阅移除时注销对应观察者。
 
@@ -1678,6 +1740,17 @@ H265 IDR（19/20，不接受 CRA）后再打开媒体出口。恢复缓冲支持
 组件及 Worker 集成测试不代表真实浏览器弱网质量已经验收。
 
 ## 本轮验证
+
+2026-11-05 分组观测与探测框架验证（macOS）：新增 7 项测试，覆盖空算法回退、分组结果传递、
+非有限结果回退、自定义探测接管、执行限幅、真实 padding/TWCC 簇编号关联、执行完成与退订中止、
+反馈超时重置及 Transport 隔离。`Packetia` 及相关测试目标构建通过，六组相关 CTest 回归全部通过，
+`git diff --check` 通过；新分组和探测策略仍为 TODO，本轮未验证新算法的效果。
+
+2026-11-05 发送反馈超时验证（macOS）：新增 8 项测试，覆盖超时撤销与重新初始化、RTT-only 不延长期限、
+RR 回退期间的 TWCC 历史重置、时间零值和自定义期限、迟到与重复反馈过滤、近期在途包保留、
+通知去重、Transport 隔离、回调内退订及实际媒体 Worker 上停包后的周期处理。
+`Packetia` 及相关测试目标构建通过，`test_weak_network_manual`、`test_rtp_input`、`test_udp_binding`、
+`media_core`、`test_webrtc_crypto`、`webrtc_service` 共 6 组 CTest 全部通过；本轮未进行真实浏览器弱网验证。
 
 2026-11-04 指标平滑接入验证（macOS）：新增 9 个用例通过，覆盖按时间加权、异常与重复采样、
 指标独立过期、RTT-only/TWCC 事件隔离、切网和接收源清理、源码率静默保留，以及原始拥塞反馈立即生效。
@@ -2854,3 +2927,35 @@ WebRTC 发布请求
 - 当前支持整条视频订阅暂停与恢复，尚未实现 simulcast/SVC 层选择；保留音频不代表预算不足时仍能满足全部音频需求。
 - 接收侧质量评估及 RR 发送仍由 SR 触发，公共 Tick 尚未接入周期质量评估；本次提前的是评估器创建时机。
 - 平滑质量指标用于观察趋势，质量降级、NACK/PLI 和拥塞控制仍读取原始反馈；源码率的平滑结果用于订阅需求估算。
+
+### 2026-11-05 — 带宽算法扩展框架与发送反馈超时
+
+#### 本次完成
+
+- 新增 `IPacketGroupObserver` / `PacketGroupObserver`，在匹配发送历史后的 TWCC 入口提供分组观测接口；可向现有码率控制传递拥塞状态、时延趋势、接收速率与丢包率，未提供的结果沿用原有逐包估算。
+- 新增 `IProbeController` / `ProbeController`，提供探测决策、反馈及执行事件接口；支持接管探测、暂不探测或退回默认策略。
+- `NetworkControllerConfig` 提供算法工厂，每条下行 Transport 独占算法实例；同一连接内的音视频共享估算，算法计算由发送控制器的锁串行保护。
+- `DownlinkTrackManager` 执行探测计划，限制速率、时长、字节预算与单次突发；`RtpSenderTrack` 将探测编号写入本地发送历史，TWCC 匹配后可关联原探测簇。
+- 接通探测开始、完成与中止事件；退订清理承载轨道，切网、断网及反馈超时清理算法状态，并过滤旧路径或旧探测代次的执行事件。
+- 复用现有媒体 Worker 的周期任务检查发送反馈超时，默认 5000 ms；撤销旧估计并通知一次空更新，保留订阅、连接及连续序号。RR 持续而 TWCC 长期缺失时单独重置 TWCC 历史。
+- 发送历史按年龄清理，保留近期在途包；补充反馈恢复、算法回退、探测执行与 Transport 隔离测试。
+
+接口约定、算法填写入口及工厂示例见[分组观测与主动探测算法扩展框架](#分组观测与主动探测算法扩展框架)，
+超时行为见[反馈超时与重新估算](#反馈超时与重新估算)。
+
+#### 验证情况
+
+- `Packetia` 及相关测试目标构建通过；`test_weak_network_manual`、`test_rtp_input`、`test_udp_binding`、`media_core`、`test_webrtc_crypto`、`webrtc_service` 共 6 组 CTest 通过。
+- 新增 7 项框架测试及 8 项反馈超时测试；`git diff --check` 通过。
+
+复用已配置的集成构建目录执行回归：
+
+```sh
+cmake --build build/webrtc-integration --target Packetia test_weak_network_manual test_rtp_input test_udp_binding test_media_core test_webrtc_crypto test_webrtc_service -j4
+ctest --test-dir build/webrtc-integration --output-on-failure -R '^(test_weak_network_manual|test_rtp_input|test_udp_binding|media_core|test_webrtc_crypto|webrtc_service)$'
+```
+
+#### 待实现
+
+- `PacketGroupObserver.cpp` 中的分组规则、去重、有界窗口与跨组趋势判断，以及 `ProbeController.cpp` 中的触发、退避与容量判断均保留 `TODO(algorithm)`，由后续算法实现补齐。
+- 默认继续使用现有 OU 逐包估算与受限 padding 恢复探测；本次未接入实际 Pacer、simulcast/SVC 选层，也未验证新算法效果、真实浏览器弱网或容量。

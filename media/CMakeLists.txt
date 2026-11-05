@@ -9,6 +9,7 @@ set(QUALITY_SRC
     quality/NetworkStatsCollector.cpp
     quality/PacketHistory.cpp
     quality/PacketRecoveryController.cpp
+    quality/ProbeController.cpp
     quality/RtcpBweBridge.cpp
     quality/SendSideController.cpp
     quality/TransportFeedbackAdapter.cpp
@@ -20,6 +21,7 @@ set(QUALITY_SRC
     quality/bwe/IncomingBitrateEstimator.cpp
     quality/bwe/LossBasedController.cpp
     quality/bwe/OUTrendDetect.cpp
+    quality/bwe/PacketGroupObserver.cpp
     quality/bwe/RemoteBitrateController.cpp
     quality/bwe/TransportBweController.cpp
 )

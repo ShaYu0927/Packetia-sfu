@@ -15,6 +15,7 @@
 #include "IMediaTransport.h"
 #include "Rtp.h"
 #include "TransportSequenceAllocator.h"
+#include "NetworkStats.h"
 
 namespace rtsp
 {
@@ -153,7 +154,7 @@ public:
     // Start a new forwarding epoch after intentional packet suppression. The
     // first recovery packet follows the last sent RTP sequence, including pads.
     void BeginDiscontinuity();
-    bool SendPadding(size_t padding_bytes);
+    bool SendPadding(size_t padding_bytes, int probe_cluster_id = -1);
 
     uint32_t GetSsrc() const { return _config.local_ssrc; }
 
@@ -188,7 +189,8 @@ private:
 
     void NotifyPacketSent(const media::TransportSequenceNumber& sequence,
                           uint16_t rtp_sequence,
-                          size_t packet_size);
+                          size_t packet_size, int probe_cluster_id = -1,
+                          media::MediaKind kind = media::MediaKind::Unknown);
 
     uint16_t RewriteSeq(uint16_t in_seq);
 

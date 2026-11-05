@@ -3,6 +3,10 @@
 
 #include "NetworkStats.h"
 #include "WeakNetController.h"
+#include "ProbeController.h"
+
+#include <functional>
+#include <memory>
 
 namespace media
 {
@@ -14,6 +18,15 @@ struct NetworkControllerConfig
 
     // 创建控制器时网络是否已经可用；不可用时控制器不应产生发送动作。
     bool network_available = true;
+
+    // 无有效 TWCC/RR 的最长间隔。超时撤销旧估计，不推断连接断开。
+    // RTT-only 更新不延长此期限；恢复反馈后重新初始化带宽估计。
+    uint64_t feedback_timeout_ms = 5000;
+
+    // 可选算法注入；工厂为每条 Transport 创建独立实例。为空时使用 TODO
+    // 实现，继续沿用现有逐包估算和受限恢复探测。
+    std::function<std::unique_ptr<IPacketGroupObserver>()> packet_group_observer_factory;
+    std::function<std::unique_ptr<IProbeController>()> probe_controller_factory;
 };
 
 // 网络连通状态变化。通常由 ICE、DTLS 或底层 Transport 通知。
