@@ -1,7 +1,7 @@
 #pragma once
 
 #include "ConferenceMixer.h"
-#include "IService.h"
+#include "IConferenceMixService.h"
 
 #include <atomic>
 #include <unordered_map>
@@ -10,7 +10,7 @@ namespace service::mix {
 
 // Global feature gate and owner of conference tasks. Lifecycle/task control
 // must not be called from a backend or output-subscriber callback.
-class ConferenceMixService final : public IService {
+class ConferenceMixService final : public IConferenceMixService {
 public:
     ConferenceMixService(std::shared_ptr<media::EncodedFrameRouter> input,
                          std::shared_ptr<media::EncodedFrameRouter> output,
@@ -25,11 +25,11 @@ public:
     ServiceHealth Health() const override;
 
     // Enabling the service permits new tasks; it does not create a backend.
-    bool StartConference(MixConfig config, std::unique_ptr<IMixBackend> backend);
-    bool StopConference(const std::string& room_id);
+    bool StartConference(MixConfig config, std::unique_ptr<IMixBackend> backend) override;
+    bool StopConference(const std::string& room_id) override;
     std::string LastError() const;
     // Stop only tasks containing inputs no longer permitted by stream policy.
-    void RefreshStreamPolicies();
+    void RefreshStreamPolicies() override;
 
 private:
     std::shared_ptr<media::EncodedFrameRouter> input_, output_;

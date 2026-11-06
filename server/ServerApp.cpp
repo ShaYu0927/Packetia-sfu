@@ -1,4 +1,5 @@
 #include "ServerApp.h"
+#include "ConfigStore.h"
 #include "ServiceNames.h"
 #include "WorkerSetup.h"
 #include "ApiServer.h"
@@ -19,10 +20,6 @@
 #include "UdpSession.h"
 #include "TurnServer.h"
 #include "StringUtil.h"
-#include "AIService.h"
-#include "UnavailableModelProvider.h"
-#include "RecordingService.h"
-#include "TranscodeService.h"
 #include "EncodedFrameRouter.h"
 #include "logger.h"
 
@@ -37,17 +34,41 @@
 
 namespace server
 {
-ServerApp::ServerApp(ServerConfig config, std::shared_ptr<service::IRecordingEventSink> recording_events)
+namespace
+{
+service::MediaProcessingServices CreateProcessingServices(
+    const service::MediaProcessingFactory& factory,
+    const std::shared_ptr<media::EncodedFrameRouter>& input,
+    const std::shared_ptr<config::ConfigStore>& settings,
+    std::shared_ptr<service::IRecordingEventSink> recording_events)
+{
+    if (!factory) throw std::invalid_argument("Media processing requires a factory");
+    auto processing = factory(input, settings, std::move(recording_events));
+    const auto validate = [](const std::shared_ptr<service::IService>& instance,
+                             service::ServiceType type, const char* name) {
+        if (!instance || instance->Type() != type || instance->State() != service::ServiceState::Created)
+            throw std::invalid_argument(std::string("Expected a fresh media processing service: ") + name);
+    };
+    validate(processing.recording, service::ServiceType::Record, "recording");
+    validate(processing.ai, service::ServiceType::Ai, "AI");
+    validate(processing.mix, service::ServiceType::ConferenceMix, "mix");
+    validate(processing.transcode, service::ServiceType::Transcode, "transcode");
+    if (!processing.mixed_frames || !processing.transcoded_frames ||
+        processing.mixed_frames == input || processing.transcoded_frames == input ||
+        processing.mixed_frames == processing.transcoded_frames)
+        throw std::invalid_argument("Media processing requires distinct input, mix and transcode routers");
+    return processing;
+}
+} // namespace
+
+ServerApp::ServerApp(ServerConfig config, std::shared_ptr<service::IRecordingEventSink> recording_events,
+                     service::MediaProcessingFactory processing_factory)
     : monitor_service_(std::make_shared<service::MonitorService>(metrics_context_.Registry())),
       config_(std::move(config)),
       settings_(std::make_shared<config::ConfigStore>(config_)),
-      recording_events_(std::move(recording_events)),
       event_loop_(std::make_shared<EventLoop>(config_.io_threads)),
       frame_router_(std::make_shared<media::EncodedFrameRouter>()),
-      mix_output_router_(std::make_shared<media::EncodedFrameRouter>()),
-      transcode_output_router_(std::make_shared<media::EncodedFrameRouter>()),
-      transcode_service_(std::make_shared<service::transcode::TranscodeService>(frame_router_, transcode_output_router_)),
-      mix_service_(std::make_shared<service::mix::ConferenceMixService>(frame_router_, mix_output_router_, settings_))
+      processing_(CreateProcessingServices(processing_factory, frame_router_, settings_, std::move(recording_events)))
 {
     ConfigureServices();
 }
@@ -154,14 +175,11 @@ void ServerApp::AddApiService()
 void ServerApp::AddMediaServices()
 {
     // Register disabled services too, so they can be enabled without restarting.
-    recording_service_ = std::make_shared<service::RecordingService>(frame_router_, config_.recording, recording_events_, settings_);
-    launcher_.AddService(SERVICE_RECORD, recording_service_, config_.recording_enabled);
-    launcher_.AddService(SERVICE_AI,
-        std::make_shared<service::ai::AIService>(
-            std::make_shared<service::ai::UnavailableModelProvider>(), frame_router_, nullptr, 128, settings_), config_.ai_enabled);
-    launcher_.AddService(SERVICE_CONFERENCE_MIX, mix_service_, config_.conference_mix_enabled);
+    launcher_.AddService(SERVICE_RECORD, processing_.recording, config_.recording_enabled);
+    launcher_.AddService(SERVICE_AI, processing_.ai, config_.ai_enabled);
+    launcher_.AddService(SERVICE_CONFERENCE_MIX, processing_.mix, config_.conference_mix_enabled);
     // No transcode workers are allocated until a task is explicitly started.
-    launcher_.AddService(SERVICE_TRANSCODE, transcode_service_);
+    launcher_.AddService(SERVICE_TRANSCODE, processing_.transcode);
 }
 
 bool ServerApp::SetServiceEnabled(service::ServiceType type, bool enabled)
@@ -200,30 +218,30 @@ bool ServerApp::ServiceEnabled(service::ServiceType type) const
 
 void ServerApp::RefreshStreamPolicies()
 {
-    if (recording_service_) recording_service_->RefreshStreamPolicies();
-    mix_service_->RefreshStreamPolicies();
+    processing_.recording->RefreshStreamPolicies();
+    processing_.mix->RefreshStreamPolicies();
 }
 
 bool ServerApp::StartRecording(const config::StreamKey& stream)
 {
     std::lock_guard<std::mutex> lock(lifecycle_mutex_);
-    return recording_service_->StartRecording(stream);
+    return processing_.recording->StartRecording(stream);
 }
 
 bool ServerApp::StopRecording(const config::StreamKey& stream)
 {
     std::lock_guard<std::mutex> lock(lifecycle_mutex_);
-    return recording_service_->StopRecording(stream);
+    return processing_.recording->StopRecording(stream);
 }
 
 std::vector<service::SegmentInfo> ServerApp::QueryRecordingSegments(const service::SegmentQuery& query) const
 {
-    return recording_service_->QuerySegments(query);
+    return processing_.recording->QuerySegments(query);
 }
 
 std::vector<service::RecordedStream> ServerApp::ListRecordedStreams(const std::string& session_id) const
 {
-    return recording_service_->ListRecordedStreams(session_id);
+    return processing_.recording->ListRecordedStreams(session_id);
 }
 
 void ServerApp::SetStreamConfig(config::StreamKey stream, config::StreamOverrides overrides)
@@ -261,36 +279,36 @@ bool ServerApp::StartConference(service::mix::MixConfig config,
                                 std::unique_ptr<service::mix::IMixBackend> backend)
 {
     std::lock_guard<std::mutex> lock(lifecycle_mutex_);
-    return mix_service_->StartConference(std::move(config), std::move(backend));
+    return processing_.mix->StartConference(std::move(config), std::move(backend));
 }
 
 bool ServerApp::StopConference(const std::string& room_id)
 {
     std::lock_guard<std::mutex> lock(lifecycle_mutex_);
-    return mix_service_->StopConference(room_id);
+    return processing_.mix->StopConference(room_id);
 }
 
 bool ServerApp::StartTranscode(service::transcode::TranscodeTaskConfig config,
                                std::function<void()> request_keyframe)
 {
     std::lock_guard<std::mutex> lock(lifecycle_mutex_);
-    return transcode_service_->StartTask(std::move(config), std::move(request_keyframe));
+    return processing_.transcode->StartTask(std::move(config), std::move(request_keyframe));
 }
 
 bool ServerApp::StopTranscode(const std::string& task_id, service::transcode::TranscodeTaskStatus* final_status)
 {
     std::lock_guard<std::mutex> lock(lifecycle_mutex_);
-    return transcode_service_->StopTask(task_id, final_status);
+    return processing_.transcode->StopTask(task_id, final_status);
 }
 
 std::optional<service::transcode::TranscodeTaskStatus> ServerApp::TranscodeStatus(const std::string& task_id) const
 {
-    return transcode_service_->TaskStatus(task_id);
+    return processing_.transcode->TaskStatus(task_id);
 }
 
 std::string ServerApp::TranscodeLastError() const
 {
-    return transcode_service_->LastError();
+    return processing_.transcode->LastError();
 }
 
 bool ServerApp::RenegotiateWebRtc(uint64_t session_id, const std::vector<sdp::SdpMedia>& medias, std::string& error)

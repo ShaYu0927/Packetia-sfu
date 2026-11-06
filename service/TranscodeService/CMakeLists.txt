@@ -19,6 +19,7 @@ target_include_directories(packetia_video_transcoder PUBLIC
 target_compile_features(packetia_video_transcoder PUBLIC cxx_std_17)
 target_link_libraries(packetia_video_transcoder PUBLIC
     packetia_transcode_domain packetia_video_codecs)
+target_link_libraries(packetia_video_transcoder PRIVATE packetia_ffmpeg)
 
 add_library(packetia_transcode_service STATIC TranscodeSession.cpp TranscodeService.cpp)
 target_include_directories(packetia_transcode_service PUBLIC
@@ -26,6 +27,9 @@ target_include_directories(packetia_transcode_service PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../core
     ${CMAKE_CURRENT_SOURCE_DIR}/../../media/core)
 target_link_libraries(packetia_transcode_service PUBLIC packetia_video_transcoder packetia_threads)
-if(TARGET media)
-    target_link_libraries(packetia_transcode_service PUBLIC media)
+if(TARGET packetia_media_core)
+    target_link_libraries(packetia_transcode_service PUBLIC packetia_media_core)
+endif()
+if(TARGET packetia_processing_api)
+    target_link_libraries(packetia_transcode_service PUBLIC packetia_processing_api)
 endif()

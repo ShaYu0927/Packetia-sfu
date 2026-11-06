@@ -4,9 +4,7 @@
 #include "ServerConfig.h"
 #include "ServerLauncher.h"
 #include "ThreadRuntimeStatus.h"
-#include "ConferenceMixService.h"
-#include "RecordingRecords.h"
-#include "TranscodeTaskTypes.h"
+#include "MediaProcessingServices.h"
 #include "RuntimeMetrics.h"
 
 #include <functional>
@@ -16,10 +14,8 @@
 
 class EventLoop;
 namespace media { class EncodedFrameRouter; }
-namespace service { class RecordingService; class IRecordingEventSink; }
 namespace service { class MonitorService; }
 namespace service::account { class AccountService; }
-namespace service::transcode { class TranscodeService; }
 namespace sdp { struct SdpMedia; }
 namespace protocol { class TurnServer; }
 
@@ -31,7 +27,10 @@ namespace api { class ApiServer; }
 class ServerApp final
 {
 public:
-    explicit ServerApp(ServerConfig config, std::shared_ptr<service::IRecordingEventSink> recording_events = {});
+    // Select processing implementations at construction; default to local services.
+    explicit ServerApp(ServerConfig config,
+        std::shared_ptr<service::IRecordingEventSink> recording_events = {},
+        service::MediaProcessingFactory processing_factory = service::CreateLocalMediaProcessingServices);
     ~ServerApp();
     ServerApp(const ServerApp&) = delete;
     ServerApp& operator=(const ServerApp&) = delete;
@@ -56,13 +55,13 @@ public:
     bool StopConference(const std::string& room_id);
     bool RenegotiateWebRtc(uint64_t session_id, const std::vector<sdp::SdpMedia>& medias, std::string& error);
     // Output subscribers (such as recording) can be attached by the application.
-    std::shared_ptr<media::EncodedFrameRouter> MixedFrameRouter() const { return mix_output_router_; }
+    std::shared_ptr<media::EncodedFrameRouter> MixedFrameRouter() const { return processing_.mixed_frames; }
     bool StartTranscode(service::transcode::TranscodeTaskConfig config,
                         std::function<void()> request_keyframe = {});
     bool StopTranscode(const std::string& task_id, service::transcode::TranscodeTaskStatus* final_status = nullptr);
     std::optional<service::transcode::TranscodeTaskStatus> TranscodeStatus(const std::string& task_id) const;
     std::string TranscodeLastError() const;
-    std::shared_ptr<media::EncodedFrameRouter> TranscodedFrameRouter() const { return transcode_output_router_; }
+    std::shared_ptr<media::EncodedFrameRouter> TranscodedFrameRouter() const { return processing_.transcoded_frames; }
 
 private:
     void ConfigureServices();
@@ -77,17 +76,12 @@ private:
     std::shared_ptr<service::MonitorService> monitor_service_;
     const ServerConfig config_; // Immutable network/resource startup settings.
     std::shared_ptr<config::ConfigStore> settings_;
-    std::shared_ptr<service::IRecordingEventSink> recording_events_;
     mutable std::mutex lifecycle_mutex_;
     std::shared_ptr<EventLoop> event_loop_;
     std::shared_ptr<service::account::AccountService> account_service_;
     std::shared_ptr<api::ApiServer> api_server_;
     std::shared_ptr<media::EncodedFrameRouter> frame_router_;
-    std::shared_ptr<media::EncodedFrameRouter> mix_output_router_;
-    std::shared_ptr<media::EncodedFrameRouter> transcode_output_router_;
-    std::shared_ptr<service::transcode::TranscodeService> transcode_service_;
-    std::shared_ptr<service::mix::ConferenceMixService> mix_service_;
-    std::shared_ptr<service::RecordingService> recording_service_;
+    service::MediaProcessingServices processing_;
     std::shared_ptr<WebRtcService> webrtc_service_;
     std::shared_ptr<protocol::TurnServer> turn_server_;
     // Destroy services before the resources referenced by their callbacks.

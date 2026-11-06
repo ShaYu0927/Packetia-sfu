@@ -1,9 +1,13 @@
 #include <gtest/gtest.h>
 
 #include "ServerApp.h"
+#include "ConfigStore.h"
+#include "EncodedFrameRouter.h"
+#include "RecordingTypes.h"
 #include "TurnServer.h"
 
 #include <cstdlib>
+#include <filesystem>
 #include <optional>
 #include <poll.h>
 #include <stdexcept>
@@ -28,6 +32,104 @@ private:
     const char* name_;
     std::optional<std::string> original_;
 };
+
+class TemporaryDirectory
+{
+public:
+    TemporaryDirectory()
+    {
+        auto pattern = (std::filesystem::temp_directory_path() / "packetia-processing-XXXXXX").string();
+        const auto* created = mkdtemp(pattern.data());
+        if (!created) throw std::runtime_error("temporary directory creation failed");
+        path = created;
+    }
+    ~TemporaryDirectory()
+    {
+        std::error_code error;
+        std::filesystem::remove_all(path, error);
+    }
+    std::string path;
+};
+
+class RecordingProbe final : public service::IRecordingService
+{
+public:
+    bool Init() override { state = service::ServiceState::Initialized; return true; }
+    bool Start() override
+    {
+        ++starts;
+        state = fail_start ? service::ServiceState::Failed : service::ServiceState::Running;
+        return !fail_start;
+    }
+    void Stop() override { ++stops; state = service::ServiceState::Stopped; }
+    void Shutdown() override { state = service::ServiceState::Created; }
+    service::ServiceType Type() const override { return service::ServiceType::Record; }
+    service::ServiceState State() const override { return state; }
+    service::ServiceHealth Health() const override
+    { return {state == service::ServiceState::Running, Type(), state, 0}; }
+    bool StartRecording(const config::StreamKey& stream) override
+    { last_stream = stream; ++recording_starts; return state == service::ServiceState::Running; }
+    bool StopRecording(const config::StreamKey& stream) override
+    { last_stream = stream; ++recording_stops; return true; }
+    std::vector<service::SegmentInfo> QuerySegments(const service::SegmentQuery&) const override { return {}; }
+    std::vector<service::RecordedStream> ListRecordedStreams(const std::string& session_id) const override
+    { return {{"injected-recording", session_id, "camera"}}; }
+    void RefreshStreamPolicies() override { ++refreshes; }
+
+    service::ServiceState state = service::ServiceState::Created;
+    config::StreamKey last_stream;
+    int starts = 0, stops = 0, recording_starts = 0, recording_stops = 0, refreshes = 0;
+    bool fail_start = false;
+};
+
+class RecordingEvents final : public service::IRecordingEventSink
+{
+public:
+    void OnRecordingEvent(const service::RecordingEvent&) override {}
+};
+
+TEST(MediaProcessingServicesTest, CanControlAndDrainLocalServicesWithoutNetworkServers)
+{
+    TemporaryDirectory directory;
+    config::AppConfig config;
+    config.recording.directory = directory.path;
+    auto settings = std::make_shared<config::ConfigStore>(config);
+    auto input = std::make_shared<media::EncodedFrameRouter>();
+    auto processing = service::CreateLocalMediaProcessingServices(input, settings);
+    // Constructing the module does not attach consumers or start workers.
+    EXPECT_EQ(input->GetStats().active_subscriptions, 0u);
+    EXPECT_TRUE(std::filesystem::is_empty(directory.path));
+    EXPECT_NE(processing.mixed_frames, input);
+    EXPECT_NE(processing.transcoded_frames, input);
+    EXPECT_NE(processing.mixed_frames, processing.transcoded_frames);
+
+    server::ServerLauncher lifecycle;
+    lifecycle.AddService("record", processing.recording);
+    lifecycle.AddService("ai", processing.ai);
+    lifecycle.AddService("mix", processing.mix);
+    lifecycle.AddService("transcode", processing.transcode);
+    const config::StreamKey stream{"room", "camera"};
+    EXPECT_FALSE(processing.recording->StartRecording(stream));
+    for (int cycle = 0; cycle != 2; ++cycle)
+    {
+        ASSERT_TRUE(lifecycle.StartAll());
+        EXPECT_EQ(input->GetStats().active_subscriptions, 2u); // Recording and AI.
+        EXPECT_EQ(processing.mix->State(), service::ServiceState::Running);
+        EXPECT_EQ(processing.transcode->State(), service::ServiceState::Running);
+        ASSERT_TRUE(processing.recording->StopRecording(stream));
+        EXPECT_FALSE(settings->Allows(config::Feature::Recording, stream));
+        ASSERT_TRUE(processing.recording->StartRecording(stream));
+        EXPECT_TRUE(settings->Allows(config::Feature::Recording, stream));
+        EXPECT_TRUE(processing.recording->ListRecordedStreams(stream.session_id).empty());
+        lifecycle.StopAll();
+        EXPECT_EQ(input->GetStats().active_subscriptions, 0u);
+        EXPECT_FALSE(processing.recording->StartRecording(stream));
+    }
+    // Stopping consumers keeps the shared routers available for a later restart.
+    EXPECT_FALSE(input->GetStats().closed);
+    EXPECT_FALSE(processing.mixed_frames->GetStats().closed);
+    EXPECT_FALSE(processing.transcoded_frames->GetStats().closed);
+}
 
 class Socket
 {
@@ -107,6 +209,98 @@ protected:
     server::ServerConfig config;
     std::vector<std::unique_ptr<Socket>> reservations;
 };
+
+TEST_F(ServerAppTest, InjectedProcessingUsesApplicationDependenciesAndLifecycle)
+{
+    config.turn.enabled = false;
+    config.recording_enabled = true;
+    reservations.clear();
+    const auto recording = std::make_shared<RecordingProbe>();
+    const auto events = std::make_shared<RecordingEvents>();
+    std::shared_ptr<config::ConfigStore> supplied_settings;
+    std::shared_ptr<media::EncodedFrameRouter> mixed, transcoded;
+    int factory_calls = 0;
+    const service::MediaProcessingFactory factory = [&](auto input, auto settings, auto sink) {
+        ++factory_calls;
+        EXPECT_EQ(sink, events);
+        EXPECT_EQ(input->GetStats().active_subscriptions, 0u);
+        supplied_settings = settings;
+        auto processing = service::CreateLocalMediaProcessingServices(input, settings, sink);
+        processing.recording = recording;
+        mixed = processing.mixed_frames;
+        transcoded = processing.transcoded_frames;
+        return processing;
+    };
+    server::ServerApp app(config, events, factory);
+    EXPECT_EQ(factory_calls, 1);
+    EXPECT_EQ(recording->starts, 0);
+    EXPECT_EQ(app.MixedFrameRouter(), mixed);
+    EXPECT_EQ(app.TranscodedFrameRouter(), transcoded);
+    ASSERT_TRUE(app.Start());
+    EXPECT_EQ(recording->starts, 1);
+
+    const config::StreamKey stream{"room", "camera"};
+    ASSERT_TRUE(app.StartRecording(stream));
+    EXPECT_EQ(recording->recording_starts, 1);
+    EXPECT_EQ(recording->last_stream.session_id, stream.session_id);
+    ASSERT_TRUE(app.StopRecording(stream));
+    EXPECT_EQ(recording->recording_stops, 1);
+    EXPECT_EQ(recording->last_stream.stream_id, stream.stream_id);
+    const auto recordings = app.ListRecordedStreams(stream.session_id);
+    ASSERT_EQ(recordings.size(), 1u);
+    EXPECT_EQ(recordings.front().recording_id, "injected-recording");
+
+    config::StreamOverrides overrides;
+    overrides.ai = false;
+    app.SetStreamConfig(stream, overrides);
+    EXPECT_EQ(recording->refreshes, 1);
+    EXPECT_EQ(app.ConfigSnapshot(), supplied_settings->Snapshot());
+    EXPECT_FALSE(supplied_settings->Resolve(stream).ai);
+
+    ASSERT_TRUE(app.SetServiceEnabled(service::ServiceType::Record, false));
+    EXPECT_EQ(recording->stops, 1);
+    recording->fail_start = true;
+    EXPECT_FALSE(app.SetServiceEnabled(service::ServiceType::Record, true));
+    EXPECT_FALSE(app.ServiceEnabled(service::ServiceType::Record));
+    EXPECT_FALSE(supplied_settings->Snapshot()->recording_enabled);
+    EXPECT_EQ(recording->stops, 2); // Clean up a failed activation too.
+    recording->fail_start = false;
+    ASSERT_TRUE(app.SetServiceEnabled(service::ServiceType::Record, true));
+    EXPECT_TRUE(supplied_settings->Snapshot()->recording_enabled);
+    app.Stop();
+    EXPECT_EQ(recording->stops, 3);
+    ASSERT_TRUE(app.Start());
+    app.Stop();
+    EXPECT_EQ(recording->stops, 4);
+    EXPECT_EQ(factory_calls, 1);
+}
+
+TEST_F(ServerAppTest, RejectsInvalidProcessingAssembliesBeforeStartingServices)
+{
+    EXPECT_THROW((server::ServerApp(config, {}, {})), std::invalid_argument);
+    const service::MediaProcessingFactory incomplete = [](auto, auto, auto) {
+        return service::MediaProcessingServices{};
+    };
+    EXPECT_THROW((server::ServerApp(config, {}, incomplete)), std::invalid_argument);
+    const service::MediaProcessingFactory wrong_type = [](auto input, auto settings, auto events) {
+        auto processing = service::CreateLocalMediaProcessingServices(input, settings, events);
+        processing.ai = processing.recording;
+        return processing;
+    };
+    EXPECT_THROW((server::ServerApp(config, {}, wrong_type)), std::invalid_argument);
+    const service::MediaProcessingFactory started = [](auto input, auto settings, auto events) {
+        auto processing = service::CreateLocalMediaProcessingServices(input, settings, events);
+        processing.ai->Init();
+        return processing;
+    };
+    EXPECT_THROW((server::ServerApp(config, {}, started)), std::invalid_argument);
+    const service::MediaProcessingFactory feedback_loop = [](auto input, auto settings, auto events) {
+        auto processing = service::CreateLocalMediaProcessingServices(input, settings, events);
+        processing.mixed_frames = input;
+        return processing;
+    };
+    EXPECT_THROW((server::ServerApp(config, {}, feedback_loop)), std::invalid_argument);
+}
 
 TEST_F(ServerAppTest, TranscodeTasksCanStartStopAndFollowServiceToggle)
 {

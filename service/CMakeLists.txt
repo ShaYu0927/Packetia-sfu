@@ -4,63 +4,18 @@ add_subdirectory(Auth)
 add_subdirectory(Account)
 add_subdirectory(Cluster)
 add_subdirectory(MonitorService)
-add_subdirectory(RecordService/Index)
+add_subdirectory(processing)
+add_subdirectory(AIService)
+add_subdirectory(RecordService)
+add_subdirectory(ConferenceMixService)
 add_subdirectory(TranscodeService)
-
-add_library(service STATIC
-    ConferenceMixService/MixTypes.h
-    ConferenceMixService/IMixBackend.h
-    ConferenceMixService/ConferenceMixer.h
-    ConferenceMixService/ConferenceMixer.cpp
-    ConferenceMixService/ConferenceMixService.h
-    ConferenceMixService/ConferenceMixService.cpp
-    AIService/AITypes.h
-    AIService/IModelProvider.h
-    AIService/UnavailableModelProvider.h
-    AIService/UnavailableModelProvider.cpp
-    AIService/AIOrchestrator.h
-    AIService/AIOrchestrator.cpp
-    AIService/AIFrameIngress.h
-    AIService/AIFrameIngress.cpp
-    AIService/AIService.h
-    AIService/AIService.cpp
-    RecordService/RecordingService.h
-    RecordService/RecordingService.cpp
-    RecordService/RecordingOptions.h
-    RecordService/RecordingTypes.h
-    RecordService/IRecorder.h
-    RecordService/RecordingSegment.h
-    RecordService/RecordingInstance.h
-    RecordService/RecordingInstance.cpp
-    RecordService/RecordingSession.h
-    RecordService/RecordingSession.cpp
-    RecordService/Mp4Recorder.h
-    RecordService/Mp4Recorder.cpp
-    RecordService/Mp4Writer.cpp
-    RecordService/IMediaReader.h
-    RecordService/Mp4Reader.h
-    RecordService/Mp4Reader.cpp
-    RecordService/ISeekableFile.h
-    RecordService/LocalFileIO.h
-    RecordService/LocalFileIO.cpp
-    RecordService/RecordingDispatcher.h
-    RecordService/RecordingDispatcher.cpp
-)
-
-target_include_directories(service
-    PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/core
-        ${CMAKE_CURRENT_SOURCE_DIR}/AIService
-        ${CMAKE_CURRENT_SOURCE_DIR}/RecordService
-)
-
-target_compile_features(service PUBLIC cxx_std_17)
-
-target_link_libraries(service PUBLIC packetia_service_core media LOGGER packetia_config packetia_recording_index packetia_transcode_service ${FFMPEG_LIBRARIES})
-
-if(MSVC)
-    target_compile_options(service PRIVATE /utf-8)
-endif()
-
 add_subdirectory(meeting)
+
+# Compatibility aggregate. New consumers select the components they actually use.
+add_library(service INTERFACE)
+target_link_libraries(service INTERFACE
+    packetia_service_core
+    packetia_ai_service
+    packetia_recording_service
+    packetia_conference_mix_service
+    packetia_transcode_service)

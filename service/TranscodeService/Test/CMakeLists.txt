@@ -16,9 +16,10 @@ target_link_libraries(test_transcode_domain PRIVATE packetia_transcode_domain GT
 add_test(NAME transcode_domain COMMAND test_transcode_domain)
 
 add_executable(test_video_transcoder test_video_transcoder.cpp)
-target_link_libraries(test_video_transcoder PRIVATE packetia_transcode_service GTest::gtest_main)
+target_link_libraries(test_video_transcoder PRIVATE packetia_transcode_service packetia_ffmpeg GTest::gtest_main)
 if(TARGET media)
     target_compile_definitions(test_video_transcoder PRIVATE PACKETIA_TEST_SFU_PIPELINE)
+    target_link_libraries(test_video_transcoder PRIVATE media)
 else()
     target_sources(test_video_transcoder PRIVATE
         ../../../media/frame/EncodedFrameRouter.cpp)
@@ -28,7 +29,7 @@ add_test(NAME video_transcoder COMMAND test_video_transcoder)
 set_tests_properties(video_transcoder PROPERTIES TIMEOUT 90)
 
 add_executable(test_multicodec test_multicodec.cpp)
-target_link_libraries(test_multicodec PRIVATE packetia_transcode_service GTest::gtest_main)
+target_link_libraries(test_multicodec PRIVATE packetia_transcode_service packetia_ffmpeg GTest::gtest_main)
 if(NOT TARGET media)
     target_sources(test_multicodec PRIVATE ../../../media/frame/EncodedFrameRouter.cpp)
     target_include_directories(test_multicodec PRIVATE ../../../log)

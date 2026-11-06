@@ -1,7 +1,7 @@
 #ifndef PACKETIA_SERVICE_RECORDSERVICE_RECORDINGSERVICE_H_
 #define PACKETIA_SERVICE_RECORDSERVICE_RECORDINGSERVICE_H_
 
-#include "IService.h"
+#include "IRecordingService.h"
 #include "RecordingOptions.h"
 #include "RecordingTypes.h"
 #include "EncodedFrameRouter.h"
@@ -16,7 +16,7 @@ struct RecordingStats {
     size_t queue_depth = 0, queue_bytes = 0;
 };
 
-class RecordingService final : public IService, public media::IEncodedFrameSink,
+class RecordingService final : public IRecordingService, public media::IEncodedFrameSink,
                                public std::enable_shared_from_this<RecordingService> 
 {
 public:
@@ -34,14 +34,14 @@ public:
     ServiceHealth Health() const override;
     RecordingStats Stats() const;
     bool SubmitFrame(const media::EncodedFrameEvent& event) override;
-    void RefreshStreamPolicies();
+    void RefreshStreamPolicies() override;
     // Control-thread operations. Start enables admission (media/keyframe may
     // arrive later). Stop waits for admitted frames and file finalization.
     // Never call from a recording event/worker callback.
-    bool StartRecording(const config::StreamKey& stream);
-    bool StopRecording(const config::StreamKey& stream);
-    std::vector<SegmentInfo> QuerySegments(const SegmentQuery& query) const;
-    std::vector<RecordedStream> ListRecordedStreams(const std::string& session_id) const;
+    bool StartRecording(const config::StreamKey& stream) override;
+    bool StopRecording(const config::StreamKey& stream) override;
+    std::vector<SegmentInfo> QuerySegments(const SegmentQuery& query) const override;
+    std::vector<RecordedStream> ListRecordedStreams(const std::string& session_id) const override;
 private:
     std::shared_ptr<media::EncodedFrameRouter> router_;
     RecordingOptions options_;

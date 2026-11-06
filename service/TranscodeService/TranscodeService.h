@@ -1,6 +1,6 @@
 #pragma once
 
-#include "IService.h"
+#include "ITranscodeService.h"
 #include "TranscodeTaskTypes.h"
 #include "TranscodeRuntime.h"
 
@@ -11,7 +11,7 @@
 
 namespace service::transcode {
 
-class TranscodeService final : public IService
+class TranscodeService final : public ITranscodeService
 {
 public:
     TranscodeService(std::shared_ptr<media::EncodedFrameRouter> input,
@@ -26,10 +26,10 @@ public:
     ServiceState State() const override { return state_.load(); }
     ServiceHealth Health() const override;
 
-    bool StartTask(TranscodeTaskConfig config, KeyFrameRequest request_keyframe = {});
-    bool StopTask(const std::string& id, TranscodeTaskStatus* final_status = nullptr);
-    std::optional<TranscodeTaskStatus> TaskStatus(const std::string& id) const;
-    std::string LastError() const;
+    bool StartTask(TranscodeTaskConfig config, KeyFrameRequest request_keyframe = {}) override;
+    bool StopTask(const std::string& id, TranscodeTaskStatus* final_status = nullptr) override;
+    std::optional<TranscodeTaskStatus> TaskStatus(const std::string& id) const override;
+    std::string LastError() const override;
 
 private:
     struct TaskRuntime {

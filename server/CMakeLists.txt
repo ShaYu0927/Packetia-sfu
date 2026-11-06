@@ -33,6 +33,35 @@ if(PACKETIA_WITH_LIBWEBSOCKETS)
         ROOM_LIB media network utils WebRtc LOGGER packetia_auth packetia_config)
 endif()
 
+# Reuse the same application runtime in the executable and integration tests.
+# Local processing is selected by the executable, not by this runtime library.
+add_library(packetia_server_app STATIC ServerApp.cpp WorkerSetup.cpp)
+target_compile_features(packetia_server_app PUBLIC cxx_std_17)
+target_link_libraries(packetia_server_app
+    PUBLIC server packetia_processing_api utils packetia_monitoring
+    PRIVATE
+        "$<$<PLATFORM_ID:Linux>:-Wl,--start-group>"
+        media rtsp rtp sip Rtmp network Rtcp LOGGER ROOM_LIB COMMON ICE WebRtc TURN Interleaved
+        packetia_auth packetia_account_api packetia_monitoring_api
+        "$<$<PLATFORM_ID:Linux>:-Wl,--end-group>"
+        OpenSSL::Crypto Threads::Threads)
+if(PACKETIA_WITH_LIBWEBSOCKETS)
+    target_link_libraries(packetia_server_app PRIVATE packetia_signaling)
+endif()
+
+add_executable(Packetia main.cpp)
+target_link_libraries(Packetia PRIVATE packetia_server_app packetia_local_processing)
+set_target_properties(Packetia PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
+
+if(BUILD_TESTING AND (NOT PACKETIA_WITH_LIBWEBSOCKETS OR PACKETIA_SRTP_AVAILABLE))
+    add_executable(test_server_app Test/test_server_app.cpp)
+    target_link_libraries(test_server_app PRIVATE
+        packetia_server_app packetia_local_processing GTest::gtest_main)
+    set_target_properties(test_server_app PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
+    add_test(NAME server_app COMMAND test_server_app)
+    set_tests_properties(server_app PROPERTIES TIMEOUT 30)
+endif()
+
 # The optional demo source is not present in every source snapshot.
 if(PACKETIA_WITH_LIBWEBSOCKETS AND PACKETIA_SRTP_AVAILABLE AND
    EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples/WebRtcRoomDemo.cpp")

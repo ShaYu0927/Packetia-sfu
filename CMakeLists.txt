@@ -43,7 +43,6 @@ endif()
 
 
 include_directories(
-    ${FFMPEG_INCLUDE_DIRS}
     # Project headers use their file names; list module search paths explicitly.
     ${CMAKE_SOURCE_DIR}/config
     ${CMAKE_SOURCE_DIR}/utils
@@ -80,12 +79,9 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/media/quality/bwe
     ${CMAKE_SOURCE_DIR}/media/stats
     ${CMAKE_SOURCE_DIR}/service/core
-    ${CMAKE_SOURCE_DIR}/service/AIService
     ${CMAKE_SOURCE_DIR}/service/Account
     ${CMAKE_SOURCE_DIR}/service/Auth
     ${CMAKE_SOURCE_DIR}/service/Cluster
-    ${CMAKE_SOURCE_DIR}/service/ConferenceMixService
-    ${CMAKE_SOURCE_DIR}/service/RecordService
     ${CMAKE_SOURCE_DIR}/server
     ${CMAKE_SOURCE_DIR}/server/api
     ${CMAKE_SOURCE_DIR}/server/cluster
@@ -307,44 +303,9 @@ if(BUILD_TESTING)
     add_test(NAME TurnUnitTest COMMAND turn_unit_tests)
     set_tests_properties(TurnUnitTest PROPERTIES TIMEOUT 30)
 endif()
-add_executable(Packetia
-    server/main.cpp
-    server/ServerApp.cpp
-    server/WorkerSetup.cpp
-)
-
 # Seed the runtime configuration once; rebuilding preserves local edits.
 if(NOT EXISTS "${CMAKE_CURRENT_BINARY_DIR}/packetia.json")
     configure_file(config/packetia.json packetia.json COPYONLY)
-endif()
-
-if(PACKETIA_WITH_LIBWEBSOCKETS)
-    target_link_libraries(Packetia PRIVATE packetia_signaling)
-endif()
-
-target_link_libraries(Packetia
-    PRIVATE
-    "$<$<PLATFORM_ID:Linux>:-Wl,--start-group>"
-    server media rtsp rtp sip Rtmp network utils Rtcp LOGGER ROOM_LIB COMMON ICE WebRtc TURN Interleaved service packetia_auth packetia_account_api packetia_monitoring_api
-    "$<$<PLATFORM_ID:Linux>:-Wl,--end-group>"
-    ${FFMPEG_LIBRARIES}
-    pthread
-    c
-    OpenSSL::Crypto
-)
-
-target_compile_options(Packetia PRIVATE -H)
-target_compile_definitions(Packetia PRIVATE RTP_DEBUG=1)
-
-if(BUILD_TESTING AND (NOT PACKETIA_WITH_LIBWEBSOCKETS OR PACKETIA_SRTP_AVAILABLE))
-    add_executable(test_server_app
-        server/Test/test_server_app.cpp
-        server/ServerApp.cpp
-        server/WorkerSetup.cpp)
-    get_target_property(PACKETIA_APP_LIBRARIES Packetia LINK_LIBRARIES)
-    target_link_libraries(test_server_app PRIVATE ${PACKETIA_APP_LIBRARIES} GTest::gtest GTest::gtest_main)
-    add_test(NAME server_app COMMAND test_server_app)
-    set_tests_properties(server_app PROPERTIES TIMEOUT 30)
 endif()
 
 
