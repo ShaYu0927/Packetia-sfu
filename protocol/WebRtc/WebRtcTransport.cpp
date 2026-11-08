@@ -117,6 +117,13 @@ network::SocketAddr WebRtcTransport::SelectedPeer() const
 
 network::transport::DatagramSendResult WebRtcTransport::Send(network::transport::DatagramProtocol protocol, const uint8_t* data, size_t size)
 {
+    return SendWithCompletion(protocol, data, size, {}, {});
+}
+
+network::transport::DatagramSendResult WebRtcTransport::SendWithCompletion(
+    network::transport::DatagramProtocol protocol, const uint8_t* data, size_t size,
+    std::function<bool()> valid, std::function<void()> on_sent)
+{
     network::SocketAddr peer;
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -126,7 +133,11 @@ network::transport::DatagramSendResult WebRtcTransport::Send(network::transport:
         }
         peer = selected_peer_;
     }
-    return SendTo(peer, protocol, data, size);
+    if (peer.len == 0 || protocol == network::transport::DatagramProtocol::Unknown || !data || !size)
+        return network::transport::DatagramSendResult::Failed;
+    if (!datagram_transport_ || !datagram_transport_->IsWritable())
+        return network::transport::DatagramSendResult::Closed;
+    return datagram_transport_->SendDatagramWithCompletion(peer, data, size, std::move(valid), std::move(on_sent));
 }
 
 network::transport::DatagramSendResult WebRtcTransport::SendTo(const network::SocketAddr& peer, network::transport::DatagramProtocol protocol, const uint8_t* data, size_t size)

@@ -4,10 +4,43 @@
 #include "RtpSenderTrack.h"
 #include "SendSideController.h"
 #include "RtpTransportCcExtension.h"
+#include "Rtp/RtpForwardingState.h"
+#include "Rtp/RtpSenderFeedback.h"
 
 namespace
 {
 using namespace media;
+
+TEST(RtpForwardingState, ResumesAcrossSequenceAndTimestampWrapAndRejectsOldPackets)
+{
+    rtsp::RtpForwardingState state;
+    uint16_t seq; uint32_t ts; int64_t source_ts;
+    ASSERT_TRUE(state.Prepare(65535, 0xfffffff0U, seq, ts, source_ts));
+    EXPECT_EQ(seq, 65535);
+    state.OnMediaSent(seq, ts, source_ts);
+    state.BeginDiscontinuity();
+    ASSERT_TRUE(state.Prepare(10, 0x20, seq, ts, source_ts));
+    EXPECT_EQ(seq, 0);
+    EXPECT_EQ(ts, 0x20U);
+    state.OnMediaSent(seq, ts, source_ts);
+    EXPECT_FALSE(state.Prepare(9, 0x20, seq, ts, source_ts));
+    const auto pad = state.NextPaddingSequence();
+    EXPECT_EQ(pad, 1);
+    state.OnPaddingSent(pad);
+    ASSERT_TRUE(state.Prepare(11, 0x30, seq, ts, source_ts));
+    EXPECT_EQ(seq, 2);
+}
+
+TEST(RtpSenderFeedback, KeyframeRequestsAreThrottledAndRecoverAfterClockRollback)
+{
+    rtsp::RtpSenderFeedback feedback;
+    EXPECT_TRUE(feedback.AllowKeyFrameRequest(100));
+    EXPECT_FALSE(feedback.AllowKeyFrameRequest(1099));
+    EXPECT_TRUE(feedback.AllowKeyFrameRequest(1100));
+    EXPECT_TRUE(feedback.AllowKeyFrameRequest(50));
+    EXPECT_FALSE(feedback.AllowKeyFrameRequest(51));
+}
+
 DownlinkBandwidthBudget Budget(uint32_t rate, uint64_t at, uint64_t epoch = 1)
 { return {epoch, at, true, true, rate}; }
 
@@ -66,6 +99,24 @@ TEST(DownlinkAllocator, SourceRateSurvivesSubscriberPausesAndPublisherSilence)
     EXPECT_EQ(estimator.Bitrate(), 32000U);
     estimator.Observe(1000, 10000);
     EXPECT_EQ(estimator.Bitrate(), 32000U);
+}
+
+TEST(DownlinkAllocator, PriorityChangeWaitsForStillForwardingTrackToPause)
+{
+    DownlinkBandwidthAllocator allocator({100, 0, 300, 0, 1500});
+    std::vector<DownlinkDemand> demands{{"high", false, true, 1, 500000},
+                                        {"low", false, true, 2, 500000}};
+    allocator.Allocate(Budget(500000, 0), demands, 0);
+    auto result = allocator.Allocate(Budget(500000, 300), demands, 300);
+    ASSERT_FALSE(result[0].allowed);
+    ASSERT_TRUE(result[1].allowed);
+    demands[0].priority = 3;
+    result = allocator.Allocate(Budget(500000, 301), demands, 301);
+    EXPECT_FALSE(result[0].allowed);
+    EXPECT_TRUE(result[1].allowed);
+    result = allocator.Allocate(Budget(500000, 601), demands, 601);
+    EXPECT_TRUE(result[0].allowed);
+    EXPECT_FALSE(result[1].allowed);
 }
 
 std::vector<uint8_t> Rtp(uint16_t seq, uint32_t stamp, std::initializer_list<uint8_t> payload, bool marker = true)

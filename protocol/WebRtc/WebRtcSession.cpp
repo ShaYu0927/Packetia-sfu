@@ -613,8 +613,15 @@ void WebRtcSession::HandleEncryptedRtcp(network::transport::ReceivedDatagram dat
 
 bool WebRtcSession::SendRtp(std::vector<uint8_t> packet)
 {
+    return SendRtpWithCompletion(std::move(packet), {}, {});
+}
+
+bool WebRtcSession::SendRtpWithCompletion(std::vector<uint8_t> packet,
+                                          std::function<bool()> valid, std::function<void()> on_sent)
+{
     return state_ == WebRtcSessionState::Connected && CheckIceLiveness() && srtp_ready_ && AllowsRtp(packet, true) &&
-        srtp_->ProtectRtp(packet) && transport_->Send(Protocol::Rtp, packet.data(), packet.size()) == SendResult::Ok;
+        srtp_->ProtectRtp(packet) && transport_->SendWithCompletion(Protocol::Rtp, packet.data(), packet.size(),
+            std::move(valid), std::move(on_sent)) == SendResult::Ok;
 }
 
 bool WebRtcSession::SendRtcp(std::vector<uint8_t> packet)

@@ -110,13 +110,19 @@ TEST(WebRtcMediaAdapter, ReceivesPlaintextAndQueuesEncryptionOnSessionLoop)
     ASSERT_EQ(sink->packets, 1U);
     EXPECT_EQ(sink->last.transport_id, 20U);
     EXPECT_EQ(sink->last.payload.ToVector(), rtp);
-    auto sent = std::async(std::launch::async, [&] { return adapter->SendRtp(rtp.data(), rtp.size()); });
+    int successful_completions = 0;
+    auto sent = std::async(std::launch::async, [&] {
+        return adapter->SendRtpWithCompletion(rtp.data(), rtp.size(), false,
+                                               [&] { ++successful_completions; });
+    });
     ASSERT_EQ(sent.get(), SendResult::Ok);
     EXPECT_EQ(counters->protects, 0U);
+    EXPECT_EQ(successful_completions, 0);
     ASSERT_EQ(tasks.size(), 1U);
     tasks.front()(); tasks.clear();
     EXPECT_EQ(counters->protects, 1U);
     EXPECT_EQ(udp->sends, 1U);
+    EXPECT_EQ(successful_completions, 1);
     auto controller = adapter->GetSendSideController();
     media::WeakNetFeedback feedback;
     feedback.now_ms = 100;
@@ -152,10 +158,12 @@ TEST(WebRtcMediaAdapter, ReceivesPlaintextAndQueuesEncryptionOnSessionLoop)
     ASSERT_EQ(adapter->SendRtp(rtp.data(), rtp.size()), SendResult::Ok);
     tasks.front()(); tasks.clear();
     EXPECT_EQ(counters->protects, 2U);
-    ASSERT_EQ(adapter->SendRtp(rtp.data(), rtp.size()), SendResult::Ok);
+    int completed = 0;
+    ASSERT_EQ(adapter->SendRtpWithCompletion(rtp.data(), rtp.size(), false, [&] { ++completed; }), SendResult::Ok);
     adapter->Close();
     for (auto& task : tasks) task();
     EXPECT_EQ(counters->protects, 2U); // Queued send is cancelled on close.
+    EXPECT_EQ(completed, 0);
     EXPECT_EQ(wire->State(), WebRtcTransportState::Closed);
     EXPECT_FALSE(wire->IsSelectedPeer(peer));
     EXPECT_EQ(session->State(), WebRtcSessionState::Closed);

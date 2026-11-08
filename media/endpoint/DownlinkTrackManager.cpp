@@ -50,6 +50,17 @@ public:
             return SendResult::NotWritable;
         return transport_->Send(type, data, size, retransmit);
     }
+    SendResult SendRtpWithCompletion(const uint8_t* data, size_t size, bool retransmit,
+                                     std::function<void()> on_sent) override
+    {
+        const auto route = route_.lock();
+        if (!route || route->Closed()) return SendResult::Closed;
+        if (!route->CanDeliver()) return SendResult::NotWritable;
+        if (!route->CanSendMedia() &&
+            !(route->probe_allowed.load() && !retransmit && IsPadding(data, size)))
+            return SendResult::NotWritable;
+        return transport_->SendRtpWithCompletion(data, size, retransmit, std::move(on_sent));
+    }
     void SetPacketSink(std::weak_ptr<IMediaPacketSink>) override {}
     void Close() override { if (const auto route = route_.lock()) route->Close(); }
     std::shared_ptr<media::SendSideController> GetSendSideController() override
@@ -80,6 +91,19 @@ bool DownlinkTrackManager::Configure(const std::string& id, const rtsp::RtpSende
         (!config.mid_extension_id && !config.mid.empty())) return false;
     for (const auto& entry : parameters_)
         if (entry.first != id && entry.second.config.local_ssrc == config.local_ssrc) return false;
+
+    if(config.rtx_enabled)
+    {
+         if (config.rtx_ssrc == 0 || config.rtx_ssrc == config.local_ssrc)
+         {
+            return false;
+         }
+
+         if(config.rtx_payload_type > 127 || config.rtx_payload_type == config.payload_type)
+         {
+            return false;
+         }
+    }
     parameters_[id] = {config, std::move(transport), codec};
     parameters_[id].config.rewrite_payload_type = true;
     parameters_[id].config.rewrite_header_extensions = true;

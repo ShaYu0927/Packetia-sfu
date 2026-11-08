@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include "IMediaPacketSink.h"
 
 namespace media { class SendSideController; }
@@ -52,6 +53,17 @@ public:
                             const uint8_t* data,
                             size_t size,
                             bool retransmit = false) = 0;
+
+    // The default preserves Send's success semantics, which may mean enqueue.
+    // Implementations with a later completion boundary should override this.
+    // The callback can run synchronously or on the transport's owner thread.
+    virtual SendResult SendRtpWithCompletion(const uint8_t* data, size_t size,
+                                             bool retransmit, std::function<void()> on_sent)
+    {
+        const auto result = Send(MediaPacketType::Rtp, data, size, retransmit);
+        if (result == SendResult::Ok && on_sent) on_sent();
+        return result;
+    }
 
     virtual void Close() = 0;
 

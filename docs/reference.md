@@ -1419,12 +1419,19 @@ python3 Rtsp/Test/run_rtp_weaknet_bench.py \
 
 ## 弱网与带宽控制
 
+下行发送轨道将原 RTP 包缓存和 NACK 重传的包龄、次数及间隔判断交给
+`RtpRetransmissionCache`；轨道仍负责重传时分配 TWCC 序号、发送及记录反馈历史。
+缓存组件与轨道共用原有串行执行上下文，发送失败不消耗重传次数；RTX 构包尚未接入。
+`RtpForwardingState` 管理轨道的 RTP 序号、时间戳与暂停恢复映射；
+`RtpSenderFeedback` 保存该轨道的 RR 状态和关键帧请求限频。轨道通过现有
+`IMediaTransport` 发送，音视频及重传继续共用所属 Transport 的 TWCC 分配器。
+
 下行音视频和重传共用每条 Transport 的 `SendSideController`，独立维护 TWCC 序号、
 发送历史和带宽估计。参考 BWE 代码的 OU 时延检测与 RemoteRateControl 核心算法已适配到
 `media/quality/bwe`，使用项目现有类型和控制接口，无需旧工程的配置及 trace 依赖。
 
 ```text
-RtpSenderTrack 发送成功 → SendSideController 记录发送历史
+RtpSenderTrack 提交发送 → WebRTC UDP socket 接受数据 → SendSideController 记录发送历史
 观众 RTCP TWCC → 匹配发送历史 → TransportBweController
   → 时延趋势 + 接收速率 + RTT + 丢包 → 目标码率 / Pacer 配置建议
 观众 RTCP RR → TWCC 有效时补充 RTT；TWCC 过期后驱动 RR 回退
@@ -1483,6 +1490,8 @@ RTT-only 更新、重复或无法匹配发送历史的 TWCC、未知发送 SSRC 
 `PacketGroupObservation` 的趋势、拥塞状态、接收速率、丢包率均为可选输出；某项未给出时使用对应的原有逐包结果。
 分组丢包率参与带宽估算，业务质量统计仍保留原始反馈丢包率。发送/反馈时间使用本机单调时钟，
 接收时间使用对端时钟；应比较各自时钟内的间隔，不能直接相减当作单向时延。
+WebRTC 的 TWCC 发送时间在 UDP socket 接受数据后采集，异步投递、SRTP 失败、旧路径或关闭导致的丢弃不记录为成功；
+该时间不表示网卡实际发出或对端收到。RTSP interleaved 的发送结果仍可能仅表示 TCP 入队。
 
 `ProbeDecision` 区分三种情况：默认 `{}` 沿用原有探测策略；`{true, std::nullopt}` 接管策略但本轮不探测；
 `{true, ProbePlan{bps, duration_ms, max_bytes}}` 请求探测，三个参数均为活动媒体之外的额外 padding 预算。
@@ -1540,6 +1549,7 @@ RTT-only 事件只更新 RTT，TWCC 只更新确认接收码率和反馈丢包�
 仍未配置时视频按 500 kbit/s、音频按 32 kbit/s 估算。
 
 预算持续不足 300 ms 才暂停视频；恢复要求多留 20% 余量且持续满足 1000 ms，减少反复开关。
+优先级切换时，等待暂停期限的轨道仍占用实际预算；新轨道需等已有发送轨道让出足够空间后才恢复。
 仅初始化完成且最近 1500 ms 内有有效 TWCC 的估计用于自动分配；启动阶段、反馈过期及 RR-only 连接冻结原分配，
 不将初始目标码率当作已测容量。音频始终保留，预算不足时无法保证所有保留轨道的总需求都能满足。
 

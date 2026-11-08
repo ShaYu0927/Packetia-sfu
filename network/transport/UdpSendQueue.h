@@ -20,7 +20,9 @@ public:
 
     UdpDatagramTransport::Sender MakeSender();
 
-    DatagramSendResult Send(const SocketAddr& remote, const uint8_t* data, std::size_t size, std::weak_ptr<UdpDatagramTransport> transport);
+    DatagramSendResult Send(const SocketAddr& remote, const uint8_t* data, std::size_t size,
+        std::weak_ptr<UdpDatagramTransport> transport, std::function<bool()> valid = {},
+        std::function<void()> on_sent = {});
     void Cancel();
 
 private:
@@ -29,6 +31,8 @@ private:
         SocketAddr remote;
         common::SharedBuffer payload;
         std::weak_ptr<UdpDatagramTransport> transport;
+        std::function<bool()> valid;
+        std::function<void()> on_sent;
     };
     using Queue = utils::BoundedChannel<PendingDatagram>;
     std::unique_ptr<Queue> queue_;

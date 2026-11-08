@@ -51,6 +51,7 @@ std::vector<DownlinkAllocation> DownlinkBandwidthAllocator::Allocate(
     });
     if (valid)
     {
+        std::vector<const DownlinkDemand*> resume_candidates;
         for (const auto* demand : videos)
         {
             auto& slot = slots_.at(demand->id);
@@ -68,7 +69,26 @@ std::vector<DownlinkAllocation> DownlinkBandwidthAllocator::Allocate(
             const auto delay = wanted ? config_.resume_delay_ms : config_.pause_delay_ms;
             if (now_ms - slot.since_ms >= delay)
             {
-                slot.allowed = wanted;
+                if (wanted) resume_candidates.push_back(demand);
+                else { slot.allowed = false; slot.pending = false; }
+            }
+        }
+        // A track waiting for its pause delay is still sending. Account for it
+        // before activating another track, even when the desired allocation
+        // above has already assigned its capacity to a higher-priority track.
+        uint64_t available = static_cast<uint64_t>(budget.target_bps) * config_.usable_percent / 100;
+        for (const auto& demand : demands)
+            if (demand.eligible && (demand.audio || slots_.at(demand.id).allowed))
+                available -= std::min<uint64_t>(available, demand.required_bps);
+        for (const auto* demand : resume_candidates)
+        {
+            const uint64_t cost = static_cast<uint64_t>(demand->required_bps) *
+                (100 + config_.resume_margin_percent) / 100;
+            if (cost <= available)
+            {
+                available -= cost;
+                auto& slot = slots_.at(demand->id);
+                slot.allowed = true;
                 slot.pending = false;
             }
         }

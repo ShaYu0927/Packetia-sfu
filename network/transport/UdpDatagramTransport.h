@@ -22,7 +22,7 @@ class UdpDatagramTransport final : public IDatagramTransport,
 public:
     // 可选的有界异步发送出口；Ok 表示入队，实际 socket 发送在网络执行器完成。
     using Sender = std::function<DatagramSendResult(const network::SocketAddr&, const uint8_t*, size_t,
-                                                  std::weak_ptr<UdpDatagramTransport>)>;
+        std::weak_ptr<UdpDatagramTransport>, std::function<bool()>, std::function<void()>)>;
     UdpDatagramTransport(uint64_t id,
                          std::weak_ptr<network::UdpServer> server, Sender sender = {}) noexcept;
 
@@ -31,6 +31,9 @@ public:
     DatagramSendResult SendDatagram(const network::SocketAddr& remote,
                                     const uint8_t* data,
                                     size_t size) override;
+    DatagramSendResult SendDatagramWithCompletion(const network::SocketAddr& remote,
+        const uint8_t* data, size_t size, std::function<bool()> valid,
+        std::function<void()> on_sent) override;
     void SetDatagramSink(std::weak_ptr<IDatagramSink> sink) override;
     void Close() override;
 

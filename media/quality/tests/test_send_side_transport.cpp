@@ -8,6 +8,22 @@
 
 namespace
 {
+TEST(SendSideTransport, LateSendCompletionCannotRecordOnNewPath)
+{
+    media::SendSideController controller;
+    media::PacketSendInfo packet;
+    packet.transport_sequence = 1;
+    packet.send_time_ms = 1000;
+    packet.size_bytes = 1000;
+    const auto old_epoch = controller.PathEpoch();
+    EXPECT_TRUE(controller.OnPacketSentForPath(packet, old_epoch));
+    controller.OnNetworkRouteChanged();
+    EXPECT_FALSE(controller.OnPacketSentForPath(packet, old_epoch));
+    EXPECT_TRUE(controller.OnPacketSentForPath(packet, controller.PathEpoch()));
+    controller.SetNetworkAvailable(false);
+    EXPECT_FALSE(controller.OnPacketSentForPath(packet, controller.PathEpoch()));
+}
+
 class FeedbackTransport final : public media::transport::MediaTransportBase
 {
 public:

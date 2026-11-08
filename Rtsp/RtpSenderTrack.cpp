@@ -76,10 +76,12 @@ size_t RtpPayloadOffset(const common::ByteVector& packet)
 }
 }
 
-RtpSenderTrack::RtpSenderTrack(const RtpSenderTrackConfig& config,
-                               std::shared_ptr<IMediaTransport> transport, Clock clock)
+RtpSenderTrack::RtpSenderTrack(const RtpSenderTrackConfig& config, std::shared_ptr<IMediaTransport> transport, Clock clock)
     : _config(config),
       _clock(clock ? std::move(clock) : Clock{NowMs}),
+      _next_rtx_sequence(config.initial_rtx_sequence),
+      _retransmission_cache({config.rtp_cache_size, config.max_retransmit_age_ms,
+                             config.min_retransmit_interval_ms, config.max_retransmit_count}),
       _transport(std::move(transport))
 {
     if (auto bound_transport = _transport.lock())
@@ -113,41 +115,13 @@ bool RtpSenderTrack::InputRtpPacket(const uint8_t* data, size_t len)
         return false;
     }
 
-    int64_t source_timestamp = in_header.getTimestamp();
-    if (_has_resume_floor && !_rebase_pending)
-    {
-        // Unwrap against recent media, so a long call cannot cross the
-        // half-timestamp range and become permanently older than recovery.
-        const auto delta = uint32_t(in_header.getTimestamp() - uint32_t(_latest_source_timestamp));
-        source_timestamp = _latest_source_timestamp +
-            (delta < 0x80000000U ? int64_t(delta) : int64_t(delta) - 0x100000000LL);
-        if (source_timestamp < _resume_floor_timestamp ||
-            (source_timestamp == _resume_floor_timestamp &&
-             uint16_t(in_header.getSequence() - _resume_floor_seq) >= 0x8000))
-            return false;
-    }
-    if (_rebase_pending)
-    {
-        const auto mapped_timestamp = _started ?
-            _base_out_timestamp + (in_header.getTimestamp() - _base_in_timestamp) : in_header.getTimestamp();
-        // Padding before the first media packet has no source clock origin.
-        if (_started && _has_sent && uint32_t(mapped_timestamp - _last_out_timestamp) >= 0x80000000U) return false;
-        _base_in_seq = in_header.getSequence();
-        _base_out_seq = _has_sent ? uint16_t(_last_out_seq + 1) : _base_in_seq;
-        _resume_floor_seq = _base_in_seq;
-        _resume_floor_timestamp = in_header.getTimestamp();
-        _latest_source_timestamp = source_timestamp;
-        _has_resume_floor = true;
-    }
-
     common::ByteVector packet(data, data + len);
-
     uint16_t out_seq = 0;
     uint32_t out_timestamp = 0;
-    if (!RewriteRtpPacket(packet, in_header, out_seq, out_timestamp))
-    {
-        return false;
-    }
+    int64_t source_timestamp = 0;
+    if (!_forwarding.Prepare(in_header.getSequence(), in_header.getTimestamp(),
+                             out_seq, out_timestamp, source_timestamp) ||
+        !RewriteRtpPacket(packet, in_header, out_seq, out_timestamp)) return false;
 
     media::TransportSequenceNumber transport_sequence;
     if (_config.rewrite_header_extensions && !RewriteHeaderExtensions(packet)) return false;
@@ -156,24 +130,15 @@ bool RtpSenderTrack::InputRtpPacket(const uint8_t* data, size_t len)
         return false;
     }
 
-    if (!SendRtpPacket(packet))
+    if (!SendRtpPacket(packet, false, transport_sequence, out_seq))
     {
         return false;
     }
 
     
-    NotifyPacketSent(transport_sequence, out_seq, packet.size());
+    _forwarding.OnMediaSent(out_seq, out_timestamp, source_timestamp);
 
-    if (!_has_sent || uint16_t(out_seq - _last_out_seq) < 0x8000)
-    {
-        _last_out_seq = out_seq;
-        _last_out_timestamp = out_timestamp;
-    }
-    _has_sent = true;
-    _rebase_pending = false;
-    if (_has_resume_floor) _latest_source_timestamp = std::max(_latest_source_timestamp, source_timestamp);
-
-    CacheRtpPacket(out_seq, packet);
+    _retransmission_cache.Store(out_seq, packet.data(), packet.size(), _clock());
     ++_packet_count;
 
     const size_t header_size = RtpPayloadOffset(packet);
@@ -187,9 +152,8 @@ bool RtpSenderTrack::InputRtpPacket(const uint8_t* data, size_t len)
 
 void RtpSenderTrack::BeginDiscontinuity()
 {
-    _rtp_cache.clear();
-    _cache_order.clear();
-    _rebase_pending = true;
+    _retransmission_cache.Clear();
+    _forwarding.BeginDiscontinuity();
 }
 
 bool RtpSenderTrack::SendPadding(size_t padding_bytes, int probe_cluster_id)
@@ -198,19 +162,17 @@ bool RtpSenderTrack::SendPadding(size_t padding_bytes, int probe_cluster_id)
     common::ByteVector packet(12 + padding_bytes, 0);
     packet[0] = 0xa0;
     packet[1] = _config.payload_type;
-    const auto sequence = _has_sent ? uint16_t(_last_out_seq + 1) : uint16_t(0);
+    const auto sequence = _forwarding.NextPaddingSequence();
     WriteUint16(packet.data() + 2, sequence);
-    WriteUint32(packet.data() + 4, _last_out_timestamp);
+    WriteUint32(packet.data() + 4, _forwarding.LastTimestamp());
     WriteUint32(packet.data() + 8, _config.local_ssrc);
     packet.back() = uint8_t(padding_bytes);
     if (_config.rewrite_header_extensions && !RewriteHeaderExtensions(packet)) return false;
     media::TransportSequenceNumber transport_sequence;
-    if (!PrepareTransportCc(packet, transport_sequence) || !SendRtpPacket(packet)) return false;
-    NotifyPacketSent(transport_sequence, sequence, packet.size(), probe_cluster_id, media::MediaKind::Padding);
+    if (!PrepareTransportCc(packet, transport_sequence) ||
+        !SendRtpPacket(packet, false, transport_sequence, sequence, probe_cluster_id, media::MediaKind::Padding)) return false;
     // Padding occupies downstream sequence space, but no source sequence.
-    if (_started) ++_base_out_seq;
-    _last_out_seq = sequence;
-    _has_sent = true;
+    _forwarding.OnPaddingSent(sequence);
     ++_packet_count;
     return true;
 }
@@ -225,78 +187,38 @@ try
     }
 
     const uint64_t now_ms = _clock();
-
-    for (uint16_t seq : lost_seqs)
-    {
-        auto it = _rtp_cache.find(seq);
-        if (it == _rtp_cache.end())
-        {
-            continue;
-        }
-
-        CachedRtpPacket& cached = it->second;
-        if (now_ms < cached.first_send_ms ||
-            (_config.max_retransmit_age_ms != 0 &&
-             now_ms - cached.first_send_ms >= _config.max_retransmit_age_ms))
-        {
-            continue;
-        }
-        if (_config.max_retransmit_count > 0 && cached.retransmit_count >= _config.max_retransmit_count)
-        {
-            continue;
-        }
-
-        if (cached.retransmit_count != 0 &&
-            now_ms >= cached.last_retransmit_ms &&
-            now_ms - cached.last_retransmit_ms < _config.min_retransmit_interval_ms)
-        {
-            continue;
-        }
-
-        // RTP sequence 必须保持为对端 NACK 请求的原值；但重传是一次新的
-        // 网络发送，因此必须复制缓存包并重新分配 TWCC sequence。
-        // 不能直接发送 cached.packet，否则原发送和重传会共用同一个 TWCC 序号。
-        common::ByteVector retransmit_packet(cached.packet.Data(), cached.packet.Data() + cached.packet.Size());
-        media::TransportSequenceNumber transport_sequence;
-        if (!PrepareTransportCc(retransmit_packet, transport_sequence))
-        {
-            continue;
-        }
-
-        if (SendRtpPacket(retransmit_packet, true))
-        {
-            NotifyPacketSent(transport_sequence, seq, retransmit_packet.size());
-            cached.last_retransmit_ms = now_ms;
-            ++cached.retransmit_count;
-        }
-    }
+    _retransmission_cache.Retransmit(lost_seqs, now_ms,
+        [this](uint16_t seq, const common::SharedBuffer& cached) {
+            // Each retransmission gets a new transport sequence, while the
+            // original RTP sequence remains the one requested by the peer.
+            common::ByteVector packet(cached.Data(), cached.Data() + cached.Size());
+            media::TransportSequenceNumber transport_sequence;
+            if (!PrepareTransportCc(packet, transport_sequence) ||
+                !SendRtpPacket(packet, true, transport_sequence, seq))
+                return false;
+            return true;
+        });
 }
 
 catch (const std::bad_alloc&) {} // Retry on subsequent feedback when capacity is available.
 
 void RtpSenderTrack::OnRtcpReceiverReport(uint32_t reporter_ssrc, uint32_t media_ssrc, uint8_t fraction_lost, int32_t cumulative_lost, uint32_t highest_seq, uint32_t jitter, uint32_t lsr, uint32_t dlsr)
 {
-    ++_rr_count;
-    _last_rr_reporter_ssrc = reporter_ssrc;
-    _last_rr_media_ssrc = media_ssrc;
-    _last_rr_fraction_lost = fraction_lost;
-    _last_rr_cumulative_lost = cumulative_lost;
-    _last_rr_highest_seq = highest_seq;
-    _last_rr_jitter = jitter;
-    _last_rr_lsr = lsr;
-    _last_rr_dlsr = dlsr;
-    _rtt_ms = CalculateRttMs(lsr, dlsr);
+    ++_feedback.rr_count;
+    _feedback.reporter_ssrc = reporter_ssrc;
+    _feedback.media_ssrc = media_ssrc;
+    _feedback.fraction_lost = fraction_lost;
+    _feedback.cumulative_lost = cumulative_lost;
+    _feedback.highest_seq = highest_seq;
+    _feedback.jitter = jitter;
+    _feedback.lsr = lsr;
+    _feedback.dlsr = dlsr;
+    _feedback.rtt_ms = CalculateRttMs(lsr, dlsr);
 }
 
 void RtpSenderTrack::OnRtcpPli()
 {
-    const uint64_t now_ms = _clock();
-    if (_last_pli_ms != 0 && now_ms >= _last_pli_ms && now_ms - _last_pli_ms < _pli_interval_ms)
-    {
-        return;
-    }
-
-    _last_pli_ms = now_ms;
+    if (!_feedback.AllowKeyFrameRequest(_clock())) return;
     if (_keyframe_cb)
     {
         _keyframe_cb();
@@ -374,9 +296,6 @@ bool RtpSenderTrack::RewriteRtpPacket(common::ByteVector& packet, const RtpHeade
     {
         return false;
     }
-
-    out_seq = RewriteSeq(in_header.getSequence());
-    out_timestamp = RewriteTimestamp(in_header.getTimestamp());
 
     uint8_t payload_type = in_header.getPayloadType();
     if (_config.rewrite_payload_type)
@@ -540,103 +459,38 @@ bool RtpSenderTrack::PrepareTransportCc(common::ByteVector& packet,
     return WriteTransportCcExtension(packet, sequence.wire_sequence);
 }
 
-void RtpSenderTrack::NotifyPacketSent(const media::TransportSequenceNumber& sequence,
-                                      uint16_t rtp_sequence,
-                                      size_t packet_size, int probe_cluster_id, media::MediaKind kind)
-{
-    // No transport sequence exists unless the downstream negotiated TWCC.
-    if (_config.transport_cc_extension_id == 0) return;
-    const uint64_t sent_at_ms = _clock();
-    if (_send_controller && sequence.extended_sequence >= 0)
-    {
-        media::PacketSendInfo packet;
-        packet.transport_sequence = sequence.extended_sequence;
-        packet.ssrc = _config.local_ssrc;
-        packet.rtp_sequence = rtp_sequence;
-        packet.send_time_ms = sent_at_ms;
-        packet.size_bytes = static_cast<uint32_t>(packet_size);
-        packet.media_kind = kind;
-        packet.is_probe = probe_cluster_id >= 0;
-        packet.probe_cluster_id = probe_cluster_id;
-        _send_controller->OnPacketSent(packet);
-    }
-    // extended_sequence 是本地连续键；wire_sequence 是 RTP 中的 16 位值。
-    // 两者必须一起保留，后续反馈适配器负责把回绕后的 wire sequence
-    // 展开并匹配到正确的 PacketHistory 记录。
-    if (_packet_sent_cb && sequence.extended_sequence >= 0)
-    {
-        _packet_sent_cb(sequence.extended_sequence,
-                        sequence.wire_sequence,
-                        _config.local_ssrc,
-                        rtp_sequence,
-                        sent_at_ms,
-                        static_cast<uint32_t>(packet_size));
-    }
-}
-
-uint16_t RtpSenderTrack::RewriteSeq(uint16_t in_seq)
-{
-    if (!_started && !_rebase_pending)
-    {
-        _base_in_seq = in_seq;
-        _base_out_seq = _has_sent ? uint16_t(_last_out_seq + 1) : in_seq;
-    }
-
-    return static_cast<uint16_t>(_base_out_seq + static_cast<uint16_t>(in_seq - _base_in_seq));
-}
-
-uint32_t RtpSenderTrack::RewriteTimestamp(uint32_t in_timestamp)
-{
-    if (!_started)
-    {
-        _base_in_timestamp = in_timestamp;
-        _base_out_timestamp = in_timestamp;
-        _started = true;
-    }
-
-    return _base_out_timestamp + (in_timestamp - _base_in_timestamp);
-}
-
-void RtpSenderTrack::CacheRtpPacket(uint16_t out_seq, const common::ByteVector& packet)
-{
-    if (_config.rtp_cache_size == 0)
-    {
-        return;
-    }
-
-    auto bytes = common::SharedBuffer::TryCopy(packet.data(), packet.size());
-    if (bytes.Empty()) return;
-
-    auto it = _rtp_cache.find(out_seq);
-    if (it == _rtp_cache.end())
-    {
-        _cache_order.push_back(out_seq);
-    }
-
-    CachedRtpPacket cached;
-    cached.packet = std::move(bytes);
-    cached.first_send_ms = _clock();
-    _rtp_cache[out_seq] = std::move(cached);
-
-    while (_rtp_cache.size() > _config.rtp_cache_size && !_cache_order.empty())
-    {
-        uint16_t old_seq = _cache_order.front();
-        _cache_order.pop_front();
-        _rtp_cache.erase(old_seq);
-    }
-}
-
-bool RtpSenderTrack::SendRtpPacket(const common::ByteVector& packet,
-                                   bool retransmit)
+bool RtpSenderTrack::SendRtpPacket(const common::ByteVector& packet, bool retransmit,
+                                   const media::TransportSequenceNumber& sequence, uint16_t rtp_sequence,
+                                   int probe_cluster_id, media::MediaKind kind)
 {
     const auto transport = _transport.lock();
-    if (!transport || packet.empty() || !transport->IsWritable())
-    {
-        return false;
-    }
+    if (!transport || packet.empty() || !transport->IsWritable()) return false;
 
+    std::function<void()> on_sent;
+    if (_config.transport_cc_extension_id != 0 && sequence.extended_sequence >= 0)
+    {
+        media::PacketSendInfo info;
+        info.transport_sequence = sequence.extended_sequence;
+        info.ssrc = _config.local_ssrc;
+        info.rtp_sequence = rtp_sequence;
+        info.size_bytes = static_cast<uint32_t>(packet.size());
+        info.media_kind = kind;
+        info.is_probe = probe_cluster_id >= 0;
+        info.probe_cluster_id = probe_cluster_id;
+        const auto controller = _send_controller;
+        const auto epoch = controller ? controller->PathEpoch() : 0;
+        const auto clock = _clock;
+        const auto callback = _packet_sent_cb;
+        on_sent = [controller, epoch, clock, callback, info, sequence]() mutable {
+            info.send_time_ms = clock();
+            if (controller && !controller->OnPacketSentForPath(info, epoch)) return;
+            if (callback) callback(sequence.extended_sequence, sequence.wire_sequence,
+                info.ssrc, info.rtp_sequence, info.send_time_ms, info.size_bytes);
+        };
+    }
     media_latency::SendScope trace_scope(retransmit);
-    return transport->SendRtp(packet.data(), packet.size(), retransmit) == SendResult::Ok;
+    return transport->SendRtpWithCompletion(packet.data(), packet.size(), retransmit,
+                                             std::move(on_sent)) == SendResult::Ok;
 }
 
 }

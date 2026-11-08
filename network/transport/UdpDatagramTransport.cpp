@@ -31,6 +31,13 @@ DatagramSendResult UdpDatagramTransport::SendDatagram(
     const uint8_t* data,
     size_t size)
 {
+    return SendDatagramWithCompletion(remote, data, size, {}, {});
+}
+
+DatagramSendResult UdpDatagramTransport::SendDatagramWithCompletion(
+    const network::SocketAddr& remote, const uint8_t* data, size_t size,
+    std::function<bool()> valid, std::function<void()> on_sent)
+{
     if (closed_.load(std::memory_order_acquire))
     {
         return DatagramSendResult::Closed;
@@ -46,10 +53,13 @@ DatagramSendResult UdpDatagramTransport::SendDatagram(
         closed_.store(true, std::memory_order_release);
         return DatagramSendResult::Closed;
     }
-    if (sender_) return sender_(remote, data, size, weak_from_this());
+    if (sender_) return sender_(remote, data, size, weak_from_this(), std::move(valid), std::move(on_sent));
+    if (valid && !valid()) return DatagramSendResult::Closed;
     switch (server->TrySendTo(remote, data, size))
     {
-        case network::UdpServer::SendResult::Sent: return DatagramSendResult::Ok;
+        case network::UdpServer::SendResult::Sent:
+            if (on_sent) on_sent();
+            return DatagramSendResult::Ok;
         case network::UdpServer::SendResult::NotWritable: return DatagramSendResult::NotWritable;
         case network::UdpServer::SendResult::Closed: return DatagramSendResult::Closed;
         default: return DatagramSendResult::Failed;

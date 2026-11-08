@@ -4,6 +4,7 @@
 #include "DatagramPacket.h"
 
 #include <memory>
+#include <functional>
 
 namespace network::transport
 {
@@ -36,6 +37,18 @@ public:
         const network::SocketAddr& remote,
         const uint8_t* data,
         size_t size) = 0;
+
+    // Completion runs only after a successful send; queued implementations
+    // override this to propagate it to their actual I/O boundary.
+    virtual DatagramSendResult SendDatagramWithCompletion(
+        const network::SocketAddr& remote, const uint8_t* data, size_t size,
+        std::function<bool()> valid, std::function<void()> on_sent)
+    {
+        if (valid && !valid()) return DatagramSendResult::Closed;
+        const auto result = SendDatagram(remote, data, size);
+        if (result == DatagramSendResult::Ok && on_sent) on_sent();
+        return result;
+    }
 
     virtual void SetDatagramSink(std::weak_ptr<IDatagramSink> sink) = 0;
     virtual void Close() = 0;

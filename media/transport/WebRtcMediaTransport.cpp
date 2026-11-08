@@ -35,12 +35,13 @@ MediaTransportState WebRtcMediaTransport::State() const noexcept
     const auto session = session_.lock();
     if (!session) return MediaTransportState::Created;
     using State = protocol::webrtc::WebRtcSessionState;
-    switch (session->State()) {
-    case State::New: return MediaTransportState::Created;
-    case State::Connected: return MediaTransportState::Connected;
-    case State::Closed: return MediaTransportState::Closed;
-    case State::Failed: return MediaTransportState::Failed;
-    default: return MediaTransportState::Connecting;
+    switch (session->State())
+    {
+        case State::New: return MediaTransportState::Created;
+        case State::Connected: return MediaTransportState::Connected;
+        case State::Closed: return MediaTransportState::Closed;
+        case State::Failed: return MediaTransportState::Failed;
+        default: return MediaTransportState::Connecting;
     }
 }
 
@@ -52,6 +53,18 @@ void WebRtcMediaTransport::SetPacketSink(std::weak_ptr<IMediaPacketSink> sink)
 
 SendResult WebRtcMediaTransport::Send(MediaPacketType type, const uint8_t* data, size_t size, bool)
 {
+    return SendWithCompletion(type, data, size, {});
+}
+
+SendResult WebRtcMediaTransport::SendRtpWithCompletion(const uint8_t* data, size_t size, bool,
+                                                        std::function<void()> on_sent)
+{
+    return SendWithCompletion(MediaPacketType::Rtp, data, size, std::move(on_sent));
+}
+
+SendResult WebRtcMediaTransport::SendWithCompletion(MediaPacketType type, const uint8_t* data,
+                                                     size_t size, std::function<void()> on_sent)
+{
     const auto epoch = path_epoch_.load(std::memory_order_acquire);
     if (IsClosed()) return SendResult::Closed;
     if (!IsWritable()) return SendResult::NotWritable;
@@ -59,7 +72,7 @@ SendResult WebRtcMediaTransport::Send(MediaPacketType type, const uint8_t* data,
     std::vector<uint8_t> packet(data, data + size);
     const auto weak = weak_from_this();
     if (weak.expired()) return SendResult::Failed;
-    return dispatch_([weak, epoch, type, packet = std::move(packet)]() mutable {
+    return dispatch_([weak, epoch, type, packet = std::move(packet), on_sent = std::move(on_sent)]() mutable {
         const auto adapter = weak.lock();
         if (!adapter || adapter->closed_ || adapter->path_epoch_.load(std::memory_order_acquire) != epoch) return;
         std::shared_ptr<protocol::webrtc::WebRtcSession> session;
@@ -68,7 +81,13 @@ SendResult WebRtcMediaTransport::Send(MediaPacketType type, const uint8_t* data,
             session = adapter->session_.lock();
         }
         if (!session) return;
-        if (type == MediaPacketType::Rtp) session->SendRtp(std::move(packet));
+        if (type == MediaPacketType::Rtp)
+        {
+            session->SendRtpWithCompletion(std::move(packet), [weak, epoch] {
+                const auto current = weak.lock();
+                return current && !current->closed_ && current->path_epoch_.load(std::memory_order_acquire) == epoch;
+            }, std::move(on_sent));
+        }
         else session->SendRtcp(std::move(packet));
     }) ? SendResult::Ok : SendResult::Failed;
 }

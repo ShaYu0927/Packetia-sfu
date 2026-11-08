@@ -88,6 +88,8 @@ public:
     // nowMs goes to DTLS; ICE uses options.iceClock or steady_clock.
     bool Tick(uint64_t nowMs);
     bool SendRtp(std::vector<uint8_t> packet);
+    bool SendRtpWithCompletion(std::vector<uint8_t> packet, std::function<bool()> valid,
+                               std::function<void()> on_sent);
     bool SendRtcp(std::vector<uint8_t> packet);
 
     WebRtcSessionState State() const noexcept { return state_.load(std::memory_order_acquire); }

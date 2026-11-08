@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 #include <chrono>
+#include <atomic>
 #include <future>
 #include <poll.h>
 #include <unistd.h>
@@ -120,6 +121,29 @@ TEST_F(UdpSendQueueTest, ClosedAdapterAndCancelledQueueDoNotSendPendingDatagrams
     EXPECT_EQ(Send({3}), DatagramSendResult::Closed);
     ResumeNetwork();
     EXPECT_TRUE(Receive(20).empty());
+}
+
+TEST_F(UdpSendQueueTest, CompletionRunsAfterSocketSendAndStaleDatagramsAreDropped)
+{
+    CreateQueue();
+    ASSERT_TRUE(PauseNetwork());
+    const std::vector<uint8_t> payload{4, 5};
+    std::atomic<bool> valid{true};
+    std::atomic<int> completed{0};
+    ASSERT_EQ(adapter->SendDatagramWithCompletion(remote, payload.data(), payload.size(),
+        [&] { return valid.load(); }, [&] { ++completed; }), DatagramSendResult::Ok);
+    EXPECT_EQ(completed.load(), 0);
+    ResumeNetwork();
+    EXPECT_EQ(Receive(), payload);
+    EXPECT_EQ(completed.load(), 1);
+
+    ASSERT_TRUE(PauseNetwork());
+    ASSERT_EQ(adapter->SendDatagramWithCompletion(remote, payload.data(), payload.size(),
+        [&] { return valid.load(); }, [&] { ++completed; }), DatagramSendResult::Ok);
+    valid.store(false);
+    ResumeNetwork();
+    EXPECT_TRUE(Receive(20).empty());
+    EXPECT_EQ(completed.load(), 1);
 }
 
 TEST_F(UdpSendQueueTest, QueuesShareByteBudgetAndDestroyingQueueReleasesPendingBytes)

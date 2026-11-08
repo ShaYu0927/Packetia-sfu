@@ -16,6 +16,9 @@
 #include "Rtp.h"
 #include "TransportSequenceAllocator.h"
 #include "NetworkStats.h"
+#include "Rtp/RtpRetransmissionCache.h"
+#include "Rtp/RtpForwardingState.h"
+#include "Rtp/RtpSenderFeedback.h"
 
 namespace rtsp
 {
@@ -107,6 +110,12 @@ struct RtpSenderTrackConfig
     // Maximum age since the original send was accepted. 0 disables expiry;
     // tune together with the receiver's recovery budget, not the cache size.
     uint64_t max_retransmit_age_ms = 500;
+
+    // RTX is disabled until the peer and sender support it.
+    bool rtx_enabled = false;
+    uint32_t rtx_ssrc = 0;
+    uint8_t rtx_payload_type = 0;
+    uint16_t initial_rtx_sequence = 0;
 };
 
 class RtpSenderTrack
@@ -162,17 +171,17 @@ public:
 
     uint64_t GetOctetCount() const { return _octet_count; }
 
-    uint64_t GetReceiverReportCount() const { return _rr_count; }
+    uint64_t GetReceiverReportCount() const { return _feedback.rr_count; }
 
-    uint8_t GetLastRrFractionLost() const { return _last_rr_fraction_lost; }
+    uint8_t GetLastRrFractionLost() const { return _feedback.fraction_lost; }
 
-    int32_t GetLastRrCumulativeLost() const { return _last_rr_cumulative_lost; }
+    int32_t GetLastRrCumulativeLost() const { return _feedback.cumulative_lost; }
 
-    uint32_t GetLastRrHighestSeq() const { return _last_rr_highest_seq; }
+    uint32_t GetLastRrHighestSeq() const { return _feedback.highest_seq; }
 
-    uint32_t GetLastRrJitter() const { return _last_rr_jitter; }
+    uint32_t GetLastRrJitter() const { return _feedback.jitter; }
 
-    uint32_t GetRttMs() const { return _rtt_ms; }
+    uint32_t GetRttMs() const { return _feedback.rtt_ms; }
 
 
 private:
@@ -187,29 +196,13 @@ private:
     bool PrepareTransportCc(common::ByteVector& packet,
                             media::TransportSequenceNumber& sequence) const;
 
-    void NotifyPacketSent(const media::TransportSequenceNumber& sequence,
-                          uint16_t rtp_sequence,
-                          size_t packet_size, int probe_cluster_id = -1,
-                          media::MediaKind kind = media::MediaKind::Unknown);
+    bool SendRtpPacket(const common::ByteVector& packet, bool retransmit,
+                       const media::TransportSequenceNumber& sequence, uint16_t rtp_sequence,
+                       int probe_cluster_id = -1, media::MediaKind kind = media::MediaKind::Unknown);
 
-    uint16_t RewriteSeq(uint16_t in_seq);
-
-    uint32_t RewriteTimestamp(uint32_t in_timestamp);
-
-    void CacheRtpPacket(uint16_t out_seq, const common::ByteVector& packet);
-
-    bool SendRtpPacket(const common::ByteVector& packet,
-                       bool retransmit = false);
+    bool BuildRtxPacket(const uint8_t* original_data, size_t original_size,  uint16_t rtx_sequence, common::ByteVector& output) const;
 
 private:
-    struct CachedRtpPacket
-    {
-        common::SharedBuffer packet;
-        uint64_t first_send_ms = 0;
-        uint64_t last_retransmit_ms = 0;
-        uint32_t retransmit_count = 0;
-    };
-
      /*
      * Sender track configuration.
      *
@@ -218,6 +211,9 @@ private:
      */
     RtpSenderTrackConfig _config;
     Clock _clock;
+    uint16_t _next_rtx_sequence;
+    RtpRetransmissionCache _retransmission_cache;
+    RtpForwardingState _forwarding;
 
     /*
      * Underlying media transport.
@@ -228,52 +224,6 @@ private:
      */
     std::weak_ptr<IMediaTransport> _transport;
     std::shared_ptr<media::SendSideController> _send_controller;
-
-    /*
-     * Whether the first RTP packet has been received.
-     *
-     * The first RTP packet is used to initialize sequence number and timestamp
-     * rewrite offsets.
-     */
-    bool _started = false;
-    bool _has_sent = false;
-    bool _rebase_pending = false;
-    bool _has_resume_floor = false;
-    uint16_t _last_out_seq = 0;
-    uint32_t _last_out_timestamp = 0;
-    uint16_t _resume_floor_seq = 0;
-    int64_t _resume_floor_timestamp = 0;
-    int64_t _latest_source_timestamp = 0;
-
-    /*
-     * Base sequence number from the upstream RTP stream.
-     *
-     * Used as the reference point for downstream sequence number rewriting.
-     */
-    uint16_t _base_in_seq = 0;
-
-    /*
-     * Base sequence number generated for the downstream RTP stream.
-     *
-     * Downstream sequence number is calculated as:
-     *   out_seq = _base_out_seq + (in_seq - _base_in_seq)
-     */
-    uint16_t _base_out_seq = 0;
-
-    /*
-     * Base RTP timestamp from the upstream RTP stream.
-     *
-     * Used as the reference point for downstream timestamp rewriting.
-     */
-    uint32_t _base_in_timestamp = 0;
-
-    /*
-     * Base RTP timestamp generated for the downstream RTP stream.
-     *
-     * Downstream timestamp is calculated as:
-     *   out_timestamp = _base_out_timestamp + (in_timestamp - _base_in_timestamp)
-     */
-    uint32_t _base_out_timestamp = 0;
 
     /*
      * Number of RTP packets successfully sent by this sender track.
@@ -299,49 +249,7 @@ private:
      */
     uint64_t _last_tick_ms = 0;
 
-    uint64_t _rr_count = 0;                  // Number of RR packets received.
-    uint32_t _last_rr_reporter_ssrc = 0;     // SSRC of the sender that generated the latest RR.
-    uint32_t _last_rr_media_ssrc = 0;        // SSRC of the media stream reported in the latest RR.
-    uint8_t  _last_rr_fraction_lost = 0;     // Fraction of RTP packets lost since the previous RR (8-bit fixed point).
-    int32_t  _last_rr_cumulative_lost = 0;   // Total number of RTP packets lost since the beginning of reception.
-    uint32_t _last_rr_highest_seq = 0;       // Highest extended RTP sequence number received by the reporter.
-    uint32_t _last_rr_jitter = 0;            // Estimated RTP packet inter-arrival jitter reported by RR.
-    uint32_t _last_rr_lsr = 0;               // NTP timestamp middle 32 bits from the last Sender Report (for RTT calculation).
-    uint32_t _last_rr_dlsr = 0;              // Delay since last Sender Report, used together with LSR to calculate RTT.
-    uint32_t _rtt_ms = 0;                    // Estimated round-trip time in milliseconds.
-
-    /*
-     * Last time a PLI/FIR key frame request was forwarded upstream.
-     *
-     * Used to avoid sending key frame requests too frequently.
-     */
-    uint64_t _last_pli_ms = 0;
-
-    /*
-     * Minimum interval between two upstream key frame requests, in milliseconds.
-     *
-     * This prevents PLI/FIR storms when the downstream network is unstable.
-     */
-    uint64_t _pli_interval_ms = 1000;
-
-    /*
-     * RTP retransmission cache order.
-     *
-     * Stores downstream sequence numbers in insertion order so that old packets
-     * can be removed when the cache exceeds the configured size.
-     */
-    std::deque<uint16_t> _cache_order;
-
-    /*
-     * RTP retransmission cache.
-     *
-     * Key:
-     *   Downstream RTP sequence number after rewriting.
-     *
-     * Value:
-     *   Cached RTP packet used for RTCP NACK retransmission.
-     */
-    std::unordered_map<uint16_t, CachedRtpPacket> _rtp_cache;
+    RtpSenderFeedback _feedback;
 
     /*
      * Callback used to request an upstream key frame.

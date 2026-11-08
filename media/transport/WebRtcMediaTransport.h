@@ -26,6 +26,8 @@ public:
     // Ok means accepted by the event-loop queue, matching other asynchronous
     // transports. Encryption and the final network write occur on that loop.
     SendResult Send(MediaPacketType type, const uint8_t* data, size_t size, bool retransmit = false) override;
+    SendResult SendRtpWithCompletion(const uint8_t* data, size_t size, bool retransmit,
+                                     std::function<void()> on_sent) override;
     void Close() override;
     void SetPacketSink(std::weak_ptr<IMediaPacketSink> sink) override;
     MediaPacketIngressResult OnMediaPacket(ReceivedMediaPacket packet) override;
@@ -34,6 +36,8 @@ public:
     void OnNetworkPathChanged(const protocol::webrtc::WebRtcNetworkPath& path);
 
 private:
+    SendResult SendWithCompletion(MediaPacketType type, const uint8_t* data, size_t size,
+                                  std::function<void()> on_sent);
     const uint64_t id_;
     const Dispatch dispatch_;
     std::atomic<bool> closed_{false};

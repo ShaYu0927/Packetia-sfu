@@ -53,6 +53,8 @@ public:
     network::SocketAddr SelectedPeer() const;
 
     network::transport::DatagramSendResult Send(network::transport::DatagramProtocol protocol, const uint8_t* data, size_t size);
+    network::transport::DatagramSendResult SendWithCompletion(network::transport::DatagramProtocol protocol,
+        const uint8_t* data, size_t size, std::function<bool()> valid, std::function<void()> on_sent);
 
     network::transport::DatagramSendResult SendTo(const network::SocketAddr& peer, network::transport::DatagramProtocol protocol, const uint8_t* data, size_t size);
 

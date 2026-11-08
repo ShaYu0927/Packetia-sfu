@@ -191,6 +191,10 @@ add_library(rtp STATIC
     Rtsp/Rtp.h
     Rtsp/Rtp/NackRequester.cpp
     Rtsp/Rtp/NackRequester.h
+    Rtsp/Rtp/RtpRetransmissionCache.cpp
+    Rtsp/Rtp/RtpRetransmissionCache.h
+    Rtsp/Rtp/RtpForwardingState.h
+    Rtsp/Rtp/RtpSenderFeedback.h
     Rtsp/Rtp/RtpHeaderExtensions.h
     Rtsp/RtpReceiver.cpp
     Rtsp/RtpReceiver.h

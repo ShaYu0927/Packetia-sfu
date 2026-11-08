@@ -23,6 +23,8 @@ public:
     explicit SendSideController(const NetworkControllerConfig& config = {});
     std::shared_ptr<TransportSequenceAllocator> SequenceAllocator() const;
     void OnPacketSent(const PacketSendInfo& packet);
+    uint64_t PathEpoch() const;
+    bool OnPacketSentForPath(const PacketSendInfo& packet, uint64_t path_epoch);
     void RegisterSender(uint32_t ssrc, uint32_t clock_rate);
     void UnregisterSender(uint32_t ssrc);
     bool OnRtcpPacket(const uint8_t* data, size_t size, uint64_t receive_time_ms);

@@ -63,6 +63,20 @@ void SendSideController::OnPacketSent(const PacketSendInfo& packet)
     if (available_) history_.AddPacket(packet);
 }
 
+uint64_t SendSideController::PathEpoch() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return path_epoch_;
+}
+
+bool SendSideController::OnPacketSentForPath(const PacketSendInfo& packet, uint64_t path_epoch)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!available_ || path_epoch_ != path_epoch) return false;
+    history_.AddPacket(packet);
+    return true;
+}
+
 void SendSideController::RegisterSender(uint32_t ssrc, uint32_t clock_rate)
 {
     std::lock_guard<std::mutex> lock(mutex_);
