@@ -1,0 +1,23 @@
+{$PACKETIA_DOMAIN} {
+    encode gzip
+
+    handle_path /sfu-a/* {
+        reverse_proxy sfu-a:18180
+    }
+
+    handle_path /sfu-b/* {
+        reverse_proxy sfu-b:18181
+    }
+
+    handle /api/* {
+        reverse_proxy control:18082
+    }
+
+    handle /healthz {
+        reverse_proxy control:18082
+    }
+
+    handle {
+        respond "Not found" 404
+    }
+}

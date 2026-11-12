@@ -167,6 +167,16 @@ python3 scripts/run_cluster_local.py --build-dir build/dev --nodes 2
 也可以分别执行 `build/dev/server/PacketiaControl CONFIG.json` 和 `build/dev/server/PacketiaSfu CONFIG.json`。
 配置模板与容器定义位于 [deploy/cluster](deploy/cluster)。
 
+Docker 部署支持生成节点配置与持久密钥、健康检查启动顺序，以及 Caddy HTTPS/WSS 入口：
+
+```sh
+python3 deploy/cluster/deploy.py init --domain rtc.example.com --public-ip 203.0.113.10
+python3 deploy/cluster/deploy.py up --build
+python3 deploy/cluster/deploy.py check
+```
+
+替换示例域名和地址，详细端口、更新方式和客户端接入见 [Docker 部署](deploy/cluster/README.md)。
+
 单进程入口提供账号 API 和本地服务；会议创建、成员管理、节点分配和入房 JWT 签发由 `PacketiaControl` 提供。
 独立 `PacketiaSfu` 当前专注房间和媒体转发，本地录制、AI、混流、转码组件尚未接入该入口。
 接口和权限说明见[会议控制与节点调度](docs/reference.md#会议控制与节点调度)。

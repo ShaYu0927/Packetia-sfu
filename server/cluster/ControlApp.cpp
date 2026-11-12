@@ -51,12 +51,14 @@ struct ControlApp::Impl
         api::ApiRouter::Builder routes;
         api::AccountController(accounts).RegisterRoutes(routes);
         api::MetricsController(monitor).RegisterRoutes(routes);
-        routes.Get("/healthz", [module = meetings](const auto&) {
+        const api::ApiRouter::Handler readiness = [module = meetings](const auto&) {
             const auto health = module->Health();
             return api::JsonResponse(health.healthy ? 200 : 503,
                 {{"status", health.healthy ? "ok" : "unavailable"}, {"role", "control"},
                  {"meeting_state", static_cast<uint8_t>(health.state)}, {"meeting_error", health.error_code}});
-        });
+        };
+        routes.Get("/healthz", readiness);
+        routes.Get("/readyz", readiness);
         rooms.RegisterRoutes(routes);
         public_api = std::make_unique<api::ApiServer>(http, routes.Build(http.max_body_bytes),
             std::make_shared<protocol::http::HttpServer>(&loop));

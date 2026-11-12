@@ -41,6 +41,18 @@ def post(base, path, body, token='', expected=200):
         return value
 
 
+def get(base, path, expected=200):
+    try:
+        response = urllib.request.urlopen(base + path, timeout=2)
+    except urllib.error.HTTPError as error:
+        response = error
+    with response:
+        value = json.load(response)
+        if expected is not None:
+            check(response.status == expected, f'{path}: HTTP {response.status}, expected {expected}')
+        return value
+
+
 def eventually(call, timeout=8):
     deadline = time.monotonic() + timeout
     while True:
@@ -178,6 +190,7 @@ def run(control, sfu):
             'registration_enabled': True}
         try:
             processes.append(Process(control, 'control', config, directory, env))
+            check(get(public, '/readyz')['status'] == 'ok', 'control readyz failed')
             with urllib.request.urlopen(public + '/healthz', timeout=2) as response:
                 health = json.load(response)
                 check(health['status'] == 'ok' and health['meeting_state'] == 3 and health['meeting_error'] == 0,
@@ -193,6 +206,8 @@ def run(control, sfu):
                 child = Process(sfu, name, node, directory, dict(env, PACKETIA_NODE_SECRET=credentials[name]))
                 processes.append(child)
                 nodes[name] = (node, child)
+                check(get(node['management_url'], '/healthz')['node_id'] == name, 'SFU liveness failed')
+                check(get(node['management_url'], '/readyz')['status'] == 'ok', 'registered SFU not ready')
 
             def account(name):
                 post(public, '/api/v1/accounts', {'login': name, 'password': 'correct-password-123', 'display_name': name}, expected=201)
@@ -271,11 +286,16 @@ def run(control, sfu):
             check(c['node_id'] == b['node_id'], 'end did not free node capacity')
             # 控制面重启保留会议、用户会话与代次；SFU 不需要重建参与者。
             processes[0].stop()
+            for node, _ in nodes.values():
+                eventually(lambda node=node: get(node['management_url'], '/readyz', expected=None)['status'] == 'lease_expired', timeout=15)
+                check(get(node['management_url'], '/healthz')['status'] == 'ok', 'lease expiry killed SFU liveness')
             processes[0] = Process(control, 'control-restarted', config, directory, env)
+            for node, _ in nodes.values():
+                eventually(lambda node=node: get(node['management_url'], '/readyz', expected=None)['status'] == 'ok')
             check(admit(rooms[2])['assignment_id'] == c['assignment_id'], 'control restart lost assignment')
             nodes[c['node_id']][1].stop()
             manage(rooms[2], 'participants', expected=503)
-            print('PASS two-node meeting management, permissions, recovery, epochs, release, end and control restart')
+            print('PASS two-node meeting management, readiness, lease expiry/recovery, epochs and control restart')
         except Exception:
             for process in processes:
                 print(process.log_path.name + ':\n' + process.log_path.read_text(errors='replace')[-2500:])

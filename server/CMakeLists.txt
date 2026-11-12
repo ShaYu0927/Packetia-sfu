@@ -99,6 +99,8 @@ if(PACKETIA_WITH_LIBWEBSOCKETS)
         if(BUILD_TESTING)
             find_package(Python3 COMPONENTS Interpreter)
             if(Python3_Interpreter_FOUND)
+                add_test(NAME ClusterDeploymentConfigTest COMMAND ${Python3_EXECUTABLE}
+                    ${PROJECT_SOURCE_DIR}/scripts/test_cluster_deploy.py)
                 add_test(NAME MeetingControlIntegrationTest COMMAND ${Python3_EXECUTABLE}
                     ${PROJECT_SOURCE_DIR}/scripts/test_meeting_control.py
                     --control $<TARGET_FILE:PacketiaControl> --sfu $<TARGET_FILE:PacketiaSfu>)

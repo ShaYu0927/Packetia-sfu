@@ -8,6 +8,7 @@
 #include "WorkerRegistry.h"
 #include "MetricsController.h"
 #include "ApiServer.h"
+#include "ApiResponse.h"
 #include "HttpServer.h"
 #include "MonitorService.h"
 
@@ -70,6 +71,14 @@ struct SfuApp::Impl
             http.enabled = true; http.listen_ip = json.value("internal_listen_ip", std::string("127.0.0.1"));
             http.listen_port = Port(json, "internal_http_port"); http.max_body_bytes = 256 * 1024;
             api::ApiRouter::Builder routes;
+            routes.Get("/healthz", [id = node.id](const auto&) {
+                return api::JsonResponse(200, {{"status", "ok"}, {"role", "sfu"}, {"node_id", id}});
+            });
+            routes.Get("/readyz", [id = node.id, lease = lease](const auto&) {
+                const bool ready = lease->IsLive();
+                return api::JsonResponse(ready ? 200 : 503,
+                    {{"status", ready ? "ok" : "lease_expired"}, {"role", "sfu"}, {"node_id", id}});
+            });
             meeting::RoomControlController(node, credential, lease, rtc).RegisterRoutes(routes);
             control_api = std::make_unique<api::ApiServer>(http, routes.Build(http.max_body_bytes),
                 std::make_shared<protocol::http::HttpServer>(&loop), 2, 64);

@@ -11,3 +11,7 @@ recordings
 **/*.db-shm
 **/*.log
 **/.env
+deploy/cluster/runtime
+examples/webrtc-room/node_modules
+examples/webrtc-room/artifacts
+build-system

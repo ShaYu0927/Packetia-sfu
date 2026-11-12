@@ -1,54 +1,84 @@
 x-jwt-environment: &jwt-environment
-  PACKETIA_JWT_ISSUER: ${PACKETIA_JWT_ISSUER:?Set PACKETIA_JWT_ISSUER in .env}
-  PACKETIA_JWT_SECRET: ${PACKETIA_JWT_SECRET:?Set PACKETIA_JWT_SECRET in .env}
+  PACKETIA_JWT_ISSUER: ${PACKETIA_JWT_ISSUER:?Run deploy.py init first}
+  PACKETIA_JWT_SECRET: ${PACKETIA_JWT_SECRET:?Run deploy.py init first}
+  PACKETIA_LOG_MODE: console
+
+x-runtime: &runtime
+  image: ${PACKETIA_IMAGE:-packetia-cluster:local}
+  init: true
+  restart: unless-stopped
+  stop_grace_period: 15s
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
 
 services:
   control:
-    image: packetia-cluster:local
+    <<: *runtime
     build:
       context: ../..
       dockerfile: deploy/cluster/Dockerfile
+      args:
+        BUILD_JOBS: ${PACKETIA_BUILD_JOBS:-2}
     command: ["PacketiaControl", "/etc/packetia/control.json"]
     environment:
       <<: *jwt-environment
-      PACKETIA_NODE_SECRETS: '{"sfu-a":"${PACKETIA_NODE_A_SECRET:?Set node A secret}","sfu-b":"${PACKETIA_NODE_B_SECRET:?Set node B secret}"}'
+      PACKETIA_NODE_SECRETS: '{"sfu-a":"${PACKETIA_NODE_A_SECRET:?Run deploy.py init first}","sfu-b":"${PACKETIA_NODE_B_SECRET:?Run deploy.py init first}"}'
     ports:
-      - "18082:18082/tcp"
+      - "127.0.0.1:18082:18082/tcp"
     volumes:
-      - ./control.json:/etc/packetia/control.json:ro
+      - ${PACKETIA_CONFIG_DIR:-./runtime}/control.json:/etc/packetia/control.json:ro
       - control-data:/data
-    restart: unless-stopped
-    stop_grace_period: 10s
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--max-time", "2", "http://127.0.0.1:18082/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
 
   sfu-a:
-    image: packetia-cluster:local
+    <<: *runtime
     command: ["PacketiaSfu", "/etc/packetia/sfu.json"]
     environment:
       <<: *jwt-environment
-      PACKETIA_NODE_SECRET: ${PACKETIA_NODE_A_SECRET:?Set node A secret}
+      PACKETIA_NODE_SECRET: ${PACKETIA_NODE_A_SECRET:?Run deploy.py init first}
     ports:
-      - "18180:18180/tcp"
+      - "127.0.0.1:18180:18180/tcp"
       - "19100:19100/udp"
     volumes:
-      - ./sfu-a.json:/etc/packetia/sfu.json:ro
-    depends_on: [control]
-    restart: unless-stopped
-    stop_grace_period: 10s
+      - ${PACKETIA_CONFIG_DIR:-./runtime}/sfu-a.json:/etc/packetia/sfu.json:ro
+    depends_on:
+      control:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--max-time", "2", "http://127.0.0.1:19080/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
 
   sfu-b:
-    image: packetia-cluster:local
+    <<: *runtime
     command: ["PacketiaSfu", "/etc/packetia/sfu.json"]
     environment:
       <<: *jwt-environment
-      PACKETIA_NODE_SECRET: ${PACKETIA_NODE_B_SECRET:?Set node B secret}
+      PACKETIA_NODE_SECRET: ${PACKETIA_NODE_B_SECRET:?Run deploy.py init first}
     ports:
-      - "18181:18181/tcp"
+      - "127.0.0.1:18181:18181/tcp"
       - "19101:19101/udp"
     volumes:
-      - ./sfu-b.json:/etc/packetia/sfu.json:ro
-    depends_on: [control]
-    restart: unless-stopped
-    stop_grace_period: 10s
+      - ${PACKETIA_CONFIG_DIR:-./runtime}/sfu-b.json:/etc/packetia/sfu.json:ro
+    depends_on:
+      control:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--max-time", "2", "http://127.0.0.1:19081/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
 
 volumes:
   control-data:

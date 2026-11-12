@@ -26,4 +26,6 @@ build/
 out/
 build-win/
 .codex-build-transport/
+/deploy/cluster/runtime/
+/deploy/cluster/.env
 recordings/

@@ -1,0 +1,30 @@
+services:
+  edge:
+    image: ${PACKETIA_EDGE_IMAGE:-caddy:2-alpine}
+    environment:
+      PACKETIA_DOMAIN: ${PACKETIA_DOMAIN:?Set a domain with deploy.py init --domain}
+    ports:
+      - "80:80/tcp"
+      - "443:443/tcp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      control:
+        condition: service_healthy
+      sfu-a:
+        condition: service_healthy
+      sfu-b:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  caddy-data:
+  caddy-config:
