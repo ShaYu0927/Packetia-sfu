@@ -72,6 +72,7 @@ add_library(media STATIC
     transport/MediaEndpointIngress.h
     transport/MediaEndpointIngress.cpp
     transport/WebRtcMediaTransport.cpp
+    transport/PacedSendQueue.cpp
     transport/MediaTransportBase.h
     transport/MediaTransportBase.cpp
     transport/RtspInterleavedTransport.h
@@ -118,6 +119,10 @@ target_link_libraries(media
 )
 
 if(BUILD_TESTING)
+    add_executable(test_media_pacer tests/test_paced_send_queue.cpp)
+    target_link_libraries(test_media_pacer PRIVATE media GTest::gtest_main)
+    add_test(NAME media_pacer COMMAND test_media_pacer)
+    set_tests_properties(media_pacer PROPERTIES TIMEOUT 15)
     add_executable(test_media_core
         tests/test_encoded_frame_router.cpp
         tests/test_encoded_frame_dispatcher.cpp

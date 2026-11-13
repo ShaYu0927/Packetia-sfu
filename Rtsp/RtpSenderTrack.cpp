@@ -433,10 +433,8 @@ bool RtpSenderTrack::WriteTransportCcExtension(common::ByteVector& packet,
     return true;
 }
 
-bool RtpSenderTrack::PrepareTransportCc(common::ByteVector& packet,
-                                        media::TransportSequenceNumber& sequence) const
+bool RtpSenderTrack::PrepareTransportCc(common::ByteVector& packet, media::TransportSequenceNumber& sequence) const
 {
-    // 没有通过 SDP 启用 transport-cc 时保持原发送行为，也不触发发送历史回调。
     if (_config.transport_cc_extension_id == 0)
     {
         sequence = {};
@@ -448,9 +446,6 @@ bool RtpSenderTrack::PrepareTransportCc(common::ByteVector& packet,
         return false;
     }
 
-    // 先用占位值验证并建立扩展结构，再从共享 allocator 取正式序号。
-    // 这样遇到不支持的扩展格式时不会白白消耗序号，也就不会在接收端
-    // 形成一个从未实际发送过、却被误认为丢失的 transport sequence。
     if (!WriteTransportCcExtension(packet, 0))
     {
         return false;

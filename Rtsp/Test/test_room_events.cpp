@@ -39,6 +39,20 @@ TEST(RoomEvents, NotifyOnlyCommittedChangesAndCallbacksCanQueryRoom)
     EXPECT_FALSE(room.PublishTrack("a", Camera(), 0, 96));
     ASSERT_EQ(published.size(), 1U);
     ASSERT_TRUE(room.SubscribeTrack("b", "camera"));
+    std::vector<room::TrackPublicationSnapshot> muted;
+    auto onMute = room.Events().Subscribe<room::TrackMutedEvent>([&](const auto& event) {
+        EXPECT_EQ(room.ParticipantCount(), 2U);
+        EXPECT_TRUE(viewer->HasSubscribedTrack("camera"));
+        muted.push_back(event.snapshot);
+    });
+    EXPECT_FALSE(room.UpdateTrackMuted("missing", true));
+    ASSERT_TRUE(room.UpdateTrackMuted("camera", true));
+    ASSERT_TRUE(room.UpdateTrackMuted("camera", true));
+    ASSERT_TRUE(room.UpdateTrackMuted("camera", false));
+    ASSERT_EQ(muted.size(), 2U);
+    EXPECT_TRUE(muted[0].track.muted); EXPECT_FALSE(muted[1].track.muted);
+    EXPECT_EQ(muted[0].publication_id, published[0].publication_id);
+    EXPECT_GT(muted[1].revision, muted[0].revision);
     ASSERT_TRUE(room.UnpublishTrack("camera"));
     EXPECT_FALSE(room.UnpublishTrack("camera"));
     ASSERT_EQ(removed.size(), 1U);

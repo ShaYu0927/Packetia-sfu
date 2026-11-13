@@ -1251,7 +1251,7 @@ if (track) {
 服务里的会话表保存运行时上下文，上下文持有与参与者共享的房间绑定。
 
 房间参与者的信令意外断开后进入 `Reconnecting`，在恢复窗口内保留参与者及媒体会话；
-主动离开或恢复超时才移除房间成员。当前仍使用单条发布或订阅连接。
+主动离开或恢复超时才移除房间成员。同一成员可保留独立的发布、订阅双会话。
 `subject_id` 来自已验证 JWT 的 `sub`；显示名称来自签名声明，操作权限由成员绑定的鉴权上下文决定。
 
 ### WebRTC 房间 owner
@@ -1301,12 +1301,15 @@ WebSocket 建连后须在 `webrtc.admission_timeout_ms` 内成功 join 或 resum
 ```
 
 服务端校验 JWT 身份、入房授权、房间绑定代次、恢复凭据、断线状态和截止时间，再把成员及会话索引迁移到新连接，增加信令绑定代数。
-`resumed` 回复的 `ice_restart` 表示是否存在需要恢复的媒体连接。仍在线的参与者不能被新连接接管；
+`resumed` 回复的 `ice_restart` 表示是否存在需要恢复的媒体连接；`media_sessions` 列出各会话的
+`session_id`、`role`（`publish` / `subscribe`）和 `ice_restart`，客户端分别恢复两路连接。
+仍在线的参与者不能被新连接接管；
 错误凭据、跨房间恢复、主动离开后的恢复和过期恢复都会拒绝。恢复凭据在参与者离开时失效。
 
 有媒体连接时，浏览器保留原 `RTCPeerConnection`、本地轨道和收流对象，调用
 `createOffer({iceRestart: true})` 并等待新一轮 ICE 候选收集完成，再发送
-`{"type":"restart_ice","sdp":"<new-offer>"}`，此操作使用连接已绑定的权限。
+`{"type":"restart_ice","session_id":101,"sdp":"<new-offer>"}`，此操作使用连接已绑定的权限。
+双会话并存时必须明确指定目标会话，answer / rollback 同样按会话路由。
 服务器生成新的本地 ICE ufrag/password，回复 `answer`；浏览器调用 `setRemoteDescription`，
 随后作为 Full ICE 端发起检查和提名。服务器继续使用 ICE-Lite，不主动枚举浏览器的网卡。
 
@@ -1323,18 +1326,21 @@ restart 等待期间禁用发送控制；新路径可用后清除旧反馈历史
 且信令仍在线时也会尝试 restart。恢复超时、已终止的媒体会话、页面刷新或服务端重启需要重新加入房间。
 目前没有持久化恢复、跨节点迁移、TURN/TCP 或 TURN/TLS 回退。
 
-## 双浏览器房间与 TURN 示例
+## 浏览器会议与 TURN 示例
 
-以下为原有示例的运行记录。当前源码快照未包含 `server/examples/WebRtcRoomDemo.cpp`，
-因此不会生成 `PacketiaRoomDemo` 目标；使用这些步骤需要该入口或已有的兼容二进制。
-
-`examples/webrtc-room` 使用实际 Room/SfuEndpoint 转发链路：两个浏览器加入同一房间，
-A 发布，B 订阅，并可在 B 建连前勾选 Force TURN 强制 `iceTransportPolicy=relay`。
-WebSocket 信令支持 join、tracks、publish、subscribe、resume、restart_ice、leave；
-每个参与者当前只承担发布或订阅一种角色，房间内轨道变更重协商尚未开放。
-订阅通过轨道 ID 和下游 MID 显式绑定。
+`examples/webrtc-room` 使用实际 Room/SfuEndpoint 转发链路，同一参与者使用两个独立的
+PeerConnection 分别发布、订阅，分别拥有 ICE、DTLS/SRTP 和媒体会话 ID。
+页面支持 Participant（同时收发）、Publisher（仅发布）与 Viewer（仅订阅）角色；
+建连前勾选 Force TURN 可对两路连接强制 `iceTransportPolicy=relay`。
+WebSocket 信令支持 join、tracks、publish、subscribe、unpublish、unsubscribe、resume、restart_ice、leave。
+`publish`、`subscribe` 返回各自的 `session_id`；停止时发送
+`{"type":"unpublish","session_id":101}` 或 `{"type":"unsubscribe","session_id":102}`，
+只清理对应方向，保留成员身份及另一方向的连接。
+权限变更的 `stopped_sessions` 和单路失败的 `media_closed` 通知也按会话清理。
+订阅通过轨道 ID 和下游 MID 显式绑定，每个订阅会话允许 1–8 条轨道。
 房间轨道发布、移除通过 EventBus 接到信令层，使用 `tracks_changed` 主动推送最新列表；
 客户端需将该通知与请求响应分流，示例页面已适配。通知不会自动创建或重协商订阅。
+发布者退出后对应画面会移除；新增发布者或重新发布后，需要停止订阅再 Watch，绑定当前源实例。
 
 需要安装上述 WebSocket/libSRTP 构建依赖及 Node.js。首次运行先配置构建目录；
 macOS 按上面的构建说明配置 OpenSSL/libwebsockets 路径，或通过 `PACKETIA_ROOM_DEMO_BINARY`
@@ -1348,21 +1354,29 @@ npm ci
 npm start
 ```
 
-打开 `http://127.0.0.1:18000`，两个浏览器使用相同房间名，A 选择 Publisher 后发布，
-B 选择 Viewer 并勾选 Force TURN 后订阅。启动器生成临时 API key/secret 与 TURN 凭证并启动 C++ 示例；
+打开 `http://127.0.0.1:18000`，三个浏览器使用相同房间名，均选择 Participant，
+先各自 Join、Publish camera，再选择 All other publishers 并 Watch。
+每端显示本地画面和另外两人的画面，Stop publishing / Stop watching 可独立停止对应方向。
+也可使用 Publisher + Viewer 演示单向转发。
+启动器生成临时 API key/secret 与 TURN 凭证并启动 C++ 示例；
 回环地址的开发签发接口按角色生成各自 JWT，浏览器只在 join/resume 时携带 JWT。
 恢复时开发签发端提供同一身份和房间的新 JWT；生产签发端需要接入登录和房间授权。
 默认 WebSocket 18080、SFU UDP 19000、TURN UDP 13478，均用于本机演示。
 其他构建目录通过 `PACKETIA_ROOM_DEMO_BINARY` 指定二进制。
 示例 TURN 只允许转发至该 SFU 的回环媒体地址。
+端口占用时，可用 `PACKETIA_DEMO_HTTP_PORT`、`PACKETIA_DEMO_WS_PORT`、
+`PACKETIA_DEMO_MEDIA_PORT`、`PACKETIA_DEMO_TURN_PORT` 覆盖启动端口；
+检查脚本用 `PACKETIA_DEMO_URL` 指定对应 HTTP 地址。
 
-启动示例后运行 `npm run check`，需要本机 Google Chrome；检查两个独立浏览器中的视频帧增长、
-音频流量、订阅端选中的 relay 候选、视频尺寸、双方信令断线后的参与者恢复和 ICE restart、
-主动退出清理，并在忽略的 artifacts 目录输出截图。
+启动示例后运行 `npm run check`，需要本机 Google Chrome；脚本启动三个独立 Chrome 进程，
+使用模拟摄像头和麦克风，检查同时收发、每端两路视频解码和音频接收流量、其中一端双连接的
+relay 候选、信令断线后双会话 ID 保留与 ICE restart、独立停止及重建、退出资源清理。
+在忽略的 `artifacts` 目录输出 `duplex-result.json` 和桌面/手机视口截图。
+此检查不包含公网弱网、人工听音、30 人容量或长时间稳定性验收。
 
 ## WebRTC SDP 协商
 
-房间发布/订阅的运行入口与限制见上面的双浏览器示例。服务器在客户端 offer 中选择本地支持的
+房间发布/订阅的运行入口与限制见上面的浏览器会议示例。服务器在客户端 offer 中选择本地支持的
 H264/Opus 能力，answer 沿用选中 codec 在 offer 中的 PT；本地能力声明中的 96/111 不会强制覆盖
 客户端的动态 PT。协商支持媒体方向、RTCP feedback 和 RTP header extension，并校验
 BUNDLE、ICE、DTLS、SSRC 与 m-line。Offer/Answer 状态通过提交和回滚管理。
@@ -1442,6 +1456,36 @@ RtpSenderTrack 提交发送 → WebRTC UDP socket 接受数据 → SendSideContr
 升码率按经过的时间和 RTT 推进，避免反馈频率越高、增长越快。
 接收速率与目标码率分别输出；估计尚未初始化时 `bandwidth_bps` 为 0，目标码率仍有效。
 网络断开或显式路由变化事件会清空旧估计；反馈中断时由下面的周期处理撤销过期状态。
+
+### WebRTC 下行节奏控制
+
+每条 `WebRtcMediaTransport` 在投递到会话 owner **之前**使用独立的 `PacedSendQueue`。
+媒体 Worker 入队时先检查容量，再复制数据；队满返回 `NotWritable`。同一队列合并唤醒，
+保持一个待执行的发送任务或定时器，不再为每个 RTP 包投递一个 owner 任务。
+
+```text
+媒体 Worker → 有界 Pacer → 会话 owner：SRTP → 有界 UdpSendQueue → 网络 owner：socket
+```
+
+Pacer 读取该连接的 `pacing_bitrate_bps`，尚无反馈时使用配置的初始码率；网络不可用时暂停 RTP。
+按单调时间累积字节预算，按旧速率结算已经经过的时间，防止新速率追溯产生预算。
+闲置或线程阻塞后最多保留 1200 字节信用，并允许一个包的发送债务，不累计无限补发额度。
+RTP 预算按明文 RTP 包字节计费，尚未精确计入 SRTP、UDP/IP 和 TURN 开销。
+单次执行最多处理 16 个包，后续定时唤醒间隔为 1–5 ms；实际执行时间还取决于线程负载。
+控制器的 40 ms 建议窗口不表示每 40 ms 集中发一批包。
+
+控制、音频、其余 RTP 分别保留 16/48/192 KiB 和 32/96/384 个包的容量。
+音频 SSRC 来自绑定时已协商的本地下行 SDP。控制报文优先，每轮最多 4 个且不扣 RTP 预算；
+音频先于视频消耗共享 RTP 预算，重传及 padding 也经过该出口。
+控制报文的容量和批次限制不等于基于码率的限流。
+
+静音、退订及带宽暂停的消费闸门在 Pacer 释放 RTP 和最终 UDP 发送前重新检查；
+ICE 路径变化清理队列及信用，关闭后拒绝新包。实际发送回调仍由 socket 成功接受数据触发，
+排队成功不产生 TWCC 发送时间样本。`GetPacerStats()` 提供排队字节、包数、最老等待及拒绝计数，
+当前仅为 C++ 查询接口，未汇入 HTTP 指标。
+
+本轮控制 WebRTC 下行的容量与发送节奏。容量上限不是延迟上限；视频按帧过期清理、
+探测簇精确时序与队列期限联动、其他协议的 Pacer、公网弱网效果仍需后续完善。
 
 SRTP 发送端允许重新保护缓存的原 RTP 序号及 payload，重传重新分配 TWCC 序号；
 接收端继续执行认证和防重放。当前协商的保护配置为 `SRTP_AES128_CM_SHA1_80`。
@@ -1577,11 +1621,26 @@ H265 IDR（19/20，不接受 CRA）后再打开媒体出口。恢复缓冲支持
 探测总目标受控制器最大码率及当前目标的增长上限约束，并扣除活动媒体需求；padding 使用新 RTP/TWCC 序号，
 不进入 NACK 缓存。用户暂停或源暂停期间不发送探测；最后一条订阅移除时注销对应观察者。
 
-当前执行的是单编码视频的整轨暂停/恢复，尚未接入 simulcast/SVC 选层、编码器动态调码率或实际 Pacer；
-受限 padding 探测也不等同于完整的探测与 pacing 系统。策略接口目前仅提供 C++ API，未新增信令字段。
+当前执行的是单编码视频的整轨暂停/恢复，尚未接入 simulcast/SVC 选层或编码器动态调码率。
+WebRTC 已接入上述基础 Pacer，受限 padding 探测尚未与精确的探测簇发送时序联动。
+策略接口目前仅提供 C++ API，未新增信令字段。
 组件及 Worker 集成测试不代表真实浏览器弱网质量已经验收。
 
 ## 本轮验证
+
+2026-11-10 WebRTC Pacer 验证（macOS）：新增 8 项确定性测试，覆盖突发合并与速率、
+音频/控制预留容量、owner 阻塞后的有限补发、速率变化与暂停、路径队列重置、关闭清理、
+发送完成边界、有效性检查、并发生产者上限及调度失败。另有 SFU 回归验证已排队音频在
+静音或退订后不再发送。`media_pacer`、`test_rtp_input` 及五组 WebRTC 服务回归通过；
+三个 Chrome 进程再次通过同时收发、TURN、双会话恢复、独立停止/重建与离会检查。
+本轮未测量端到端延迟改善，尚未进行公网弱网及容量验收。
+
+2026-11-10 浏览器双向会议验证（macOS）：`PacketiaRoomDemo` 构建通过，三个独立 Chrome
+进程同时发布 H264/Opus 并各订阅另外两人的音视频，其中一端发布、订阅均选中 TURN relay。
+信令断开后原参与者及双会话 ID 保留，两路 ICE restart 后视频继续解码；独立停止发布、停止订阅、
+重新创建及离会资源清理通过。桌面和 390 px 手机视口截图已检查，无横向溢出。
+`test_rtp_input`、`webrtc_audio_controls`、`webrtc_duplex` 三组 CTest 全部通过，
+浏览器脚本语法与 diff 格式检查通过。验证使用模拟媒体和本机网络，尚未验证公网弱网与会议容量。
 
 2026-11-05 分组观测与探测框架验证（macOS）：新增 7 项测试，覆盖空算法回退、分组结果传递、
 非有限结果回退、自定义探测接管、执行限幅、真实 padding/TWCC 簇编号关联、执行完成与退订中止、

@@ -57,10 +57,11 @@ struct CertificateFiles
                     X509_gmtime_adj(X509_getm_notBefore(cert.get()), -60) &&
                     X509_gmtime_adj(X509_getm_notAfter(cert.get()), 3600) &&
                     X509_set_pubkey(cert.get(), private_key.get()) == 1, "test certificate");
-        auto* name = X509_get_subject_name(cert.get());
-        Require(X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
+        std::unique_ptr<X509_NAME, decltype(&X509_NAME_free)> name(X509_NAME_new(), X509_NAME_free);
+        Require(name && X509_NAME_add_entry_by_txt(name.get(), "CN", MBSTRING_ASC,
                     reinterpret_cast<const unsigned char*>("localhost"), -1, -1, 0) == 1 &&
-                    X509_set_issuer_name(cert.get(), name) == 1, "test certificate identity");
+                    X509_set_subject_name(cert.get(), name.get()) == 1 &&
+                    X509_set_issuer_name(cert.get(), name.get()) == 1, "test certificate identity");
         std::unique_ptr<X509_EXTENSION, decltype(&X509_EXTENSION_free)> san(
             X509V3_EXT_conf_nid(nullptr, nullptr, NID_subject_alt_name,
                                const_cast<char*>("DNS:localhost")), X509_EXTENSION_free);

@@ -56,6 +56,8 @@ public:
                       uint8_t payload_type, const std::string& source_track_id = {});
 
     bool UnpublishTrack(const std::string& track_id);
+    // owner 在媒体门控生效后同步发布元数据；不改变任何订阅者的独立开关。
+    bool UpdateTrackMuted(const std::string& track_id, bool muted);
 
     bool SubscribeTrack(const std::string& subscriber_id, const std::string& track_id);
 

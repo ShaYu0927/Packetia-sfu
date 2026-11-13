@@ -36,6 +36,32 @@ public:
     std::vector<std::vector<uint8_t>> packets;
 };
 
+class DeferredCaptureTransport : public CaptureTransport
+{
+public:
+    SendResult SendWithValidity(MediaPacketType type, const uint8_t* data, size_t size, bool retransmit,
+                               std::function<bool()> valid, std::function<void()> on_sent = {}) override
+    {
+        std::vector<uint8_t> bytes(data, data + size);
+        std::lock_guard<std::mutex> lock(mutex);
+        pending.push_back([this, type, retransmit, bytes = std::move(bytes),
+                           valid = std::move(valid), on_sent = std::move(on_sent)] {
+            if (valid && !valid()) return;
+            CaptureTransport::Send(type, bytes.data(), bytes.size(), retransmit);
+            if (on_sent) on_sent();
+        });
+        return SendResult::Ok;
+    }
+    void Flush()
+    {
+        std::vector<std::function<void()>> tasks;
+        { std::lock_guard<std::mutex> lock(mutex); tasks.swap(pending); }
+        for (auto& task : tasks) task();
+    }
+    size_t PendingCount() { std::lock_guard<std::mutex> lock(mutex); return pending.size(); }
+    std::vector<std::function<void()>> pending;
+};
+
 std::shared_ptr<RtpTrackDescription> Description(int index, bool audio, uint8_t pt)
 {
     ::TrackInfo info;
@@ -200,6 +226,98 @@ TEST_F(SfuConference, GlobalTrackControlsGateRtpRetransmissionAndIndependentCons
     EXPECT_EQ(c->SubscriptionCount(), 0U);
     EXPECT_FALSE(streams.FindTrack(ref));
     source->Stop(); b->Stop(); c->Stop();
+}
+
+TEST_F(SfuConference, AudioMuteKeepsRoutesAndOtherReceiversIndependent)
+{
+    auto source = std::make_shared<media::SfuEndpoint>(9200001);
+    auto a = std::make_shared<media::SfuEndpoint>(9200002);
+    auto c = std::make_shared<media::SfuEndpoint>(9200003);
+    ASSERT_TRUE(source->AddPublishedTrack("mic", Description(0, true, 111)));
+    ASSERT_TRUE(source->Start()); ASSERT_TRUE(a->Start()); ASSERT_TRUE(c->Start());
+    auto& streams = media::MediaStreamRegistry::Instance();
+    auto stream = std::make_shared<media::MediaStream>("audio-mute-test");
+    ASSERT_TRUE(stream->ReplaceTracks({{0, media::MediaType::Audio, media::CodecType::Opus, 48000, 2}}));
+    ASSERT_TRUE(stream->BindTrackEndpoint(0, source->Id()));
+    ASSERT_TRUE(stream->StartPublishing()); ASSERT_TRUE(streams.Register(stream));
+    struct Registration {
+        media::MediaStream::Ptr stream;
+        ~Registration() { media::MediaStreamRegistry::Instance().Remove(stream); }
+    } cleanup{stream};
+    const auto ref = stream->GetTracks()[0].ref;
+    auto toA = std::make_shared<CaptureTransport>(), toC = std::make_shared<CaptureTransport>();
+    Configure(a, "mic", toA, true, 777, 111); Configure(c, "mic", toC, true, 778, 111);
+    ASSERT_TRUE(a->Subscribe("mic", source, "mic", ref));
+    ASSERT_TRUE(c->Subscribe("mic", source, "mic", ref));
+    const auto send = [&](uint16_t seq) {
+        Input(source, Packet(11, 111, seq));
+        Drain(media_affinity::MakeStreamKey(a->Id(), 777));
+        Drain(media_affinity::MakeStreamKey(c->Id(), 778));
+    };
+    send(1);
+    ASSERT_EQ(toA->Count(), 1U); ASSERT_EQ(toC->Count(), 1U);
+    const auto sent = toA->Last();
+    const auto nack = rtcpx::RtRtcpNack::Build(888, 777, {uint16_t((sent[2] << 8) | sent[3])});
+    bool changed = false;
+    ASSERT_TRUE(a->SetAudioSubscriptionMuted("mic", true, changed)); EXPECT_TRUE(changed);
+    ASSERT_TRUE(a->SetAudioSubscriptionMuted("mic", true, changed)); EXPECT_FALSE(changed);
+    EXPECT_FALSE(a->SetAudioSubscriptionMuted("missing", true, changed));
+    send(2); Input(a, nack, {}, true);
+    EXPECT_EQ(toA->Count(), 1U); EXPECT_EQ(toC->Count(), 2U);
+    ASSERT_TRUE(streams.SetTrackPaused(ref, true));
+    send(3);
+    EXPECT_EQ(toA->Count(), 1U); EXPECT_EQ(toC->Count(), 2U);
+    ASSERT_TRUE(a->SetAudioSubscriptionMuted("mic", false, changed));
+    send(4);
+    EXPECT_EQ(toA->Count(), 1U); EXPECT_EQ(toC->Count(), 2U);
+    ASSERT_TRUE(a->SetAudioSubscriptionMuted("mic", true, changed));
+    ASSERT_TRUE(streams.SetTrackPaused(ref, false));
+    send(5);
+    EXPECT_EQ(toA->Count(), 1U); EXPECT_EQ(toC->Count(), 3U);
+    ASSERT_TRUE(a->SetAudioSubscriptionMuted("mic", false, changed)); EXPECT_TRUE(changed);
+    send(6);
+    EXPECT_EQ(toA->Count(), 2U); EXPECT_EQ(toC->Count(), 4U);
+    EXPECT_EQ(a->SubscriptionCount(), 1U); EXPECT_EQ(c->SubscriptionCount(), 1U);
+    source->Stop(); a->Stop(); c->Stop();
+}
+
+TEST_F(SfuConference, QueuedAudioIsCancelledWhenMutedOrUnsubscribed)
+{
+    auto source = std::make_shared<media::SfuEndpoint>(9200011);
+    auto destination = std::make_shared<media::SfuEndpoint>(9200012);
+    ASSERT_TRUE(source->AddPublishedTrack("mic", Description(0, true, 111)));
+    ASSERT_TRUE(source->Start()); ASSERT_TRUE(destination->Start());
+    auto& streams = media::MediaStreamRegistry::Instance();
+    auto stream = std::make_shared<media::MediaStream>("queued-audio-control-test");
+    ASSERT_TRUE(stream->ReplaceTracks({{0, media::MediaType::Audio, media::CodecType::Opus, 48000, 2}}));
+    ASSERT_TRUE(stream->BindTrackEndpoint(0, source->Id()));
+    ASSERT_TRUE(stream->StartPublishing()); ASSERT_TRUE(streams.Register(stream));
+    struct Registration {
+        media::MediaStream::Ptr stream;
+        ~Registration() { media::MediaStreamRegistry::Instance().Remove(stream); }
+    } cleanup{stream};
+    auto transport = std::make_shared<DeferredCaptureTransport>();
+    Configure(destination, "mic", transport, true, 777, 111);
+    ASSERT_TRUE(destination->Subscribe("mic", source, "mic", stream->GetTracks()[0].ref));
+    const auto enqueue = [&](uint16_t seq) {
+        Input(source, Packet(11, 111, seq));
+        Drain(media_affinity::MakeStreamKey(destination->Id(), 777));
+    };
+    enqueue(1);
+    ASSERT_EQ(transport->PendingCount(), 1U);
+    bool changed = false;
+    ASSERT_TRUE(destination->SetAudioSubscriptionMuted("mic", true, changed));
+    transport->Flush();
+    EXPECT_EQ(transport->Count(), 0U);
+    ASSERT_TRUE(destination->SetAudioSubscriptionMuted("mic", false, changed));
+    enqueue(2); transport->Flush();
+    EXPECT_EQ(transport->Count(), 1U);
+    enqueue(3);
+    ASSERT_EQ(transport->PendingCount(), 1U);
+    ASSERT_TRUE(destination->Unsubscribe("mic"));
+    transport->Flush();
+    EXPECT_EQ(transport->Count(), 1U);
+    source->Stop(); destination->Stop();
 }
 
 TEST_F(SfuConference, IdleAudioGapExpiresOnOwningWorkerWithoutAnotherPacket)

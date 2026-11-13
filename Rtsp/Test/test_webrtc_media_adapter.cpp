@@ -65,7 +65,8 @@ TEST(WebRtcMediaAdapter, ReceivesPlaintextAndQueuesEncryptionOnSessionLoop)
 {
     std::vector<std::function<void()>> tasks;
     auto adapter = std::make_shared<media::transport::WebRtcMediaTransport>(20,
-        [&](auto task) { tasks.push_back(std::move(task)); return true; });
+        [&](auto task) { tasks.push_back(std::move(task)); return true; },
+        [&](uint32_t, auto task) { tasks.push_back(std::move(task)); return true; });
     auto udp = std::make_shared<AdapterDatagram>();
     auto wire = std::make_shared<WebRtcTransport>(20, udp);
     auto crypto = std::make_unique<AdapterSrtp>();

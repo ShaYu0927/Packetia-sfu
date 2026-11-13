@@ -88,6 +88,259 @@ TransportFeedback Feedback(uint64_t at)
     return feedback;
 }
 
+PacketFeedback GroupPacket(int64_t sequence, uint64_t send_ms, uint64_t receive_ms,
+                           bool received = true, uint32_t bytes = 1200)
+{
+    PacketFeedback packet;
+    packet.sent_packet.transport_sequence = sequence;
+    packet.sent_packet.send_time_ms = send_ms;
+    packet.sent_packet.size_bytes = bytes;
+    packet.received = received;
+    packet.receive_time_ms = receive_ms;
+    return packet;
+}
+
+TEST(PacketGrouping, PreservesPendingGroupAcrossFeedbackAndIncludesFiveMillisecondBoundary)
+{
+    PacketGroupObserver observer;
+    TransportFeedback feedback;
+    feedback.feedback_time_ms = 1000;
+    feedback.packet_feedbacks = {GroupPacket(2, 105, 190, true, 200),
+                                GroupPacket(0, 100, 200, true, 100),
+                                GroupPacket(1, 104, 999, false, 300)};
+    EXPECT_TRUE(observer.OnFeedback(feedback, {}).completed_groups.empty());
+
+    feedback.feedback_time_ms = 1010;
+    feedback.packet_feedbacks = {GroupPacket(3, 106, 210)};
+    const auto result = observer.OnFeedback(feedback, {});
+    ASSERT_EQ(result.completed_groups.size(), 1U);
+    const auto& group = result.completed_groups.front();
+    EXPECT_EQ(group.id, 0U);
+    EXPECT_EQ(group.feedback_time_ms, 1010U);
+    EXPECT_EQ(group.first_send_time_ms, 100U);
+    EXPECT_EQ(group.last_send_time_ms, 105U);
+    ASSERT_TRUE(group.first_receive_time_ms);
+    ASSERT_TRUE(group.last_receive_time_ms);
+    EXPECT_EQ(*group.first_receive_time_ms, 190U);
+    EXPECT_EQ(*group.last_receive_time_ms, 200U);
+    EXPECT_EQ(group.received_packets, 2U);
+    EXPECT_EQ(group.received_bytes, 300U);
+    EXPECT_EQ(group.lost_packets, 1U);
+    EXPECT_EQ(group.lost_bytes, 300U);
+    EXPECT_FALSE(group.queue_delay_ms);
+    EXPECT_FALSE(result.usage);
+    EXPECT_FALSE(result.delay_trend_ms);
+    EXPECT_FALSE(result.receive_bitrate_bps);
+    EXPECT_FALSE(result.loss_rate);
+
+    feedback.packet_feedbacks = {GroupPacket(4, 111, 220), GroupPacket(5, 112, 230)};
+    const auto next = observer.OnFeedback(feedback, {});
+    ASSERT_EQ(next.completed_groups.size(), 1U);
+    EXPECT_EQ(next.completed_groups.front().id, 1U);
+    EXPECT_EQ(next.completed_groups.front().first_send_time_ms, 106U);
+    EXPECT_EQ(next.completed_groups.front().last_send_time_ms, 111U);
+    EXPECT_EQ(next.completed_groups.front().received_packets, 2U);
+}
+
+TEST(PacketGrouping, DuplicateFeedbackAndLatePacketsDoNotModifyCompletedGroups)
+{
+    PacketGroupObserver observer;
+    TransportFeedback feedback;
+    feedback.packet_feedbacks = {GroupPacket(0, 100, 150), GroupPacket(1, 106, 156)};
+    ASSERT_EQ(observer.OnFeedback(feedback, {}).completed_groups.size(), 1U);
+    EXPECT_TRUE(observer.OnFeedback(feedback, {}).completed_groups.empty());
+
+    feedback.packet_feedbacks = {GroupPacket(2, 102, 152), GroupPacket(3, 107, 157),
+                                GroupPacket(4, 112, 162)};
+    const auto result = observer.OnFeedback(feedback, {});
+    ASSERT_EQ(result.completed_groups.size(), 1U);
+    const auto& group = result.completed_groups.front();
+    EXPECT_EQ(group.id, 1U);
+    EXPECT_EQ(group.first_send_time_ms, 106U);
+    EXPECT_EQ(group.last_send_time_ms, 107U);
+    EXPECT_EQ(group.received_packets, 2U);
+    EXPECT_EQ(group.received_bytes, 2400U);
+}
+
+TEST(PacketGrouping, LostOnlyGroupsHaveNoReceiveTimesAndResetClearsGroupingAndDeduplication)
+{
+    PacketGroupObserver observer;
+    TransportFeedback feedback;
+    feedback.packet_feedbacks = {GroupPacket(0, 0, 999, false), GroupPacket(1, 6, 0)};
+    const auto result = observer.OnFeedback(feedback, {});
+    ASSERT_EQ(result.completed_groups.size(), 1U);
+    EXPECT_EQ(result.completed_groups.front().lost_packets, 1U);
+    EXPECT_EQ(result.completed_groups.front().received_packets, 0U);
+    EXPECT_FALSE(result.completed_groups.front().first_receive_time_ms);
+    EXPECT_FALSE(result.completed_groups.front().last_receive_time_ms);
+
+    observer.Reset();
+    feedback.packet_feedbacks = {GroupPacket(0, 0, 0), GroupPacket(1, 6, 6)};
+    const auto restarted = observer.OnFeedback(feedback, {});
+    ASSERT_EQ(restarted.completed_groups.size(), 1U);
+    const auto& group = restarted.completed_groups.front();
+    EXPECT_EQ(group.id, 0U);
+    EXPECT_EQ(group.first_send_time_ms, 0U);
+    EXPECT_EQ(group.received_packets, 1U);
+    EXPECT_EQ(group.lost_packets, 0U);
+    ASSERT_TRUE(group.first_receive_time_ms);
+    EXPECT_EQ(*group.first_receive_time_ms, 0U);
+}
+
+PacketGroupObservation ObservePacket(PacketGroupObserver& observer, int64_t sequence,
+                                     uint64_t send_ms, uint64_t receive_ms)
+{
+    TransportFeedback feedback;
+    feedback.feedback_time_ms = 1000000 + static_cast<uint64_t>(sequence) * 20;
+    feedback.packet_feedbacks = {GroupPacket(sequence, send_ms, receive_ms)};
+    return observer.OnFeedback(feedback, {});
+}
+
+TEST(GroupTrend, WaitsForWindowAndDetectsStableGrowingAndDrainingQueues)
+{
+    for (const int receive_interval : {20, 25, 15})
+    {
+        SCOPED_TRACE(receive_interval);
+        PacketGroupObserver observer;
+        PacketGroupObservation result;
+        for (int i = 0; i < 80; ++i)
+        {
+            result = ObservePacket(observer, i, 1000 + i * 20, 10000 + i * receive_interval);
+            if (i <= 20)
+            {
+                EXPECT_FALSE(result.usage);
+                EXPECT_FALSE(result.delay_trend_ms);
+                EXPECT_FALSE(result.delay_trend_slope);
+            }
+        }
+        ASSERT_TRUE(result.usage);
+        ASSERT_TRUE(result.delay_trend_ms);
+        ASSERT_TRUE(result.delay_trend_slope);
+        if (receive_interval == 20)
+        {
+            EXPECT_EQ(*result.usage, BandwidthUsage::kNormal);
+            EXPECT_DOUBLE_EQ(*result.delay_trend_ms, 0);
+            EXPECT_DOUBLE_EQ(*result.delay_trend_slope, 0);
+        }
+        else if (receive_interval == 25)
+        {
+            EXPECT_EQ(*result.usage, BandwidthUsage::kOverUsing);
+            EXPECT_NEAR(*result.delay_trend_slope, 0.2, 0.001);
+            EXPECT_GT(*result.delay_trend_ms, 0);
+        }
+        else
+        {
+            EXPECT_EQ(*result.usage, BandwidthUsage::kUnderUsing);
+            EXPECT_NEAR(*result.delay_trend_slope, -1.0 / 3.0, 0.001);
+            EXPECT_LT(*result.delay_trend_ms, 0);
+        }
+    }
+}
+
+TEST(GroupTrend, SmallTransientSpikeDoesNotTriggerOveruse)
+{
+    PacketGroupObserver observer;
+    for (int i = 0; i < 100; ++i)
+    {
+        const auto result = ObservePacket(observer, i, 1000 + i * 20,
+            10000 + i * 20 + (i == 50 ? 10 : 0));
+        if (result.usage) EXPECT_EQ(*result.usage, BandwidthUsage::kNormal);
+    }
+}
+
+TEST(GroupTrend, LostTailPacketsAndLostOnlyGroupsDoNotDistortDelayTiming)
+{
+    PacketGroupObserver observer;
+    PacketGroupObservation result;
+    for (int i = 0; i < 80; ++i)
+    {
+        TransportFeedback feedback;
+        const bool received = i != 40;
+        feedback.packet_feedbacks = {
+            GroupPacket(i * 2, 1000 + i * 20, 10000 + i * 20, received),
+            GroupPacket(i * 2 + 1, 1000 + i * 20 + (i % 2 ? 5 : 1), 0, false)};
+        result = observer.OnFeedback(feedback, {});
+        ASSERT_EQ(result.completed_groups.size(), i == 0 ? 0U : 1U);
+        if (i == 1)
+        {
+            EXPECT_EQ(result.completed_groups.front().last_send_time_ms, 1001U);
+            EXPECT_EQ(result.completed_groups.front().last_received_send_time_ms, 1000U);
+        }
+        if (result.usage) EXPECT_EQ(*result.usage, BandwidthUsage::kNormal);
+    }
+    ASSERT_TRUE(result.delay_trend_slope);
+    ASSERT_TRUE(result.delay_trend_ms);
+    EXPECT_DOUBLE_EQ(*result.delay_trend_slope, 0);
+    EXPECT_DOUBLE_EQ(*result.delay_trend_ms, 0);
+}
+
+TEST(GroupTrend, BackwardsArrivalIsSkippedWithoutMovingReference)
+{
+    PacketGroupObserver observer;
+    for (int i = 0; i < 80; ++i)
+        ObservePacket(observer, i, 1000 + i * 20, 10000 + i * 20);
+    ObservePacket(observer, 80, 2600, 11400);
+    const auto skipped = ObservePacket(observer, 81, 2620, 11620);
+    EXPECT_FALSE(skipped.usage);
+    const auto resumed = ObservePacket(observer, 82, 2640, 11640);
+    ASSERT_TRUE(resumed.usage);
+    EXPECT_EQ(*resumed.usage, BandwidthUsage::kNormal);
+    EXPECT_EQ(resumed.delay_trend_ms, 0);
+    EXPECT_EQ(resumed.delay_trend_slope, 0);
+}
+
+TEST(GroupTrend, IdleGapAndResetDiscardOldTrendAndRequireNewWarmup)
+{
+    PacketGroupObserver observer;
+    for (int i = 0; i < 80; ++i)
+        ObservePacket(observer, i, 1000 + i * 20, 10000 + i * 25);
+
+    TransportFeedback feedback;
+    feedback.packet_feedbacks = {GroupPacket(80, 100000, 200000), GroupPacket(81, 100020, 200020)};
+    const auto gap = observer.OnFeedback(feedback, {});
+    EXPECT_FALSE(gap.usage);
+    EXPECT_FALSE(gap.delay_trend_ms);
+    EXPECT_FALSE(gap.delay_trend_slope);
+    for (int i = 82; i <= 101; ++i)
+    {
+        const auto result = ObservePacket(observer, i, 100000 + (i - 80) * 20, 200000 + (i - 80) * 20);
+        if (i < 101) EXPECT_FALSE(result.usage);
+        else
+        {
+            ASSERT_TRUE(result.usage);
+            EXPECT_EQ(*result.usage, BandwidthUsage::kNormal);
+            EXPECT_EQ(result.delay_trend_ms, 0);
+        }
+    }
+
+    observer.Reset();
+    for (int i = 0; i < 22; ++i)
+    {
+        const auto result = ObservePacket(observer, i, 1000 + i * 20, 10000 + i * 20);
+        if (i <= 20) EXPECT_FALSE(result.usage);
+        else
+        {
+            ASSERT_TRUE(result.usage);
+            EXPECT_EQ(*result.usage, BandwidthUsage::kNormal);
+            EXPECT_EQ(result.delay_trend_ms, 0);
+        }
+    }
+}
+
+TEST(GroupTrend, IndependentLargeClockOffsetsPreserveTrend)
+{
+    PacketGroupObserver baseline, shifted;
+    const uint64_t large_origin = std::numeric_limits<uint64_t>::max() - 10000;
+    for (int i = 0; i < 80; ++i)
+    {
+        const auto a = ObservePacket(baseline, i, 1000 + i * 20, 10000 + i * 25);
+        const auto b = ObservePacket(shifted, i, large_origin + i * 20, large_origin + i * 25);
+        EXPECT_EQ(a.usage, b.usage);
+        EXPECT_EQ(a.delay_trend_ms, b.delay_trend_ms);
+        EXPECT_EQ(a.delay_trend_slope, b.delay_trend_slope);
+    }
+}
+
 TEST(BandwidthFramework, EmptyAlgorithmsPreserveExistingEstimationAndLegacyProbeSelection)
 {
     GoogCcNetworkController defaults;

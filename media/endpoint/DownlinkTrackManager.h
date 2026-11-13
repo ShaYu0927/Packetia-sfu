@@ -36,6 +36,7 @@ public:
     void SetSchedule(std::function<void()> schedule) { schedule_ = std::move(schedule); }
     void Tick(uint64_t now_ms, bool force = false);
     bool SetPolicy(const std::string& id, const DownlinkSubscriptionPolicy& policy);
+    bool SetAudioMuted(const std::string& id, bool muted, bool& changed);
     std::optional<DownlinkBandwidthStatus> GetStatus(const std::string& id) const;
 
 private:

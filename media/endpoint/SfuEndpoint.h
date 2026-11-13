@@ -75,6 +75,8 @@ public:
 
     // 关闭转发关系并回收发送器，保留下行配置供再次订阅。
     bool Unsubscribe(const std::string& id);
+    // 保留协商和路由，只控制本端音频消费者。
+    bool SetAudioSubscriptionMuted(const std::string& id, bool muted, bool& changed);
     bool SetSubscriptionBandwidthPolicy(const std::string& id, const DownlinkSubscriptionPolicy& policy);
     std::optional<endpoint::DownlinkBandwidthStatus> GetSubscriptionBandwidthStatus(const std::string& id) const;
 

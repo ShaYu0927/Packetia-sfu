@@ -57,6 +57,21 @@ void Room::NotifyTrackEvent(const media::MediaEvent& event)
         "event=", event.Name(), "failed=", result.failed);
 }
 
+bool Room::UpdateTrackMuted(const std::string& track_id, bool muted)
+{
+    TrackPublicationSnapshot snapshot;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto track = published_tracks_.find(track_id);
+        if (track == published_tracks_.end()) return false;
+        if (track->second.track->muted() == muted) return true;
+        track->second.track->setMuted(muted);
+        snapshot = TrackSnapshotLocked(track_id, track->second);
+    }
+    NotifyTrackEvent(TrackMutedEvent(std::move(snapshot)));
+    return true;
+}
+
 const std::string& Room::Id() const
 {
     return info_.room_id;

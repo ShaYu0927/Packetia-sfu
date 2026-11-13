@@ -213,10 +213,11 @@ public:
             !X509_gmtime_adj(X509_getm_notBefore(certificate.get()), -60) ||
             !X509_gmtime_adj(X509_getm_notAfter(certificate.get()), 365L * 24 * 60 * 60) ||
             X509_set_pubkey(certificate.get(), key.get()) != 1) return false;
-        X509_NAME* name = X509_get_subject_name(certificate.get());
+        std::unique_ptr<X509_NAME, decltype(&X509_NAME_free)> name(X509_NAME_new(), X509_NAME_free);
         const unsigned char commonName[] = "Packetia WebRTC";
-        if (!name || X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, commonName, -1, -1, 0) != 1 ||
-            X509_set_issuer_name(certificate.get(), name) != 1 ||
+        if (!name || X509_NAME_add_entry_by_txt(name.get(), "CN", MBSTRING_ASC, commonName, -1, -1, 0) != 1 ||
+            X509_set_subject_name(certificate.get(), name.get()) != 1 ||
+            X509_set_issuer_name(certificate.get(), name.get()) != 1 ||
             X509_sign(certificate.get(), key.get(), EVP_sha256()) <= 0 ||
             SSL_CTX_use_certificate(context_.get(), certificate.get()) != 1 ||
             SSL_CTX_use_PrivateKey(context_.get(), key.get()) != 1 ||

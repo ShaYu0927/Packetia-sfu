@@ -47,15 +47,26 @@ public:
     void RejectNewAdmission(const std::string& connection) { RemoveSession(connection); }
 private:
     using Session = server::WebRtcSessionContext;
+    struct MediaSessions
+    {
+        std::shared_ptr<Session> publish;
+        std::shared_ptr<Session> subscribe;
+        std::shared_ptr<Session>& Role(bool subscriber) { return subscriber ? subscribe : publish; }
+        const std::shared_ptr<Session>& Role(bool subscriber) const { return subscriber ? subscribe : publish; }
+        bool Empty() const { return !publish && !subscribe; }
+    };
     struct Membership;
     struct Subscription;
     struct RoomObservation;
     using DatagramTasks = utils::BoundedChannel<std::function<void()>>;
     Json DispatchMessage(const std::string&, const SignalRequest&, const ParticipantInit*);
     std::optional<Json> AuthorizeMessage(const std::string&, const SignalRequest&) const;
+    std::shared_ptr<Session> FindSession(const std::string&, bool subscriber) const;
+    std::shared_ptr<Session> SelectSession(const std::string&, const SignalRequest&, Json& error) const;
     Json HandleNegotiationReply(Session&, const SignalRequest&);
     Json HandleMediaOffer(const std::string&, const SignalRequest&);
     Json HandleMediaStop(const std::string&, const SignalRequest&);
+    Json HandleAudioControl(const std::string&, const SignalRequest&);
     Json HandleSubscribe(const std::string&, const SignalRequest&, const std::string&);
     std::optional<sdp::SdpMedia> FindPublishedMedia(const std::string&, const std::string&) const;
     Json CreateSession(const std::string&, const std::string&, const std::vector<Subscription>& = {});
@@ -74,7 +85,7 @@ private:
     void ReconcileMediaTracks();
     void LeaveRoom(const std::string&);
     void RemoveSession(const std::string&);
-    void RemoveMediaSession(const std::string&);
+    void RemoveMediaSession(const std::string&, std::optional<bool> subscriber = std::nullopt);
     const std::shared_ptr<TaskScheduler> scheduler_;
     const config::AppConfig config_;
     const std::shared_ptr<media::IEncodedFramePublisher> publisher_;
@@ -88,7 +99,7 @@ private:
     uint16_t udp_port_ = 0;
     int network_family_ = 0;
     bool owns_network_ = true;
-    std::unordered_map<std::string, std::shared_ptr<Session>> sessions_;
+    std::unordered_map<std::string, MediaSessions> sessions_;
     std::unordered_map<std::string, std::unique_ptr<Membership>> memberships_;
     std::unordered_map<std::string, std::string> participant_connections_;
     std::unordered_map<std::string, std::shared_ptr<room::Room>> rooms_;

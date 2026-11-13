@@ -573,6 +573,13 @@ bool SfuEndpoint::Unsubscribe(const std::string& id)
     return downlinks_.Unsubscribe(id);
 }
 
+bool SfuEndpoint::SetAudioSubscriptionMuted(const std::string& id, bool muted, bool& changed)
+{
+    std::lock_guard<std::recursive_mutex> guard(runtime_mutex_);
+    changed = false;
+    return IsRunning() && downlinks_.SetAudioMuted(id, muted, changed);
+}
+
 bool SfuEndpoint::SetSubscriptionBandwidthPolicy(const std::string& id, const DownlinkSubscriptionPolicy& policy)
 {
     std::lock_guard<std::recursive_mutex> guard(runtime_mutex_);

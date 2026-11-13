@@ -94,6 +94,7 @@ struct RoomSignalHandler::RoomObservation
     std::shared_ptr<std::atomic<uint64_t>> revision = std::make_shared<std::atomic<uint64_t>>(0);
     media::EventBus::Subscription published;
     media::EventBus::Subscription unpublished;
+    media::EventBus::Subscription muted;
     std::shared_ptr<std::atomic<uint64_t>> participant_revision = std::make_shared<std::atomic<uint64_t>>(0);
     media::EventBus::Subscription participant_changed;
 };
@@ -103,6 +104,34 @@ struct RoomSignalHandler::Subscription
     std::string track_id;
     WebRtcMediaDescription media;
 };
+
+std::shared_ptr<RoomSignalHandler::Session> RoomSignalHandler::FindSession(
+    const std::string& connection, bool subscriber) const
+{
+    const auto found = sessions_.find(connection);
+    return found == sessions_.end() ? nullptr : found->second.Role(subscriber);
+}
+
+std::shared_ptr<RoomSignalHandler::Session> RoomSignalHandler::SelectSession(
+    const std::string& connection, const SignalRequest& request, Json& error) const
+{
+    const auto reject = [&](const char* message) -> std::shared_ptr<Session> { error = Error(message); return {}; };
+    const auto found = sessions_.find(connection);
+    if (found == sessions_.end()) return reject("Publish or subscribe before negotiating a media session");
+    const auto& media = found->second;
+    const auto id = request.body.find("session_id");
+    if (id == request.body.end())
+    {
+        if (media.publish && media.subscribe) return reject("session_id is required when both media roles are active");
+        return media.publish ? media.publish : media.subscribe;
+    }
+    if (!id->is_number_integer() || (!id->is_number_unsigned() && id->get<int64_t>() <= 0) ||
+        (id->is_number_unsigned() && id->get<uint64_t>() == 0))
+        return reject("Expected a positive integer session_id from the media answer");
+    for (const auto& session : {media.publish, media.subscribe})
+        if (session && session->id == id->get<uint64_t>()) return session;
+    return reject("Media session_id does not match the current participant");
+}
 
 Json RoomSignalHandler::DispatchMessage(const std::string& connection, const SignalRequest& request, const ParticipantInit* init)
 {
@@ -129,11 +158,18 @@ Json RoomSignalHandler::DispatchMessage(const std::string& connection, const Sig
     case Type::Unpublish:
     case Type::Unsubscribe:
         return HandleMediaStop(connection, request);
+    case Type::SetAudioSubscription:
+    case Type::SetTrackMuted:
+        return HandleAudioControl(connection, request);
     case Type::Offer:
         return Error("Room media renegotiation requires a new session; use restart_ice for ICE recovery");
     case Type::Answer:
     case Type::Rollback:
-        return HandleNegotiationReply(*sessions_.at(connection), request);
+    {
+        Json error;
+        const auto session = SelectSession(connection, request, error);
+        return session ? HandleNegotiationReply(*session, request) : error;
+    }
     case Type::Publish:
     case Type::Subscribe:
     case Type::RestartIce:
@@ -162,17 +198,20 @@ std::optional<Json> RoomSignalHandler::AuthorizeMessage(const std::string& conne
         break;
     }
     case Type::Publish:
+    case Type::SetTrackMuted:
     case Type::Unpublish: action = auth::Action::Publish; break;
     case Type::Subscribe:
+    case Type::SetAudioSubscription:
     case Type::Unsubscribe: action = auth::Action::Subscribe; break;
     case Type::Offer:
     case Type::Answer:
     case Type::Rollback:
     case Type::RestartIce:
     {
-        const auto session = sessions_.find(connection);
-        if (session == sessions_.end()) return Error("Publish or subscribe before negotiating a media session");
-        action = session->second->subscriber ? auth::Action::Subscribe : auth::Action::Publish;
+        Json error;
+        const auto session = SelectSession(connection, request, error);
+        if (!session) return error;
+        action = session->subscriber ? auth::Action::Subscribe : auth::Action::Publish;
         break;
     }
     default: return Error("Unsupported signaling message type");
@@ -222,13 +261,17 @@ Json RoomSignalHandler::HandleMediaOffer(const std::string& connection, const Si
     if (offer.empty() || offer.size() > kMaxSdpBytes) return Error("SDP must be between 1 and 65536 bytes");
     if (request.type == SignalRequest::Type::RestartIce)
     {
-        auto& session = *sessions_.at(connection);
+        Json error;
+        const auto selected = SelectSession(connection, request, error);
+        if (!selected) return error;
+        auto& session = *selected;
         WebRtcSessionDescription answer;
         if (!session.rtc->RestartIce(offer, answer)) return Error(session.rtc->LastError());
         return Json{{"type", "answer"}, {"session_id", session.id},
             {"sdp", sdp::Sdp::Serialize(answer)}};
     }
-    if (sessions_.count(connection)) return Error("Stop the current media session with unpublish or unsubscribe before starting another");
+    if (FindSession(connection, request.type == SignalRequest::Type::Subscribe))
+        return Error("Stop the current session of this role before starting another");
     if (request.type == SignalRequest::Type::Publish) return CreateSession(connection, offer);
     return HandleSubscribe(connection, request, offer);
 }
@@ -243,16 +286,62 @@ Json RoomSignalHandler::HandleMediaStop(const std::string& connection, const Sig
 
     const auto sessionId = id->get<uint64_t>();
     const bool subscriber = request.type == SignalRequest::Type::Unsubscribe;
-    const auto session = sessions_.find(connection);
-    const bool changed = session != sessions_.end();
-    if (changed)
+    const auto session = FindSession(connection, subscriber);
+    const auto other = FindSession(connection, !subscriber);
+    if (other && other->id == sessionId) return Error("Media stop action does not match the current session role");
+    const bool changed = bool(session);
+    if (session)
     {
-        if (session->second->id != sessionId) return Error("Media session_id does not match the current session");
-        if (session->second->subscriber != subscriber) return Error("Media stop action does not match the current session role");
-        RemoveMediaSession(connection);
+        if (session->id != sessionId) return Error("Media session_id does not match the current session");
+        RemoveMediaSession(connection, subscriber);
     }
     return Json{{"type", subscriber ? "unsubscribed" : "unpublished"},
         {"session_id", sessionId}, {"changed", changed}};
+}
+
+Json RoomSignalHandler::HandleAudioControl(const std::string& connection, const SignalRequest& request)
+{
+    const auto& body = request.body;
+    const auto id = body.find("session_id");
+    if (id == body.end() || !id->is_number_integer() ||
+        (!id->is_number_unsigned() && id->get<int64_t>() <= 0) ||
+        (id->is_number_unsigned() && id->get<uint64_t>() == 0))
+        return Error("Expected a positive integer session_id from the media answer");
+    if (!body.contains("track_id") || !body["track_id"].is_string() ||
+        body["track_id"].get_ref<const std::string&>().empty() ||
+        !body.contains("muted") || !body["muted"].is_boolean())
+        return Error("Expected track_id and boolean muted");
+    const bool subscriber = request.type == SignalRequest::Type::SetAudioSubscription;
+    const auto found = FindSession(connection, subscriber);
+    if (!found || found->id != id->get<uint64_t>())
+        return Error("Media session_id does not match the current session role");
+    auto& session = *found;
+    const auto& trackId = body["track_id"].get_ref<const std::string&>();
+    const auto& bindings = subscriber ? session.room_subscriptions : session.room_tracks;
+    if (std::find(bindings.begin(), bindings.end(), trackId) == bindings.end())
+        return Error("Track is not bound to the current media session");
+    const bool muted = body["muted"].get<bool>();
+    bool changed = false;
+    if (subscriber)
+    {
+        if (!session.endpoint->SetAudioSubscriptionMuted(trackId, muted, changed))
+            return Error("Audio subscription is unavailable");
+    }
+    else
+    {
+        const auto& member = *memberships_.at(connection);
+        const auto track = member.participant->GetPublishedTrack(trackId);
+        if (!track || track->type() != media::MediaType::Audio)
+            return Error("Published audio track is unavailable");
+        auto& registry = media::MediaStreamRegistry::Instance();
+        const auto ref = track->info().media_track;
+        const auto current = registry.FindTrack(ref);
+        if (!current || !registry.SetTrackPaused(ref, muted)) return Error("Published audio track is unavailable");
+        changed = (current->state == media::MediaTrackState::Paused) != muted;
+        member.room->UpdateTrackMuted(trackId, muted);
+    }
+    return Json{{"type", subscriber ? "audio_subscription_updated" : "track_mute_updated"},
+        {"session_id", session.id}, {"track_id", trackId}, {"muted", muted}, {"changed", changed}};
 }
 
 Json RoomSignalHandler::HandleSubscribe(const std::string& connection, const SignalRequest& request, const std::string& offer)
@@ -297,9 +386,9 @@ std::optional<sdp::SdpMedia> RoomSignalHandler::FindPublishedMedia(const std::st
     {
         if (item.first == connection || item.second->room != member.room) continue;
         const auto track = item.second->participant->GetPublishedTrack(trackId);
-        const auto source = sessions_.find(item.first);
-        if (!track || source == sessions_.end() || source->second->subscriber) continue;
-        for (const auto& media : source->second->rtc->LocalDescription().medias)
+        const auto source = FindSession(item.first, false);
+        if (!track || !source) continue;
+        for (const auto& media : source->rtc->LocalDescription().medias)
             if (media.mid == track->info().mid && media.port && media.direction == MediaDirection::RecvOnly)
                 return media;
     }
@@ -343,10 +432,14 @@ Json RoomSignalHandler::CreateSession(const std::string& connection, const std::
     entry->subscriber = !subscriptions.empty();
 
     // 先登记归属，后续失败统一回收本次资源。
-    auto& session = *sessions_.emplace(connection, std::move(entry)).first->second;
+    const bool subscriber = entry->subscriber;
+    auto& slot = sessions_[connection].Role(subscriber);
+    if (slot) return Error("Media role is already bound");
+    slot = entry;
+    auto& session = *entry;
     const auto fail = [&](std::string detail)
     {
-        RemoveMediaSession(connection);
+        RemoveMediaSession(connection, subscriber);
         return Error(detail);
     };
     if (!capacity_->AcquireMedia()) return fail("WebRTC session limit reached");
@@ -364,7 +457,7 @@ Json RoomSignalHandler::CreateSession(const std::string& connection, const std::
     const auto datagram = mux_->Register(session.id, session.ufrag, std::move(dispatch));
     if (!datagram) return fail("Could not register ICE session");
     const auto weakMux = std::weak_ptr<WebRtcUdpMux>(mux_);
-    const auto weakSession = std::weak_ptr<Session>(sessions_.at(connection));
+    const auto weakSession = std::weak_ptr<Session>(entry);
     options.onSelectedPeer = [weakMux, weakSession](const network::SocketAddr& peer)
     {
         const auto mux = weakMux.lock();
@@ -387,6 +480,12 @@ Json RoomSignalHandler::CreateSession(const std::string& connection, const std::
         {
             const auto scheduler = weakScheduler.lock();
             return scheduler && scheduler->Post(std::move(task));
+        }, [weakScheduler](uint32_t delay_ms, std::function<void()> task)
+        {
+            const auto scheduler = weakScheduler.lock();
+            if (!scheduler || scheduler->IsStopped()) return false;
+            if (!delay_ms) return scheduler->Post(std::move(task));
+            return scheduler->AddTimer([task = std::move(task)] { task(); return false; }, delay_ms) != 0;
         });
     const auto member = memberships_.find(connection);
     if (!session.subscriber)
@@ -566,11 +665,13 @@ void RoomSignalHandler::OnSignalingClosed(const std::string& connection)
     member.room->NotifyParticipantChanged(member.participant->Id());
     const auto session = sessions_.find(connection);
     if (session != sessions_.end())
-    {
-        session->second->rtc->RollbackNegotiation();
-        session->second->pending_offer_id.clear();
-        session->second->negotiation_deadline_ms = 0;
-    }
+        for (const auto& media : {session->second.publish, session->second.subscribe})
+        {
+            if (!media) continue;
+            media->rtc->RollbackNegotiation();
+            media->pending_offer_id.clear();
+            media->negotiation_deadline_ms = 0;
+        }
 }
 
 Json RoomSignalHandler::ResumeRoom(const std::string& connection, const std::string& roomId,
@@ -598,11 +699,18 @@ Json RoomSignalHandler::ResumeRoom(const std::string& connection, const std::str
         RemoveSession(previous);
         return Error("Participant recovery expired");
     }
+    // 失效方向单独回收，仍可恢复另一条媒体会话及原参会身份。
+    const bool hadMedia = sessions_.count(previous) != 0;
+    for (const bool subscriber : {false, true})
+        if (const auto media = FindSession(previous, subscriber); media &&
+            (media->rtc->State() == WebRtcSessionState::Failed || media->rtc->State() == WebRtcSessionState::Closed))
+        {
+            ++stats_.media_closed;
+            RemoveMediaSession(previous, subscriber);
+        }
     const auto media = sessions_.find(previous);
-    if (media != sessions_.end() && (media->second->rtc->State() == WebRtcSessionState::Failed ||
-        media->second->rtc->State() == WebRtcSessionState::Closed))
+    if (hadMedia && media == sessions_.end())
     {
-        ++stats_.media_closed;
         RemoveSession(previous);
         return Error("Media session expired; join again");
     }
@@ -612,7 +720,11 @@ Json RoomSignalHandler::ResumeRoom(const std::string& connection, const std::str
     auto response = Json{{"type", "resumed"}, {"room_id", roomId}, {"participant_id", participantId},
         {"subject_id", member.caller.subject_id},
         {"resume_token", member.resume_token}, {"signaling_generation", nextBinding.generation},
-        {"ice_restart", media != sessions_.end()}};
+        {"ice_restart", media != sessions_.end()}, {"media_sessions", Json::array()}};
+    if (media != sessions_.end())
+        for (const auto& session : {media->second.publish, media->second.subscribe})
+            if (session) response["media_sessions"].push_back({{"session_id", session->id},
+                {"role", session->subscriber ? "subscribe" : "publish"}, {"ice_restart", true}});
     // 先预留两个映射项再迁移归属，分配失败后原参与者仍可重试恢复。
     memberships_.reserve(memberships_.size() + 1);
     if (media != sessions_.end()) sessions_.emplace(connection, media->second);
@@ -651,7 +763,8 @@ Json RoomSignalHandler::ListTracks(const std::string& connection) const
         {
             const auto info = track->info();
             tracks.push_back({{"track_id", info.sid}, {"publisher_id", participant->Id()},
-                {"kind", info.type == media::MediaType::Video ? "video" : "audio"}, {"mime_type", info.mimeType}});
+                {"kind", info.type == media::MediaType::Video ? "video" : "audio"}, {"mime_type", info.mimeType},
+                {"muted", info.muted}});
         }
     std::sort(tracks.begin(), tracks.end(), [](const auto& a, const auto& b) { return a.at("track_id") < b.at("track_id"); });
     return Json{{"type", "tracks"}, {"tracks", tracks}};
@@ -675,6 +788,7 @@ void RoomSignalHandler::ObserveRoom(const std::shared_ptr<room::Room>& target)
     };
     observation->published = target->Events().Subscribe<room::TrackPublishedEvent>(changed);
     observation->unpublished = target->Events().Subscribe<room::TrackUnpublishedEvent>(changed);
+    observation->muted = target->Events().Subscribe<room::TrackMutedEvent>(changed);
     observation->participant_revision->store(target->ParticipantRevision());
     const std::weak_ptr<std::atomic<uint64_t>> members = observation->participant_revision;
     observation->participant_changed = target->Events().Subscribe<room::ParticipantChangedEvent>([members](const auto& event) {
@@ -834,9 +948,14 @@ Json RoomSignalHandler::ApplyParticipantCommand(std::shared_ptr<room::Room> targ
     auto info = target->GetInfo();
     Json error;
     if (!ApplyParticipantPatch(body, info, error)) return error;
-    const auto media = sessions_.find(targetConnection);
-    const bool stopMedia = media != sessions_.end() &&
-        (media->second->subscriber ? !info.permissions.can_subscribe : !info.permissions.can_publish);
+    const bool stopPublish = FindSession(targetConnection, false) && !info.permissions.can_publish;
+    const bool stopSubscribe = FindSession(targetConnection, true) && !info.permissions.can_subscribe;
+    const bool stopMedia = stopPublish || stopSubscribe;
+    auto stoppedSessions = Json::array();
+    for (const bool subscriber : {false, true})
+        if (subscriber ? stopSubscribe : stopPublish)
+            stoppedSessions.push_back({{"session_id", FindSession(targetConnection, subscriber)->id},
+                {"role", subscriber ? "subscribe" : "publish"}});
     if (!targetRoom->UpdateParticipant(id, std::move(info.identity.name), std::move(info.properties), info.permissions))
         return Error("Participant left during update");
     auto& grant = member.caller.video;
@@ -844,14 +963,16 @@ Json RoomSignalHandler::ApplyParticipantCommand(std::shared_ptr<room::Room> targ
     grant.can_subscribe = info.permissions.can_subscribe;
     grant.room_admin = info.permissions.room_admin;
     grant.can_update_own_metadata = info.permissions.can_update_own_metadata;
-    if (stopMedia) RemoveMediaSession(targetConnection);
+    if (stopPublish) RemoveMediaSession(targetConnection, false);
+    if (stopSubscribe) RemoveMediaSession(targetConnection, true);
     const auto snapshot = ParticipantMessage(target->GetInfo());
     const auto revision = targetRoom->ParticipantRevision();
     if (body.contains("permissions") && targetConnection != connection && !member.reconnect_deadline_ms && emit_)
         emit_(targetConnection, Json{{"type", "permissions_changed"}, {"room_id", targetRoom->Id()},
-            {"revision", revision}, {"participant", snapshot}, {"media_stopped", stopMedia}}, false);
+            {"revision", revision}, {"participant", snapshot}, {"media_stopped", stopMedia},
+            {"stopped_sessions", stoppedSessions}}, false);
     return {{"type", "participant_updated"}, {"room_id", targetRoom->Id()}, {"revision", revision},
-        {"participant", snapshot}, {"media_stopped", stopMedia}};
+        {"participant", snapshot}, {"media_stopped", stopMedia}, {"stopped_sessions", stoppedSessions}};
 }
 
 void RoomSignalHandler::RetireAssignment(const std::string& roomId, const std::string& id)
@@ -965,16 +1086,26 @@ void RoomSignalHandler::LeaveRoom(const std::string& connection)
 
 void RoomSignalHandler::RemoveSession(const std::string& connection)
 {
-    LeaveRoom(connection);
-    RemoveMediaSession(connection);
+    const auto key = connection;
+    LeaveRoom(key);
+    RemoveMediaSession(key);
 }
 
-void RoomSignalHandler::RemoveMediaSession(const std::string& connection)
+void RoomSignalHandler::RemoveMediaSession(const std::string& connection, std::optional<bool> subscriber)
 {
+    if (!subscriber.has_value())
+    {
+        // 参数可能借用 sessions_ 中的 key，删除最后一个方向前先复制。
+        const auto key = connection;
+        RemoveMediaSession(key, false);
+        RemoveMediaSession(key, true);
+        return;
+    }
     const auto found = sessions_.find(connection);
     if (found == sessions_.end()) return;
-    auto session = std::move(found->second);
-    sessions_.erase(found);
+    auto session = std::move(found->second.Role(*subscriber));
+    if (found->second.Empty()) sessions_.erase(found);
+    if (!session) return;
     if (session->capacity_reserved) capacity_->ReleaseMedia();
     const auto member = memberships_.find(connection);
     if (member != memberships_.end() && session->room_binding)
@@ -999,10 +1130,13 @@ bool RoomSignalHandler::Renegotiate(uint64_t sessionId, const std::vector<sdp::S
     const auto perform = [&]
     {
         if (!started_) { error = "WebRTC service is stopped"; return; }
-        const auto found = std::find_if(sessions_.begin(), sessions_.end(),
-            [&](const auto& item) { return item.second->id == sessionId; });
-        if (found == sessions_.end()) { error = "Unknown WebRTC session"; return; }
-        auto& session = *found->second;
+        std::shared_ptr<Session> selected;
+        std::string connection;
+        for (const auto& item : sessions_)
+            for (const auto& media : {item.second.publish, item.second.subscribe})
+                if (media && media->id == sessionId) { selected = media; connection = item.first; }
+        if (!selected) { error = "Unknown WebRTC session"; return; }
+        auto& session = *selected;
         if (session.room_managed) { error = "Room media renegotiation requires a new session"; return; }
         const auto supported = Capabilities();
         for (const auto& media : medias)
@@ -1035,7 +1169,7 @@ bool RoomSignalHandler::Renegotiate(uint64_t sessionId, const std::vector<sdp::S
             const auto message = Json{{"type", "offer"}, {"session_id", session.id},
                 {"negotiation_id", offer.origin.sess_version}, {"sdp", sdp}};
             session.pending_offer_id = offer.origin.sess_version;
-            if (!emit_ || !emit_(found->first, message, false)) throw std::runtime_error("Could not queue SDP offer");
+            if (!emit_ || !emit_(connection, message, false)) throw std::runtime_error("Could not queue SDP offer");
         }
         catch (const std::exception&)
         {
@@ -1124,13 +1258,15 @@ void RoomSignalHandler::Stop()
 Json RoomSignalHandler::Handle(const std::string& connection, const SignalRequest& request, const ParticipantInit* init)
 {
     if (!started_) return Error("WebRTC service is stopped");
-    const bool had_media = sessions_.count(connection) != 0;
+    const auto before = sessions_.find(connection);
+    const auto previous = before == sessions_.end() ? MediaSessions{} : before->second;
     const bool had_member = HasMember(connection);
     try { return DispatchMessage(connection, request, init); }
     catch (...)
     {
         // 解析或分配失败只回收本次新建资源；不得误删原参与者及既有媒体。
-        if (!had_media) RemoveMediaSession(connection);
+        if (!previous.publish) RemoveMediaSession(connection, false);
+        if (!previous.subscribe) RemoveMediaSession(connection, true);
         if (!had_member) LeaveRoom(connection);
         for (auto it = rooms_.begin(); it != rooms_.end();)
             if (!it->second || !it->second->ParticipantCount())
@@ -1218,26 +1354,43 @@ void RoomSignalHandler::Tick()
     for (const auto& item : memberships_)
         if (item.second->reconnect_deadline_ms && now >= item.second->reconnect_deadline_ms)
         { ++stats_.recovery_expired; expired.insert(item.first); }
+    struct ClosedMedia { std::string connection; bool subscriber; uint64_t id; };
+    std::vector<ClosedMedia> closed;
     for (const auto& item : sessions_)
+        for (const auto& media : {item.second.publish, item.second.subscribe})
+        {
+            if (!media) continue;
+            auto& session = *media;
+            if (!session.rtc->Tick(now))
+            {
+                ++stats_.media_closed;
+                closed.push_back({item.first, session.subscriber, session.id});
+                continue;
+            }
+            if (session.endpoint && session.rtc->State() == WebRtcSessionState::Connected)
+                session.endpoint->ScheduleRecoveryTick();
+            if (session.negotiation_deadline_ms && now >= session.negotiation_deadline_ms)
+            {
+                session.rtc->RollbackNegotiation();
+                const auto id = std::move(session.pending_offer_id);
+                session.pending_offer_id.clear(); session.negotiation_deadline_ms = 0;
+                ++stats_.negotiation_timeouts;
+                if (!emit_ || !emit_(item.first, Json{{"type", "error"}, {"session_id", session.id},
+                    {"error", "Negotiation timed out; previous media retained"}, {"negotiation_id", id}}, false))
+                    expired.insert(item.first);
+            }
+        }
+    for (const auto& media : closed)
     {
-        auto& session = *item.second;
-        if (!session.rtc->Tick(now))
-        {
-            if (!expired.count(item.first)) ++stats_.media_closed;
-            expired.insert(item.first); continue;
-        }
-        if (session.endpoint && session.rtc->State() == WebRtcSessionState::Connected)
-            session.endpoint->ScheduleRecoveryTick();
-        if (session.negotiation_deadline_ms && now >= session.negotiation_deadline_ms)
-        {
-            session.rtc->RollbackNegotiation();
-            const auto id = std::move(session.pending_offer_id);
-            session.pending_offer_id.clear(); session.negotiation_deadline_ms = 0;
-            ++stats_.negotiation_timeouts;
-            if (!emit_ || !emit_(item.first, Json{{"type", "error"},
-                {"error", "Negotiation timed out; previous media retained"}, {"negotiation_id", id}}, false))
-                expired.insert(item.first);
-        }
+        if (expired.count(media.connection)) continue;
+        RemoveMediaSession(media.connection, media.subscriber);
+        if (!sessions_.count(media.connection)) { expired.insert(media.connection); continue; }
+        const auto member = memberships_.find(media.connection);
+        if (member != memberships_.end() && !member->second->reconnect_deadline_ms && emit_ &&
+            !emit_(media.connection, Json{{"type", "media_closed"}, {"session_id", media.id},
+                {"role", media.subscriber ? "subscribe" : "publish"},
+                {"reason", "WebRTC connection closed or timed out"}}, false))
+            expired.insert(media.connection);
     }
     for (const auto& connection : expired)
     {
@@ -1272,7 +1425,8 @@ void RoomSignalHandler::ReconcileMediaTracks()
     std::vector<std::string> empty;
     for (const auto& item : sessions_)
     {
-        auto& session = *item.second;
+        if (!item.second.publish) continue;
+        auto& session = *item.second.publish;
         if (!session.media_stream) continue;
         if (!registry.FindById(session.media_stream->GetId()))
         { empty.push_back(item.first); continue; }
@@ -1281,16 +1435,21 @@ void RoomSignalHandler::ReconcileMediaTracks()
         for (auto it = session.room_tracks.begin(); it != session.room_tracks.end();)
         {
             const auto track = member->second->participant->GetPublishedTrack(*it);
-            if (track && !registry.FindTrack(track->info().media_track))
+            const auto current = track ? registry.FindTrack(track->info().media_track) : std::nullopt;
+            if (track && !current)
             {
                 member->second->room->UnpublishTrack(*it);
                 it = session.room_tracks.erase(it);
             }
-            else ++it;
+            else
+            {
+                if (current) member->second->room->UpdateTrackMuted(*it, current->state == media::MediaTrackState::Paused);
+                ++it;
+            }
         }
         if (session.room_tracks.empty() && session.room_managed) empty.push_back(item.first);
     }
-    for (const auto& connection : empty) RemoveMediaSession(connection);
+    for (const auto& connection : empty) RemoveMediaSession(connection, false);
 }
 
 }

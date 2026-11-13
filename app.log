@@ -2,3 +2,27 @@
 2026-11-04 15:46:25.861 [pid=53828 tid=0x1f77c1e80] [INFO]: [ReceiveQualityMonitor.cpp:40] [WEAK_NET] quality changed  ssrc= 2  from= Unknown  to= Weak  loss= 0  jitter_ms= 10  sender_bitrate_bps= 1000000  target_bitrate_bps= 680000
 2026-11-04 15:46:25.861 [pid=53828 tid=0x1f77c1e80] [INFO]: [ReceiveQualityMonitor.cpp:40] [WEAK_NET] quality changed  ssrc= 1  from= Excellent  to= Weak  loss= 0  jitter_ms= 10  sender_bitrate_bps= 1000000  target_bitrate_bps= 680000
 2026-11-04 15:46:25.861 [pid=53828 tid=0x1f77c1e80] [INFO]: [ReceiveQualityMonitor.cpp:40] [WEAK_NET] quality changed  ssrc= 1  from= Unknown  to= Weak  loss= 0  jitter_ms= 10  sender_bitrate_bps= 1000000  target_bitrate_bps= 680000
+2026-11-10 15:19:16.257 [pid=39519 tid=0x1f77c1e80] [INFO]: [ShardedWorkerPool.cpp:369] [WorkerService] create pool ok, pool= media  worker_count= 4  max_queue_len= 128
+2026-11-10 15:19:16.257 [pid=39519 tid=0x1f77c1e80] [INFO]: [AudioRtpDepacketizerFactory.cpp:158] [AUDIO][FACTORY] selected Opus RTP depacketizer  sample_rate= 48000  channels= 2
+2026-11-10 15:19:16.257 [pid=39519 tid=0x1f77c1e80] [INFO]: [RtpReceiver.cpp:278] [AUDIO][TRACK] depacketizer ready  track= 0  codec= opus  pt= 111  clock_rate= 48000  channels= 2
+2026-11-10 15:19:16.257 [pid=39519 tid=0x1f77c1e80] [INFO]: [SfuEndpoint.cpp:176] [AUDIO][TRACK] created  track= 0  codec= opus  pt= 111  ssrc= 11  clock_rate= 48000  channels= 2
+2026-11-10 15:19:16.257 [pid=39519 tid=0x1f77c1e80] [INFO]: [RtpReceiver.cpp:459] [AUDIO][RTP] first packet accepted  track= 0  codec= opus  pt= 111  ssrc= 11  seq= 1  rtp_ts= 1  payload_bytes= 3
+2026-11-10 15:19:16.257 [pid=39519 tid=0x16be27000] [INFO]: [ShardedWorkerPool.cpp:244] worker exit by stop, idx= 0
+2026-11-10 15:19:16.257 [pid=39519 tid=0x16beb3000] [INFO]: [MediaLatency.cpp:203] [media-latency] thread=0x16beb3000 window_ms=0 sample_every=1 sender_attempts=3
+2026-11-10 15:19:16.257 [pid=39519 tid=0x16bfcb000] [INFO]: [ShardedWorkerPool.cpp:244] worker exit by stop, idx= 3
+2026-11-10 15:19:16.257 [pid=39519 tid=0x16bf3f000] [INFO]: [ShardedWorkerPool.cpp:244] worker exit by stop, idx= 2
+2026-11-10 15:19:16.257 [pid=39519 tid=0x16beb3000] [INFO]: [ShardedWorkerPool.cpp:244] worker exit by stop, idx= 1
+2026-11-10 15:19:16.257 [pid=39519 tid=0x1f77c1e80] [INFO]: [ShardedWorkerPool.cpp:429] [WorkerService] destroy pool ok, pool= media  drain= 1
+2026-11-10 15:19:16.259 [pid=39519 tid=0x1f77c1e80] [INFO]: [IceAgent.cpp:254] [ICE] selected peer by USE-CANDIDATE, peer= 192.0.2.3:7000
+2026-11-12 17:40:33.129 [pid=6903 tid=0x1f77c1e80] [INFO]: [ReceiveQualityMonitor.cpp:48] [WEAK_NET] quality changed  ssrc= 1  from= Unknown  to= Excellent  loss= 0  jitter_ms= 10  sender_bitrate_bps= 1000000  target_bitrate_bps= 840000
+2026-11-12 17:40:33.129 [pid=6903 tid=0x1f77c1e80] [INFO]: [ReceiveQualityMonitor.cpp:48] [WEAK_NET] quality changed  ssrc= 2  from= Unknown  to= Weak  loss= 0  jitter_ms= 10  sender_bitrate_bps= 1000000  target_bitrate_bps= 680000
+2026-11-12 17:40:33.129 [pid=6903 tid=0x1f77c1e80] [INFO]: [ReceiveQualityMonitor.cpp:48] [WEAK_NET] quality changed  ssrc= 1  from= Excellent  to= Weak  loss= 0  jitter_ms= 10  sender_bitrate_bps= 1000000  target_bitrate_bps= 680000
+2026-11-12 17:40:33.129 [pid=6903 tid=0x1f77c1e80] [INFO]: [ReceiveQualityMonitor.cpp:48] [WEAK_NET] quality changed  ssrc= 1  from= Unknown  to= Weak  loss= 0  jitter_ms= 10  sender_bitrate_bps= 1000000  target_bitrate_bps= 680000
+2026-11-12 17:40:33.134 [pid=6903 tid=0x1f77c1e80] [INFO]: [ReceiveQualityMonitor.cpp:48] [WEAK_NET] quality changed  ssrc= 77  from= Unknown  to= Bad  loss= 0.25  jitter_ms= 0  sender_bitrate_bps= 0  target_bitrate_bps= 425000
+2026-11-12 17:40:33.134 [pid=6903 tid=0x1f77c1e80] [INFO]: [ReceiveQualityMonitor.cpp:48] [WEAK_NET] quality changed  ssrc= 88  from= Unknown  to= Bad  loss= 0.25  jitter_ms= 0  sender_bitrate_bps= 0  target_bitrate_bps= 425000
+2026-11-12 17:40:33.134 [pid=6903 tid=0x1f77c1e80] [INFO]: [ReceiveQualityMonitor.cpp:48] [WEAK_NET] quality changed  ssrc= 77  from= Unknown  to= Bad  loss= 0.25  jitter_ms= 0  sender_bitrate_bps= 0  target_bitrate_bps= 425000
+2026-11-12 17:40:33.134 [pid=6903 tid=0x1f77c1e80] [INFO]: [ReceiveQualityMonitor.cpp:48] [WEAK_NET] quality changed  ssrc= 88  from= Unknown  to= Bad  loss= 0.25  jitter_ms= 0  sender_bitrate_bps= 0  target_bitrate_bps= 425000
+2026-11-12 17:40:33.135 [pid=6903 tid=0x1f77c1e80] [INFO]: [ReceiveQualityMonitor.cpp:48] [WEAK_NET] quality changed  ssrc= 77  from= Unknown  to= Bad  loss= 0.25  jitter_ms= 0  sender_bitrate_bps= 0  target_bitrate_bps= 425000
+2026-11-12 17:40:33.135 [pid=6903 tid=0x1f77c1e80] [INFO]: [ReceiveQualityMonitor.cpp:48] [WEAK_NET] quality changed  ssrc= 77  from= Unknown  to= Bad  loss= 0.25  jitter_ms= 0  sender_bitrate_bps= 0  target_bitrate_bps= 425000
+2026-11-12 17:40:33.135 [pid=6903 tid=0x1f77c1e80] [INFO]: [ReceiveQualityMonitor.cpp:48] [WEAK_NET] quality changed  ssrc= 88  from= Unknown  to= Bad  loss= 0.25  jitter_ms= 0  sender_bitrate_bps= 0  target_bitrate_bps= 425000
+2026-11-12 17:40:33.135 [pid=6903 tid=0x1f77c1e80] [INFO]: [ReceiveQualityMonitor.cpp:48] [WEAK_NET] quality changed  ssrc= 77  from= Unknown  to= Bad  loss= 0.25  jitter_ms= 0  sender_bitrate_bps= 0  target_bitrate_bps= 425000

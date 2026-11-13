@@ -48,7 +48,8 @@ public:
         if (type == MediaPacketType::Rtp && !route->CanSendMedia() &&
             !(route->probe_allowed.load() && !retransmit && IsPadding(data, size)))
             return SendResult::NotWritable;
-        return transport_->Send(type, data, size, retransmit);
+        return transport_->SendWithValidity(type, data, size, retransmit,
+            Validity(type, !retransmit && IsPadding(data, size)));
     }
     SendResult SendRtpWithCompletion(const uint8_t* data, size_t size, bool retransmit,
                                      std::function<void()> on_sent) override
@@ -59,13 +60,22 @@ public:
         if (!route->CanSendMedia() &&
             !(route->probe_allowed.load() && !retransmit && IsPadding(data, size)))
             return SendResult::NotWritable;
-        return transport_->SendRtpWithCompletion(data, size, retransmit, std::move(on_sent));
+        return transport_->SendWithValidity(MediaPacketType::Rtp, data, size, retransmit,
+            Validity(MediaPacketType::Rtp, !retransmit && IsPadding(data, size)), std::move(on_sent));
     }
     void SetPacketSink(std::weak_ptr<IMediaPacketSink>) override {}
     void Close() override { if (const auto route = route_.lock()) route->Close(); }
     std::shared_ptr<media::SendSideController> GetSendSideController() override
     { return transport_->GetSendSideController(); }
 private:
+    std::function<bool()> Validity(MediaPacketType type, bool padding) const
+    {
+        return [weak = route_, type, padding] {
+            const auto route = weak.lock();
+            return route && route->CanDeliver() && (type != MediaPacketType::Rtp ||
+                route->CanSendMedia() || (padding && route->probe_allowed.load()));
+        };
+    }
     const std::shared_ptr<IMediaTransport> transport_;
     const std::weak_ptr<Subscription> route_;
 };
@@ -249,6 +259,19 @@ uint32_t DownlinkTrackManager::RequiredBitrate(const Subscription& route) const
     const auto measured = route.source_bitrate ? route.source_bitrate->Bitrate() : 0;
     return measured ? measured : route.bandwidth_policy.bitrate_hint_bps ?
         route.bandwidth_policy.bitrate_hint_bps : route.audio ? 32000 : 500000;
+}
+
+bool DownlinkTrackManager::SetAudioMuted(const std::string& id, bool muted, bool& changed)
+{
+    changed = false;
+    const auto it = subscriptions_.find(id);
+    if (it == subscriptions_.end() || it->second->Closed() || !it->second->audio || !it->second->consumer)
+        return false;
+    const auto& consumer = it->second->consumer;
+    const bool previous = consumer->Paused();
+    if (!MediaStreamRegistry::Instance().SetConsumerPaused(consumer->Id(), muted)) return false;
+    changed = previous != muted;
+    return true;
 }
 
 bool DownlinkTrackManager::SetPolicy(const std::string& id, const DownlinkSubscriptionPolicy& policy)

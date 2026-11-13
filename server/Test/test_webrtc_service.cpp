@@ -1163,6 +1163,331 @@ void RunMediaControls()
     Require(streams.Size() == streamBaseline, "media controls leaked core streams");
 }
 
+void RunAudioControls()
+{
+    const auto baseline = utils::EndpointManager::Instance().Size();
+    auto& streams = media::MediaStreamRegistry::Instance();
+    const auto streamBaseline = streams.Size();
+    EventLoop loop(2);
+    Require(loop.Start(), "audio controls loop did not start");
+    config::AppConfig config;
+    config.listen_ip = config.webrtc.public_ip = "127.0.0.1";
+    config.udp_port = AvailablePort(SOCK_DGRAM);
+    config.websocket_port = AvailablePort(SOCK_STREAM);
+    config.webrtc.enabled = true;
+    config.webrtc.api_keys = {{kApiKey, kApiSecret}};
+    config.webrtc.max_sessions = 4;
+    auto service = std::make_shared<server::WebRtcService>(&loop, config, nullptr);
+    Require(service->Start(), "audio controls service did not start");
+    Client publisher(config.websocket_port), a(config.websocket_port), c(config.websocket_port), guest(config.websocket_port);
+    for (const auto* type : {"set_audio_subscription", "set_track_muted"})
+        Require(guest.Request({{"type", type}}).value("code", "") == "unauthenticated", "audio control bypassed admission");
+    const auto joined = Join(publisher, "audio-publisher", "audio-controls");
+    const auto publisherId = joined.at("participant_id").get<std::string>();
+    Join(a, "audio-a", "audio-controls"); Join(c, "audio-c", "audio-controls");
+    Join(guest, "audio-guest", "audio-controls", false, false);
+    for (const auto* type : {"set_audio_subscription", "set_track_muted"})
+        Require(guest.Request({{"type", type}}).value("code", "") == "forbidden", "audio control bypassed permission");
+    const auto publication = publisher.Request({{"type", "publish"}, {"sdp", Offer()}});
+    CheckAnswer(publication, config.udp_port);
+    const auto sourceId = publication.at("session_id").get<uint64_t>();
+    auto browser = ParseDescription({{"sdp", Offer()}}, sdp::SdpType::Offer);
+    Json bindings = Json::array();
+    std::string audioId, videoId;
+    for (auto& media : browser.medias)
+    {
+        media.direction = sdp::MediaDirection::RecvOnly;
+        media.ssrcs.clear(); media.ssrcGroups.clear();
+        const auto trackId = publisherId + ":" + media.mid;
+        (media.media == "audio" ? audioId : videoId) = trackId;
+        bindings.push_back({{"track_id", trackId}, {"mid", media.mid}});
+    }
+    const auto subscribe = [&](Client& client) {
+        const auto answer = client.Request({{"type", "subscribe"}, {"sdp", sdp::Sdp::Serialize(browser)}, {"tracks", bindings}});
+        Require(answer.value("type", "") == "answer", answer.dump().c_str());
+        return answer.at("session_id").get<uint64_t>();
+    };
+    const auto aId = subscribe(a), cId = subscribe(c);
+    const auto published = a.ReceiveTrackChange(); c.ReceiveTrackChange();
+    const auto core = streams.FindByName(publisherId, "audio-controls");
+    Require(core != nullptr, "audio publication not registered");
+    media::MediaTrackRef audioRef, videoRef;
+    for (const auto& track : core->GetTracks())
+        (track.type == media::MediaType::Audio ? audioRef : videoRef) = track.ref;
+    const auto pausedCount = [&](media::MediaTrackRef ref) {
+        const auto track = streams.FindTrack(ref);
+        Require(track && track->consumers.size() == 2, "audio control destroyed a forwarding route");
+        return std::count_if(track->consumers.begin(), track->consumers.end(), [](const auto& consumer) { return consumer.paused; });
+    };
+    const Json mute = {{"type", "set_audio_subscription"}, {"session_id", aId}, {"track_id", audioId}, {"muted", true}};
+    const auto rejected = [&](Client& client, Json request) {
+        Require(client.Request(request).value("type", "") == "error", "invalid audio control accepted");
+    };
+    for (const auto& field : {"session_id", "track_id", "muted"}) { auto bad = mute; bad.erase(field); rejected(a, bad); }
+    for (const auto& id : Json::array({nullptr, false, 0, -1, 1.0, "1", Json::object(), Json::array(), cId}))
+    { auto bad = mute; bad["session_id"] = id; rejected(a, bad); }
+    for (const auto& value : Json::array({nullptr, 0, "true", Json::object()}))
+    { auto bad = mute; bad["muted"] = value; rejected(a, bad); }
+    for (const auto& value : Json::array({nullptr, 1, "", "missing", videoId}))
+    { auto bad = mute; bad["track_id"] = value; rejected(a, bad); }
+    auto wrongRole = mute; wrongRole["session_id"] = sourceId; rejected(publisher, wrongRole);
+    wrongRole = mute; wrongRole["type"] = "set_track_muted"; rejected(a, wrongRole);
+    Require(pausedCount(audioRef) == 0, "invalid control changed audio state");
+    const auto muted = a.Request(mute);
+    Require(muted.value("type", "") == "audio_subscription_updated" && muted.at("changed") == true &&
+        muted.at("muted") == true, "audio mute acknowledgement incorrect");
+    Require(a.Request(mute).at("changed") == false, "audio mute is not idempotent");
+    Require(pausedCount(audioRef) == 1 && pausedCount(videoRef) == 0 &&
+        streams.FindTrack(audioRef)->state == media::MediaTrackState::Open, "receiver mute affected other media");
+    Json sourceMute = {{"type", "set_track_muted"}, {"session_id", sourceId}, {"track_id", audioId}, {"muted", true}};
+    auto badSource = sourceMute; badSource["track_id"] = videoId; rejected(publisher, badSource);
+    badSource = sourceMute; badSource["track_id"] = "another:audio"; rejected(publisher, badSource);
+    const auto checkNotification = [&](Client& client, bool expected) {
+        const auto notification = client.ReceiveTrackChange();
+        Require(notification.at("revision") > published.at("revision"), "mute notification did not advance revision");
+        for (const auto& track : notification.at("tracks"))
+            if (track.at("track_id") == audioId) {
+                Require(track.at("muted") == expected, "publication mute notification is incorrect");
+                return;
+            }
+        Require(false, "mute removed publication from notification");
+    };
+    const auto sourceMuted = publisher.Request(sourceMute);
+    Require(sourceMuted.value("type", "") == "track_mute_updated" && sourceMuted.at("changed") == true,
+        "publication mute acknowledgement incorrect");
+    checkNotification(a, true); checkNotification(c, true);
+    Require(publisher.Request(sourceMute).at("changed") == false, "publication mute is not idempotent");
+    Require(streams.FindTrack(audioRef)->state == media::MediaTrackState::Paused && pausedCount(audioRef) == 1,
+        "publication mute changed receiver choice");
+    sourceMute["muted"] = false;
+    Require(publisher.Request(sourceMute).at("changed") == true, "publication resume failed");
+    checkNotification(a, false); checkNotification(c, false);
+    Require(pausedCount(audioRef) == 1 && streams.FindTrack(audioRef)->state == media::MediaTrackState::Open,
+        "publication resume erased receiver mute");
+    auto resume = mute; resume["muted"] = false;
+    Require(a.Request(resume).at("changed") == true && pausedCount(audioRef) == 0, "receiver resume failed");
+    auto endpoint = std::dynamic_pointer_cast<media::SfuEndpoint>(utils::EndpointManager::Instance().Find(aId));
+    Require(endpoint && endpoint->SubscriptionCount() == 2, "mute rebuilt the subscriber session");
+    Require(a.Request({{"type", "unsubscribe"}, {"session_id", aId}}).at("changed") == true, "unsubscribe failed");
+    const auto replacement = subscribe(a);
+    Require(replacement != aId && pausedCount(audioRef) == 0, "new session retained old mute state");
+    rejected(a, mute);
+    for (auto* client : {&publisher, &a, &c, &guest})
+        Require(client->Request({{"type", "leave"}}).value("type", "") == "closed", "audio control leave failed");
+    WaitForEndpoints(baseline);
+    service->Stop(); loop.Stop();
+    Require(streams.Size() == streamBaseline, "audio controls leaked publication");
+}
+
+void RunDuplexSessions()
+{
+    const auto baseline = utils::EndpointManager::Instance().Size();
+    auto& streams = media::MediaStreamRegistry::Instance();
+    const auto streamBaseline = streams.Size();
+    EventLoop loop(3);
+    Require(loop.Start(), "duplex loop did not start");
+    config::AppConfig config;
+    config.listen_ip = config.webrtc.public_ip = "127.0.0.1";
+    config.udp_port = AvailablePort(SOCK_DGRAM);
+    config.websocket_port = AvailablePort(SOCK_STREAM);
+    config.webrtc.enabled = true; config.webrtc.api_keys = {{kApiKey, kApiSecret}};
+    config.webrtc.max_sessions = 6;
+    config.webrtc.reconnect_timeout_ms = 5000;
+    auto service = std::make_shared<server::WebRtcService>(&loop, config, nullptr);
+    Require(service->Start(), "duplex service did not start");
+    Client a(config.websocket_port), b(config.websocket_port), c(config.websocket_port), admin(config.websocket_port);
+    const auto aJoin = Join(a, "duplex-a", "duplex");
+    const auto bJoin = Join(b, "duplex-b", "duplex");
+    const auto cJoin = Join(c, "duplex-c", "duplex");
+    const auto adminJoin = admin.Request({{"type", "join"}, {"room_id", "duplex"},
+        {"token", RoomToken("duplex-admin", "duplex", true, true, 0, kApiKey, kApiSecret, true)}});
+    Require(adminJoin.value("type", "") == "joined", "duplex admin join failed");
+    const auto aPid = aJoin.at("participant_id").get<std::string>();
+    const auto bPid = bJoin.at("participant_id").get<std::string>();
+    const auto cPid = cJoin.at("participant_id").get<std::string>();
+    const auto endpoint = [](uint64_t id) {
+        return std::dynamic_pointer_cast<media::SfuEndpoint>(utils::EndpointManager::Instance().Find(id));
+    };
+    const auto publish = [&](Client& client) {
+        const auto answer = client.Request({{"type", "publish"}, {"sdp", Offer()}});
+        Require(answer.value("type", "") == "answer", answer.dump().c_str());
+        Require(endpoint(answer.at("session_id"))->PublishedTrackCount() == 2, "duplex publication missing tracks");
+        return answer;
+    };
+    const auto subscription = [&](const std::vector<std::string>& publishers) {
+        auto offer = ParseDescription({{"sdp", Offer()}}, sdp::SdpType::Offer);
+        const auto templates = offer.medias;
+        offer.medias.clear();
+        offer.bundle.mids.clear();
+        Json bindings = Json::array();
+        for (const auto& publisher : publishers)
+            for (auto media : templates)
+            {
+                const auto trackId = publisher + ":" + media.mid;
+                media.mid = std::to_string(offer.medias.size());
+                media.direction = sdp::MediaDirection::RecvOnly;
+                media.ssrcs.clear(); media.ssrcGroups.clear();
+                bindings.push_back({{"track_id", trackId}, {"mid", media.mid}});
+                offer.bundle.mids.push_back(media.mid);
+                offer.medias.push_back(std::move(media));
+            }
+        return Json{{"type", "subscribe"}, {"sdp", sdp::Sdp::Serialize(offer)}, {"tracks", bindings}};
+    };
+    const auto subscribe = [&](Client& client, const Json& request) {
+        const auto answer = client.Request(request);
+        Require(answer.value("type", "") == "answer", answer.dump().c_str());
+        const auto target = endpoint(answer.at("session_id"));
+        Require(target && target->SubscriptionCount() == request.at("tracks").size(), "duplex forwarding routes missing");
+        return answer;
+    };
+    auto aPublication = publish(a);
+    // 先订阅再发布也应成功，不能依赖绑定顺序。
+    auto bSubscription = subscribe(b, subscription({aPid}));
+    Require(b.Request({{"type", "publish"}, {"sdp", "invalid"}}).value("type", "") == "error" &&
+        endpoint(bSubscription.at("session_id"))->SubscriptionCount() == 2, "failed publication removed subscription");
+    auto bPublication = publish(b);
+    auto cPublication = publish(c);
+    const auto aRequest = subscription({bPid, cPid});
+    const auto bRequest = subscription({aPid, cPid});
+    const auto cRequest = subscription({aPid, bPid});
+    auto aSubscription = subscribe(a, aRequest);
+    auto cSubscription = subscribe(c, cRequest);
+    Require(b.Request({{"type", "unsubscribe"}, {"session_id", bSubscription.at("session_id")}}).at("changed") == true,
+        "could not replace initial subscriber");
+    bSubscription = subscribe(b, bRequest);
+    const auto aPubId = aPublication.at("session_id").get<uint64_t>();
+    const auto aSubId = aSubscription.at("session_id").get<uint64_t>();
+    const auto bPubId = bPublication.at("session_id").get<uint64_t>();
+    Require(utils::EndpointManager::Instance().Size() == baseline + 6 && streams.Size() == streamBaseline + 3,
+        "three participants did not retain six independent media sessions");
+    Require(a.Request({{"type", "publish"}, {"sdp", Offer()}}).value("type", "") == "error" &&
+        a.Request(aRequest).value("type", "") == "error", "duplicate role replaced active media");
+    // 总媒体额度保持有界，失败不能清理已有的另一个方向。
+    Require(admin.Request({{"type", "publish"}, {"sdp", Offer()}}).value("type", "") == "error",
+        "duplex sessions bypassed media capacity");
+    Require(a.Request({{"type", "unsubscribe"}, {"session_id", aSubId}}).at("changed") == true && endpoint(aPubId),
+        "unsubscribe removed local publication");
+    auto adminPublication = publish(admin);
+    Require(a.Request(aRequest).value("type", "") == "error" && endpoint(aPubId)->PublishedTrackCount() == 2 &&
+        utils::EndpointManager::Instance().Size() == baseline + 6, "capacity rollback damaged existing publication");
+    Require(admin.Request({{"type", "unpublish"}, {"session_id", adminPublication.at("session_id")}}).at("changed") == true,
+        "capacity test cleanup failed");
+    aSubscription = subscribe(a, aRequest);
+    auto aCurrentSubId = aSubscription.at("session_id").get<uint64_t>();
+    Require(a.Request({{"type", "unsubscribe"}, {"session_id", aSubId}}).value("type", "") == "error",
+        "stale unsubscribe removed replacement");
+    Require(a.Request({{"type", "unpublish"}, {"session_id", aCurrentSubId}}).value("type", "") == "error" &&
+        a.Request({{"type", "unsubscribe"}, {"session_id", aPubId}}).value("type", "") == "error",
+        "media stop crossed roles");
+    // 两个会话时协商必须显式选中，不能猜测目标或接受其他人的 ID。
+    for (const auto* type : {"restart_ice", "answer", "rollback"})
+        Require(a.Request({{"type", type}, {"sdp", Offer()}, {"negotiation_id", "invalid"}}).value("type", "") == "error",
+            "ambiguous dual-session negotiation accepted");
+    for (const auto& id : Json::array({nullptr, false, 0, -1, 1.0, "1", bPubId}))
+        Require(a.Request({{"type", "restart_ice"}, {"session_id", id}, {"sdp", Offer()}}).value("type", "") == "error",
+            "invalid negotiation session accepted");
+    const auto restart = [&](Client& client, const std::string& offerSdp, uint64_t id, char seed, unsigned version = 2) {
+        auto offer = ParseDescription({{"sdp", offerSdp}}, sdp::SdpType::Offer);
+        offer.origin.sess_version = std::to_string(version);
+        offer.ice.ufrag = std::string(8, seed); offer.ice.pwd = std::string(24, seed);
+        for (auto& media : offer.medias) media.ice = offer.ice;
+        const auto answer = client.Request({{"type", "restart_ice"}, {"session_id", id}, {"sdp", sdp::Sdp::Serialize(offer)}});
+        Require(answer.value("type", "") == "answer" && answer.at("session_id") == id,
+            "duplex ICE restart did not preserve selected session");
+        return answer;
+    };
+    aPublication = restart(a, Offer(), aPubId, 'p');
+    aSubscription = restart(a, aRequest.at("sdp"), aCurrentSubId, 's');
+    Require(endpoint(aPubId)->PublishedTrackCount() == 2 && endpoint(aCurrentSubId)->SubscriptionCount() == 4,
+        "ICE restart changed duplex routes");
+    std::string bAudio;
+    for (const auto& track : aRequest.at("tracks"))
+        if (track.at("track_id").get<std::string>().rfind(bPid + ":", 0) == 0)
+        {
+            const auto tracks = a.Request({{"type", "tracks"}});
+            for (const auto& item : tracks.at("tracks"))
+                if (item.at("track_id") == track.at("track_id") && item.at("kind") == "audio")
+                    bAudio = track.at("track_id");
+        }
+    Require(!bAudio.empty(), "remote audio track missing");
+    Require(a.Request({{"type", "set_audio_subscription"}, {"session_id", aCurrentSubId},
+        {"track_id", bAudio}, {"muted", true}}).at("changed") == true, "duplex audio mute failed");
+    a.Close();
+    const auto deadline = std::chrono::steady_clock::now() + 2s;
+    while (!service->GetStats().reconnecting_participants && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(5ms);
+    Require(service->GetStats().reconnecting_participants == 1, "duplex signaling did not suspend");
+    Client resumed(config.websocket_port);
+    const auto recovered = resumed.Request({{"type", "resume"}, {"room_id", "duplex"},
+        {"token", RoomToken("duplex-a", "duplex")}, {"participant_id", aPid}, {"resume_token", aJoin.at("resume_token")}});
+    Require(recovered.value("type", "") == "resumed" && recovered.at("media_sessions").size() == 2 &&
+        recovered.at("ice_restart") == true, "duplex resume lost a media session");
+    Require(recovered.at("media_sessions")[0].at("session_id") == aPubId &&
+        recovered.at("media_sessions")[1].at("session_id") == aCurrentSubId, "resume changed media identities");
+    Require(resumed.Request({{"type", "set_audio_subscription"}, {"session_id", aCurrentSubId},
+        {"track_id", bAudio}, {"muted", true}}).at("changed") == false, "resume lost receiver preference");
+    Require(endpoint(aPubId) && endpoint(aCurrentSubId)->SubscriptionCount() == 4, "resume detached duplex routes");
+    aPublication = restart(resumed, Offer(), aPubId, 'r', 3);
+    aSubscription = restart(resumed, aRequest.at("sdp"), aCurrentSubId, 't', 3);
+    // 收回某一方向的权限，只清理该方向；重新授权后可单独重建。
+    const auto permissions = [&](bool publishAllowed, bool subscribeAllowed) {
+        const auto response = admin.Request({{"type", "update_participant"}, {"participant_id", aPid},
+            {"permissions", {{"can_publish", publishAllowed}, {"can_subscribe", subscribeAllowed}}}});
+        Require(response.value("type", "") == "participant_updated", response.dump().c_str());
+        const auto notification = resumed.ReceivePermissionsChange();
+        const auto& stopped = response.at("stopped_sessions");
+        Require(notification.at("stopped_sessions") == stopped &&
+            stopped.size() == (publishAllowed && subscribeAllowed ? 0U : 1U), "permission stop notification ambiguous");
+        if (!stopped.empty())
+            Require(stopped[0].at("session_id") == (publishAllowed ? Json(aCurrentSubId) : aPublication.at("session_id")) &&
+                stopped[0].at("role") == (publishAllowed ? "subscribe" : "publish"), "permission stopped the wrong role");
+    };
+    permissions(false, true);
+    Require(!endpoint(aPubId) && endpoint(aCurrentSubId)->SubscriptionCount() == 4,
+        "revoke publish also stopped receiving");
+    Require(resumed.Request({{"type", "publish"}, {"sdp", Offer()}}).value("code", "") == "forbidden",
+        "publish revoke did not block recreation");
+    permissions(true, true);
+    aPublication = publish(resumed);
+    const auto replacementPubId = aPublication.at("session_id").get<uint64_t>();
+    Require(replacementPubId != aPubId && resumed.Request({{"type", "unpublish"}, {"session_id", aPubId}})
+        .value("type", "") == "error", "stale unpublish stopped duplex replacement");
+    permissions(true, false);
+    Require(endpoint(replacementPubId) && !endpoint(aCurrentSubId), "revoke subscribe stopped publication");
+    permissions(true, true);
+    aSubscription = subscribe(resumed, aRequest);
+    aCurrentSubId = aSubscription.at("session_id").get<uint64_t>();
+    const auto core = streams.FindByName(aPid, "duplex");
+    Require(core && streams.Remove(core), "global publication removal failed");
+    const auto removalDeadline = std::chrono::steady_clock::now() + 2s;
+    while (endpoint(replacementPubId) && std::chrono::steady_clock::now() < removalDeadline)
+        std::this_thread::sleep_for(5ms);
+    Require(!endpoint(replacementPubId) && endpoint(aCurrentSubId)->SubscriptionCount() == 4,
+        "global source removal closed the subscriber session");
+    Require(resumed.Request({{"type", "unpublish"}, {"session_id", replacementPubId}}).at("changed") == false,
+        "repeat stop failed while opposite role remained active");
+    aPublication = publish(resumed);
+    c.Close();
+    const auto expiryDeadline = std::chrono::steady_clock::now() + 7s;
+    while ((endpoint(cPublication.at("session_id")) || endpoint(cSubscription.at("session_id"))) &&
+        std::chrono::steady_clock::now() < expiryDeadline) std::this_thread::sleep_for(10ms);
+    Require(!endpoint(cPublication.at("session_id")) && !endpoint(cSubscription.at("session_id")) &&
+        endpoint(aCurrentSubId) && endpoint(bPubId), "recovery expiry did not isolate and release both roles");
+    for (auto* client : {&resumed, &b, &admin})
+        Require(client->Request({{"type", "leave"}}).value("type", "") == "closed", "duplex leave failed");
+    WaitForEndpoints(baseline);
+    // 有活动双会话时停机，也必须释放所有端点和全局发布流。
+    Client shutdownA(config.websocket_port), shutdownB(config.websocket_port);
+    const auto shutdownAJoin = Join(shutdownA, "shutdown-a", "duplex-shutdown");
+    const auto shutdownBJoin = Join(shutdownB, "shutdown-b", "duplex-shutdown");
+    publish(shutdownA); publish(shutdownB);
+    subscribe(shutdownA, subscription({shutdownBJoin.at("participant_id")}));
+    subscribe(shutdownB, subscription({shutdownAJoin.at("participant_id")}));
+    service->Stop(); loop.Stop();
+    Require(utils::EndpointManager::Instance().Size() == baseline && streams.Size() == streamBaseline,
+        "duplex shutdown leaked media resources");
+}
+
 void RunRoomOwners()
 {
     using server::signaling::SignalSessionCoordinator;
@@ -1595,6 +1920,10 @@ int main(int argc, char** argv)
         }
         if (argc == 2 && std::string(argv[1]) == "--control")
         { RunBackendControls(); std::cout << "PASS backend room controls, epochs, reclamation and deadlines\n"; return 0; }
+        if (argc == 2 && std::string(argv[1]) == "--audio-controls")
+        { RunAudioControls(); std::cout << "PASS independent audio subscriptions and publication notifications\n"; return 0; }
+        if (argc == 2 && std::string(argv[1]) == "--duplex")
+        { RunDuplexSessions(); std::cout << "PASS duplex media roles, recovery and isolated cleanup\n"; return 0; }
         Run();
         RunSignalingLifecycle();
         RunCoordinatorChannels();

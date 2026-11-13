@@ -42,7 +42,7 @@ const stop = () => {
 };
 process.on('SIGINT', stop);
 process.on('SIGTERM', stop);
-child.stderr.on('data', () => {});
+child.stderr.on('data', chunk => process.stderr.write(chunk));
 child.on('error', error => {console.error(error.message); process.exitCode = 1; stop();});
 child.on('exit', code => {
   server?.close();
@@ -79,12 +79,12 @@ server = createServer(async (request, response) => {
       try {input = JSON.parse(body);} catch {response.writeHead(400).end(); return;}
       if (!input || typeof input.room !== 'string' || typeof input.identity !== 'string' ||
           !/^[A-Za-z0-9_.-]{1,64}$/.test(input.room) ||
-          !/^demo-[a-f0-9-]{36}$/.test(input.identity) || !['publisher', 'viewer'].includes(input.role)) {
+          !/^demo-[a-f0-9-]{36}$/.test(input.identity) || !['participant', 'publisher', 'viewer'].includes(input.role)) {
         response.writeHead(400).end(); return;
       }
       const now = Math.floor(Date.now() / 1000);
       const claims = {iss: apiKey, sub: input.identity, aud: 'packetia-webrtc', iat: now, nbf: now, exp: now + 3600,
-        video: {room: input.room, roomJoin: true, canPublish: input.role === 'publisher', canSubscribe: input.role === 'viewer',
+        video: {room: input.room, roomJoin: true, canPublish: input.role !== 'viewer', canSubscribe: input.role !== 'publisher',
           canUpdateOwnMetadata: true}};
       const encode = value => Buffer.from(JSON.stringify(value)).toString('base64url');
       const signing = `${encode({alg: 'HS256', typ: 'JWT'})}.${encode(claims)}`;

@@ -40,6 +40,19 @@ public:
     const TrackPublicationSnapshot snapshot;
 };
 
+class TrackMutedEvent final : public media::MediaEvent
+{
+public:
+    static constexpr media::MediaEventType StaticType() { return media::MediaEventType::TrackMuted; }
+    explicit TrackMutedEvent(TrackPublicationSnapshot value)
+        : MediaEvent(StaticType(), media::MediaEventLevel::Info), snapshot(std::move(value))
+    {
+        Meta().track_id = snapshot.track.sid;
+    }
+    const char* Name() const override { return "TrackMuted"; }
+    const TrackPublicationSnapshot snapshot;
+};
+
 class TrackUnpublishedEvent final : public media::MediaEvent
 {
 public:

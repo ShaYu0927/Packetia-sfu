@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <utility>
 #include "IMediaPacketSink.h"
 
 namespace media { class SendSideController; }
@@ -63,6 +64,17 @@ public:
         const auto result = Send(MediaPacketType::Rtp, data, size, retransmit);
         if (result == SendResult::Ok && on_sent) on_sent();
         return result;
+    }
+
+    // The default checks admission only; paced transports carry the predicate
+    // through final dispatch. It must be thread-safe and not borrow packet data.
+    virtual SendResult SendWithValidity(MediaPacketType type, const uint8_t* data, size_t size,
+                                       bool retransmit, std::function<bool()> valid,
+                                       std::function<void()> on_sent = {})
+    {
+        if (valid && !valid()) return SendResult::NotWritable;
+        return type == MediaPacketType::Rtp ?
+            SendRtpWithCompletion(data, size, retransmit, std::move(on_sent)) : Send(type, data, size, retransmit);
     }
 
     virtual void Close() = 0;

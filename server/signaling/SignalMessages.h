@@ -21,7 +21,8 @@ struct SignalKey
 struct SignalRequest
 {
     enum class Type { Unknown, Leave, Join, Resume, Tracks, Participants, Participant, UpdateParticipant,
-                      RemoveParticipant, Publish, Subscribe, Unpublish, Unsubscribe, Offer, Answer, Rollback, RestartIce };
+                      RemoveParticipant, Publish, Subscribe, Unpublish, Unsubscribe, Offer, Answer, Rollback, RestartIce,
+                      SetAudioSubscription, SetTrackMuted };
 
     static Type ParseType(std::string_view name)
     {
@@ -33,6 +34,7 @@ struct SignalRequest
             {"kick", Type::RemoveParticipant},
             {"publish", Type::Publish}, {"subscribe", Type::Subscribe},
             {"unpublish", Type::Unpublish}, {"unsubscribe", Type::Unsubscribe},
+            {"set_audio_subscription", Type::SetAudioSubscription}, {"set_track_muted", Type::SetTrackMuted},
             {"offer", Type::Offer}, {"answer", Type::Answer}, {"rollback", Type::Rollback},
             {"restart_ice", Type::RestartIce}
         };

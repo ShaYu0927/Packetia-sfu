@@ -62,9 +62,8 @@ if(BUILD_TESTING AND (NOT PACKETIA_WITH_LIBWEBSOCKETS OR PACKETIA_SRTP_AVAILABLE
     set_tests_properties(server_app PROPERTIES TIMEOUT 30)
 endif()
 
-# The optional demo source is not present in every source snapshot.
-if(PACKETIA_WITH_LIBWEBSOCKETS AND PACKETIA_SRTP_AVAILABLE AND
-   EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples/WebRtcRoomDemo.cpp")
+# Local browser demo shares the production signaling and forwarding path.
+if(PACKETIA_WITH_LIBWEBSOCKETS AND PACKETIA_SRTP_AVAILABLE)
     add_executable(PacketiaRoomDemo examples/WebRtcRoomDemo.cpp)
     target_link_libraries(PacketiaRoomDemo PRIVATE
         "$<$<PLATFORM_ID:Linux>:-Wl,--start-group>"

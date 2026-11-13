@@ -19,8 +19,8 @@
 
 | 模块 | 已有能力 | 当前边界 |
 | --- | --- | --- |
-| WebRTC / SFU | WebSocket 信令、H264/Opus 协商、ICE-Lite、DTLS/SRTP、房间发布与订阅 | 示例每个参与者只承担发布或订阅一种媒体角色；动态轨道重协商尚未开放 |
-| RTP / RTCP | 接收排序、H264 组帧、NACK、PLI/FIR、TWCC/RR 与发送侧带宽控制 | Pacer、simulcast/SVC 选层和 FEC 尚未接入；其他视频格式的完整 RTP 接入需分别完善 |
+| WebRTC / SFU | WebSocket 信令、H264/Opus 协商、ICE-Lite、DTLS/SRTP、独立发布与订阅双会话，三端 Chrome 同时收发验证通过 | 每个订阅会话最多 8 条轨道；动态轨道重协商尚未开放 |
+| RTP / RTCP | 接收排序、H264 组帧、NACK、PLI/FIR、TWCC/RR、发送侧带宽控制与 WebRTC 有界 Pacer | simulcast/SVC 选层和 FEC 尚未接入；其他视频格式的完整 RTP 接入需分别完善 |
 | 断线恢复 | 信令恢复、参与者保留、同会话 ICE restart | 同进程内恢复，不包含服务重启或跨节点媒体迁移 |
 | TURN / STUN | UDP 中继、长期凭证认证、权限与通道、IPv4/IPv6 | 不支持 TURN TCP/TLS；TLS 传输组件尚未接入 WSS/TURN 监听 |
 | 录制 | H264/AAC fMP4 切片、逐流启停、SQLite 索引与查询 | 原始流录制与处理输出的保存需要分别组装 |
@@ -181,10 +181,9 @@ python3 deploy/cluster/deploy.py check
 独立 `PacketiaSfu` 当前专注房间和媒体转发，本地录制、AI、混流、转码组件尚未接入该入口。
 接口和权限说明见[会议控制与节点调度](docs/reference.md#会议控制与节点调度)。
 
-浏览器示例前端位于 [examples/webrtc-room](examples/webrtc-room)。对应服务目标 `PacketiaRoomDemo`
-仅在 `server/examples/WebRtcRoomDemo.cpp` 存在时生成，当前源码快照缺少该入口。
-已有兼容二进制时，可通过 `PACKETIA_ROOM_DEMO_BINARY` 指定；原有运行步骤见
-[双浏览器房间与 TURN 示例](docs/reference.md#双浏览器房间与-turn-示例)。
+浏览器示例位于 [examples/webrtc-room](examples/webrtc-room)，启用 WebSocket 和 libSRTP 时可构建
+`PacketiaRoomDemo`。选择 Participant 后可同时发布摄像头、麦克风并接收其他参与者，
+发布和订阅可分别停止、重建；运行步骤见[浏览器会议与 TURN 示例](docs/reference.md#浏览器会议与-turn-示例)。
 
 ## 处理组件与构建目标
 
