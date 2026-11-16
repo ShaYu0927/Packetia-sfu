@@ -1,0 +1,13 @@
+cmake_minimum_required(VERSION 3.16)
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    project(PacketiaLoggerTests LANGUAGES CXX)
+    enable_testing()
+endif()
+include("${CMAKE_CURRENT_LIST_DIR}/../../utils/threading/ThreadSupport.cmake")
+add_executable(test_structured_logger test_structured_logger.cpp)
+target_compile_features(test_structured_logger PRIVATE cxx_std_17)
+target_include_directories(test_structured_logger PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}/.. ${CMAKE_CURRENT_LIST_DIR}/../..)
+target_link_libraries(test_structured_logger PRIVATE packetia_threads)
+add_test(NAME StructuredLoggerTest COMMAND test_structured_logger)
+set_tests_properties(StructuredLoggerTest PROPERTIES TIMEOUT 20)

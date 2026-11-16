@@ -139,6 +139,7 @@ class Process:
         path = directory / (name + '.json')
         path.write_text(json.dumps(config))
         self.log_path = directory / (name + '.log')
+        self.node_id = config.get('node_id', '')
         self.log = self.log_path.open('wb')
         self.process = subprocess.Popen([str(Path(binary).resolve()), str(path)], env=env,
             stdout=self.log, stderr=subprocess.STDOUT, cwd=directory)
@@ -161,6 +162,18 @@ class Process:
             check(self.process.poll() is None and time.monotonic() < deadline,
                 'process startup failed: ' + self.log_path.read_text(errors='replace')[-5000:])
             time.sleep(.05)
+        records = []
+        for line in self.log_path.read_text(errors='replace').splitlines():
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue  # Third-party libraries may write their own stderr diagnostics.
+            if isinstance(record, dict) and record.get('event') == 'process_ready':
+                records.append(record)
+        check(len(records) == 1, 'missing structured readiness event')
+        ready = records[0]
+        check(ready['service'] == ('sfu' if self.node_id else 'control') and ready['node_id'] == self.node_id,
+            'incorrect process log identity')
 
     def stop(self):
         if self.process.poll() is None:
@@ -182,7 +195,8 @@ def run(control, sfu):
         secret = secrets.token_hex(32)
         credentials = {name: secrets.token_hex(32) for name in ('sfu-a', 'sfu-b')}
         env = dict(os.environ, PACKETIA_JWT_ISSUER='test', PACKETIA_JWT_SECRET=secret,
-            PACKETIA_NODE_SECRETS=json.dumps(credentials))
+            PACKETIA_NODE_SECRETS=json.dumps(credentials), PACKETIA_LOG_MODE='console',
+            PACKETIA_LOG_FORMAT='json', PACKETIA_LOG_LEVEL='info')
         public, internal = f'http://127.0.0.1:{port()}', f'http://127.0.0.1:{port()}'
         config = {'listen_ip': '127.0.0.1', 'http_port': urlsplit(public).port,
             'internal_listen_ip': '127.0.0.1', 'internal_http_port': urlsplit(internal).port,

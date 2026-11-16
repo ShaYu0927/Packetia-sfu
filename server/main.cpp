@@ -1,11 +1,13 @@
 #include "ServerApp.h"
 #include "StartupConfig.h"
+#include "logger.h"
 #include <exception>
 #include <iostream>
 
 int main(int argc, char** argv)
 {
     try {
+        InitializeLogger("packetia");
         auto config = server::PrepareStartup(argc, argv);
         if (!config) return 0;
         auto main_thread = utils::ThreadManager::Instance().TrackCurrent(

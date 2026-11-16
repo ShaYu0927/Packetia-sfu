@@ -2,6 +2,8 @@ x-jwt-environment: &jwt-environment
   PACKETIA_JWT_ISSUER: ${PACKETIA_JWT_ISSUER:?Run deploy.py init first}
   PACKETIA_JWT_SECRET: ${PACKETIA_JWT_SECRET:?Run deploy.py init first}
   PACKETIA_LOG_MODE: console
+  PACKETIA_LOG_FORMAT: ${PACKETIA_LOG_FORMAT:-json}
+  PACKETIA_LOG_LEVEL: ${PACKETIA_LOG_LEVEL:-info}
 
 x-runtime: &runtime
   image: ${PACKETIA_IMAGE:-packetia-cluster:local}

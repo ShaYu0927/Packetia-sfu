@@ -16,6 +16,19 @@ import time
 CONSOLE_LOCK = threading.Lock()
 
 
+def is_ready_line(line):
+    line = line.rstrip(b'\r\n')
+    if line == b'PACKETIA_READY':  # Older binaries.
+        return True
+    if line.startswith(b'{'):
+        try:
+            record = json.loads(line)
+        except (ValueError, UnicodeError):
+            return False
+        return isinstance(record, dict) and record.get('event') == 'process_ready'
+    return b'[event=process_ready]' in line and line.endswith(b'PACKETIA_READY')
+
+
 def status(message):
     with CONSOLE_LOCK:
         print(message, flush=True)
@@ -74,7 +87,7 @@ class LogRelay:
                     if self.output.write(line) != len(line):
                         raise OSError('incomplete log file write')
                     self.bytes += len(line)
-                    if line.rstrip(b'\r\n') == b'PACKETIA_READY':
+                    if is_ready_line(line):
                         self.ready.set()
                     if self.console is not None:
                         text = line.decode('utf-8', errors='replace').replace('\r\n', '\n')
@@ -231,7 +244,7 @@ def main():
     env = dict(os.environ, PACKETIA_JWT_ISSUER='packetia-local', PACKETIA_JWT_SECRET=credentials['jwt'],
                PACKETIA_NODE_SECRETS=json.dumps(credentials['nodes']))
     # The launcher owns file logs; keep C++ output on stdout to avoid duplicate app.log files.
-    env.setdefault('PACKETIA_LOG_MODE', 'console')
+    env['PACKETIA_LOG_MODE'] = 'console'
     processes, logs = [], []
     stopping = False
 

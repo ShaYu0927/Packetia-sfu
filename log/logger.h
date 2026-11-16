@@ -23,6 +23,8 @@
 #include <filesystem>
 #include <stdexcept>
 #include "ThreadManager.h"
+#include "LoggerConfig.h"
+#include "LogRecord.h"
 
 #ifdef _WIN32
 #include <process.h>
@@ -68,7 +70,7 @@ void AppendToStream(std::ostringstream& oss, const T& val, const Args&... args)
 #define LOG_LEVEL_ERR   3
 
 #ifndef LOGGER_MIN_LEVEL
-#define LOGGER_MIN_LEVEL LOG_LEVEL_INFO   // 默认 INFO
+#define LOGGER_MIN_LEVEL LOG_LEVEL_DEBUG  // 编译保留 DEBUG，运行时默认 INFO。
 #endif
 
 
@@ -87,97 +89,52 @@ public:
 };
 
 
-class BaseLogger : public ILogger {
+class BaseLogger : public ILogger
+{
 protected:
     std::atomic<int> minlevel_{LOG_LEVEL_INFO};
+    const LogFormat format_;
+    const std::string service_, node_id_;
 
-    static const char* level_str(int level) 
+    explicit BaseLogger(const LoggerOptions& options = {})
+        : minlevel_(options.min_level), format_(options.format),
+          service_(options.service), node_id_(options.node_id) {}
+
+    std::string Format(const char* file, int line, int level, std::string_view message,
+                       const char* event = nullptr) const
     {
-        switch (level) 
-        {
-            case TRACE: return "TRACE";
-            case DEBUG: return "DEBUG";
-            case INFO:  return "INFO";
-            case ERR:   return "ERROR";
-            default:    return "UNKNOWN";
-        }
+        return packetia::logging::FormatRecord(format_, service_, node_id_, file, line, level, message, event);
     }
 
-    static std::string now_str() 
-    {
-        const auto now = std::chrono::system_clock::now();
-        const auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count() % 1000;
-        time_t sectime = std::chrono::system_clock::to_time_t(now);
-        tm tmtime;
-    #ifdef _WIN32
-        localtime_s(&tmtime, &sectime);
-    #else
-        localtime_r(&sectime, &tmtime);
-    #endif
-        char buf[1024];
-        snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d.%03d",
-            tmtime.tm_year + 1900, tmtime.tm_mon + 1, tmtime.tm_mday,
-            tmtime.tm_hour, tmtime.tm_min, tmtime.tm_sec, static_cast<int>(millis));
-        return buf;
-    }
-
-    static void Context(std::ostringstream& stream)
-    {
-#ifdef _WIN32
-        stream << " [pid=" << _getpid();
-#else
-        stream << " [pid=" << getpid();
-#endif
-        stream << " tid=" << std::this_thread::get_id() << "]";
-    }
-
-    // 派生类实现：真正写到哪里
     virtual void sink(std::string&& line) = 0;
 
 public:
     void set_min_level(int level) override { minlevel_.store(level, std::memory_order_relaxed); }
-    int  min_level() const override { return minlevel_.load(std::memory_order_relaxed); }
+    int min_level() const override { return minlevel_.load(std::memory_order_relaxed); }
+    LogFormat format() const { return format_; }
+    const std::string& service() const { return service_; }
+    const std::string& node_id() const { return node_id_; }
 
     template<typename... Args>
-    void Write(const char* file, int line, int level, const Args&... args) 
+    void Write(const char* file, int line, int level, const Args&... args)
     {
         if (level < min_level()) return;
-
-        std::ostringstream oss;
-        oss << now_str();
-        Context(oss);
-        oss << " [" << level_str(level) << "]: ["
-            << GetFileName(file) << ":" << line << "] ";
-        AppendToStream(oss, args...);
-
-        sink(oss.str());
+        std::ostringstream message;
+        AppendToStream(message, args...);
+        sink(Format(file, line, level, message.str()));
     }
 
-    // ILogger::log：用于接收外部已格式化的字符串
-    void log(const char* file, int line, int level, std::string&& msg) override 
+    void log(const char* file, int line, int level, std::string&& message) override
     {
         if (level < min_level()) return;
-        std::ostringstream oss;
-        oss << now_str();
-        Context(oss);
-        oss << " [" << level_str(level) << "]: ["
-            << GetFileName(file) << ":" << line << "] " << msg;
-        sink(oss.str());
+        sink(Format(file, line, level, message));
     }
-};
 
-
-
-
-struct LoggerOptions
-{
-    bool to_console = true;
-    bool to_file = true;
-    size_t max_queue_messages = 8192;
-    size_t max_queue_bytes = 8 * 1024 * 1024;
-    std::uintmax_t max_file_bytes = 16 * 1024 * 1024;
-    size_t backup_files = 3;
-    std::chrono::milliseconds flush_interval{200};
+    // Process readiness is also the local launcher's handshake, independent of log level.
+    void Ready(const char* file, int line)
+    {
+        sink(Format(file, line, INFO, "PACKETIA_READY", "process_ready"));
+    }
 };
 
 struct LoggerStats
@@ -285,8 +242,9 @@ class AsyncFileLogger : public BaseLogger
             }
             if (dropped > reported_drops)
             {
-                write_line(now_str() + " [LOGGER] dropped " + std::to_string(dropped - reported_drops) +
-                           " log records (queue capacity or shutdown)");
+                write_line(Format(__FILE__, __LINE__, ERR,
+                    "dropped " + std::to_string(dropped - reported_drops) +
+                    " log records (queue capacity or shutdown)", "logger_dropped"));
                 reported_drops = dropped;
                 dirty = true;
             }
@@ -326,7 +284,12 @@ class AsyncFileLogger : public BaseLogger
             stats_.pending_messages = stats_.pending_bytes = 0;
         }
         cv_.notify_all();
-        std::fprintf(stderr, "Packetia logger failed (%s): %s\n", logfile_.string().c_str(), message);
+        try
+        {
+            const auto record = Format(__FILE__, __LINE__, ERR, "logger output failed", "logger_failed");
+            std::fprintf(stderr, "%s\n", record.c_str());
+        }
+        catch (...) { std::fputs("Packetia logger output failed\n", stderr); }
     }
 
     void worker_loop()
@@ -363,7 +326,7 @@ public:
         : AsyncFileLogger(logfile, [to_console] { LoggerOptions options; options.to_console = to_console; return options; }()) {}
 
     AsyncFileLogger(const std::string& logfile, LoggerOptions options)
-        : logfile_(logfile), options_(options)
+        : BaseLogger(options), logfile_(logfile), options_(std::move(options))
     {
         if ((!options_.to_console && !options_.to_file) || !options_.max_queue_messages || !options_.max_queue_bytes ||
             options_.flush_interval.count() <= 0 ||
@@ -416,40 +379,51 @@ public:
 
 
 
-inline AsyncFileLogger& GlobalLogger()
+namespace packetia::logging
+{
+inline AsyncFileLogger& LoggerInstance(const std::string& service, const std::string& node_id)
 {
     static AsyncFileLogger logger([] {
         const char* path = std::getenv("PACKETIA_LOG_FILE");
         return path ? std::string(path) : std::string("app.log");
-    }(), [] {
-        LoggerOptions options;
-        if (const char* raw = std::getenv("PACKETIA_LOG_MODE"))
-        {
-            const std::string mode(raw);
-            if (mode != "console" && mode != "file" && mode != "both")
-                throw std::invalid_argument("PACKETIA_LOG_MODE expects console, file or both");
-            options.to_file = mode != "console";
-            options.to_console = mode != "file";
-        }
-        return options;
-    }());
+    }(), LoggerOptionsFromEnvironment(service, node_id));
+    return logger;
+}
+}
+
+// Call before constructing application services or starting their threads.
+inline AsyncFileLogger& InitializeLogger(const std::string& service, const std::string& node_id = {})
+{
+    auto& logger = packetia::logging::LoggerInstance(service, node_id);
+    if (logger.service() != service || logger.node_id() != node_id)
+        throw std::logic_error("logger identity must be initialized before the first log call");
     return logger;
 }
 
+inline AsyncFileLogger& GlobalLogger()
+{
+    return packetia::logging::LoggerInstance("packetia", {});
+}
+
+// Check the runtime level before evaluating arguments or formatting messages.
+#define PACKETIA_LOG_AT(level, ...) do { \
+    auto& packetia_logger_instance = GlobalLogger(); \
+    if ((level) >= packetia_logger_instance.min_level()) \
+        packetia_logger_instance.Write(__FILE__, __LINE__, (level), __VA_ARGS__); \
+} while (false)
+
 #if LOGGER_MIN_LEVEL <= LOG_LEVEL_DEBUG
-#define LOG_DEBUG(...) GlobalLogger().Write(__FILE__, __LINE__, BaseLogger::DEBUG, __VA_ARGS__)
+#define LOG_DEBUG(...) PACKETIA_LOG_AT(BaseLogger::DEBUG, __VA_ARGS__)
 #else
 #define LOG_DEBUG(...) ((void)0)
 #endif
 
 #if LOGGER_MIN_LEVEL <= LOG_LEVEL_INFO
-#define LOG_INFO(...)  GlobalLogger().Write(__FILE__, __LINE__, BaseLogger::INFO,  __VA_ARGS__)
+#define LOG_INFO(...) PACKETIA_LOG_AT(BaseLogger::INFO, __VA_ARGS__)
 #else
-#define LOG_INFO(...)  ((void)0)
+#define LOG_INFO(...) ((void)0)
 #endif
 
-#define LOG_ERROR(...) GlobalLogger().Write(__FILE__, __LINE__, BaseLogger::ERR, __VA_ARGS__)
-
+#define LOG_ERROR(...) PACKETIA_LOG_AT(BaseLogger::ERR, __VA_ARGS__)
 
 #endif // LOGGER_H_
-

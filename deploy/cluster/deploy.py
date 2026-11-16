@@ -75,6 +75,8 @@ def initialize(runtime, public_ip=None, domain=None, registration=None):
     values.setdefault('PACKETIA_PROJECT_NAME', 'packetia')
     values.setdefault('PACKETIA_IMAGE', 'packetia-cluster:local')
     values.setdefault('PACKETIA_BUILD_JOBS', '2')
+    values.setdefault('PACKETIA_LOG_FORMAT', 'json')
+    values.setdefault('PACKETIA_LOG_LEVEL', 'info')
     values['PACKETIA_DOMAIN'] = domain
     values['PACKETIA_PUBLIC_IP'] = str(address)
     values['PACKETIA_CONFIG_DIR'] = str(runtime)

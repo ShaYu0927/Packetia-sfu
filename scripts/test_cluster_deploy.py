@@ -15,6 +15,9 @@ ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location('packetia_deploy', ROOT / 'deploy/cluster/deploy.py')
 deploy = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(deploy)
+LAUNCHER_SPEC = importlib.util.spec_from_file_location('packetia_launcher', ROOT / 'scripts/run_cluster_local.py')
+launcher = importlib.util.module_from_spec(LAUNCHER_SPEC)
+LAUNCHER_SPEC.loader.exec_module(launcher)
 
 
 class ClusterDeploymentTest(unittest.TestCase):
@@ -29,6 +32,8 @@ class ClusterDeploymentTest(unittest.TestCase):
     def test_public_configuration_matches_proxy_routes_and_private_management(self):
         values = deploy.initialize(self.runtime, '203.0.113.10', 'Rtc.Example.com')
         self.assertEqual(values['PACKETIA_DOMAIN'], 'rtc.example.com')
+        self.assertEqual(values['PACKETIA_LOG_FORMAT'], 'json')
+        self.assertEqual(values['PACKETIA_LOG_LEVEL'], 'info')
         self.assertFalse(self.config('control')['registration_enabled'])
         for index, name in enumerate(('sfu-a', 'sfu-b')):
             node = self.config(name)
@@ -45,6 +50,7 @@ class ClusterDeploymentTest(unittest.TestCase):
         original = deploy.initialize(self.runtime, registration=True)
         with (self.runtime / '.env').open('a') as output:
             output.write("PACKETIA_BUILD_JOBS='4'\n")
+            output.write("PACKETIA_LOG_LEVEL='error'\n")
         public = deploy.initialize(self.runtime, '203.0.113.10', 'rtc.example.com')
         again = deploy.initialize(self.runtime)
         for key in deploy.SECRET_KEYS:
@@ -52,6 +58,7 @@ class ClusterDeploymentTest(unittest.TestCase):
             self.assertEqual(original[key], again[key])
         self.assertEqual(again['PACKETIA_DOMAIN'], 'rtc.example.com')
         self.assertEqual(again['PACKETIA_BUILD_JOBS'], '4')
+        self.assertEqual(again['PACKETIA_LOG_LEVEL'], 'error')
         self.assertTrue(self.config('control')['registration_enabled'])
         deploy.initialize(self.runtime, registration=False)
         self.assertFalse(self.config('control')['registration_enabled'])
@@ -87,6 +94,14 @@ class ClusterDeploymentTest(unittest.TestCase):
         self.runtime = Path(self.temporary.name) / "runtime's $literal path"
         values = deploy.initialize(self.runtime)
         self.assertEqual(deploy.read_environment(self.runtime / '.env'), values)
+
+    def test_launcher_understands_structured_and_legacy_readiness(self):
+        for line in (b'PACKETIA_READY\n', b'[INFO] [event=process_ready] PACKETIA_READY\n',
+                     b'{"event":"process_ready","service":"sfu","message":"PACKETIA_READY"}\n'):
+            self.assertTrue(launcher.is_ready_line(line))
+        for line in (b'not PACKETIA_READY\n', b'{bad json}', b'{}', b'[]',
+                     b'{"message":"PACKETIA_READY"}', b'{"event":"process_failed"}'):
+            self.assertFalse(launcher.is_ready_line(line))
 
     @mock.patch.object(deploy.shutil, 'which', return_value='/mock/docker')
     @mock.patch.object(deploy.subprocess, 'run')

@@ -129,6 +129,21 @@ python3 deploy/cluster/deploy.py down
 此版本为单控制服务和 SQLite 持久化，多个容器共用一台机器不提供机器故障容灾。
 修改 `PACKETIA_PROJECT_NAME` 会切换到另一套容器和卷，正常更新应保持该名称稳定。
 
+### 日志配置
+
+容器默认向标准输出写 JSON 应用日志，由 Docker 负责保存和轮转。每条记录包含 UTC 时间、
+级别、`service`、`node_id`、进程/线程 ID 和源码位置。SFU 的节点 ID 自动读取运行配置，
+即使合并多个容器日志，也能区分来源。第三方库仍可能向 stderr 输出自己的文本诊断。
+
+在 `runtime/.env` 中设置 `PACKETIA_LOG_FORMAT=json`（或 `text`）和
+`PACKETIA_LOG_LEVEL=info`（或 `debug`、`error`），然后执行 `up --recreate` 生效。
+修改镜像内的程序后仍需 `up --build --recreate`。
+`debug` 用于临时排查；网络可写事件已降为 DEBUG，正常运行使用 INFO。
+
+`process_ready` 是本地启动器使用的就绪事件，不受日志级别过滤。
+日志队列满时会丢弃新记录并报告 `logger_dropped`，避免媒体线程等待磁盘或终端。
+模块接口和原生进程配置见 [日志模块说明](../../log/README.md)。
+
 `check` 在容器内验证控制服务和两个 SFU 的 `/readyz`。SFU 的就绪状态依赖有效节点租约：
 续租失败并过期后返回 503，进程存活探针 `/healthz` 仍可返回 200。
 Docker 的 `restart: unless-stopped` 会重启退出的进程，单纯变成 `unhealthy` 不会自动重启容器。
@@ -171,6 +186,6 @@ python3 scripts/test_meeting_control.py \
 集成测试会验证节点注册、会议管理、租约过期与恢复，以及 Control 重启后房间分配保持。
 两项测试也已注册到启用测试和 WebRTC 依赖的 CMake/CTest 构建中。
 
-本次已通过 8 项配置测试、原生双节点集成测试，以及 Compose 官方 CLI 对本地和公网两套配置的校验。
-开发机没有 Docker 引擎，尚未执行镜像构建及容器启动；首次部署需在目标服务器上执行
+部署配置测试、原生双节点集成测试，以及 Compose 官方 CLI 对本地和公网两套配置的校验已通过。
+镜像构建及容器启动尚未完成验证；首次部署需在目标服务器上执行
 `up --build`、`check`，并从外部客户端验证 HTTPS/WSS 和实际媒体收发。

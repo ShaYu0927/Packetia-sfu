@@ -3,6 +3,7 @@
 #include "EventLoop.h"
 #include "EndpointBase.h"
 #include "WorkerRegistry.h"
+#include "logger.h"
 
 #include <charconv>
 #include <chrono>
@@ -84,6 +85,7 @@ int main(int argc, char** argv)
     std::signal(SIGINT, StopSignal); std::signal(SIGTERM, StopSignal);
     try
     {
+        InitializeLogger("room-demo");
         Demo demo(Port(argv[1]), Port(argv[2]), Port(argv[3]));
         if (!demo.Start()) { std::cerr << "Room demo startup failed\n"; return 1; }
         std::cout << "ROOM_DEMO_READY" << std::endl;

@@ -94,20 +94,20 @@ public:
     void HandleEvent(int events)
     {
 #if RTP_DEBUG
-        LOG_INFO("Channel::HandleEvent called on fd=" + std::to_string(sockfd_) + " events=" + std::to_string(events));
+        LOG_DEBUG("Channel::HandleEvent fd=", sockfd_, "events=", events);
 #endif
 
         if (events & (EVENT_PRI | EVENT_IN)) 
         {
 #if RTP_DEBUG
-            LOG_INFO("Channel fd=" + std::to_string(sockfd_) + " readable");
+            LOG_DEBUG("Channel readable fd=", sockfd_);
 #endif
             readCallback_();
         }
 
         if(events & EVENT_OUT)
         {
-            LOG_INFO("Channel fd=" + std::to_string(sockfd_) + " writable");
+            LOG_DEBUG("Channel writable fd=", sockfd_);
             writeCallback_();
         }
 
