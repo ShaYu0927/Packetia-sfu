@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cassert>
 #include <chrono>
+#include <cmath>
 
 namespace media::endpoint
 {
@@ -15,6 +16,14 @@ uint64_t NowMs()
 {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+// RTT 重试间隔草稿，尚未接入 Tick；当前仍固定每秒重试。
+uint64_t KeyFrameRetryIntervalMs(double rtt_ms)
+{
+    if (!std::isfinite(rtt_ms) || rtt_ms <= 0)
+        return 1000;
+    return static_cast<uint64_t>(std::clamp(rtt_ms * 2.0, 1000.0, 5000.0));
 }
 
 bool IsPadding(const uint8_t* data, size_t size)
@@ -295,8 +304,7 @@ void DownlinkTrackManager::Tick(uint64_t now_ms, bool force)
 {
     if (!force && now_ms < next_tick_ms_) return;
     next_tick_ms_ = now_ms + 20;
-    // Controller callbacks can re-enter subscription management. Run them
-    // before iterating transport groups, retaining only controller ownership.
+
     std::vector<std::shared_ptr<SendSideController>> controllers;
     controllers.reserve(transports_.size());
     for (const auto& entry : transports_)

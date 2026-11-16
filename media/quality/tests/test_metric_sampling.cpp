@@ -52,6 +52,37 @@ TEST(EwmaSampling, TimeConstantDependsOnElapsedTimeRatherThanFeedbackCount)
     EXPECT_NEAR(*slow.GetValue(2000), 100 * (1 - std::exp(-1)), 1e-10);
 }
 
+TEST(EwmaSampling, SmallHistoryWeightsDoNotDisappearThroughSubtraction)
+{
+    EwmaFilter fixed(1e-20);
+    fixed.AddSample(1e20, 0);
+    fixed.AddSample(0, 1);
+    ASSERT_TRUE(fixed.GetValue(1));
+    EXPECT_NEAR(*fixed.GetValue(1), 1.0, 1e-14);
+
+    EwmaFilter timed(0.9);
+    ASSERT_TRUE(timed.SetTimeConstantMs(1000));
+    timed.AddSample(1e20, 0);
+    timed.AddSample(0, 50000);
+    ASSERT_TRUE(timed.GetValue(50000));
+    EXPECT_NEAR(*timed.GetValue(50000), 1e20 * std::exp(-50.0), 1e-15);
+}
+
+TEST(EwmaSampling, AlphaEndpointsAndFirstValidSampleHaveDefinedBehavior)
+{
+    EwmaFilter latest(0.0), initial(1.0);
+    for (auto* filter : {&latest, &initial})
+    {
+        filter->AddSample(std::numeric_limits<double>::quiet_NaN(), 1000);
+        EXPECT_FALSE(filter->GetValue(1000));
+        EXPECT_FALSE(filter->LastSampleTimeMs());
+        filter->AddSample(100, 1000);
+        filter->AddSample(200, 1100);
+    }
+    EXPECT_DOUBLE_EQ(*latest.GetValue(1100), 200);
+    EXPECT_DOUBLE_EQ(*initial.GetValue(1100), 100);
+}
+
 WeakNetFeedback Metrics(uint64_t at)
 {
     WeakNetFeedback feedback;

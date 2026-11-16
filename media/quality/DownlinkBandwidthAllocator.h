@@ -43,6 +43,9 @@ struct DownlinkAllocation
 {
     std::string id;
     bool allowed = true;
+    // Committed demand, excluding the extra headroom required to resume.
+    uint32_t bandwidth_requested_bps = 0;
+    int64_t bandwidth_delta_bps = 0; // Change from this track's previous committed demand.
 };
 
 
@@ -69,7 +72,26 @@ private:
         bool allowed = true;
         bool pending = false;
         uint64_t since_ms = 0;
+        uint32_t bandwidth_requested_bps = 0;
     };
+
+    // Single-layer counterpart of LiveKit's provisional allocation state.
+    // Planning does not change Slot::allowed; only Commit changes forwarding permission.
+    struct AllocationPlan
+    {
+        const DownlinkDemand* demand;
+        Slot* slot;
+        bool wanted;
+        uint64_t reserved_bps = 0;
+        bool resume_ready = false;
+    };
+
+    bool IsBudgetValid(const DownlinkBandwidthBudget& budget, uint64_t now_ms) const;
+    std::vector<AllocationPlan> Prepare(const std::vector<DownlinkDemand>& demands, bool reset_pending);
+    std::vector<AllocationPlan*> ProvisionalAllocate(std::vector<AllocationPlan>& plans, uint64_t usable_bps) const;
+    std::vector<DownlinkAllocation> Commit(std::vector<AllocationPlan>& plans,
+        const std::vector<AllocationPlan*>& videos, uint64_t usable_bps, bool valid, uint64_t now_ms);
+
     Config config_;
     uint64_t epoch_ = 0;
     std::unordered_map<std::string, Slot> slots_;

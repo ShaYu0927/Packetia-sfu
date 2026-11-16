@@ -71,12 +71,13 @@ BweResult RemoteBitrateController::Update(BandwidthUsage usage, uint32_t incomin
     SetRtt(rtt_ms);
     double elapsed_ms = last_update_ms_ < 0 ? 0 : std::min<int64_t>(now_ms - last_update_ms_, 3000);
     last_update_ms_ = now_ms;
-    if (incoming_bitrate_bps) {
+    if (incoming_bitrate_bps)
+    {
         if (first_incoming_ms_ < 0) first_incoming_ms_ = now_ms;
         initial_incoming_bps_ = std::max(initial_incoming_bps_, incoming_bitrate_bps);
-        if (!initialized_ && (usage == BandwidthUsage::kOverUsing || now_ms - first_incoming_ms_ >= 2000)) {
-            const double initial_rate = usage == BandwidthUsage::kOverUsing ?
-                incoming_bitrate_bps : initial_incoming_bps_;
+        if (!initialized_ && (usage == BandwidthUsage::kOverUsing || now_ms - first_incoming_ms_ >= 2000))
+        {
+            const double initial_rate = usage == BandwidthUsage::kOverUsing ? incoming_bitrate_bps : initial_incoming_bps_;
             // Finishing warmup must not undo a reduction during loss/queueing.
             target_bitrate_bps_ = ClampRate(usage != BandwidthUsage::kNormal ||
                 loss_probe_start_ms_ >= 0 || loss_rate > 0.10 ?
@@ -89,16 +90,17 @@ BweResult RemoteBitrateController::Update(BandwidthUsage usage, uint32_t incomin
     const double compensated = incoming / (1.0 - std::min(0.95 * baseline_loss_, 0.6));
     const double beta = region_ == RateControlRegion::kNearMax ? 0.8 : 0.85;
     const auto previous_state = state_;
-    if (usage == BandwidthUsage::kOverUsing) {
+    if (usage == BandwidthUsage::kOverUsing)
+    {
         state_ = RateControlState::kDecrease;
         // New delay congestion invalidates the pre-loss recovery anchor.
         loss_probe_start_ms_ = -1;
-    } else if (usage == BandwidthUsage::kUnderUsing || previous_state == RateControlState::kDecrease ||
-               loss_probe_start_ms_ >= 0)
+    } else if (usage == BandwidthUsage::kUnderUsing || previous_state == RateControlState::kDecrease || loss_probe_start_ms_ >= 0)
         state_ = RateControlState::kHold;
     else state_ = RateControlState::kIncrease;
 
-    if (state_ == RateControlState::kDecrease) {
+    if (state_ == RateControlState::kDecrease)
+    {
         const double anchor = incoming > 0 ? std::min(target_bitrate_bps_, compensated) : target_bitrate_bps_;
         // Clamp after signed arithmetic: the reference's unsigned -2000 can wrap.
         target_bitrate_bps_ = previous_state != RateControlState::kDecrease ?
@@ -107,10 +109,14 @@ BweResult RemoteBitrateController::Update(BandwidthUsage usage, uint32_t incomin
         UpdateCapacity(compensated);
         region_ = RateControlRegion::kNearMax;
         max_hold_rate_ = 0;
-    } else if (state_ == RateControlState::kHold) {
+    }
+    else if (state_ == RateControlState::kHold)
+    {
         max_hold_rate_ = std::max(max_hold_rate_, target_bitrate_bps_);
         UpdateCapacity(compensated);
-    } else if (initialized_ && incoming > 0 && loss_probe_start_ms_ < 0) {
+    }
+    else if (initialized_ && incoming > 0 && loss_probe_start_ms_ < 0)
+    {
         if (capacity_kbps_ > 0 && compensated / 1000.0 > capacity_kbps_ +
             3.0 * std::sqrt(capacity_variance_ * capacity_kbps_)) region_ = RateControlRegion::kAboveMax;
         const double sensitivity = region_ == RateControlRegion::kNearMax ? 0.2 :
@@ -124,12 +130,14 @@ BweResult RemoteBitrateController::Update(BandwidthUsage usage, uint32_t incomin
         const double radical_incoming = incoming / (1.0 - std::min(baseline_loss_, 0.8));
         if (candidate <= 1.7 * radical_incoming || target_bitrate_bps_ <= start_bitrate_bps_ * 0.5)
             target_bitrate_bps_ = candidate;
-        if (max_hold_rate_ > 0) {
+        if (max_hold_rate_ > 0)
+        {
             target_bitrate_bps_ = std::max(target_bitrate_bps_, beta * max_hold_rate_);
             max_hold_rate_ = 0;
         }
     }
-    if (loss_probe_start_ms_ >= 0) {
+    if (loss_probe_start_ms_ >= 0)
+    {
         const double observation_ms = std::clamp(average_rtt_ms_, 1000.0, 2000.0) + 500.0;
         if (now_ms - loss_probe_start_ms_ >= observation_ms) {
             baseline_loss_ = 0.85 * std::min(loss_rate, 0.8);

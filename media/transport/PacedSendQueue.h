@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace media::transport
@@ -25,8 +26,21 @@ public:
     };
     struct Stats
     {
-        std::size_t queued_bytes = 0, queued_packets = 0;
-        uint64_t oldest_wait_ms = 0, rejected_packets = 0;
+        // 容量占用包含正在执行 consume 回调的包，回调返回后释放。
+        std::size_t queued_bytes = 0;
+        std::size_t queued_packets = 0;
+        uint64_t oldest_wait_ms = 0;
+        uint64_t rejected_packets = 0;
+
+        // 等待发送的音频、视频 RTP 字节数。
+        std::size_t queued_rtp_bytes = 0;
+
+        // 当前 pacing 发送速率，单位 bit/s。
+        uint32_t pacing_bitrate_bps = 0;
+
+        // 按当前速率估算 RTP 排空时间（向上取整）；有积压但速率为零时无值。
+        // 不含 pacing 债务、后续入队及 socket 排队时间，不代表端到端时延。
+        std::optional<uint64_t> estimated_drain_ms;
     };
     using Schedule = std::function<bool(uint32_t delay_ms, std::function<void()>)>;
     using Consume = std::function<void(Packet)>;

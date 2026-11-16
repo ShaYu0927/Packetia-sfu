@@ -168,4 +168,63 @@ TEST(MediaPacer, SchedulerRejectionReleasesQueuedMemoryAndStopsAdmission)
     EXPECT_EQ(h.queue.GetStats().queued_bytes, 0U);
     EXPECT_EQ(h.Send(), Result::Closed);
 }
+
+TEST(MediaPacer, DrainEstimateCountsOnlyQueuedRtpAndUsesCurrentRate)
+{
+    Harness h;
+    ASSERT_EQ(h.Send(Priority::Control, 100), Result::Accepted);
+    ASSERT_EQ(h.Send(Priority::Audio, 100), Result::Accepted);
+    ASSERT_EQ(h.Send(Priority::Media, 1201), Result::Accepted);
+    h.now = 7; // 队列尚未执行发送，与预计排空时间分别计量。
+    auto stats = h.queue.GetStats();
+    EXPECT_EQ(stats.queued_bytes, 1401U);
+    EXPECT_EQ(stats.queued_rtp_bytes, 1301U);
+    EXPECT_EQ(stats.oldest_wait_ms, 7U);
+    EXPECT_EQ(stats.pacing_bitrate_bps, 800000U);
+    ASSERT_TRUE(stats.estimated_drain_ms);
+    EXPECT_EQ(*stats.estimated_drain_ms, 14U); // ceil(1301 * 8 / 800 kbps)。
+
+    h.rate = 400000;
+    stats = h.queue.GetStats();
+    EXPECT_EQ(stats.queued_rtp_bytes, 1301U);
+    ASSERT_TRUE(stats.estimated_drain_ms);
+    EXPECT_EQ(*stats.estimated_drain_ms, 27U);
+}
+
+TEST(MediaPacer, PausedRtpHasNoDrainEstimateUntilQueueIsEmpty)
+{
+    Harness h;
+    h.rate = 0;
+    EXPECT_EQ(h.queue.GetStats().estimated_drain_ms, 0U);
+    ASSERT_EQ(h.Send(Priority::Control, 100), Result::Accepted);
+    EXPECT_EQ(h.queue.GetStats().estimated_drain_ms, 0U);
+    ASSERT_EQ(h.Send(), Result::Accepted);
+    EXPECT_FALSE(h.queue.GetStats().estimated_drain_ms);
+    h.Advance(10); // 控制包照常发送，RTP 保持暂停。
+    EXPECT_EQ(h.sent.size(), 1U);
+    EXPECT_EQ(h.queue.GetStats().queued_rtp_bytes, 1200U);
+    EXPECT_FALSE(h.queue.GetStats().estimated_drain_ms);
+    h.queue.Reset();
+    EXPECT_EQ(h.queue.GetStats().queued_rtp_bytes, 0U);
+    EXPECT_EQ(h.queue.GetStats().estimated_drain_ms, 0U);
+}
+
+TEST(MediaPacer, PacketInConsumeCallbackIsChargedButNoLongerWaiting)
+{
+    std::function<void()> pump;
+    Queue::Stats during_consume;
+    Queue queue{
+        [&](uint32_t, auto task) { pump = std::move(task); return true; },
+        [&](auto) { during_consume = queue.GetStats(); },
+        [] { return 800000U; }, [] { return 0U; }};
+    const uint8_t packet[100]{};
+    ASSERT_EQ(queue.Send(Priority::Media, packet, sizeof(packet)), Result::Accepted);
+    ASSERT_TRUE(pump);
+    pump();
+    EXPECT_EQ(during_consume.queued_bytes, 100U);
+    EXPECT_EQ(during_consume.queued_packets, 1U);
+    EXPECT_EQ(during_consume.queued_rtp_bytes, 0U);
+    EXPECT_EQ(during_consume.estimated_drain_ms, 0U);
+    EXPECT_EQ(queue.GetStats().queued_bytes, 0U);
+}
 }

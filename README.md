@@ -10,6 +10,8 @@
 - [架构与模块](#架构与模块)
 - [构建与依赖](#构建与依赖)
 - [运行方式](#运行方式)
+- [发送侧控制与恢复](#发送侧控制与恢复)
+- [日志](#日志)
 - [处理组件与构建目标](#处理组件与构建目标)
 - [测试](#测试)
 - [后续拆分方向](#后续拆分方向)
@@ -185,6 +187,60 @@ python3 deploy/cluster/deploy.py check
 `PacketiaRoomDemo`。选择 Participant 后可同时发布摄像头、麦克风并接收其他参与者，
 发布和订阅可分别停止、重建；运行步骤见[浏览器会议与 TURN 示例](docs/reference.md#浏览器会议与-turn-示例)。
 
+## 发送侧控制与恢复
+
+一个下行连接共享发送侧带宽预算，分配器再决定该连接上各条订阅是否允许转发：
+
+```text
+接收端 RTCP/TWCC 反馈 + 本地发送历史
+    → PacketGroupObserver：包分组、时延差、平滑与回归趋势
+    → TransportBweController / RemoteBitrateController：链路目标码率
+    → SendSideController：网络状态与发送预算
+    ├─ DownlinkBandwidthAllocator：准备 → 试分配 → 提交
+    │    → DownlinkTrackManager：暂停 / 等待关键帧 / 转发
+    │    → ConsumerTransport：检查订阅权限及排队包有效性
+    └─ PacedSendQueue：按发送速率释放 RTP → UDP 发送队列 → socket
+```
+
+分配器借鉴 LiveKit 的阶段划分，当前仍对单层视频做整流准入，音频优先预留，
+视频按优先级分配。提交时先扣除尚在暂停等待期内的发送占用，再恢复其他轨道。
+默认使用目标带宽的 85%，暂停等待 300 ms，恢复等待 1000 ms，并要求 20% 恢复余量。
+过期或无效的预算保留已有视频允许状态；恢复余量不会计入实际请求带宽。
+源码对照、带宽变化量和具体算例见[下行分配阅读指南](docs/downlink-allocation-livekit.md)。
+
+`PacedSendQueue::GetStats()` 提供以下本地诊断值：
+
+| 字段 | 口径 |
+| --- | --- |
+| `queued_bytes` / `queued_packets` | 容量占用，包含已出队但尚未返回的消费回调 |
+| `oldest_wait_ms` | 当前队列中最老包的等待时长，包含控制包 |
+| `rejected_packets` | 因无效输入、队列容量或内存分配失败而拒绝的累计包数 |
+| `queued_rtp_bytes` | 仍在音频、媒体队列中等待的字节数，不含控制包及已出队包 |
+| `pacing_bitrate_bps` | 当前配置的 pacing 速率，单位 bit/s |
+| `estimated_drain_ms` | `ceil(queued_rtp_bytes × 8000 / pacing_bitrate_bps)`；空队列为 0，有积压且速率为 0 时无值 |
+
+预计排空时间假设没有新包入队、速率不变，不包含 pacing 债务和 socket 队列，不能作为端到端时延。
+新增统计目前通过 C++ 接口读取，尚未接入 HTTP 指标或浏览器界面。
+
+带宽恢复后，视频进入 `WaitingKeyFrame`，请求上游关键帧并等待可恢复画面。
+当前 `Tick()` 将下一次 PLI 重试设为一秒后；实际发出还受 Tick 调用时机和请求限流影响。
+`KeyFrameRetryIntervalMs()` 是尚未接入的 RTT 策略草稿，不会改变现有行为。
+Simulcast/SVC 选层、RTT 驱动的重试闭环和多协议适配仍待后续实现。
+
+## 日志
+
+日志线程从有界队列批量写出，支持文本/单行 JSON、级别过滤及文件轮转。
+集群入口记录服务名和 SFU 节点 ID，便于区分多个节点；请求和房间上下文尚未统一接入。
+
+```sh
+PACKETIA_LOG_MODE=console PACKETIA_LOG_FORMAT=json PACKETIA_LOG_LEVEL=info \
+  python3 scripts/run_cluster_local.py --build-dir build/dev --nodes 2
+```
+
+原生程序默认使用 `both`（控制台和文件）、`text`、`info`；本地集群启动器固定使用控制台输出并保存各进程日志。
+Docker Compose 默认使用控制台 JSON 日志，交给 Docker 保存和轮转。
+配置、队列上限、丢弃统计、启动就绪事件和独立测试见[日志模块 README](log/README.md)。
+
 ## 处理组件与构建目标
 
 组件各自在目录内声明源文件和依赖，应用入口由 `server/CMakeLists.txt` 组装。
@@ -237,7 +293,7 @@ server::ServerApp app(config, {}, service::CreateLocalMediaProcessingServices);
 
 ```sh
 cmake --build build/dev --parallel
-ctest --test-dir build/dev --output-on-failure
+PACKETIA_LOG_MODE=console ctest --test-dir build/dev --output-on-failure
 ```
 
 本次模块拆分的相关回归入口：
@@ -245,6 +301,15 @@ ctest --test-dir build/dev --output-on-failure
 ```sh
 ctest --test-dir build/dev --output-on-failure \
   -R '^(server_app|server_launcher|server_config|startup_config|stream_services|ConferenceMixFramework|transcode_domain|video_transcoder|multicodec|webrtc_service|MeetingControlIntegrationTest)$'
+```
+
+发送侧质量控制、Pacer、日志与集群部署的回归入口：
+
+```sh
+cmake --build build/dev --target test_media_pacer test_weak_network_manual \
+  test_rtp_input test_structured_logger PacketiaControl PacketiaSfu --parallel
+PACKETIA_LOG_MODE=console ctest --test-dir build/dev --output-on-failure \
+  -R '^(media_pacer|test_weak_network_manual|test_rtp_input|StructuredLoggerTest|ClusterDeploymentConfigTest|MeetingControlIntegrationTest)$'
 ```
 
 录像集成测试默认关闭，开启时需要 `ffmpeg` 命令行包含 libx264 和 AAC 编码能力：
@@ -274,6 +339,8 @@ ctest --test-dir build/dev --output-on-failure -R 'recording|mp4_reader'
 - [技术参考](docs/reference.md)：线程、网络、协议、媒体管理、控制面和详细验证记录。
 - [开发记录](docs/changelog.md)：历史变更与对应验证范围。
 - [运行指标](monitoring/README.md)：指标口径、采样和 HTTP 查询。
+- [日志模块](log/README.md)：结构化输出、节点身份、有界队列与轮转。
+- [下行分配阅读指南](docs/downlink-allocation-livekit.md)：LiveKit 源码对照、分配阶段与预算移交算例。
 - [会议混流](service/ConferenceMixService/README.md)：任务、后端契约与输出边界。
 - [录像合成示例](service/RecordService/examples/README.md)：离线拼画面与混音实验。
 - [解包与弱网测试](Common/Depacketizer/Test/README.md)：H264 接收与恢复实验。

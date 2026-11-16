@@ -6,6 +6,10 @@
 #include "RtpTransportCcExtension.h"
 #include "Rtp/RtpForwardingState.h"
 #include "Rtp/RtpSenderFeedback.h"
+#include <algorithm>
+#include <limits>
+#include <map>
+#include <tuple>
 
 namespace
 {
@@ -114,9 +118,125 @@ TEST(DownlinkAllocator, PriorityChangeWaitsForStillForwardingTrackToPause)
     result = allocator.Allocate(Budget(500000, 301), demands, 301);
     EXPECT_FALSE(result[0].allowed);
     EXPECT_TRUE(result[1].allowed);
+    EXPECT_EQ(result[0].bandwidth_requested_bps, 0U);
+    EXPECT_EQ(result[0].bandwidth_delta_bps, 0);
+    EXPECT_EQ(result[1].bandwidth_requested_bps, 500000U);
+    EXPECT_EQ(result[1].bandwidth_delta_bps, 0);
     result = allocator.Allocate(Budget(500000, 601), demands, 601);
     EXPECT_TRUE(result[0].allowed);
     EXPECT_FALSE(result[1].allowed);
+    EXPECT_EQ(result[0].bandwidth_delta_bps, 500000);
+    EXPECT_EQ(result[1].bandwidth_delta_bps, -500000);
+}
+
+TEST(DownlinkAllocator, CommittedBandwidthTracksHysteresisAndExcludesResumeHeadroom)
+{
+    DownlinkBandwidthAllocator allocator({100, 20, 300, 1000, 1500});
+    const std::vector<DownlinkDemand> demands{
+        {"audio", true, true, 0, 50000}, {"video", false, true, 128, 500000}};
+    auto result = allocator.Allocate(Budget(600000, 1000), demands, 1000);
+    ASSERT_EQ(result.size(), 2U);
+    EXPECT_EQ(result[0].bandwidth_requested_bps, 50000U);
+    EXPECT_EQ(result[0].bandwidth_delta_bps, 50000);
+    EXPECT_EQ(result[1].bandwidth_requested_bps, 500000U);
+    EXPECT_EQ(result[1].bandwidth_delta_bps, 500000);
+
+    result = allocator.Allocate(Budget(300000, 1100), demands, 1100);
+    EXPECT_TRUE(result[1].allowed); // A provisional pause still consumes bandwidth.
+    EXPECT_EQ(result[1].bandwidth_requested_bps, 500000U);
+    EXPECT_EQ(result[1].bandwidth_delta_bps, 0);
+    result = allocator.Allocate(Budget(300000, 1400), demands, 1400);
+    EXPECT_FALSE(result[1].allowed);
+    EXPECT_EQ(result[1].bandwidth_requested_bps, 0U);
+    EXPECT_EQ(result[1].bandwidth_delta_bps, -500000);
+
+    result = allocator.Allocate(Budget(650000, 1500), demands, 1500);
+    EXPECT_FALSE(result[1].allowed);
+    EXPECT_EQ(result[1].bandwidth_requested_bps, 0U);
+    result = allocator.Allocate(Budget(650000, 2499), demands, 2499);
+    EXPECT_FALSE(result[1].allowed);
+    result = allocator.Allocate(Budget(650000, 2500), demands, 2500);
+    EXPECT_TRUE(result[1].allowed);
+    EXPECT_EQ(result[1].bandwidth_requested_bps, 500000U); // Admission reserved 600000.
+    EXPECT_EQ(result[1].bandwidth_delta_bps, 500000);
+    result = allocator.Allocate(Budget(650000, 2501), demands, 2501);
+    EXPECT_EQ(result[0].bandwidth_delta_bps, 0);
+    EXPECT_EQ(result[1].bandwidth_delta_bps, 0);
+}
+
+TEST(DownlinkAllocator, SingleLayerPlanningIsIndependentOfDemandOrder)
+{
+    std::vector<DownlinkDemand> demands{
+        {"b", false, true, 128, 500000}, {"audio", true, true, 0, 50000},
+        {"a", false, true, 128, 500000}};
+    using State = std::tuple<bool, uint32_t, int64_t>;
+    std::map<std::string, State> expected;
+    for (int pass = 0; pass < 2; ++pass)
+    {
+        DownlinkBandwidthAllocator allocator({100, 20, 0, 0, 1500});
+        const auto result = allocator.Allocate(Budget(550000, 0), demands, 0);
+        std::map<std::string, State> actual;
+        for (const auto& allocation : result)
+            actual.emplace(allocation.id, State{allocation.allowed, allocation.bandwidth_requested_bps,
+                                                allocation.bandwidth_delta_bps});
+        EXPECT_TRUE(std::get<0>(actual.at("a")));
+        EXPECT_FALSE(std::get<0>(actual.at("b")));
+        if (pass == 0) expected = actual;
+        else EXPECT_EQ(actual, expected);
+        std::reverse(demands.begin(), demands.end());
+    }
+}
+
+TEST(DownlinkAllocator, CommittedDemandChangesWithMeasurementsEligibilityAndTrackLifetime)
+{
+    DownlinkBandwidthAllocator allocator({100, 20, 0, 0, 1500});
+    std::vector<DownlinkDemand> demands{{"video", false, true, 128, 500000}};
+    EXPECT_EQ(allocator.Allocate(Budget(1000000, 0), demands, 0)[0].bandwidth_delta_bps, 500000);
+    demands[0].required_bps = 400000;
+    auto result = allocator.Allocate(Budget(1000000, 1), demands, 1);
+    EXPECT_TRUE(result[0].allowed);
+    EXPECT_EQ(result[0].bandwidth_delta_bps, -100000);
+    demands[0].eligible = false;
+    result = allocator.Allocate(Budget(1000000, 2), demands, 2);
+    EXPECT_EQ(result[0].bandwidth_requested_bps, 0U);
+    EXPECT_EQ(result[0].bandwidth_delta_bps, -400000);
+    demands[0].eligible = true;
+    EXPECT_EQ(allocator.Allocate(Budget(1000000, 3), demands, 3)[0].bandwidth_delta_bps, 400000);
+    EXPECT_TRUE(allocator.Allocate(Budget(1000000, 4), {}, 4).empty());
+    EXPECT_EQ(allocator.Allocate(Budget(1000000, 5), demands, 5)[0].bandwidth_delta_bps, 400000);
+    allocator.Clear();
+    EXPECT_EQ(allocator.Allocate(Budget(1000000, 6), demands, 6)[0].bandwidth_delta_bps, 400000);
+}
+
+TEST(DownlinkAllocator, UnknownVideoDemandCannotConsumeAFreeCandidate)
+{
+    DownlinkBandwidthAllocator allocator({100, 20, 0, 0, 1500});
+    const std::vector<DownlinkDemand> demands{
+        {"unknown", false, true, 255, 0}, {"known", false, true, 128, 500000}};
+    const auto result = allocator.Allocate(Budget(500000, 0), demands, 0);
+    EXPECT_FALSE(result[0].allowed);
+    EXPECT_EQ(result[0].bandwidth_requested_bps, 0U);
+    EXPECT_TRUE(result[1].allowed);
+    EXPECT_EQ(result[1].bandwidth_requested_bps, 500000U);
+}
+
+TEST(DownlinkAllocator, ResumeReservationAndSignedDeltasHandleLargeDemands)
+{
+    constexpr auto maximum = std::numeric_limits<uint32_t>::max();
+    DownlinkBandwidthAllocator allocator({100, 100, 0, 0, 1500});
+    std::vector<DownlinkDemand> demands{{"video", false, true, 128, maximum}};
+    auto result = allocator.Allocate(Budget(maximum, 0), demands, 0);
+    EXPECT_EQ(result[0].bandwidth_delta_bps, static_cast<int64_t>(maximum));
+    result = allocator.Allocate(Budget(1, 1), demands, 1);
+    EXPECT_FALSE(result[0].allowed);
+    EXPECT_EQ(result[0].bandwidth_delta_bps, -static_cast<int64_t>(maximum));
+    result = allocator.Allocate(Budget(maximum, 2), demands, 2);
+    EXPECT_FALSE(result[0].allowed); // Twice the demand exceeds a uint32_t budget.
+    demands[0].required_bps = maximum / 2;
+    result = allocator.Allocate(Budget(maximum, 3), demands, 3);
+    EXPECT_TRUE(result[0].allowed);
+    EXPECT_EQ(result[0].bandwidth_requested_bps, maximum / 2);
+    EXPECT_EQ(result[0].bandwidth_delta_bps, static_cast<int64_t>(maximum / 2));
 }
 
 std::vector<uint8_t> Rtp(uint16_t seq, uint32_t stamp, std::initializer_list<uint8_t> payload, bool marker = true)

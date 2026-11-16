@@ -17,7 +17,7 @@ void EwmaFilter::AddSample(double sample, uint64_t timestamp_ms)
 {
     if (!std::isfinite(sample)) return;
     if (initialized_ && timestamp_ms <= last_timestamp_ms_) return;
-    if(!initialized_)
+    if (!initialized_)
     {
         value_ = sample;
         initialized_ = true;
@@ -25,10 +25,18 @@ void EwmaFilter::AddSample(double sample, uint64_t timestamp_ms)
         return;
     }
 
-    const double weight = time_constant_ms_ ?
-        -std::expm1(-static_cast<double>(timestamp_ms - last_timestamp_ms_) / *time_constant_ms_) :
-        1.0 - alpha_;
-    value_ = (1.0 - weight) * value_ + weight * sample;
+    double old_weight = alpha_;
+    double sample_weight = 1.0 - alpha_;
+    if (time_constant_ms_)
+    {
+        const double elapsed_ms = static_cast<double>(timestamp_ms - last_timestamp_ms_);
+        const double exponent = -elapsed_ms / *time_constant_ms_;
+        old_weight = std::exp(exponent);
+        // 小采样间隔时避免 1 - exp(exponent) 的相减精度损失。
+        sample_weight = -std::expm1(exponent);
+    }
+    // 直接使用旧值权重，避免 1 - (1 - alpha) 将很小的 alpha 舍入成 0。
+    value_ = old_weight * value_ + sample_weight * sample;
     last_timestamp_ms_ = timestamp_ms;
 }
 
@@ -43,7 +51,7 @@ std::optional<double> EwmaFilter::GetValue(uint64_t now_ms) const
 
 bool EwmaFilter::SetTimeConstantMs(uint32_t time_constant_ms)
 {
-    if(time_constant_ms == 0)
+    if (time_constant_ms == 0)
     {
         return false;
     }

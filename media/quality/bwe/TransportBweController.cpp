@@ -36,6 +36,7 @@ void TransportBweController::Reset()
 
 BweResult TransportBweController::OnTransportFeedback(const media::TransportFeedback& feedback)
 {
+    /* 分组观察算法 */
     group_observation_ = group_observer_->OnFeedback(feedback,
         {feedback.feedback_time_ms, bitrate_controller_.target_bitrate_bps(), rtt_ms_});
     trend_detector_.SetNetworkEstimate(bitrate_controller_.target_bitrate_bps(), rtt_ms_);
@@ -54,6 +55,7 @@ BweResult TransportBweController::OnTransportFeedback(const media::TransportFeed
         }
     }
 
+    /* 时延排序 */
     std::sort(received_packets.begin(), received_packets.end(),
               [](const media::PacketFeedback* lhs, const media::PacketFeedback* rhs) {
                   const auto& left = lhs->sent_packet;

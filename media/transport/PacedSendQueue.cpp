@@ -184,16 +184,29 @@ void PacedSendQueue::Close()
 
 PacedSendQueue::Stats PacedSendQueue::GetStats() const
 {
-    std::lock_guard<std::mutex> lock(state_->mutex);
     Stats result;
+    // 与 Pump 一样，在队列锁外读取外部速率回调，避免锁顺序反转。
+    result.pacing_bitrate_bps = state_->rate ? state_->rate() : 0;
+    std::lock_guard<std::mutex> lock(state_->mutex);
     result.rejected_packets = state_->rejected;
     const auto now = state_->clock();
     for (std::size_t lane = 0; lane < state_->queues.size(); ++lane)
     {
         result.queued_bytes += state_->bytes[lane];
         result.queued_packets += state_->packets[lane];
+        // 只统计仍在音频/媒体队列里等待的包，不含 RTCP 或已出队的包。
+        if (lane != static_cast<std::size_t>(Priority::Control))
+            for (const auto& packet : state_->queues[lane])
+                result.queued_rtp_bytes += packet.bytes.size();
         if (!state_->queues[lane].empty() && now >= state_->queues[lane].front().queued_ms)
             result.oldest_wait_ms = std::max(result.oldest_wait_ms, now - state_->queues[lane].front().queued_ms);
+    }
+    if (result.queued_rtp_bytes == 0)
+        result.estimated_drain_ms = 0;
+    else if (result.pacing_bitrate_bps != 0)
+    {
+        const uint64_t bits_ms = static_cast<uint64_t>(result.queued_rtp_bytes) * 8000;
+        result.estimated_drain_ms = (bits_ms + result.pacing_bitrate_bps - 1) / result.pacing_bitrate_bps;
     }
     return result;
 }

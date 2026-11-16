@@ -54,12 +54,22 @@ class EwmaFilter final : public SmoothingFilter
 {
 public:
 
-    // alpha is the old-value weight. SetTimeConstantMs enables time-based
-    // weighting; duplicate/backwards timestamps and nonfinite samples are ignored.
+    // 固定权重模式：新结果 = alpha * 旧结果 + (1 - alpha) * 新样本。
+    // alpha 必须在 [0, 1]：越大越平滑；0 跟随最新样本，1 保留首个样本。
     explicit EwmaFilter(double alpha);
+
+    // 首个有效样本直接初始化；忽略非有限值及重复、倒退的采样时间。
     void AddSample(double sample, uint64_t timestamp_ms) override;
+
+    // 返回已有估计；未初始化或查询时间早于最后采样时间时返回空值。
+    // 查询不更新滤波状态，数据过期由调用方处理。
     std::optional<double> GetValue(uint64_t now_ms) const override;
+
+    // 切换到时间权重模式，旧值权重为 exp(-采样间隔 / 时间常数)。
+    // 时间常数为 0 时返回 false，保留原配置。
     bool SetTimeConstantMs(uint32_t time_constant_ms) override;
+
+    // 清除历史采样，保留权重/时间常数配置。
     void Reset();
     std::optional<uint64_t> LastSampleTimeMs() const;
 
