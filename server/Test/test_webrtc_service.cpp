@@ -1777,6 +1777,71 @@ void RunAuthorization()
     loop.Stop();
 }
 
+void RunTransportCcNegotiation()
+{
+    const auto baseline = utils::EndpointManager::Instance().Size();
+    EventLoop loop(2);
+    Require(loop.Start(), "event loop did not start");
+    config::AppConfig config;
+    config.listen_ip = config.webrtc.public_ip = "127.0.0.1";
+    config.udp_port = AvailablePort(SOCK_DGRAM);
+    config.websocket_port = AvailablePort(SOCK_STREAM);
+    config.webrtc.enabled = true;
+    config.webrtc.api_keys = {{kApiKey, kApiSecret}};
+    auto service = std::make_shared<server::WebRtcService>(&loop, config, nullptr);
+    Require(service->Start(), "TWCC room service did not start");
+    Client publisher(config.websocket_port), viewer(config.websocket_port);
+    const auto joined = Join(publisher, "twcc-publisher", "twcc");
+    Join(viewer, "twcc-viewer", "twcc", false, true);
+    // The source has no TWCC: downstream capabilities must not depend on it.
+    CheckAnswer(publisher.Request({{"type", "publish"}, {"sdp", Offer()}}), config.udp_port);
+    constexpr const char* uri = "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01";
+    for (int scenario = 0; scenario < 4; ++scenario)
+    {
+        const bool extension = scenario == 0 || scenario == 2;
+        const bool feedback = scenario == 0 || scenario == 1;
+        auto offer = ParseDescription({{"sdp", Offer()}}, sdp::SdpType::Offer);
+        Json bindings = Json::array();
+        for (auto& media : offer.medias)
+        {
+            media.direction = sdp::MediaDirection::RecvOnly;
+            media.ssrcs.clear(); media.ssrcGroups.clear();
+            media.headerExtensions = {{7, "urn:ietf:params:rtp-hdrext:sdes:mid", sdp::MediaDirection::RecvOnly, {}}};
+            if (extension) media.headerExtensions.push_back({5, uri, sdp::MediaDirection::RecvOnly, {}});
+            auto codec = media.codecs.front();
+            codec.payloadType = media.media == "video" ? 120 : 112;
+            if (feedback) codec.rtcpFeedback.emplace_back("transport-cc");
+            sdp::Sdp::SetCodecs(media, {codec});
+            bindings.push_back({{"track_id", joined.at("participant_id").get<std::string>() + ":" + media.mid},
+                {"mid", media.mid}});
+        }
+        const auto reply = viewer.Request({{"type", "subscribe"}, {"sdp", sdp::Sdp::Serialize(offer)}, {"tracks", bindings}});
+        Require(reply.value("type", "") == "answer", reply.dump().c_str());
+        const auto answer = ParseDescription(reply, sdp::SdpType::Answer);
+        for (const auto& media : answer.medias)
+        {
+            Require(media.port && media.direction == sdp::MediaDirection::SendOnly, "TWCC media was rejected");
+            const auto mid = std::find_if(media.headerExtensions.begin(), media.headerExtensions.end(),
+                [](const auto& item) { return item.uri == "urn:ietf:params:rtp-hdrext:sdes:mid"; });
+            Require(mid != media.headerExtensions.end() && mid->id == 7, "answer did not preserve the viewer MID ID");
+            const auto cc = std::find_if(media.headerExtensions.begin(), media.headerExtensions.end(),
+                [&](const auto& item) { return item.uri == uri; });
+            Require((cc != media.headerExtensions.end()) == extension, "answer invented or lost the TWCC extension");
+            if (extension) Require(cc->id == 5 && cc->direction == sdp::MediaDirection::SendOnly,
+                "answer did not preserve the viewer TWCC ID and direction");
+            const auto& selected = media.codecs.front().rtcpFeedback;
+            const bool has_feedback = std::any_of(selected.begin(), selected.end(),
+                [](const auto& item) { return item.type == "transport-cc"; });
+            Require(has_feedback == (extension && feedback), "TWCC feedback requires both negotiated capabilities");
+        }
+        Require(viewer.Request({{"type", "unsubscribe"}, {"session_id", reply.at("session_id")}})
+            .value("type", "") == "unsubscribed", "could not replace TWCC subscription");
+    }
+    service->Stop();
+    WaitForEndpoints(baseline);
+    loop.Stop();
+}
+
 void Run()
 {
     auto& streams = media::MediaStreamRegistry::Instance();
@@ -1912,6 +1977,8 @@ int main(int argc, char** argv)
     std::signal(SIGPIPE, SIG_IGN);
     try
     {
+        if (argc == 2 && std::string(argv[1]) == "--twcc")
+        { RunTransportCcNegotiation(); std::cout << "PASS downstream TWCC negotiation and RR compatibility\n"; return 0; }
         if (argc == 2 && std::string(argv[1]) == "--members")
         {
             RunMembers();

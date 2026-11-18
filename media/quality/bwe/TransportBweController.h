@@ -24,6 +24,7 @@ public:
     BweResult OnTransportFeedback(const media::TransportFeedback& feedback);
     void SetBitrateConstraints(const media::BitrateConstraints& constraints);
     void SetRtt(uint32_t rtt_ms);
+    BweResult ApplyProbeEstimate(BweResult result, uint32_t capacity_bps);
     void Reset();
 
     void AddObserver(const std::shared_ptr<IBweObserver>& observer);

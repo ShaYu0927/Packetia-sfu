@@ -1,0 +1,13 @@
+{
+  "repository": "https://webrtc.googlesource.com/src",
+  "revision": "afef16afa42fb248d85c717bfbd88d612a37722a",
+  "files": {
+    "modules/congestion_controller/goog_cc/trendline_estimator.h": "f3b8427d152e48ce114a2cd5522afa36b77137230050011e957c303899d103ab",
+    "modules/congestion_controller/goog_cc/trendline_estimator.cc": "cb8c347f2ba912010fc8e933808c2d286409035d161aa6771a9fad0d747816fc",
+    "modules/congestion_controller/goog_cc/trendline_estimator_unittest.cc": "250bba53cd12caec0f6362e36fb924187a80ff4c8fc8584eb849aadbb82c8907",
+    "api/transport/bandwidth_usage.h": "d8e8854a670972fa0a27ffc9a74937d6140629e31a7551a1a6d1def4b9ae6701",
+    "LICENSE": "ab00a482b6a3902e40211b43c5d0441962ea99b6cc7c25c0f243fa270b78d482",
+    "PATENTS": "01462e2068d1a04c2274f3389773014c14ed9bc3446b28303543bd3e3c064145",
+    "AUTHORS": "fbac1b9ab5c0f737e3b343015d9c9748827ebd050f4a37a77bd1f40f95eeebce"
+  }
+}

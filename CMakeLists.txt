@@ -256,6 +256,7 @@ add_library(ROOM_LIB STATIC
 )
 add_subdirectory(Rtsp/Rtp)
 add_subdirectory(protocol)
+add_subdirectory(third/webrtc_trendline)
 add_subdirectory(media)
 add_subdirectory(service)
 target_link_libraries(rtsp PUBLIC packetia_auth)

@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -63,6 +64,10 @@ public:
     DownlinkBandwidthAllocator() = default;
     explicit DownlinkBandwidthAllocator(Config config);
     std::vector<DownlinkAllocation> Allocate(const DownlinkBandwidthBudget& budget, const std::vector<DownlinkDemand>& demands, uint64_t now_ms);
+    // Preserve active demand and add one paused video, including allocation headroom.
+    // This query does not change forwarding permissions or hysteresis timers.
+    // Unknown candidate rates and arithmetic overflow return no threshold.
+    std::optional<uint64_t> RequiredBudgetToResume(uint64_t active_bps, uint32_t candidate_bps) const;
     void Remove(const std::string& id) { slots_.erase(id); }
     void Clear() { slots_.clear(); epoch_ = 0; }
 
@@ -87,6 +92,7 @@ private:
     };
 
     bool IsBudgetValid(const DownlinkBandwidthBudget& budget, uint64_t now_ms) const;
+    uint64_t ResumeCostBps(uint32_t required_bps) const;
     std::vector<AllocationPlan> Prepare(const std::vector<DownlinkDemand>& demands, bool reset_pending);
     std::vector<AllocationPlan*> ProvisionalAllocate(std::vector<AllocationPlan>& plans, uint64_t usable_bps) const;
     std::vector<DownlinkAllocation> Commit(std::vector<AllocationPlan>& plans,

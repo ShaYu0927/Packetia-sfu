@@ -60,7 +60,13 @@ std::shared_ptr<TransportSequenceAllocator> SendSideController::SequenceAllocato
 void SendSideController::OnPacketSent(const PacketSendInfo& packet)
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (available_) history_.AddPacket(packet);
+    if (available_)
+    {
+        history_.AddPacket(packet);
+        ++diagnostic_totals_.sent_packets_total;
+        diagnostic_totals_.sent_rtp_bytes_total += packet.size_bytes;
+        if (packet.is_probe) diagnostic_totals_.sent_probe_bytes_total += packet.size_bytes;
+    }
 }
 
 uint64_t SendSideController::PathEpoch() const
@@ -74,6 +80,9 @@ bool SendSideController::OnPacketSentForPath(const PacketSendInfo& packet, uint6
     std::lock_guard<std::mutex> lock(mutex_);
     if (!available_ || path_epoch_ != path_epoch) return false;
     history_.AddPacket(packet);
+    ++diagnostic_totals_.sent_packets_total;
+    diagnostic_totals_.sent_rtp_bytes_total += packet.size_bytes;
+    if (packet.is_probe) diagnostic_totals_.sent_probe_bytes_total += packet.size_bytes;
     return true;
 }
 
@@ -124,7 +133,12 @@ bool SendSideController::OnRtcpPacket(const uint8_t* data, size_t size, uint64_t
          */
         for (const auto& report : collector.reports)
         {
+            ++diagnostic_totals_.twcc_reports_total;
             auto feedback = adapter_.Build(report, history_, receive_time_ms);
+            diagnostic_totals_.matched_feedback_packets_total += feedback.packet_feedbacks.size();
+            diagnostic_totals_.received_feedback_packets_total += feedback.ReceivedCount();
+            if (report.packets.size() > feedback.packet_feedbacks.size())
+                diagnostic_totals_.unmatched_twcc_packets_total += report.packets.size() - feedback.packet_feedbacks.size();
             if (feedback.packet_feedbacks.empty()) continue;
             /* 已经收到反馈的包不再需要保留在发送历史中 */
             for (const auto& packet : feedback.packet_feedbacks)
@@ -148,6 +162,7 @@ bool SendSideController::OnRtcpPacket(const uint8_t* data, size_t size, uint64_t
          */
         for (const auto& report : collector.receiver_reports)
         {
+            ++diagnostic_totals_.rr_reports_total;
             // 根据 RR 中的 SSRC 查找对应媒体流的 RTP 时钟频率。
             //
             // 常见时钟频率：
@@ -206,6 +221,7 @@ bool SendSideController::ProcessIntervalLocked(uint64_t now_ms)
     history_.RemoveExpired(now_ms, config_.feedback_timeout_ms);
     const bool had_state = controller_.GetNetworkState(0).HasUpdates();
     controller_.OnProcessInterval({now_ms});
+    if (active_probe_ && !ProbeActiveLocked(now_ms)) active_probe_.reset();
     if (has_twcc_ && now_ms >= last_valid_twcc_receive_time_ms_ &&
         now_ms - last_valid_twcc_receive_time_ms_ >= config_.feedback_timeout_ms)
     {
@@ -243,6 +259,7 @@ void SendSideController::SetNetworkAvailable(bool available)
         last_valid_twcc_receive_time_ms_ = 0;
         config_.network_available = available;
         controller_ = GoogCcNetworkController(config_);
+        active_probe_.reset();
         callback = update_callback_;
     }
     // An empty update on a state transition clears the consumer's old rate.
@@ -264,6 +281,7 @@ void SendSideController::OnNetworkRouteChanged()
         last_valid_twcc_receive_time_ms_ = 0;
         config_.network_available = available_ = true;
         controller_ = GoogCcNetworkController(config_);
+        active_probe_.reset();
         callback = update_callback_;
     }
     // Do not reset sequence_allocator_ or sender_clock_rates_: old feedback
@@ -322,7 +340,8 @@ DownlinkBandwidthBudget SendSideController::GetBandwidthBudget() const
 ProbeDecision SendSideController::GetProbeDecision(const ProbeRequest& request)
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!available_ || request.path_epoch != path_epoch_) return {true, std::nullopt};
+    if (!available_) return {true, std::nullopt, ProbeDecisionReason::NetworkUnavailable};
+    if (request.path_epoch != path_epoch_) return {true, std::nullopt, ProbeDecisionReason::StalePath};
     return controller_.GetProbeDecision(request);
 }
 
@@ -331,16 +350,78 @@ std::optional<ProbePlan> SendSideController::StartProbe(ProbePlan plan, uint64_t
     std::lock_guard<std::mutex> lock(mutex_);
     if (!available_ || !plan.bitrate_bps || !plan.duration_ms || plan.max_bytes < 300 ||
         path_epoch != path_epoch_ || plan.generation != controller_.ProbeGeneration() ||
-        next_probe_cluster_id_ == std::numeric_limits<int>::max()) return std::nullopt;
+        next_probe_cluster_id_ == std::numeric_limits<int>::max() || ProbeActiveLocked(now_ms)) return std::nullopt;
+    plan.bitrate_bps = std::min(plan.bitrate_bps, config_.bitrate.max_bitrate_bps);
+    plan.duration_ms = std::min<uint32_t>(plan.duration_ms, 500);
+    plan.max_bytes = std::min<uint64_t>(plan.max_bytes, 128 * 1024);
+    plan.pacing_bitrate_bps = std::min(config_.bitrate.max_bitrate_bps,
+        std::max(plan.bitrate_bps, plan.pacing_bitrate_bps));
     plan.cluster_id = next_probe_cluster_id_++;
+    active_probe_ = ActiveProbe{plan, now_ms, path_epoch_};
     controller_.OnProbeEvent({ProbeEventType::Started, plan, path_epoch_, now_ms, 0});
     return plan;
 }
 
 void SendSideController::OnProbeEvent(const ProbeEvent& event)
 {
+    NetworkControlUpdate update;
+    UpdateCallback callback;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (event.path_epoch != path_epoch_ || event.plan.generation != controller_.ProbeGeneration()) return;
+        update = controller_.OnProbeEvent(event);
+        if (active_probe_ && active_probe_->plan.cluster_id == event.plan.cluster_id &&
+            event.type != ProbeEventType::Started) active_probe_.reset();
+        callback = update_callback_;
+    }
+    if (callback && update.HasUpdates()) callback(update);
+    if (update.HasUpdates()) NotifyBudgetObservers();
+}
+
+bool SendSideController::ProbeActiveLocked(uint64_t now_ms) const
+{
+    if (!available_ || !active_probe_ || active_probe_->path_epoch != path_epoch_ ||
+        active_probe_->plan.generation != controller_.ProbeGeneration()) return false;
+    const auto result = controller_.LastProbeResult();
+    if (result && result->cluster_id == active_probe_->plan.cluster_id) return false;
+    return now_ms < active_probe_->started_ms || now_ms - active_probe_->started_ms < active_probe_->plan.duration_ms;
+}
+
+bool SendSideController::IsProbeActive(int cluster_id, uint64_t now_ms) const
+{
     std::lock_guard<std::mutex> lock(mutex_);
-    if (event.path_epoch == path_epoch_) controller_.OnProbeEvent(event);
+    return ProbeActiveLocked(now_ms) && active_probe_->plan.cluster_id == cluster_id;
+}
+
+uint32_t SendSideController::GetPacingRate(uint64_t now_ms) const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!available_) return 0;
+    const auto update = controller_.GetNetworkState(0);
+    const uint32_t normal = update.has_pacer_config ? update.pacer_config.pacing_bitrate_bps :
+        config_.bitrate.start_bitrate_bps;
+    if (!ProbeActiveLocked(now_ms)) return normal;
+    return std::min(config_.bitrate.max_bitrate_bps,
+        std::max(normal, active_probe_->plan.pacing_bitrate_bps));
+}
+
+std::optional<ProbeResult> SendSideController::LastProbeResult() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return controller_.LastProbeResult();
+}
+
+TransportDiagnostics SendSideController::GetDiagnostics(uint64_t now_ms) const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto result = diagnostic_totals_;
+    result.at_time_ms = now_ms;
+    result.path_epoch = path_epoch_;
+    result.network_available = available_;
+    result.controller = controller_.GetDiagnostics(now_ms);
+    if (ProbeActiveLocked(now_ms)) result.active_probe = active_probe_->plan;
+    result.last_probe_result = controller_.LastProbeResult();
+    return result;
 }
 
 void SendSideController::NotifyBudgetObservers()

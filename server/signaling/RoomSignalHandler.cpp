@@ -18,6 +18,7 @@
 #include "RtpTrackBinding.h"
 #include "MediaEndpointIngress.h"
 #include "WebRtcMediaTransport.h"
+#include "QosTrace.h"
 #include "UdpServer.h"
 #include "WebRtcCodec.h"
 #include "WebRtcUdpMux.h"
@@ -75,8 +76,6 @@ void CopyPrimarySources(const WebRtcMediaDescription& remote, WebRtcMediaDescrip
 }
 struct RoomSignalHandler::Membership
 {
-    // 已验签的身份和授权快照属于本次信令绑定；媒体包不携带 JWT。
-    // 后续业务动作仍分别检查该快照对应的权限。
     auth::AuthContext caller;
     std::shared_ptr<room::Room> room;
     std::shared_ptr<room::Participant> participant;
@@ -365,7 +364,12 @@ Json RoomSignalHandler::HandleSubscribe(const std::string& connection, const Sig
         subscription.media.ssrcs.clear();
         subscription.media.ssrcGroups.clear();
         subscription.media.msids = {"packetia " + trackId};
-        for (auto& extension : subscription.media.headerExtensions) extension.direction = MediaDirection::SendOnly;
+        // Downstream feedback is negotiated independently of the publisher.
+        // These IDs are capability placeholders; the answer uses the viewer's IDs.
+        subscription.media.headerExtensions = {
+            {1, RtpHeaderExtensionUri::SDES_MID, MediaDirection::SendOnly, {}},
+            {2, RtpHeaderExtensionUri::TRANSPORT_CC, MediaDirection::SendOnly, {}}};
+        subscription.media.rtcpFeedback.emplace_back(RtcpFeedbackType::TRANSPORT_CC);
         uint32_t ssrc = 0;
         do
         {
@@ -639,9 +643,18 @@ Json RoomSignalHandler::CreateSession(const std::string& connection, const std::
                 sender.local_ssrc = media->ssrcs.front().ssrc;
                 sender.payload_type = static_cast<uint8_t>(media->codecs.front().payloadType);
                 sender.sample_rate = media->codecs.front().clockRate;
+                const bool transport_cc = std::any_of(media->codecs.front().rtcpFeedback.begin(),
+                    media->codecs.front().rtcpFeedback.end(), [](const auto& feedback) {
+                        return feedback.type == RtcpFeedbackType::TRANSPORT_CC && feedback.parameter.empty();
+                    });
                 for (const auto& extension : media->headerExtensions)
+                {
                     if (extension.uri == RtpHeaderExtensionUri::SDES_MID)
                     { sender.mid_extension_id = static_cast<uint8_t>(extension.id); sender.mid = media->mid; }
+                    // Enable packet numbering only when both extension and feedback were agreed.
+                    if (transport_cc && extension.uri == RtpHeaderExtensionUri::TRANSPORT_CC)
+                        sender.transport_cc_extension_id = static_cast<uint8_t>(extension.id);
+                }
                 const auto codec = media->media == "video" ? CodecId::H264 : CodecId::OPUS;
                 session.room_subscriptions.push_back(subscription.track_id);
                 if (!session.endpoint->ConfigureSubscription(subscription.track_id, sender, session.transport, codec) ||
@@ -649,6 +662,14 @@ Json RoomSignalHandler::CreateSession(const std::string& connection, const std::
                     return fail("Could not connect room subscription");
             }
         }
+    }
+    if (media::QosTraceEnabled())
+    {
+        const auto owner = memberships_.find(connection);
+        media::WriteQosEvent("qos_session", {{"transport_id", session.id},
+            {"role", session.subscriber ? "subscribe" : "publish"},
+            {"room_id", owner != memberships_.end() ? owner->second->room->Id() : std::string{}},
+            {"participant_id", owner != memberships_.end() ? owner->second->participant->Id() : std::string{}}});
     }
     return Json{{"type", "answer"}, {"session_id", session.id}, {"sdp", sdp::Sdp::Serialize(answer)}};
 }

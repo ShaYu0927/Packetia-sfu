@@ -2,6 +2,7 @@
 #include "third/nlohmann/json.hpp"
 #include <set>
 #include <vector>
+#include <limits>
 
 #define CHECK(value) do { if (!(value)) throw std::runtime_error(#value); } while (false)
 using Json = nlohmann::json;
@@ -134,6 +135,35 @@ void Rotation(const std::filesystem::path& path)
     CHECK(records.size() == 10 && std::filesystem::exists(path.string() + ".1"));
 }
 
+void TypedEventFields(const std::filesystem::path& path)
+{
+    LoggerOptions options;
+    options.to_console = false;
+    options.format = LogFormat::Json;
+    {
+        AsyncFileLogger logger(path.string(), options);
+        logger.WriteEvent(__FILE__, __LINE__, BaseLogger::INFO, "qos_sample", "diagnostic",
+            {{"transport_id", uint64_t(-1)}, {"counter", int64_t(-7)}, {"valid", true},
+             {"missing", std::optional<double>{}}, {"bad", std::numeric_limits<double>::infinity()},
+             {"label", "quote\"\nline"}, {"rate", 123.456789}, {"event", "nested"}});
+        logger.set_min_level(BaseLogger::ERR);
+        logger.WriteEvent(__FILE__, __LINE__, BaseLogger::INFO, "hidden", "filtered", {});
+    }
+    const auto records = Read(path);
+    CHECK(records.size() == 1);
+    const auto& record = records.front();
+    CHECK(record.at("event") == "qos_sample");
+    const auto& data = record.at("data");
+    CHECK(data.at("transport_id").get<uint64_t>() == uint64_t(-1));
+    CHECK(data.at("counter") == -7 && data.at("valid") == true);
+    CHECK(data.at("missing").is_null() && data.at("bad").is_null());
+    CHECK(data.at("label") == "quote\"\nline" && data.at("event") == "nested");
+    CHECK(std::abs(data.at("rate").get<double>() - 123.456789) < 1e-8);
+    const auto text = packetia::logging::FormatRecord(LogFormat::Text, "sfu", "node", __FILE__, __LINE__,
+        BaseLogger::INFO, "diagnostic", "qos_sample", {{"label", "a\nb"}});
+    CHECK(text.find('\n') == std::string::npos && text.find("data={") != std::string::npos);
+}
+
 void EnvironmentAndFiltering()
 {
     Environment mode("PACKETIA_LOG_MODE", "console");
@@ -174,6 +204,7 @@ try
     QueueAndReadiness(directory.path / "queue.log");
     ConcurrentOutput(directory.path / "concurrent.log");
     Rotation(directory.path / "rotation.log");
+    TypedEventFields(directory.path / "fields.log");
     EnvironmentAndFiltering();
     std::cout << "PASS structured logging, filtering, identity, readiness, concurrency, drops and rotation\n";
 }

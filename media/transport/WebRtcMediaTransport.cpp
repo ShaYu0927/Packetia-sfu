@@ -1,4 +1,5 @@
 #include "WebRtcMediaTransport.h"
+#include <chrono>
 
 namespace media::transport
 {
@@ -32,10 +33,9 @@ bool WebRtcMediaTransport::BindSession(const std::shared_ptr<protocol::webrtc::W
             session->SendRtcp(std::move(packet.bytes));
         else session->SendRtpWithCompletion(std::move(packet.bytes), std::move(packet.valid), std::move(packet.on_sent));
     }, [controller = controller_] {
-        const auto budget = controller->GetBandwidthBudget();
-        if (!budget.network_available) return uint32_t{0};
-        const auto update = controller->GetNetworkState();
-        return update.has_pacer_config ? update.pacer_config.pacing_bitrate_bps : budget.start_bps;
+        const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        return controller->GetPacingRate(static_cast<uint64_t>(now_ms));
     });
     session_ = session;
     return true;

@@ -3,6 +3,7 @@
 #include "VideoResumeBuffer.h"
 #include "RtpSenderTrack.h"
 #include "SendSideController.h"
+#include "PacedSendQueue.h"
 #include "RtpTransportCcExtension.h"
 #include "Rtp/RtpForwardingState.h"
 #include "Rtp/RtpSenderFeedback.h"
@@ -47,6 +48,46 @@ TEST(RtpSenderFeedback, KeyframeRequestsAreThrottledAndRecoverAfterClockRollback
 
 DownlinkBandwidthBudget Budget(uint32_t rate, uint64_t at, uint64_t epoch = 1)
 { return {epoch, at, true, true, rate}; }
+
+TEST(DownlinkAllocator, RecoveryBudgetIsTheAllocationBoundaryForOnePausedVideo)
+{
+    struct Case { uint32_t usable, margin, active, candidate; uint64_t expected; };
+    for (const auto& item : {Case{85, 20, 1000000, 300000, 1600000},
+                             Case{100, 0, 50000, 300000, 350000},
+                             Case{80, 50, 100000, 200000, 500000},
+                             Case{85, 20, 1, 1, 3}})
+    {
+        DownlinkBandwidthAllocator allocator({item.usable, item.margin, 0, 0, 1500});
+        const std::vector<DownlinkDemand> demands{
+            {"audio", true, true, 0, item.active}, {"video", false, true, 128, item.candidate}};
+        ASSERT_FALSE(allocator.Allocate(Budget(1, 1000), demands, 1000)[1].allowed);
+        const auto required = allocator.RequiredBudgetToResume(item.active, item.candidate);
+        ASSERT_TRUE(required);
+        EXPECT_EQ(*required, item.expected);
+        ASSERT_FALSE(allocator.Allocate(Budget(static_cast<uint32_t>(*required - 1), 1001), demands, 1001)[1].allowed);
+        ASSERT_TRUE(allocator.Allocate(Budget(static_cast<uint32_t>(*required), 1002), demands, 1002)[1].allowed);
+    }
+}
+
+TEST(DownlinkAllocator, RecoveryBudgetQueryPreservesResumeWaitAndHandlesUnknownAndOverflow)
+{
+    DownlinkBandwidthAllocator allocator({85, 20, 0, 1000, 1500});
+    const std::vector<DownlinkDemand> demands{{"video", false, true, 128, 300000}};
+    ASSERT_FALSE(allocator.Allocate(Budget(100000, 1000), demands, 1000)[0].allowed);
+    const auto required = allocator.RequiredBudgetToResume(0, 300000);
+    ASSERT_TRUE(required);
+    const auto rate = static_cast<uint32_t>(*required);
+    EXPECT_FALSE(allocator.Allocate(Budget(rate, 1100), demands, 1100)[0].allowed);
+    for (int i = 0; i < 10; ++i) EXPECT_EQ(allocator.RequiredBudgetToResume(0, 300000), required);
+    EXPECT_FALSE(allocator.Allocate(Budget(rate, 2099), demands, 2099)[0].allowed);
+    EXPECT_TRUE(allocator.Allocate(Budget(rate, 2100), demands, 2100)[0].allowed);
+    EXPECT_FALSE(allocator.RequiredBudgetToResume(0, 0));
+    EXPECT_FALSE(allocator.RequiredBudgetToResume(std::numeric_limits<uint64_t>::max(), 1));
+    EXPECT_FALSE(allocator.RequiredBudgetToResume(std::numeric_limits<uint64_t>::max() - 10, 1));
+    DownlinkBandwidthAllocator full_budget({100, 0, 0, 0, 1500});
+    EXPECT_EQ(full_budget.RequiredBudgetToResume(std::numeric_limits<uint64_t>::max() - 1, 1),
+        std::numeric_limits<uint64_t>::max());
+}
 
 TEST(DownlinkAllocator, ReservesAudioAndAllocatesPriorityBeforeSmallerVideos)
 {
@@ -328,6 +369,112 @@ public:
     std::shared_ptr<SendSideController> controller = std::make_shared<SendSideController>();
     std::vector<std::vector<uint8_t>> packets;
 };
+// Deterministic socket boundary: accepted packets are paced first, then complete.
+class PacedProbeTransport final : public SenderTransport
+{
+public:
+    PacedProbeTransport()
+    {
+        NetworkControllerConfig config;
+        config.bitrate = {100000, 200000, 2000000};
+        controller = std::make_shared<SendSideController>(config);
+    }
+    uint64_t now = 1000, next_task = 0;
+    std::map<std::pair<uint64_t, uint64_t>, std::function<void()>> tasks;
+    std::vector<uint64_t> send_times;
+    media::transport::PacedSendQueue queue{
+        [this](uint32_t delay, auto task) {
+            tasks.emplace(std::make_pair(now + delay, ++next_task), std::move(task)); return true;
+        },
+        [this](auto packet) {
+            packets.push_back(std::move(packet.bytes));
+            send_times.push_back(now);
+            if (packet.on_sent) packet.on_sent();
+        }, [this] { return controller->GetPacingRate(now); }, [this] { return now; }};
+    SendResult SendRtpWithCompletion(const uint8_t* data, size_t size, bool,
+                                    std::function<void()> complete) override
+    {
+        return queue.Send(media::transport::PacedSendQueue::Priority::Media, data, size, {},
+            std::move(complete)) == media::transport::PacedSendQueue::Result::Accepted ?
+            SendResult::Ok : SendResult::NotWritable;
+    }
+    void Advance(uint64_t end)
+    {
+        while (!tasks.empty() && tasks.begin()->first.first <= end)
+        {
+            auto task = tasks.extract(tasks.begin());
+            now = task.key().first;
+            task.mapped()();
+        }
+        now = end;
+    }
+};
+
+TEST(DownlinkSender, PaddingSocketCompletionsAndEncodedTwccRaiseSharedBudget)
+{
+    auto transport = std::make_shared<PacedProbeTransport>();
+    rtsp::RtpSenderTrackConfig config;
+    config.local_ssrc = 99;
+    config.transport_cc_extension_id = 3;
+    rtsp::RtpSenderTrack sender(config, transport, [&] { return transport->now; });
+    auto controller = transport->controller;
+    auto decision = controller->GetProbeDecision({1000, controller->PathEpoch(), 0, 400000});
+    ASSERT_TRUE(decision.plan);
+    const auto plan = controller->StartProbe(*decision.plan, 1000, controller->PathEpoch());
+    ASSERT_TRUE(plan);
+    uint64_t accounted = 0;
+    for (uint64_t tick = 1000; tick < 1500; tick += 20)
+    {
+        transport->Advance(tick);
+        const auto allowance = std::min(plan->max_bytes, uint64_t(plan->bitrate_bps) * (tick - 1000 + 20) / 8000);
+        while (accounted + 300 <= allowance)
+        {
+            ASSERT_TRUE(sender.SendPadding(240, plan->cluster_id));
+            accounted += 300;
+        }
+    }
+    transport->Advance(1500);
+    controller->OnProbeEvent({ProbeEventType::Finished, *plan, controller->PathEpoch(), 1500, accounted});
+    ASSERT_GT(transport->packets.size(), 50U);
+    EXPECT_FALSE(controller->GetBandwidthBudget().estimate_valid);
+
+    // One TWCC run-length chunk: all packets received with small deltas.
+    auto put16 = [](uint8_t* p, uint16_t v) { p[0] = uint8_t(v >> 8); p[1] = uint8_t(v); };
+    std::vector<uint8_t> feedback(22, 0);
+    feedback[0] = 0x8f; feedback[1] = 205;
+    uint16_t sequence;
+    ASSERT_TRUE(rtsp::RtpTransportCcExtension::Read(transport->packets.front().data(),
+        transport->packets.front().size(), 3, &sequence));
+    put16(feedback.data() + 12, sequence);
+    put16(feedback.data() + 14, static_cast<uint16_t>(transport->packets.size()));
+    const uint64_t first_receive_ms = 50000 + transport->send_times.front() - 1000;
+    const uint32_t reference = static_cast<uint32_t>(first_receive_ms / 64);
+    feedback[16] = uint8_t(reference >> 16); feedback[17] = uint8_t(reference >> 8); feedback[18] = uint8_t(reference);
+    put16(feedback.data() + 20, 0x2000 | static_cast<uint16_t>(transport->packets.size()));
+    uint64_t previous_receive_ms = uint64_t(reference) * 64;
+    for (const auto at : transport->send_times)
+    {
+        const uint64_t receive_ms = 50000 + at - 1000;
+        ASSERT_LE((receive_ms - previous_receive_ms) * 4, 255U);
+        feedback.push_back(static_cast<uint8_t>((receive_ms - previous_receive_ms) * 4));
+        previous_receive_ms = receive_ms;
+    }
+    while (feedback.size() % 4) feedback.push_back(0);
+    put16(feedback.data() + 2, static_cast<uint16_t>(feedback.size() / 4 - 1));
+    unsigned updates = 0;
+    controller->AddBudgetObserver([&] { ++updates; });
+    ASSERT_TRUE(controller->OnRtcpPacket(feedback.data(), feedback.size(), 1550));
+    ASSERT_TRUE(controller->LastProbeResult());
+    EXPECT_EQ(controller->LastProbeResult()->outcome, ProbeOutcome::Succeeded);
+    const auto budget = controller->GetBandwidthBudget();
+    EXPECT_TRUE(budget.estimate_valid);
+    EXPECT_GT(budget.target_bps, 200000U);
+    EXPECT_LT(budget.target_bps, plan->pacing_bitrate_bps);
+    EXPECT_EQ(updates, 1U);
+    ASSERT_TRUE(controller->OnRtcpPacket(feedback.data(), feedback.size(), 1560));
+    EXPECT_EQ(updates, 1U); // Matched history was consumed, so replay cannot grow again.
+}
+
 uint16_t Sequence(const std::vector<uint8_t>& p) { return (uint16_t(p[2]) << 8) | p[3]; }
 
 TEST(DownlinkSender, RecoverySkipsIntentionalGapsRetainsNetworkGapsAndClearsOldNacks)

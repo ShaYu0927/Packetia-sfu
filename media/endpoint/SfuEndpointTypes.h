@@ -66,7 +66,8 @@ struct Subscription
     std::shared_ptr<SourceBitrateEstimator> source_bitrate;
     DownlinkSubscriptionPolicy bandwidth_policy;
     std::atomic<DownlinkBandwidthState> bandwidth_state{DownlinkBandwidthState::Forwarding};
-    std::atomic<bool> probe_allowed{false};
+    // Captured by queued padding; a newer cluster cannot revive an old packet.
+    std::atomic<int> probe_cluster_id{-1};
     uint64_t transport_id = 0;
     CodecId codec = CodecId::Unknown;
     bool audio = false;

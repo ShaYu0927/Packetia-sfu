@@ -4,22 +4,19 @@
 #include "NetworkController.h"
 #include "NetworkControllerInterface.h"
 #include "TransportBweController.h"
+#include "TransportDiagnostics.h"
 #include <optional>
 
 namespace media
 {
 
 /**
- * GoogCC 形状的编排层。
- *
- *   - TransportBweController 负责基于 Transport-CC 的 OU 时延趋势、
- *     接收速率和时间/RTT 驱动的 RemoteBitrateController；
- *   - NetworkController 负责质量分级、目标码率和 Pacer 建议。
- *
- *   - PacketGroupObserver 与 ProbeController 提供可替换算法接口，默认尚无新算法。
- * 后续可以逐个加入 AcknowledgedBitrateEstimator、ALR、
- * LossBasedBwe 和 CongestionWindow，而 INetworkController 调用接口保持不变。
- * 本类只负责编排和状态汇合，不负责 RTCP 解析与实际发包。
+ * Packetia's orchestration layer with a WebRTC-style event boundary.
+ * TransportBweController combines grouped WebRTC trendline detection, legacy
+ * per-packet fallback, receive-rate estimation and RemoteBitrateController.
+ * NetworkController generates policy and pacing suggestions. Grouping and
+ * probing can be injected independently. This is not the complete libwebrtc GCC;
+ * RTCP parsing and packet transmission remain outside this class.
  */
 class GoogCcNetworkController final : public INetworkController
 {
@@ -34,7 +31,9 @@ public:
     NetworkControlUpdate OnReceiverFeedback(const WeakNetFeedback& feedback) override;
     NetworkControlUpdate GetNetworkState(uint64_t at_time_ms) const override;
     ProbeDecision GetProbeDecision(const ProbeRequest& request);
-    void OnProbeEvent(const ProbeEvent& event);
+    NetworkControlUpdate OnProbeEvent(const ProbeEvent& event);
+    std::optional<ProbeResult> LastProbeResult() const { return last_probe_result_; }
+    ControllerDiagnostics GetDiagnostics(uint64_t now_ms) const;
     uint64_t ProbeGeneration() const { return probe_generation_; }
 
 private:
@@ -66,6 +65,7 @@ private:
     NetworkStatsCollector stats_;
     std::unique_ptr<IProbeController> probe_controller_;
     uint64_t probe_generation_ = 1;
+    std::optional<ProbeResult> last_probe_result_;
 };
 
 }

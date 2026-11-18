@@ -4,6 +4,7 @@ x-jwt-environment: &jwt-environment
   PACKETIA_LOG_MODE: console
   PACKETIA_LOG_FORMAT: ${PACKETIA_LOG_FORMAT:-json}
   PACKETIA_LOG_LEVEL: ${PACKETIA_LOG_LEVEL:-info}
+  PACKETIA_QOS_LOG: ${PACKETIA_QOS_LOG:-0}
 
 x-runtime: &runtime
   image: ${PACKETIA_IMAGE:-packetia-cluster:local}

@@ -12,6 +12,7 @@ public:
                      double loss_rate, int64_t now_ms, uint32_t rtt_ms = 0);
     void SetBitrateConstraints(uint32_t min_bps, uint32_t start_bps, uint32_t max_bps);
     void SetRtt(uint32_t rtt_ms);
+    void ApplyProbeEstimate(uint32_t capacity_bps);
     void Reset();
     uint32_t target_bitrate_bps() const { return static_cast<uint32_t>(target_bitrate_bps_); }
     RateControlRegion region() const { return region_; }

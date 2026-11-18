@@ -1,15 +1,19 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Packetia Room</title>
+  <title>Packetia · 传输实验室</title>
   <link rel="stylesheet" href="/style.css">
   <script type="module" src="/app.js"></script>
 </head>
 <body>
-  <header><strong>Packetia Room</strong><span id="connection" role="status">Disconnected</span></header>
+  <header><strong>Packetia <small>传输实验室</small></strong><span id="connection" role="status">Disconnected</span></header>
   <main>
+    <div class="intro"><div><p class="eyebrow">WEBRTC / SINGLE-LAYER FORWARDING</p>
+      <h1>让每一次传输变化，都看得见。</h1>
+      <p>一个窗口推流，另一个窗口订阅。在相同房间观察发送、接收和网络反馈。</p></div>
+      <a class="button" href="/" target="_blank" rel="noopener">打开接收窗口 ↗</a></div>
     <form id="join-form" class="toolbar">
       <label>Room<input id="room" value="demo" maxlength="64" required pattern="[A-Za-z0-9_.-]+"></label>
       <label>Role<select id="role"><option value="participant">Participant</option><option value="publisher">Publisher</option><option value="viewer">Viewer</option></select></label>
@@ -18,6 +22,17 @@
       <button id="leave" type="button" disabled>Leave</button>
     </form>
     <p id="identity">No room selected</p>
+    <fieldset id="capture-settings" class="settings">
+      <legend>01 / 推流参数</legend>
+      <label>分辨率<select id="resolution"><option value="640x360">640 × 360</option>
+        <option value="1280x720">1280 × 720</option><option value="1920x1080">1920 × 1080</option></select></label>
+      <label>帧率 · fps<select id="framerate"><option value="20">20</option><option value="30">30</option>
+        <option value="60">60</option><option value="120">120</option></select></label>
+      <label>编码码率上限 · kbps<input id="max-bitrate" type="number" min="100" max="50000" step="100" value="800" required></label>
+      <button id="apply-bitrate" disabled>应用码率上限</button>
+      <p class="hint">分辨率和帧率在开始推流时生效；码率上限可实时调整。实际输出取决于设备、编码器和网络。
+        当前 SFU 下行默认上限为 2.5 Mbps，高码率输入不代表下行能完整转发。</p>
+    </fieldset>
     <div class="actions">
       <button id="publish" disabled>Publish camera</button>
       <label>Publisher<select id="publisher" disabled><option value="">No published tracks</option></select></label>
@@ -31,6 +46,31 @@
       </section>
       <div id="remotes"></div>
     </div>
+    <section class="quality-panel" aria-label="实时传输质量">
+      <div class="panel-heading"><div><p class="eyebrow">02 / LIVE MEASUREMENTS</p><h2>实际传输质量</h2></div>
+        <div class="report-actions"><span id="sample-count">0 个采样</span><button id="clear-report">清空记录</button>
+          <button id="export-report" disabled>导出 JSON</button></div></div>
+      <div class="quality-cards">
+        <article><span>视频发送码率</span><strong id="tx-rate">—</strong><small>浏览器 → SFU</small></article>
+        <article><span>视频接收码率</span><strong id="rx-rate">—</strong><small>SFU → 当前浏览器 · 多轨合计</small></article>
+        <article><span>订阅连接 ICE RTT</span><strong id="quality-rtt">—</strong><small>当前浏览器 ↔ SFU</small></article>
+        <article><span>实际摄像头采集</span><strong id="capture-actual">—</strong><small id="capture-requested">尚未开始推流</small></article>
+      </div>
+      <div class="chart-heading"><span><i class="dot tx"></i>发送 <i class="dot rx"></i>接收 · 视频 kbps</span>
+        <span id="chart-scale">等待采样</span></div>
+      <svg id="bitrate-chart" viewBox="0 0 900 160" role="img" aria-label="最近 90 次采样的视频收发码率趋势">
+        <path class="grid-line" d="M0 40H900 M0 80H900 M0 120H900"/>
+        <path id="tx-line" class="chart-line tx-line"/><path id="rx-line" class="chart-line rx-line"/>
+      </svg>
+      <p class="hint">每秒采样；首个采样和浏览器不支持的指标显示 —。这是浏览器测量值，未接入服务器内部 BWE、队列或探测状态。</p>
+      <div class="table-scroll"><table><caption>逐轨统计 · 帧率不跨视频轨道相加</caption>
+        <thead><tr><th>方向 / 类型</th><th>编码</th><th>实际码率</th><th>包 / 秒</th><th>帧 / 秒</th><th>尺寸</th>
+          <th>区间丢包</th><th>抖动</th><th>缓冲等待</th><th>冻结累计</th><th>编码限制</th></tr></thead>
+        <tbody id="stream-metrics"><tr><td colspan="11">开始推流或订阅后显示逐轨指标</td></tr></tbody>
+      </table></div>
+      <p class="hint">丢包和抖动来自本机接收统计；ICE RTT 不是端到端播放延迟。码率上限不是网络限速，也不是带宽探测结果。</p>
+      <p id="quality-error" role="status"></p>
+    </section>
     <dl class="metrics">
       <div><dt>Publish ICE</dt><dd id="publish-ice">Idle</dd></div>
       <div><dt>Subscribe ICE</dt><dd id="subscribe-ice">Idle</dd></div>

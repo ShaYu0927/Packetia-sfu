@@ -23,8 +23,8 @@ struct NetworkControllerConfig
     // RTT-only 更新不延长此期限；恢复反馈后重新初始化带宽估计。
     uint64_t feedback_timeout_ms = 5000;
 
-    // 可选算法注入；工厂为每条 Transport 创建独立实例。为空时使用 TODO
-    // 实现，继续沿用现有逐包估算和受限恢复探测。
+    // Optional per-transport algorithms. Defaults use PacketGroupObserver with
+    // the vendored WebRTC trendline estimator, plus Packetia's ProbeController.
     std::function<std::unique_ptr<IPacketGroupObserver>()> packet_group_observer_factory;
     std::function<std::unique_ptr<IProbeController>()> probe_controller_factory;
 };

@@ -19,8 +19,7 @@ public:
 
     bool RegisterSource(uint32_t source_ssrc);
     std::optional<NetworkStatsSnapshot> GetSnapshot(uint32_t source_ssrc, uint64_t now_ms = 0) const;
-    bool Evaluate(const rtsp::RtpReceiverTrack::Ptr& track, uint64_t now_ms,
-                  uint32_t local_rtcp_ssrc, const SendCallback& send);
+    bool Evaluate(const rtsp::RtpReceiverTrack::Ptr& track, uint64_t now_ms, uint32_t local_rtcp_ssrc, const SendCallback& send);
     void Remove(uint32_t ssrc);
     void Clear();
 

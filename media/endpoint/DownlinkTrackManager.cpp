@@ -2,11 +2,11 @@
 #include "SfuEndpoint.h"
 #include "MediaStreamRegistry.h"
 #include "MediaStreamAffinity.h"
+#include "WebRtcMediaTransport.h"
 
 #include <algorithm>
 #include <cassert>
 #include <chrono>
-#include <cmath>
 
 namespace media::endpoint
 {
@@ -16,14 +16,6 @@ uint64_t NowMs()
 {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count();
-}
-
-// RTT 重试间隔草稿，尚未接入 Tick；当前仍固定每秒重试。
-uint64_t KeyFrameRetryIntervalMs(double rtt_ms)
-{
-    if (!std::isfinite(rtt_ms) || rtt_ms <= 0)
-        return 1000;
-    return static_cast<uint64_t>(std::clamp(rtt_ms * 2.0, 1000.0, 5000.0));
 }
 
 bool IsPadding(const uint8_t* data, size_t size)
@@ -55,7 +47,7 @@ public:
         if (!route || route->Closed()) return SendResult::Closed;
         if (!route->CanDeliver()) return SendResult::NotWritable;
         if (type == MediaPacketType::Rtp && !route->CanSendMedia() &&
-            !(route->probe_allowed.load() && !retransmit && IsPadding(data, size)))
+            !(route->probe_cluster_id.load() >= 0 && !retransmit && IsPadding(data, size)))
             return SendResult::NotWritable;
         return transport_->SendWithValidity(type, data, size, retransmit,
             Validity(type, !retransmit && IsPadding(data, size)));
@@ -67,7 +59,7 @@ public:
         if (!route || route->Closed()) return SendResult::Closed;
         if (!route->CanDeliver()) return SendResult::NotWritable;
         if (!route->CanSendMedia() &&
-            !(route->probe_allowed.load() && !retransmit && IsPadding(data, size)))
+            !(route->probe_cluster_id.load() >= 0 && !retransmit && IsPadding(data, size)))
             return SendResult::NotWritable;
         return transport_->SendWithValidity(MediaPacketType::Rtp, data, size, retransmit,
             Validity(MediaPacketType::Rtp, !retransmit && IsPadding(data, size)), std::move(on_sent));
@@ -79,10 +71,19 @@ public:
 private:
     std::function<bool()> Validity(MediaPacketType type, bool padding) const
     {
-        return [weak = route_, type, padding] {
+        const auto route = route_.lock();
+        const int cluster = padding && route ? route->probe_cluster_id.load() : -1;
+        const std::weak_ptr<SendSideController> controller = transport_->GetSendSideController();
+        return [weak = route_, controller, type, cluster] {
             const auto route = weak.lock();
-            return route && route->CanDeliver() && (type != MediaPacketType::Rtp ||
-                route->CanSendMedia() || (padding && route->probe_allowed.load()));
+            if (!route || !route->CanDeliver()) return false;
+            if (cluster >= 0)
+            {
+                const auto current = controller.lock();
+                return route->probe_cluster_id.load() == cluster && current &&
+                    current->IsProbeActive(cluster, NowMs());
+            }
+            return type != MediaPacketType::Rtp || route->CanSendMedia();
         };
     }
     const std::shared_ptr<IMediaTransport> transport_;
@@ -168,6 +169,8 @@ bool DownlinkTrackManager::Subscribe(const std::string& id, const ::TrackInfo& s
         {
             auto& group = transports_[transport_id];
             group.controller = controller;
+            group.transport = params->second.transport;
+            group.transport_id = transport_id;
             if (controller && schedule_) group.observer = controller->AddBudgetObserver(schedule_);
         }
     }
@@ -175,6 +178,13 @@ bool DownlinkTrackManager::Subscribe(const std::string& id, const ::TrackInfo& s
     {
         if (!Unsubscribe(id)) route->Close();
         throw;
+    }
+    if (QosTraceEnabled())
+    {
+        WriteQosEvent("qos_subscription", {{"transport_id", transport_id}, {"subscription_id", id},
+            {"source_track_id", route->source_track_id}, {"sender_ssrc", route->sender->GetSsrc()},
+            {"source_endpoint_id", source->Id()}, {"destination_endpoint_id", destination->Id()},
+            {"kind", route->audio ? "audio" : "video"}, {"twcc_extension_id", params->second.config.transport_cc_extension_id}, {"monotonic_ms", NowMs()}});
     }
     return true;
 }
@@ -245,11 +255,13 @@ void DownlinkTrackManager::Deliver(const std::shared_ptr<Subscription>& route, c
             if (state == DownlinkBandwidthState::Paused || recovery.empty()) return;
             route->sender->BeginDiscontinuity();
             route->bandwidth_state.store(DownlinkBandwidthState::Forwarding);
+            TraceState(*route, state, "complete_keyframe", now_ms);
             for (const auto& part : recovery)
             {
                 if (!route->sender->InputRtpPacket(part.data(), part.size()))
                 {
                     route->bandwidth_state.store(DownlinkBandwidthState::WaitingKeyFrame);
+                    TraceState(*route, DownlinkBandwidthState::Forwarding, "recovery_send_rejected", now_ms);
                     route->sender->BeginDiscontinuity();
                     route->next_keyframe_request_ms = 0;
                     break;
@@ -261,6 +273,29 @@ void DownlinkTrackManager::Deliver(const std::shared_ptr<Subscription>& route, c
         if (!route->sender->InputRtpPacket(packet.Data(), packet.Size()))
             media_latency::Count(media_latency::Counter::SenderRejected);
     }
+}
+
+void DownlinkTrackManager::TraceState(const Subscription& route, DownlinkBandwidthState before,
+                                      const char* reason, uint64_t now_ms) const
+{
+    if (!QosTraceEnabled()) return;
+    const auto after = route.bandwidth_state.load();
+    if (after == before) return;
+    const auto name = [](DownlinkBandwidthState state) {
+        switch (state)
+        {
+            case DownlinkBandwidthState::Forwarding: return "forwarding";
+            case DownlinkBandwidthState::Paused: return "paused";
+            case DownlinkBandwidthState::WaitingKeyFrame: return "waiting_keyframe";
+        }
+        return "unknown";
+    };
+    const auto controller = route.send_transport ? route.send_transport->GetSendSideController() : nullptr;
+    WriteQosEvent("qos_track_state", {{"transport_id", route.transport_id}, {"monotonic_ms", now_ms},
+        {"path_epoch", controller ? std::optional<uint64_t>(controller->PathEpoch()) : std::nullopt},
+        {"source_track_id", route.source_track_id}, {"sender_ssrc", route.sender->GetSsrc()},
+        {"from", name(before)}, {"to", name(after)}, {"reason", reason},
+        {"required_bps", RequiredBitrate(route)}});
 }
 
 uint32_t DownlinkTrackManager::RequiredBitrate(const Subscription& route) const
@@ -326,7 +361,10 @@ void DownlinkTrackManager::Tick(uint64_t now_ms, bool force)
                 route->recovery.Reset();
                 route->next_keyframe_request_ms = 0;
                 if (route->bandwidth_state.load() == DownlinkBandwidthState::Forwarding)
+                {
                     route->bandwidth_state.store(DownlinkBandwidthState::WaitingKeyFrame);
+                    TraceState(*route, DownlinkBandwidthState::Forwarding, "path_changed", now_ms);
+                }
             }
             // Policy-exempt tracks keep flowing, but still reserve their cost.
             demands.push_back({subscription.first, route->audio || !route->bandwidth_policy.enabled,
@@ -340,9 +378,20 @@ void DownlinkTrackManager::Tick(uint64_t now_ms, bool force)
         group.path_epoch = budget.path_epoch;
         group.probe_generation = budget.probe_generation;
         const auto allocations = group.allocator.Allocate(budget, demands, now_ms);
+        const bool trace_sample = QosTraceEnabled() && group.trace.SampleDue(now_ms);
         for (const auto& allocation : allocations)
         {
             const auto& route = subscriptions_.at(allocation.id);
+            if (trace_sample)
+                WriteQosEvent("qos_allocation", {{"transport_id", entry.first}, {"monotonic_ms", now_ms},
+                    {"path_epoch", budget.path_epoch}, {"subscription_id", allocation.id},
+                    {"source_track_id", route->source_track_id}, {"sender_ssrc", route->sender->GetSsrc()},
+                    {"kind", route->audio ? "audio" : "video"}, {"eligible", route->CanDeliver()},
+                    {"priority", route->bandwidth_policy.priority}, {"policy_enabled", route->bandwidth_policy.enabled},
+                    {"required_bps", RequiredBitrate(*route)}, {"allowed", allocation.allowed},
+                    {"committed_bps", allocation.bandwidth_requested_bps}, {"delta_bps", allocation.bandwidth_delta_bps},
+                    {"budget_estimate_valid", budget.estimate_valid}, {"budget_measured_at_ms", budget.measured_at_ms},
+                    {"budget_target_bps", budget.target_bps}});
             if (route->audio) continue;
             const auto state = route->bandwidth_state.load();
             const bool allowed = !route->bandwidth_policy.enabled || allocation.allowed;
@@ -358,6 +407,7 @@ void DownlinkTrackManager::Tick(uint64_t now_ms, bool force)
                 route->recovery.Restart();
                 route->next_keyframe_request_ms = 0;
             }
+            TraceState(*route, state, allowed ? "allocation_allowed" : "allocation_denied", now_ms);
             if (route->bandwidth_state.load() == DownlinkBandwidthState::WaitingKeyFrame &&
                 route->CanDeliver() && budget.network_available && now_ms >= route->next_keyframe_request_ms)
             {
@@ -366,6 +416,14 @@ void DownlinkTrackManager::Tick(uint64_t now_ms, bool force)
             }
         }
         Probe(group, budget, demands, now_ms);
+        if (QosTraceEnabled())
+        {
+            std::optional<transport::PacedSendQueue::Stats> queue;
+            if (group.trace.SampleDue(now_ms))
+                if (const auto adapter = std::dynamic_pointer_cast<transport::WebRtcMediaTransport>(group.transport.lock()))
+                    queue = adapter->GetPacerStats();
+            group.trace.Observe(entry.first, group.controller->GetDiagnostics(now_ms), queue ? &*queue : nullptr);
+        }
     }
 }
 
@@ -377,6 +435,10 @@ void DownlinkTrackManager::Probe(TransportGroup& group, const DownlinkBandwidthB
         FinishProbe(group, now_ms, ProbeEventType::Aborted);
         return;
     }
+    if (group.probe_started_ms && now_ms >= *group.probe_started_ms &&
+        now_ms - *group.probe_started_ms < group.probe_plan->duration_ms &&
+        !group.controller->IsProbeActive(group.probe_plan->cluster_id, now_ms))
+        FinishProbe(group, now_ms, ProbeEventType::Aborted);
     if (group.probe_started_ms && (now_ms < *group.probe_started_ms ||
         now_ms - *group.probe_started_ms >= group.probe_plan->duration_ms))
     {
@@ -390,16 +452,36 @@ void DownlinkTrackManager::Probe(TransportGroup& group, const DownlinkBandwidthB
         for (const auto& demand : demands)
         {
             const auto& route = subscriptions_.at(demand.id);
-            if (!demand.eligible) continue;
-            if (route->bandwidth_state.load() != DownlinkBandwidthState::Paused)
+            if (demand.eligible && route->bandwidth_state.load() != DownlinkBandwidthState::Paused)
                 active_bps += demand.required_bps;
-            else if (route->bandwidth_policy.enabled && parameters_.at(demand.id).config.transport_cc_extension_id &&
-                (!candidate || demand.priority > candidate->priority ||
-                 (demand.priority == candidate->priority && demand.id < candidate->id))) candidate = &demand;
+        }
+        uint64_t required_budget_bps = 0;
+        for (const auto& demand : demands)
+        {
+            const auto& route = subscriptions_.at(demand.id);
+            if (!demand.eligible || route->bandwidth_state.load() != DownlinkBandwidthState::Paused ||
+                !route->bandwidth_policy.enabled || !parameters_.at(demand.id).config.transport_cc_extension_id) continue;
+            const auto required = group.allocator.RequiredBudgetToResume(active_bps, demand.required_bps);
+            if (!required || *required > budget.max_bps) continue;
+            if (!candidate || demand.priority > candidate->priority ||
+                (demand.priority == candidate->priority && demand.id < candidate->id))
+            {
+                candidate = &demand;
+                required_budget_bps = *required;
+            }
         }
         if (!candidate) return;
         const auto decision = group.controller->GetProbeDecision(
-            {now_ms, budget.path_epoch, active_bps, candidate->required_bps});
+            {now_ms, budget.path_epoch, active_bps, candidate->required_bps, required_budget_bps});
+        if (QosTraceEnabled() && (!group.last_probe_reason || *group.last_probe_reason != decision.reason))
+        {
+            WriteQosEvent("qos_probe_decision", {{"transport_id", subscriptions_.at(candidate->id)->transport_id},
+                {"subscription_id", candidate->id}, {"monotonic_ms", now_ms}, {"path_epoch", budget.path_epoch},
+                {"reason", ToString(decision.reason)}, {"active_bps", active_bps},
+                {"candidate_bps", candidate->required_bps}, {"required_budget_bps", required_budget_bps},
+                {"target_bps", budget.target_bps}, {"max_bps", budget.max_bps}});
+            group.last_probe_reason = decision.reason;
+        }
         ProbePlan plan;
         if (decision.handled)
         {
@@ -408,7 +490,7 @@ void DownlinkTrackManager::Probe(TransportGroup& group, const DownlinkBandwidthB
         }
         else
         {
-            // 保留原有策略；新 ProbeController 的核心算法由调用方实现。
+            // Compatibility policy for injected controllers that leave planning unhandled.
             if (group.last_probe_ms && (now_ms < *group.last_probe_ms || now_ms - *group.last_probe_ms < 3000)) return;
             const uint64_t ceiling = std::min<uint64_t>(budget.max_bps, budget.target_bps ?
                 std::max<uint64_t>(uint64_t(budget.target_bps) * 3 / 2, uint64_t(budget.target_bps) + 64000) : budget.start_bps);
@@ -416,44 +498,55 @@ void DownlinkTrackManager::Probe(TransportGroup& group, const DownlinkBandwidthB
             if (total <= active_bps) return;
             plan = {static_cast<uint32_t>(total - active_bps), 500, 128 * 1024};
         }
-        // 执行边界独立于算法：限制额外速率、单簇时长和总字节数。
+        // Bound execution independently of the selected planning algorithm.
         if (!plan.bitrate_bps || !plan.duration_ms || plan.max_bytes < 300 || active_bps >= budget.max_bps) return;
         plan.bitrate_bps = static_cast<uint32_t>(std::min<uint64_t>(plan.bitrate_bps, budget.max_bps - active_bps));
         plan.duration_ms = std::min<uint32_t>(plan.duration_ms, 500);
         plan.max_bytes = std::min<uint64_t>(plan.max_bytes, 128 * 1024);
         plan.generation = budget.probe_generation;
+        plan.pacing_bitrate_bps = static_cast<uint32_t>(active_bps + plan.bitrate_bps);
         group.probe_plan = group.controller->StartProbe(plan, now_ms, budget.path_epoch);
         if (!group.probe_plan) return;
         group.probe_started_ms = group.last_probe_ms = now_ms;
         group.probe_track = candidate->id;
         group.probe_bytes = 0;
+        if (QosTraceEnabled())
+            WriteQosEvent("qos_probe_started", {{"transport_id", subscriptions_.at(candidate->id)->transport_id},
+                {"subscription_id", candidate->id}, {"monotonic_ms", now_ms}, {"path_epoch", budget.path_epoch},
+                {"cluster_id", group.probe_plan->cluster_id}, {"generation", group.probe_plan->generation},
+                {"padding_bps", group.probe_plan->bitrate_bps}, {"total_pacing_bps", group.probe_plan->pacing_bitrate_bps},
+                {"duration_ms", group.probe_plan->duration_ms}, {"max_bytes", group.probe_plan->max_bytes}});
+        subscriptions_.at(group.probe_track)->probe_cluster_id.store(group.probe_plan->cluster_id);
     }
     const auto it = subscriptions_.find(group.probe_track);
     if (it == subscriptions_.end() || !it->second->CanDeliver() ||
-        it->second->bandwidth_state.load() != DownlinkBandwidthState::Paused)
+        it->second->bandwidth_state.load() != DownlinkBandwidthState::Paused ||
+        !it->second->bandwidth_policy.enabled)
     { FinishProbe(group, now_ms, ProbeEventType::Aborted); return; }
     const uint64_t elapsed = now_ms - *group.probe_started_ms + 20;
     const auto allowance = std::min<uint64_t>(group.probe_plan->max_bytes,
         uint64_t(group.probe_plan->bitrate_bps) * elapsed / 8000);
     const auto& route = it->second;
-    struct ProbePermit
-    {
-        std::atomic<bool>& allowed;
-        explicit ProbePermit(std::atomic<bool>& flag) : allowed(flag) { allowed.store(true); }
-        ~ProbePermit() { allowed.store(false); }
-    } permit(route->probe_allowed);
     // Bound bursts when the worker tick is delayed. Failed sends consume no credit.
     for (size_t sent = 0; sent < 16384 && group.probe_bytes + 300 <= allowance; sent += 300)
     {
         if (!route->sender->SendPadding(240, group.probe_plan->cluster_id)) break;
         group.probe_bytes += 300; // Includes a conservative header/crypto allowance.
     }
-    if (group.probe_bytes + 300 > group.probe_plan->max_bytes)
-        FinishProbe(group, now_ms, ProbeEventType::Finished);
+    // Keep queued padding valid until the execution deadline, even when admission
+    // has exhausted the byte budget. Admission is not a socket-send completion.
 }
 
 void DownlinkTrackManager::FinishProbe(TransportGroup& group, uint64_t now_ms, ProbeEventType type)
 {
+    const auto route = subscriptions_.find(group.probe_track);
+    if (route != subscriptions_.end()) route->second->probe_cluster_id.store(-1);
+    if (group.probe_plan && QosTraceEnabled())
+        WriteQosEvent("qos_probe_execution", {{"transport_id", group.transport_id},
+            {"subscription_id", group.probe_track}, {"monotonic_ms", now_ms}, {"path_epoch", group.path_epoch},
+            {"cluster_id", group.probe_plan->cluster_id}, {"generation", group.probe_plan->generation},
+            {"execution", type == ProbeEventType::Finished ? "finished" : "aborted"},
+            {"accounted_bytes", group.probe_bytes}});
     if (group.probe_plan)
         group.controller->OnProbeEvent({type, *group.probe_plan, group.path_epoch, now_ms, group.probe_bytes});
     group.probe_started_ms.reset();

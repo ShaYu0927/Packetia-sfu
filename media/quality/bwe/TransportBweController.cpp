@@ -105,6 +105,18 @@ BweResult TransportBweController::OnTransportFeedback(const media::TransportFeed
     return result;
 }
 
+BweResult TransportBweController::ApplyProbeEstimate(BweResult result, uint32_t capacity_bps)
+{
+    if (!capacity_bps || result.usage != BandwidthUsage::kNormal ||
+        !std::isfinite(result.loss_rate) || result.loss_rate > 0.05) return result;
+    bitrate_controller_.ApplyProbeEstimate(capacity_bps);
+    result.target_bitrate_bps = bitrate_controller_.target_bitrate_bps();
+    result.estimate_valid = true;
+    result.rc_state = RateControlState::kHold;
+    NotifyBweResult(result);
+    return result;
+}
+
 void TransportBweController::AddObserver(const std::shared_ptr<IBweObserver>& observer)
 {
     if (!observer)

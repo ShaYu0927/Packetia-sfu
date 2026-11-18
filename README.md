@@ -8,10 +8,12 @@
 
 - [当前能力与限制](#当前能力与限制)
 - [架构与模块](#架构与模块)
+- [集群现状与演进方向](#集群现状与演进方向)
 - [构建与依赖](#构建与依赖)
 - [运行方式](#运行方式)
 - [发送侧控制与恢复](#发送侧控制与恢复)
 - [日志](#日志)
+- [近期改动与验证](#近期改动与验证)
 - [处理组件与构建目标](#处理组件与构建目标)
 - [测试](#测试)
 - [后续拆分方向](#后续拆分方向)
@@ -29,7 +31,7 @@
 | 视频转码 | FFmpeg 软件编解码，支持 H264/H265/VP8/VP9/AV1，一次解码生成多档输出 | 依赖本机 FFmpeg 实现；尚无远程任务 API、派生流 RTP 输出与浏览器播放闭环 |
 | 混流 | 输入配置、任务生命周期、有界队列及输出接口 | 实际拼画面、混音和编解码后端需要实现 `IMixBackend` |
 | AI | 模型提供者接口、请求编排与帧处理入口 | 默认提供者未配置模型，不会执行实际推理 |
-| 控制面 | 账号与会话、房间管理、节点注册与心跳、房间分配、JWT 准入 | 单控制服务，尚无节点故障迁移 |
+| 控制面 | 账号与会话、房间管理、节点注册与心跳、房间分配、JWT 准入 | 单控制服务与 SQLite；同一房间固定一个 SFU，尚无跨节点媒体分发和节点故障迁移 |
 | 监控 | HTTP 指标快照、Worker、发送队列与进程资源指标 | AI、混流和转码自有队列的指标尚未统一覆盖 |
 
 RTSP、RTMP、SIP 等协议代码与服务入口保留在项目中，具体接入和互通边界见[技术参考](docs/reference.md)。
@@ -72,6 +74,52 @@ RTP 接收 / 解包 → 完整编码帧 → EncodedFrameRouter
 | `Rtsp/`、`protocol/` | 协议、RTP/RTCP、ICE、WebRTC、TURN 等实现 |
 | `network/`、`utils/` | 网络传输、EventLoop、线程与有界队列 |
 | `config/`、`monitoring/` | 配置快照与运行指标 |
+
+## 集群现状与演进方向
+
+当前已实现“多个房间分配到多个 SFU 节点”，单个房间的在线成员与媒体运行时仍由一个节点管理：
+
+```text
+客户端 → PacketiaControl：检查权限、查询或分配房间归属、签发入房令牌
+                       ├─ 房间 A → SFU 1
+                       └─ 房间 B → SFU 2
+客户端 → 目标 SFU：WebSocket 信令与 WebRTC 媒体连接
+```
+
+`POST /api/v1/room-admissions` 返回 `signaling_url` 和令牌；客户端随后连接对应 SFU，
+媒体无需经过 Control。已有房间沿用原绑定；新房间从租约有效且房间容量未满的节点中选择，
+主要比较已绑定房间数与 `max_rooms` 的比例，其次比较参与人数。
+
+| 状态 | 当前归属与存储 |
+| --- | --- |
+| 房间业务权限、节点注册与租约、房间绑定 | Control 的 SQLite 数据库，由事务协调分配 |
+| 在线成员、发布轨道、订阅关系 | 房间所属 SFU 的内存；管理请求先定位节点再转发 |
+| 连接、TWCC、Pacer、发送历史 | 实际服务该连接的 SFU 本地状态 |
+
+`node_id` 标识节点，`instance_id` 区分进程实例，`assignment_id` 区分房间分配代次。
+集群节点分配与进程内 Owner 分配是两层职责：前者决定房间在哪个节点，后者决定在哪个执行线程。
+当前使用房间哈希固定 Owner，Owner 内串行，多个 Owner 和媒体 Worker 并行；WebRTC 共用 UDP 收发入口。
+
+后续重点是“单个逻辑房间跨多个 SFU”，先面向少量发布者、大量观众设计。以下为目标结构，尚未实现：
+
+```text
+                  同一个逻辑房间
+主播 → 源 SFU ──┬─→ 接入 SFU 1 → 部分观众
+                ├─→ 接入 SFU 2 → 部分观众
+                └─→ 接入 SFU 3 → 部分观众
+```
+
+需要增加跨节点媒体转发、源流目录、按用户分配接入节点，以及节点间的权限和房间状态协调。
+每个接入节点维护自己的用户连接与反馈状态；房间规则和流目录按需共享。
+多人发布场景还需限制每个用户实际订阅的流数。多个大房间是在这些分发关系上继续做负载分配。
+
+Redis、MySQL/PostgreSQL 或 OceanBase 都属于后续存储方案评估，目前均未接入；
+跨机器部署多个 Control 需要明确共享状态的权威存储、原子分配与故障处理规则，不能直接共享本地 SQLite 文件。
+增加数据库节点或同机 Docker 容器不等于增加媒体出口容量。
+
+下一步先验证现有集群入房路径并测量节点容量，再以“两台 SFU 服务同一房间的一路源流”为跨节点分发的首个验收目标。
+当前尚无万人房间、多房间大规模并发或公网弱网容量的实测结论。
+部署入口见[集群 README](deploy/cluster/README.md)，源码与接口见[会议控制与节点调度](docs/reference.md#会议控制与节点调度)。
 
 ## 构建与依赖
 
@@ -185,7 +233,8 @@ python3 deploy/cluster/deploy.py check
 
 浏览器示例位于 [examples/webrtc-room](examples/webrtc-room)，启用 WebSocket 和 libSRTP 时可构建
 `PacketiaRoomDemo`。选择 Participant 后可同时发布摄像头、麦克风并接收其他参与者，
-发布和订阅可分别停止、重建；运行步骤见[浏览器会议与 TURN 示例](docs/reference.md#浏览器会议与-turn-示例)。
+发布和订阅可分别停止、重建；推流参数、实时质量曲线、JSON 导出及算法测试入口见
+[传输实验室 README](examples/webrtc-room/README.md)。房间运行步骤见[浏览器会议与 TURN 示例](docs/reference.md#浏览器会议与-turn-示例)。
 
 ## 发送侧控制与恢复
 
@@ -193,7 +242,7 @@ python3 deploy/cluster/deploy.py check
 
 ```text
 接收端 RTCP/TWCC 反馈 + 本地发送历史
-    → PacketGroupObserver：包分组、时延差、平滑与回归趋势
+    → PacketGroupObserver：包分组、时延差 → 引入的 WebRTC TrendlineEstimator
     → TransportBweController / RemoteBitrateController：链路目标码率
     → SendSideController：网络状态与发送预算
     ├─ DownlinkBandwidthAllocator：准备 → 试分配 → 提交
@@ -208,6 +257,19 @@ python3 deploy/cluster/deploy.py check
 过期或无效的预算保留已有视频允许状态；恢复余量不会计入实际请求带宽。
 源码对照、带宽变化量和具体算例见[下行分配阅读指南](docs/downlink-allocation-livekit.md)。
 
+趋势检测已引入固定版本的 WebRTC `TrendlineEstimator`，保留原始源码、许可证与适配版本，
+并通过测试对照默认配置的逐步输出。包分组、接收速率估计和码率控制仍使用本项目实现。
+源码位置、裁剪差异和断点阅读顺序见[WebRTC 趋势检测学习指南](docs/webrtc-trendline.md)。
+
+房间订阅已接通下行 TWCC 协商：独立声明头扩展和 `transport-cc` 反馈能力，与订阅浏览器的 Offer 取交集，
+再将 Answer 中的扩展 ID 配给 `RtpSenderTrack`。只有两项能力同时协商成功才启用编号，
+同一下行连接共享序号分配器；未协商成功时保留 RR 回退。该实现不要求发布端支持 TWCC，
+也不表示上行 TWCC 接收反馈生成已经实现。
+
+暂停视频的恢复探测已接通：计划 → RTP Padding → WebRTC Pacer 临时提速 → 发送完成历史 → TWCC 簇评估 → 更新共享预算。
+成功后仍经过分配器等待和关键帧恢复；丢包或拥塞撤销提速，反馈不足则超时退避。
+预算参数、测量口径、源码入口和测试见[下行带宽探测闭环](docs/bandwidth-probing.md)。
+
 `PacedSendQueue::GetStats()` 提供以下本地诊断值：
 
 | 字段 | 口径 |
@@ -220,17 +282,23 @@ python3 deploy/cluster/deploy.py check
 | `estimated_drain_ms` | `ceil(queued_rtp_bytes × 8000 / pacing_bitrate_bps)`；空队列为 0，有积压且速率为 0 时无值 |
 
 预计排空时间假设没有新包入队、速率不变，不包含 pacing 债务和 socket 队列，不能作为端到端时延。
-新增统计目前通过 C++ 接口读取，尚未接入 HTTP 指标或浏览器界面。
+上述统计已接入可选的服务端 QoS 诊断日志，记录反馈、控制决策、分配和队列状态；
+开启方式、字段口径与复测步骤见[媒体质量诊断日志](docs/media-quality-diagnostics.md)。
+浏览器面板仍使用自身 `getStats()`，服务端指标尚未通过 HTTP 接口提供。
 
 带宽恢复后，视频进入 `WaitingKeyFrame`，请求上游关键帧并等待可恢复画面。
 当前 `Tick()` 将下一次 PLI 重试设为一秒后；实际发出还受 Tick 调用时机和请求限流影响。
-`KeyFrameRetryIntervalMs()` 是尚未接入的 RTT 策略草稿，不会改变现有行为。
+[关键帧重试策略](media/quality/KeyFrameRetryPolicy.h) 提供独立计算函数
+`ComputeKeyFrameRetryIntervalMs(publisher_rtt_ms)`：有效发布端 RTT 按两倍计算，
+限制在 200–1000 ms 并向上取整；未知、非有限值或非正数回退为 1000 ms。
+例如 RTT 为 150 ms 时返回 300 ms，30 ms 时返回 200 ms。
+该函数尚未接入 `Tick()` 和下游请求限流，当前运行行为仍保持一秒重试。
 Simulcast/SVC 选层、RTT 驱动的重试闭环和多协议适配仍待后续实现。
 
 ## 日志
 
 日志线程从有界队列批量写出，支持文本/单行 JSON、级别过滤及文件轮转。
-集群入口记录服务名和 SFU 节点 ID，便于区分多个节点；请求和房间上下文尚未统一接入。
+集群入口记录服务名和 SFU 节点 ID；QoS 事件提供房间、成员、会话与订阅关联，通用请求上下文尚未统一接入。
 
 ```sh
 PACKETIA_LOG_MODE=console PACKETIA_LOG_FORMAT=json PACKETIA_LOG_LEVEL=info \
@@ -240,6 +308,33 @@ PACKETIA_LOG_MODE=console PACKETIA_LOG_FORMAT=json PACKETIA_LOG_LEVEL=info \
 原生程序默认使用 `both`（控制台和文件）、`text`、`info`；本地集群启动器固定使用控制台输出并保存各进程日志。
 Docker Compose 默认使用控制台 JSON 日志，交给 Docker 保存和轮转。
 配置、队列上限、丢弃统计、启动就绪事件和独立测试见[日志模块 README](log/README.md)。
+
+通过 `PACKETIA_QOS_LOG=1` 开启媒体诊断，配合 JSON 与 INFO 输出，记录下行连接约每秒一次的反馈、
+目标码率、实际发送完成速率与队列快照，以及轨道和探测状态事件。未知指标输出 `null`。
+浏览器示例默认开启，原生与集群入口默认关闭；示例目录中运行 `npm run qos:summary` 可汇总日志。
+字段口径和与浏览器报告的关联方法见[媒体质量诊断日志](docs/media-quality-diagnostics.md)。
+
+## 近期改动与验证
+
+2026-11-18 的媒体诊断与 TWCC 接入记录：
+
+| 改动 | 实际行为 |
+| --- | --- |
+| 服务端 QoS 诊断 | 串联网络反馈、控制决策、轨道分配、发送完成量、队列与探测事件 |
+| RR-only 发送计数 | 无 TWCC 时也统计实际发送完成量，不虚构传输序号与 TWCC 历史 |
+| 独立下行 TWCC 协商 | 发布端未协商 TWCC，订阅端仍可协商并启用下行反馈 |
+| 浏览器与服务端日志关联 | 按房间及进程/节点/连接标识，生成本次测试的原始日志与汇总 |
+| 严格浏览器检查 | `PACKETIA_EXPECT_TWCC=1` 要求反馈匹配历史、产生斜率和有效分配预算 |
+
+本机 macOS 验证通过：传输/算法/日志 CTest 5/5 组、信令 CTest 6/6 组、JavaScript 测试 11/11，
+以及严格 TWCC 浏览器质量检查。首次订阅的最后周期样本为 320 份 TWCC、1653 个匹配包，
+重新订阅为 96 份 TWCC、662 个匹配包；未匹配回执项均为 0，两次订阅均有有效分配预算。
+浏览器测试包含模拟摄像头/麦克风、真实 SFU 收发、编码上限调整、ICE restart 和 720p60 请求。
+这些结果验证本机收发与算法输入链路，不代表已经验证弱网恢复探测或大规模集群容量。
+
+测试产物位于已忽略的 `examples/webrtc-room/artifacts/`，包括 `quality-result.json`、
+`quality-server-qos.jsonl` 和 `quality-server-summary.json`；每次运行会更新，不作为固定基准。
+复测步骤见[传输实验室 README](examples/webrtc-room/README.md)。
 
 ## 处理组件与构建目标
 
@@ -306,10 +401,10 @@ ctest --test-dir build/dev --output-on-failure \
 发送侧质量控制、Pacer、日志与集群部署的回归入口：
 
 ```sh
-cmake --build build/dev --target test_media_pacer test_weak_network_manual \
-  test_rtp_input test_structured_logger PacketiaControl PacketiaSfu --parallel
+cmake --build build/dev --target test_media_pacer test_webrtc_trendline test_weak_network_manual \
+  test_rtp_input test_structured_logger test_webrtc_service PacketiaControl PacketiaSfu --parallel
 PACKETIA_LOG_MODE=console ctest --test-dir build/dev --output-on-failure \
-  -R '^(media_pacer|test_weak_network_manual|test_rtp_input|StructuredLoggerTest|ClusterDeploymentConfigTest|MeetingControlIntegrationTest)$'
+  -R '^(media_pacer|webrtc_trendline|test_weak_network_manual|test_rtp_input|StructuredLoggerTest|webrtc_twcc|webrtc_service|ClusterDeploymentConfigTest|MeetingControlIntegrationTest)$'
 ```
 
 录像集成测试默认关闭，开启时需要 `ffmpeg` 命令行包含 libx264 和 AAC 编码能力：
@@ -341,6 +436,10 @@ ctest --test-dir build/dev --output-on-failure -R 'recording|mp4_reader'
 - [运行指标](monitoring/README.md)：指标口径、采样和 HTTP 查询。
 - [日志模块](log/README.md)：结构化输出、节点身份、有界队列与轮转。
 - [下行分配阅读指南](docs/downlink-allocation-livekit.md)：LiveKit 源码对照、分配阶段与预算移交算例。
+- [WebRTC 趋势检测学习指南](docs/webrtc-trendline.md)：固定版本源码、移植边界与算法阅读顺序。
+- [媒体质量诊断日志](docs/media-quality-diagnostics.md)：服务端采样、TWCC 协商、字段口径与实测记录。
+- [传输实验室](examples/webrtc-room/README.md)：浏览器收发、质量面板与 TWCC 验证步骤。
+- [集群部署](deploy/cluster/README.md)：Control/SFU 启动、Docker、公网入口与当前部署边界。
 - [会议混流](service/ConferenceMixService/README.md)：任务、后端契约与输出边界。
 - [录像合成示例](service/RecordService/examples/README.md)：离线拼画面与混音实验。
 - [解包与弱网测试](Common/Depacketizer/Test/README.md)：H264 接收与恢复实验。

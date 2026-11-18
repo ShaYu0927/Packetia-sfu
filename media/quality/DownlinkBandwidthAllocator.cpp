@@ -14,6 +14,28 @@ DownlinkBandwidthAllocator::DownlinkBandwidthAllocator(Config config) : config_(
         throw std::invalid_argument("invalid downlink allocation config");
 }
 
+uint64_t DownlinkBandwidthAllocator::ResumeCostBps(uint32_t required_bps) const
+{
+    return static_cast<uint64_t>(required_bps) * (100 + config_.resume_margin_percent) / 100;
+}
+
+std::optional<uint64_t> DownlinkBandwidthAllocator::RequiredBudgetToResume(uint64_t active_bps, uint32_t candidate_bps) const
+{
+    if (!candidate_bps) return std::nullopt;
+    const uint64_t resume_cost = ResumeCostBps(candidate_bps);
+    constexpr uint64_t maximum = std::numeric_limits<uint64_t>::max();
+    if (active_bps > maximum - resume_cost) return std::nullopt;
+
+    const uint64_t required_usable_bps = active_bps + resume_cost;
+    // ceil(required_usable_bps * 100 / usable_percent), without overflowing
+    // the multiplication. This is the inverse of Allocate's usable budget.
+    const uint64_t whole = required_usable_bps / config_.usable_percent;
+    const uint64_t remainder = required_usable_bps % config_.usable_percent;
+    const uint64_t fraction = (remainder * 100 + config_.usable_percent - 1) / config_.usable_percent;
+    if (whole > (maximum - fraction) / 100) return std::nullopt;
+    return whole * 100 + fraction;
+}
+
 std::vector<DownlinkAllocation> DownlinkBandwidthAllocator::Allocate(
     const DownlinkBandwidthBudget& budget, const std::vector<DownlinkDemand>& demands, uint64_t now_ms)
 {
@@ -97,8 +119,8 @@ std::vector<DownlinkBandwidthAllocator::AllocationPlan*> DownlinkBandwidthAlloca
     {
         // One candidate per video today. A future layer allocator can try lower
         // layers for all tracks before upgrades, using the same prepare/commit boundary.
-        const uint64_t cost = static_cast<uint64_t>(plan->demand->required_bps) *
-            (plan->slot->allowed ? 100 : 100 + config_.resume_margin_percent) / 100;
+        const uint64_t cost = plan->slot->allowed ? plan->demand->required_bps :
+            ResumeCostBps(plan->demand->required_bps);
         // An unknown source rate is not a free video.
         plan->wanted = cost != 0 && cost <= remaining;
         if (plan->wanted)

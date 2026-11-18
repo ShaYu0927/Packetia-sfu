@@ -462,7 +462,9 @@ bool RtpSenderTrack::SendRtpPacket(const common::ByteVector& packet, bool retran
     if (!transport || packet.empty() || !transport->IsWritable()) return false;
 
     std::function<void()> on_sent;
-    if (_config.transport_cc_extension_id != 0 && sequence.extended_sequence >= 0)
+    // RR-only transports still need real socket-completion throughput counters.
+    // PacketHistory ignores the negative transport sequence when TWCC is absent.
+    if (_send_controller || (_config.transport_cc_extension_id != 0 && sequence.extended_sequence >= 0))
     {
         media::PacketSendInfo info;
         info.transport_sequence = sequence.extended_sequence;
@@ -479,7 +481,7 @@ bool RtpSenderTrack::SendRtpPacket(const common::ByteVector& packet, bool retran
         on_sent = [controller, epoch, clock, callback, info, sequence]() mutable {
             info.send_time_ms = clock();
             if (controller && !controller->OnPacketSentForPath(info, epoch)) return;
-            if (callback) callback(sequence.extended_sequence, sequence.wire_sequence,
+            if (callback && sequence.extended_sequence >= 0) callback(sequence.extended_sequence, sequence.wire_sequence,
                 info.ssrc, info.rtp_sequence, info.send_time_ms, info.size_bytes);
         };
     }

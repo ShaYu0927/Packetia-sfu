@@ -20,7 +20,7 @@ uint16_t U16(const uint8_t* p) { return (uint16_t(p[0]) << 8) | p[1]; }
 void Put16(uint8_t* p, uint16_t value) { p[0] = uint8_t(value >> 8); p[1] = uint8_t(value); }
 
 // Actual wire TWCC, with manually recorded sends to keep controller warmup
-// deterministic. Constraints fix its capacity at 1 Mbit/s, not its validity.
+// deterministic. Test transports keep a 1 Mbit/s floor while allowing a higher maximum.
 void Feedback(const std::shared_ptr<SendSideController>& controller, uint16_t sequence, uint64_t at)
 {
     for (unsigned i = 0; i < 10; ++i)
@@ -46,9 +46,9 @@ class BandwidthTransport : public IMediaTransport
 {
 public:
     explicit BandwidthTransport(uint64_t id, uint64_t feedback_timeout_ms = 5000,
-                                NetworkControllerConfig config = {}) : id_(id)
+                                NetworkControllerConfig config = {}, uint32_t max_bps = 1000000) : id_(id)
     {
-        config.bitrate = {1000000, 1000000, 1000000};
+        config.bitrate = {1000000, 1000000, max_bps};
         config.feedback_timeout_ms = feedback_timeout_ms;
         controller = std::make_shared<SendSideController>(config);
     }
@@ -115,6 +115,7 @@ struct ProbeCalls
     ProbeDecision decision{true, std::nullopt};
     std::vector<ProbeEvent> events;
     std::vector<PacketSendInfo> feedback;
+    std::vector<ProbeContext> contexts;
     int resets = 0;
 };
 
@@ -122,7 +123,8 @@ class InjectedProbes final : public IProbeController
 {
 public:
     explicit InjectedProbes(std::shared_ptr<ProbeCalls> calls) : calls_(std::move(calls)) {}
-    ProbeDecision OnProcessInterval(const ProbeContext&) override { return calls_->decision; }
+    ProbeDecision OnProcessInterval(const ProbeContext& context) override
+    { calls_->contexts.push_back(context); return calls_->decision; }
     void OnFeedback(const TransportFeedback& feedback, const PacketGroupObservation&, const BweResult&) override
     {
         for (const auto& packet : feedback.packet_feedbacks)
@@ -155,11 +157,97 @@ void PauseVideo(Downlinks& links, const std::shared_ptr<BandwidthTransport>& tra
     ASSERT_EQ(route->bandwidth_state.load(), endpoint::DownlinkBandwidthState::Paused);
 }
 
+class DeferredBandwidthTransport final : public BandwidthTransport
+{
+public:
+    using BandwidthTransport::BandwidthTransport;
+    struct Pending
+    {
+        std::vector<uint8_t> bytes;
+        std::function<bool()> valid;
+        std::function<void()> complete;
+    };
+    bool defer = false;
+    std::vector<Pending> pending;
+    SendResult SendWithValidity(MediaPacketType type, const uint8_t* data, size_t size,
+        bool retry, std::function<bool()> valid, std::function<void()> complete = {}) override
+    {
+        if (!defer) return IMediaTransport::SendWithValidity(type, data, size, retry,
+            std::move(valid), std::move(complete));
+        pending.push_back({{data, data + size}, std::move(valid), std::move(complete)});
+        return SendResult::Ok;
+    }
+};
+
+TEST(DownlinkBandwidth, QueuedPaddingRemainsValidAfterTickButCannotSurviveAbortOrNewCluster)
+{
+    Downlinks links;
+    auto calls = std::make_shared<ProbeCalls>();
+    auto transport = std::make_shared<DeferredBandwidthTransport>(1, 5000, ProbeConfig(calls), 4000000);
+    auto route = links.Add("video", transport, 11);
+    const auto now = Now();
+    PauseVideo(links, transport, route, now);
+    transport->defer = true;
+    calls->decision = {true, ProbePlan{300000, 500, 18000}};
+    links.manager.Tick(now + 302, true);
+    ASSERT_FALSE(transport->pending.empty());
+    auto old_valid = transport->pending.front().valid;
+    EXPECT_TRUE(old_valid()); // The worker's stack scope has already ended.
+    calls->decision = {true, std::nullopt};
+    links.manager.Tick(now + 802, true);
+    EXPECT_FALSE(old_valid());
+    calls->decision = {true, ProbePlan{300000, 500, 18000}};
+    links.manager.Tick(now + 803, true);
+    EXPECT_FALSE(old_valid()); // A new permission must not revive old queued padding.
+    auto new_valid = transport->pending.back().valid;
+    EXPECT_TRUE(new_valid());
+    transport->controller->OnNetworkRouteChanged();
+    EXPECT_FALSE(new_valid());
+    ASSERT_TRUE(links.manager.Unsubscribe("video"));
+    EXPECT_FALSE(new_valid());
+}
+
+TEST(DownlinkBandwidth, ProbeRequestUsesRecoveryBudgetAndSkipsUnreachableHigherPriorityVideo)
+{
+    Downlinks links;
+    auto calls = std::make_shared<ProbeCalls>();
+    auto transport = std::make_shared<BandwidthTransport>(1, 5000, ProbeConfig(calls), 2000000);
+    auto audio = links.Add("audio", transport, 10, true);
+    auto large = links.Add("large", transport, 11);
+    auto small = links.Add("small", transport, 12);
+    DownlinkSubscriptionPolicy policy;
+    policy.bitrate_hint_bps = 50000;
+    ASSERT_TRUE(links.manager.SetPolicy("audio", policy));
+    policy.bitrate_hint_bps = 3000000;
+    policy.priority = 200;
+    ASSERT_TRUE(links.manager.SetPolicy("large", policy));
+    policy.bitrate_hint_bps = 900000;
+    policy.priority = 100;
+    ASSERT_TRUE(links.manager.SetPolicy("small", policy));
+    const auto now = Now();
+    Feedback(transport->controller, 10000, now - 2200);
+    Feedback(transport->controller, 10010, now);
+    links.manager.Tick(now, true);
+    links.manager.Tick(now + 301, true);
+    ASSERT_EQ(large->bandwidth_state.load(), endpoint::DownlinkBandwidthState::Paused);
+    ASSERT_EQ(small->bandwidth_state.load(), endpoint::DownlinkBandwidthState::Paused);
+    ASSERT_FALSE(calls->contexts.empty());
+    const auto& request = calls->contexts.back().request;
+    EXPECT_EQ(request.active_bitrate_bps, 50000U);
+    EXPECT_EQ(request.candidate_bitrate_bps, 900000U);
+    EXPECT_EQ(request.required_budget_bps, 1329412U);
+    calls->contexts.clear();
+    policy.bitrate_hint_bps = 2000000;
+    ASSERT_TRUE(links.manager.SetPolicy("small", policy));
+    links.manager.Tick(now + 302, true);
+    EXPECT_TRUE(calls->contexts.empty()); // Neither candidate can recover below the maximum.
+}
+
 TEST(DownlinkBandwidth, InjectedStrategyCanSuppressLegacyProbes)
 {
     Downlinks links;
     auto calls = std::make_shared<ProbeCalls>();
-    auto transport = std::make_shared<BandwidthTransport>(1, 5000, ProbeConfig(calls));
+    auto transport = std::make_shared<BandwidthTransport>(1, 5000, ProbeConfig(calls), 4000000);
     auto route = links.Add("video", transport, 11);
     const auto now = Now();
     PauseVideo(links, transport, route, now);
@@ -172,7 +260,7 @@ TEST(DownlinkBandwidth, CustomPlanIsBoundedAndWireFeedbackRetainsProbeIdentity)
 {
     Downlinks links;
     auto calls = std::make_shared<ProbeCalls>();
-    auto transport = std::make_shared<BandwidthTransport>(1, 5000, ProbeConfig(calls));
+    auto transport = std::make_shared<BandwidthTransport>(1, 5000, ProbeConfig(calls), 4000000);
     auto route = links.Add("video", transport, 11);
     const auto now = Now();
     PauseVideo(links, transport, route, now);
@@ -180,7 +268,7 @@ TEST(DownlinkBandwidth, CustomPlanIsBoundedAndWireFeedbackRetainsProbeIdentity)
     links.manager.Tick(now + 302, true);
     ASSERT_EQ(calls->events.size(), 1U);
     const auto plan = calls->events[0].plan;
-    EXPECT_EQ(plan.bitrate_bps, 1000000U);
+    EXPECT_EQ(plan.bitrate_bps, 4000000U);
     EXPECT_EQ(plan.duration_ms, 500U);
     EXPECT_EQ(plan.max_bytes, 128U * 1024);
     ASSERT_GT(transport->packets.size(), 1U);
@@ -222,8 +310,8 @@ TEST(DownlinkBandwidth, TimeoutCancelsExecutionAndResetsOnlyItsTransportAlgorith
     Downlinks links;
     auto a = std::make_shared<ProbeCalls>();
     auto b = std::make_shared<ProbeCalls>();
-    auto transport = std::make_shared<BandwidthTransport>(1, 5000, ProbeConfig(a));
-    auto other = std::make_shared<BandwidthTransport>(2, 5000, ProbeConfig(b));
+    auto transport = std::make_shared<BandwidthTransport>(1, 5000, ProbeConfig(a), 4000000);
+    auto other = std::make_shared<BandwidthTransport>(2, 5000, ProbeConfig(b), 4000000);
     auto route = links.Add("video", transport, 11);
     links.Add("other", other, 21);
     const auto now = Now();
@@ -244,7 +332,7 @@ TEST(DownlinkBandwidth, TimeoutCancelsExecutionAndResetsOnlyItsTransportAlgorith
 TEST(DownlinkBandwidth, IsolatesTransportsBlocksMediaAndRetriesButAllowsBoundedProbes)
 {
     Downlinks links;
-    auto b = std::make_shared<BandwidthTransport>(1);
+    auto b = std::make_shared<BandwidthTransport>(1, 5000, NetworkControllerConfig{}, 2000000);
     auto c = std::make_shared<BandwidthTransport>(2);
     auto b1 = links.Add("b1", b, 11);
     auto b2 = links.Add("b2", b, 12);

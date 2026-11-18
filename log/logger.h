@@ -101,9 +101,9 @@ protected:
           service_(options.service), node_id_(options.node_id) {}
 
     std::string Format(const char* file, int line, int level, std::string_view message,
-                       const char* event = nullptr) const
+                       const char* event = nullptr, const packetia::logging::LogFields& fields = {}) const
     {
-        return packetia::logging::FormatRecord(format_, service_, node_id_, file, line, level, message, event);
+        return packetia::logging::FormatRecord(format_, service_, node_id_, file, line, level, message, event, fields);
     }
 
     virtual void sink(std::string&& line) = 0;
@@ -128,6 +128,13 @@ public:
     {
         if (level < min_level()) return;
         sink(Format(file, line, level, message));
+    }
+
+    void WriteEvent(const char* file, int line, int level, const char* event, std::string_view message,
+                    const packetia::logging::LogFields& fields)
+    {
+        if (level < min_level()) return;
+        sink(Format(file, line, level, message, event, fields));
     }
 
     // Process readiness is also the local launcher's handshake, independent of log level.

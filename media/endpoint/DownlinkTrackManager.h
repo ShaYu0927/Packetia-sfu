@@ -3,6 +3,7 @@
 
 #include "SfuEndpointTypes.h"
 #include "SendSideController.h"
+#include "QosTrace.h"
 
 #include <unordered_map>
 
@@ -46,6 +47,10 @@ private:
     struct TransportGroup
     {
         std::shared_ptr<SendSideController> controller;
+        std::weak_ptr<IMediaTransport> transport;
+        uint64_t transport_id = 0;
+        QosTrace trace;
+        std::optional<ProbeDecisionReason> last_probe_reason;
         SendSideController::BudgetObserverId observer = 0;
         DownlinkBandwidthAllocator allocator;
         uint64_t path_epoch = 0;
@@ -59,6 +64,7 @@ private:
     std::unordered_map<uint64_t, TransportGroup> transports_;
     std::function<void()> schedule_;
     uint64_t next_tick_ms_ = 0;
+    void TraceState(const Subscription& route, DownlinkBandwidthState before, const char* reason, uint64_t now_ms) const;
     uint32_t RequiredBitrate(const Subscription& route) const;
     void Probe(TransportGroup& group, const DownlinkBandwidthBudget& budget,
         const std::vector<DownlinkDemand>& demands, uint64_t now_ms);

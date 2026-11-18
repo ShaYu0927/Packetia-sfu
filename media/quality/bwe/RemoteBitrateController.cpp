@@ -40,6 +40,17 @@ void RemoteBitrateController::SetRtt(uint32_t rtt_ms)
     average_rtt_ms_ = average_rtt_ms_ == 0 ? rtt_ms : (average_rtt_ms_ + rtt_ms) * 0.5;
 }
 
+void RemoteBitrateController::ApplyProbeEstimate(uint32_t capacity_bps)
+{
+    // Keep the estimate inside the rate controller so the next update retains it.
+    target_bitrate_bps_ = ClampRate(std::max<double>(target_bitrate_bps_, capacity_bps));
+    initialized_ = true;
+    state_ = RateControlState::kHold;
+    max_hold_rate_ = 0;
+    loss_probe_start_ms_ = -1;
+    UpdateCapacity(capacity_bps);
+}
+
 void RemoteBitrateController::UpdateCapacity(double incoming_bps)
 {
     if (incoming_bps <= 0) return;

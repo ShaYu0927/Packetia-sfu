@@ -38,6 +38,7 @@ NetworkControlUpdate GoogCcNetworkController::OnNetworkRouteChange(const Network
 void GoogCcNetworkController::ResetFeedback()
 {
     probe_controller_->Reset();
+    last_probe_result_.reset();
     ++probe_generation_;
     stats_.Reset();
     delay_bwe_.Reset();
@@ -67,6 +68,7 @@ void GoogCcNetworkController::ExpireFeedback(uint64_t now_ms)
         latest_bwe_.reset();
         last_twcc_time_ms_.reset();
         probe_controller_->Reset();
+        last_probe_result_.reset();
         ++probe_generation_;
     }
 }
@@ -74,6 +76,8 @@ void GoogCcNetworkController::ExpireFeedback(uint64_t now_ms)
 NetworkControlUpdate GoogCcNetworkController::OnProcessInterval(const ProcessInterval& msg)
 {
     ExpireFeedback(msg.at_time_ms);
+    probe_controller_->OnTime(msg.at_time_ms);
+    if (const auto result = probe_controller_->TakeResult()) last_probe_result_ = result;
     // No synthetic feedback or bitrate growth on timer ticks.
     return GetNetworkState(msg.at_time_ms);
 }
@@ -109,9 +113,15 @@ NetworkControlUpdate GoogCcNetworkController::OnTransportPacketsFeedback(const T
 
     ExpireFeedback(msg.feedback.feedback_time_ms);
 
-    const BweResult bwe = delay_bwe_.OnTransportFeedback(msg.feedback);
-    latest_bwe_ = bwe;
+    BweResult bwe = delay_bwe_.OnTransportFeedback(msg.feedback);
     probe_controller_->OnFeedback(msg.feedback, delay_bwe_.GroupObservation(), bwe);
+    if (const auto result = probe_controller_->TakeResult())
+    {
+        last_probe_result_ = result;
+        if (result->generation == probe_generation_ && result->outcome == ProbeOutcome::Succeeded)
+            bwe = delay_bwe_.ApplyProbeEstimate(bwe, result->capacity_bps);
+    }
+    latest_bwe_ = bwe;
 
     latest_feedback_.now_ms = msg.feedback.feedback_time_ms;
     latest_feedback_.receive_bitrate_bps = bwe.incoming_bitrate_bps;
@@ -154,6 +164,32 @@ NetworkControlUpdate GoogCcNetworkController::GetNetworkState(uint64_t at_time_m
     return result;
 }
 
+ControllerDiagnostics GoogCcNetworkController::GetDiagnostics(uint64_t now_ms) const
+{
+    ControllerDiagnostics result;
+    result.feedback_time_ms = last_feedback_time_ms_;
+    result.twcc_time_ms = last_twcc_time_ms_;
+    result.feedback_valid = network_available_ && has_feedback_ && last_feedback_time_ms_ &&
+        now_ms >= *last_feedback_time_ms_ && now_ms - *last_feedback_time_ms_ < feedback_timeout_ms_;
+    if (!result.feedback_valid) return result;
+    result.control = GetNetworkState(now_ms);
+    result.feedback_source = latest_bwe_ ? "twcc" : "rr";
+    result.loss_rate = latest_feedback_.loss_rate;
+    const auto smooth = stats_.GetSnapshot(now_ms);
+    result.rtt_ms = smooth.rtt_ms;
+    result.jitter_ms = smooth.jitter_ms;
+    if (latest_bwe_)
+    {
+        result.bwe_estimate_valid = latest_bwe_->estimate_valid;
+        result.usage = latest_bwe_->usage;
+        if (latest_bwe_->estimate_valid) result.receive_bitrate_bps = latest_bwe_->incoming_bitrate_bps;
+        const auto& groups = delay_bwe_.GroupObservation();
+        result.delay_trend_ms = groups.delay_trend_ms;
+        result.delay_slope = groups.delay_trend_slope;
+    }
+    return result;
+}
+
 NetworkControlUpdate GoogCcNetworkController::EmptyUpdate() const
 {
     return NetworkControlUpdate{};
@@ -161,18 +197,30 @@ NetworkControlUpdate GoogCcNetworkController::EmptyUpdate() const
 
 ProbeDecision GoogCcNetworkController::GetProbeDecision(const ProbeRequest& request)
 {
-    if (!network_available_) return {true, std::nullopt};
+    if (!network_available_) return {true, std::nullopt, ProbeDecisionReason::NetworkUnavailable};
     auto decision = probe_controller_->OnProcessInterval({request, bitrate_,
         latest_update_.has_target_rate ? latest_update_.target_rate.target_bitrate_bps : 0,
-        latest_feedback_.rtt_ms, latest_bwe_});
+        latest_feedback_.rtt_ms, latest_bwe_, last_twcc_time_ms_});
     if (decision.plan) decision.plan->generation = probe_generation_;
     return decision;
 }
 
-void GoogCcNetworkController::OnProbeEvent(const ProbeEvent& event)
+NetworkControlUpdate GoogCcNetworkController::OnProbeEvent(const ProbeEvent& event)
 {
-    // 旧路径/超时前的执行事件不能进入已重置的算法实例。
-    if (event.plan.generation == probe_generation_) probe_controller_->OnProbeEvent(event);
+    if (event.plan.generation != probe_generation_) return EmptyUpdate();
+    probe_controller_->OnProbeEvent(event);
+    if (const auto result = probe_controller_->TakeResult())
+    {
+        last_probe_result_ = result;
+        if (result->outcome == ProbeOutcome::Succeeded && latest_bwe_)
+        {
+            latest_bwe_ = delay_bwe_.ApplyProbeEstimate(*latest_bwe_, result->capacity_bps);
+            latest_update_ = policy_.OnBweResultAndFeedback(*latest_bwe_, latest_feedback_);
+            latest_update_.target_rate.estimate.smoothed = stats_.GetSnapshot(event.at_time_ms);
+            return latest_update_;
+        }
+    }
+    return EmptyUpdate();
 }
 
 }

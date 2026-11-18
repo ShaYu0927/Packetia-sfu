@@ -1,8 +1,13 @@
+import {RtcStatsSampler, readPublishSettings} from './quality-stats.js';
+import {QualityPanel} from './quality-panel.js';
+
 const $ = id => document.getElementById(id);
 const config = await (await fetch('/config')).json();
 const identity = `demo-${crypto.randomUUID()}`;
+const qualityPanel = new QualityPanel();
 const roles = ['publish', 'subscribe'];
 const fresh = role => ({role, pc: undefined, sessionId: undefined, stream: undefined, starting: false,
+  sampler: new RtcStatsSampler(), lastQualityAt: -Infinity, metrics: undefined, requested: undefined,
   stopping: false, restarting: undefined, candidates: [], errors: [], bindings: [], views: new Map(), restarts: 0});
 const media = {publish: fresh('publish'), subscribe: fresh('subscribe')};
 let socket, participant, participantInfo, roomId, resumeToken, recovery;
@@ -23,6 +28,9 @@ function controls() {
   $('watch').disabled = !joined || !participantInfo?.permissions.can_subscribe || Boolean(media.subscribe.pc) || media.subscribe.starting || unavailable || !$('publisher').value;
   $('stop-publish').disabled = !media.publish.sessionId || unavailable || media.publish.stopping;
   $('stop-watch').disabled = !media.subscribe.sessionId || unavailable || media.subscribe.stopping;
+  $('resolution').disabled = $('framerate').disabled = Boolean(media.publish.pc) || media.publish.starting || unavailable;
+  $('max-bitrate').disabled = media.publish.starting || unavailable;
+  $('apply-bitrate').disabled = !media.publish.sessionId || unavailable || media.publish.stopping;
 }
 function connectionStatus() {
   if (recovery) return;
@@ -71,6 +79,7 @@ function resetMedia(role) {
   connectionStatus(); controls();
 }
 function reset() {
+  qualityPanel.event('leave');
   ++lifecycle; resetMedia();
   participant = participantInfo = roomId = resumeToken = undefined; memberRevision = 0;
   available = []; $('publisher').replaceChildren(new Option('No published tracks', ''));
@@ -178,7 +187,8 @@ async function join(id = $('room').value) {
   participant = reply.participant_id; roomId = id; participantInfo = reply.participant; memberRevision = reply.revision;
   resumeToken = reply.resume_token; reconnectTimeout = reply.reconnect_timeout_ms;
   $('room').value = id; $('identity').textContent = `${id} / ${participant}`;
-  $('connection').textContent = 'Joined'; await refreshTracks(); controls(); return reply;
+  $('connection').textContent = 'Joined'; qualityPanel.event('joined', {room: id});
+  await refreshTracks(); controls(); return reply;
 }
 async function refreshTracks() {
   if (!participant) return [];
@@ -291,7 +301,7 @@ function restartIce(role) {
       const reply = await request({type: 'restart_ice', session_id: state.sessionId, sdp: await offer(state, true)});
       if (!active(state)) return;
       await state.pc.setRemoteDescription({type: 'answer', sdp: reply.sdp});
-      ++state.restarts; ++iceRestartCount;
+      ++state.restarts; ++iceRestartCount; qualityPanel.event('ice-restarted', {role});
     } catch (error) {
       if (active(state) && state.pc.signalingState === 'have-local-offer') await state.pc.setLocalDescription({type: 'rollback'}).catch(() => {});
       throw error;
@@ -316,13 +326,20 @@ async function publish(forceRelay = $('relay').checked) {
   if (!participant || state.pc || state.starting || recovery) throw new Error('Join a room with an idle publishing connection');
   state.starting = true; controls();
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({video: {width: 640, height: 360, frameRate: 20}, audio: true});
+    const settings = readPublishSettings($('resolution').value, $('framerate').value, $('max-bitrate').value);
+    state.requested = settings;
+    const stream = await navigator.mediaDevices.getUserMedia({video: {width: {ideal: settings.width},
+      height: {ideal: settings.height}, frameRate: {ideal: settings.fps, max: settings.fps}}, audio: true});
     if (!active(state)) {stream.getTracks().forEach(track => track.stop()); throw new Error('Media operation cancelled');}
     state.stream = stream; $('local').srcObject = stream;
     const current = connection(state, forceRelay);
-    for (const track of stream.getTracks()) preferences(current.addTransceiver(track, {direction: 'sendonly', streams: [stream]}), track.kind);
+    for (const track of stream.getTracks()) {
+      const options = {direction: 'sendonly', streams: [stream]};
+      if (track.kind === 'video') options.sendEncodings = [{maxBitrate: settings.max_bitrate_bps, maxFramerate: settings.fps}];
+      preferences(current.addTransceiver(track, options), track.kind);
+    }
     const reply = await negotiate(state, {type: 'publish', sdp: await offer(state)});
-    $('local-status').textContent = 'Publishing'; return reply;
+    $('local-status').textContent = 'Publishing'; qualityPanel.event('publish', {settings}); return reply;
   } catch (error) {await failed(state); throw error;} finally {state.starting = false; controls();}
 }
 async function watch(publisherId = $('publisher').value, forceRelay = $('relay').checked) {
@@ -340,6 +357,7 @@ async function watch(publisherId = $('publisher').value, forceRelay = $('relay')
       return {track, transceiver};
     });
     const sdp = await offer(state);
+    qualityPanel.event('subscribe', {tracks: tracks.length});
     return await negotiate(state, {type: 'subscribe', sdp,
       tracks: state.bindings.map(({track, transceiver}) => ({track_id: track.track_id, mid: transceiver.mid}))});
   } catch (error) {await failed(state); throw error;} finally {state.starting = false; controls();}
@@ -352,13 +370,29 @@ async function stopMedia(role) {
   try {
     if (state.restarting) await state.restarting;
     const reply = await request({type: role === 'publish' ? 'unpublish' : 'unsubscribe', session_id: state.sessionId});
-    if (media[role] === state) resetMedia(role);
+    if (media[role] === state) {qualityPanel.event('media-stopped', {role}); resetMedia(role);}
     return reply;
   } finally {state.stopping = false; controls();}
 }
+async function applyBitrate() {
+  const state = media.publish;
+  if (!state.sessionId || !state.pc || state.stopping) throw new Error('Start publishing before applying a bitrate limit');
+  const settings = readPublishSettings($('resolution').value, $('framerate').value, $('max-bitrate').value);
+  const sender = state.pc.getSenders().find(sender => sender.track?.kind === 'video');
+  if (!sender) throw new Error('Video sender is unavailable');
+  const parameters = sender.getParameters();
+  if (!parameters.encodings?.length) throw new Error('Video encoding parameters are unavailable');
+  parameters.encodings[0].maxBitrate = settings.max_bitrate_bps;
+  await sender.setParameters(parameters);
+  if (!active(state)) return;
+  state.requested = {...state.requested, max_bitrate_bps: settings.max_bitrate_bps};
+  qualityPanel.event('encoder-limit-changed', {max_bitrate_bps: settings.max_bitrate_bps});
+}
 async function roleStats(state) {
   if (!state.pc) return undefined;
-  const report = await state.pc.getStats();
+  let report;
+  try {report = await state.pc.getStats();}
+  catch (error) {if (!active(state)) return undefined; throw error;}
   if (!active(state)) return undefined;
   let frames = 0, bytes = 0, audioBytes = 0, sentBytes = 0, candidateType = '', pair;
   for (const stat of report.values()) {
@@ -368,19 +402,32 @@ async function roleStats(state) {
     if (stat.type === 'outbound-rtp') sentBytes += stat.bytesSent || 0;
   }
   if (pair) candidateType = report.get(pair.localCandidateId)?.candidateType || '';
-  return {frames, bytes, audioBytes, sentBytes, candidateType, sessionId: state.sessionId, restarts: state.restarts,
+  if (performance.now() - state.lastQualityAt >= 900) {
+    state.metrics = state.sampler.sample(report); state.lastQualityAt = performance.now();
+  }
+  const capture = state.stream?.getVideoTracks()[0]?.getSettings();
+  const encoding = state.pc.getSenders().find(sender => sender.track?.kind === 'video')?.getParameters().encodings?.[0];
+  return {frames, bytes, audioBytes, sentBytes, candidateType, metrics: state.metrics, requested: state.requested,
+    encoding: encoding ? {max_bitrate_bps: encoding.maxBitrate, max_framerate: encoding.maxFramerate} : undefined,
+    capture: capture ? {width: capture.width, height: capture.height, frameRate: capture.frameRate} : undefined, sessionId: state.sessionId, restarts: state.restarts,
     state: state.pc.connectionState, ice: state.pc.iceConnectionState, gatheringState: state.pc.iceGatheringState,
     gatheredCandidates: state.candidates, candidateErrors: state.errors};
 }
-async function stats() {
+let statsOperation;
+function stats() {
+  if (!statsOperation) statsOperation = collectStats().finally(() => {statsOperation = undefined;});
+  return statsOperation;
+}
+async function collectStats() {
   const [publish, subscribe] = await Promise.all(roles.map(role => roleStats(media[role])));
   const current = subscribe || publish, remoteVideos = [...media.subscribe.views].map(([id, view]) =>
     ({publisher: id, width: view.video.videoWidth, height: view.video.videoHeight}));
   $('candidate').textContent = current?.candidateType || '-';
   $('frames').textContent = String(subscribe?.frames || 0); $('bytes').textContent = String(subscribe?.bytes || 0);
   const mode = publish && subscribe ? 'duplex' : publish ? 'publish' : subscribe ? 'watch' : '';
-  return {...current, publish, subscribe, remoteVideos, participant, roomId, mode, recoveryCount, iceRestartCount,
+  const snapshot = {...current, publish, subscribe, remoteVideos, participant, roomId, mode, recoveryCount, iceRestartCount,
     width: remoteVideos[0]?.width || 0, height: remoteVideos[0]?.height || 0};
+  qualityPanel.update(snapshot); $('quality-error').textContent = ''; return snapshot;
 }
 async function leave() {
   leaving = true; ++lifecycle;
@@ -395,9 +442,16 @@ $('publish').onclick = () => action(() => publish()); $('watch').onclick = () =>
 $('stop-publish').onclick = () => action(() => stopMedia('publish'));
 $('stop-watch').onclick = () => action(() => stopMedia('subscribe'));
 $('leave').onclick = () => action(leave); $('publisher').onchange = controls;
-setInterval(() => {if (!busy && !recovery && participant && !media.subscribe.pc) refreshTracks().catch(() => {}); stats().catch(() => {});}, 2000);
+$('apply-bitrate').onclick = () => action(applyBitrate);
+$('export-report').onclick = () => qualityPanel.download();
+$('clear-report').onclick = () => qualityPanel.clear();
+setInterval(() => {
+  if (!busy && !recovery && participant && !media.subscribe.pc) refreshTracks().catch(() => {});
+  stats().catch(error => {$('quality-error').textContent = `统计采样失败：${error.message}`;});
+}, 1000);
 window.addEventListener('pagehide', () => {leaving = true; resetMedia(); socket?.close();});
-window.demo = {join, publish, watch, stopMedia, refreshTracks, stats, leave, restartIce,
+window.demo = {join, publish, watch, stopMedia, refreshTracks, stats, leave, restartIce, applyBitrate,
+  qualityReport: () => qualityPanel.report(),
   listParticipants, getParticipant, updateParticipant, removeParticipant,
   get memberRevision() {return memberRevision;}, dropSignaling: () => socket?.close()};
 emptyRemote(); controls();

@@ -3,7 +3,6 @@ cmake_minimum_required(VERSION 3.16)
 set(QUALITY_SRC
     quality/DownlinkBandwidthAllocator.cpp
     quality/GoogCcNetworkController.cpp
-    quality/NackContext.cpp
     quality/NetworkController.cpp
     quality/NetworkQualityEstimator.cpp
     quality/NetworkStatsCollector.cpp
@@ -12,6 +11,7 @@ set(QUALITY_SRC
     quality/ProbeController.cpp
     quality/RtcpBweBridge.cpp
     quality/SendSideController.cpp
+    quality/QosTrace.cpp
     quality/TransportFeedbackAdapter.cpp
     quality/VideoRecoveryController.cpp
     quality/WeakNetController.cpp
@@ -24,6 +24,7 @@ set(QUALITY_SRC
     quality/bwe/PacketGroupObserver.cpp
     quality/bwe/RemoteBitrateController.cpp
     quality/bwe/TransportBweController.cpp
+    quality/bwe/WebRtcTrendlineEstimator.cpp
 )
 
 # Both RTP senders and transports use the controller. Keep it below media so
@@ -34,7 +35,7 @@ target_include_directories(media_quality PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/quality/bwe
 )
 target_compile_features(media_quality PUBLIC cxx_std_17)
-target_link_libraries(media_quality PUBLIC Rtcp network utils LOGGER)
+target_link_libraries(media_quality PUBLIC Rtcp network utils LOGGER PRIVATE packetia_webrtc_trendline)
 target_link_libraries(rtp PUBLIC media_quality)
 
 add_library(packetia_media_core STATIC

@@ -1,4 +1,5 @@
 #include "PacedSendQueue.h"
+#include "SendSideController.h"
 #include <gtest/gtest.h>
 
 #include <map>
@@ -15,6 +16,7 @@ struct Harness
     uint64_t now = 0, next_task = 0;
     uint32_t rate = 800000;
     bool accepting = true;
+    std::function<uint32_t()> rate_source;
     std::map<std::pair<uint64_t, uint64_t>, std::function<void()>> tasks;
     struct Sent { uint64_t at; Queue::Packet packet; };
     std::vector<Sent> sent;
@@ -24,7 +26,7 @@ struct Harness
             tasks.emplace(std::make_pair(now + delay, ++next_task), std::move(task)); return true;
         },
         [this](auto packet) { sent.push_back({now, std::move(packet)}); },
-        [this] { return rate; }, [this] { return now; }};
+        [this] { return rate_source ? rate_source() : rate; }, [this] { return now; }};
 
     Result Send(Priority priority = Priority::Media, size_t size = 1200, uint8_t id = 1,
                 std::function<bool()> valid = {}, std::function<void()> complete = {})
@@ -55,6 +57,27 @@ TEST(MediaPacer, BurstIsCoalescedAndReleasedAtConfiguredRate)
     ASSERT_EQ(h.sent.size(), 11U);
     EXPECT_EQ(h.queue.GetStats().queued_packets, 89U);
     for (size_t i = 1; i < h.sent.size(); ++i) EXPECT_GE(h.sent[i].at - h.sent[i - 1].at, 12U);
+}
+
+TEST(MediaPacer, ProbeControllerRateReachesPacedPacketsAndAutomaticallyExpires)
+{
+    media::NetworkControllerConfig config;
+    config.bitrate = {100000, 200000, 2000000};
+    media::SendSideController controller(config);
+    Harness h;
+    h.rate_source = [&] { return controller.GetPacingRate(h.now); };
+    auto decision = controller.GetProbeDecision({0, 1, 0, 400000});
+    ASSERT_TRUE(decision.plan);
+    const auto plan = controller.StartProbe(*decision.plan, 0, 1);
+    ASSERT_TRUE(plan);
+    for (int i = 0; i < 100; ++i) ASSERT_EQ(h.Send(Priority::Media, 264), Result::Accepted);
+    h.Advance(100);
+    EXPECT_EQ(h.queue.GetStats().pacing_bitrate_bps, 300000U);
+    EXPECT_GE(h.sent.size(), 14U); // At 200 kbit/s only ten packets would have left.
+    EXPECT_LE(h.sent.size(), 16U);
+    h.Advance(500);
+    EXPECT_EQ(h.queue.GetStats().pacing_bitrate_bps, 200000U);
+    EXPECT_FALSE(controller.IsProbeActive(plan->cluster_id, h.now));
 }
 
 TEST(MediaPacer, VideoCannotConsumeReservedAudioAndControlCapacity)

@@ -6,6 +6,11 @@
 #include <sstream>
 #include <string_view>
 #include <thread>
+#include <cmath>
+#include <optional>
+#include <type_traits>
+#include <variant>
+#include <vector>
 
 #ifdef _WIN32
 #include <process.h>
@@ -15,6 +20,31 @@
 
 namespace packetia::logging
 {
+// Typed scalar fields keep diagnostics queryable without embedding JSON in message.
+struct LogField
+{
+    using Value = std::variant<std::nullptr_t, bool, int64_t, uint64_t, double, std::string>;
+    std::string key;
+    Value value;
+
+    static Value Convert(std::nullptr_t) { return nullptr; }
+    static Value Convert(bool value) { return value; }
+    static Value Convert(double value) { return value; }
+    static Value Convert(const char* value) { return value ? Value(std::string(value)) : Value(nullptr); }
+    static Value Convert(const std::string& value) { return value; }
+    template<typename T, std::enable_if_t<std::is_integral_v<T> && !std::is_same_v<T, bool>, int> = 0>
+    static Value Convert(T value)
+    {
+        if constexpr (std::is_signed_v<T>) return static_cast<int64_t>(value);
+        else return static_cast<uint64_t>(value);
+    }
+    template<typename T>
+    static Value Convert(const std::optional<T>& value) { return value ? Convert(*value) : Value(nullptr); }
+    template<typename T>
+    LogField(std::string name, const T& input) : key(std::move(name)), value(Convert(input)) {}
+};
+using LogFields = std::vector<LogField>;
+
 inline const char* LevelName(int level)
 {
     switch (level)
@@ -63,10 +93,36 @@ inline void AppendJsonString(std::string& out, std::string_view value)
     out += '"';
 }
 
+inline std::string FieldsJson(const LogFields& fields)
+{
+    std::string out = "{";
+    bool first = true;
+    for (const auto& field : fields)
+    {
+        if (!first) out += ',';
+        first = false;
+        AppendJsonString(out, field.key); out += ':';
+        std::visit([&out](const auto& value) {
+            using T = std::decay_t<decltype(value)>;
+            if constexpr (std::is_same_v<T, std::nullptr_t>) out += "null";
+            else if constexpr (std::is_same_v<T, bool>) out += value ? "true" : "false";
+            else if constexpr (std::is_same_v<T, std::string>) AppendJsonString(out, value);
+            else if constexpr (std::is_floating_point_v<T>)
+            {
+                if (!std::isfinite(value)) out += "null";
+                else { std::ostringstream stream; stream.imbue(std::locale::classic()); stream.precision(15); stream << value; out += stream.str(); }
+            }
+            else out += std::to_string(value);
+        }, field.value);
+    }
+    out += '}';
+    return out;
+}
+
 // Text and JSON both keep each application record on a single physical line.
 inline std::string FormatRecord(LogFormat format, const std::string& service, const std::string& node_id,
                                 const char* file, int line, int level, std::string_view message,
-                                const char* event = nullptr)
+                                const char* event = nullptr, const LogFields& fields = {})
 {
     const std::string_view path(file);
     const auto separator = path.find_last_of("/\\");
@@ -96,6 +152,7 @@ inline std::string FormatRecord(LogFormat format, const std::string& service, co
         out += ",\"line\":" + std::to_string(line);
         if (event) { out += ",\"event\":"; AppendJsonString(out, event); }
         out += ",\"message\":"; AppendJsonString(out, message);
+        if (!fields.empty()) out += ",\"data\":" + FieldsJson(fields);
         out += '}';
     }
     else
@@ -112,6 +169,7 @@ inline std::string FormatRecord(LogFormat format, const std::string& service, co
         AppendJsonString(out, message);
         out.erase(begin, 1);
         out.pop_back();
+        if (!fields.empty()) out += " data=" + FieldsJson(fields);
     }
     return out;
 }

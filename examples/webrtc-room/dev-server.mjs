@@ -27,7 +27,11 @@ const config = {url: `ws://127.0.0.1:${wsPort}`,
   iceServer: {urls: `turn:127.0.0.1:${turnPort}?transport=udp`, username, credential}};
 const binary = process.env.PACKETIA_ROOM_DEMO_BINARY || resolve(root, 'build/webrtc-integration/server/PacketiaRoomDemo');
 const child = spawn(binary, [String(wsPort), String(mediaPort), String(turnPort)], {
-  cwd: '/tmp', env: {...process.env, PACKETIA_WEBRTC_API_KEY: apiKey, PACKETIA_WEBRTC_API_SECRET: apiSecret,
+  cwd: '/tmp', env: {...process.env, PACKETIA_QOS_LOG: process.env.PACKETIA_QOS_LOG ?? '1',
+    PACKETIA_LOG_MODE: process.env.PACKETIA_LOG_MODE || 'both',
+    PACKETIA_LOG_FORMAT: process.env.PACKETIA_LOG_FORMAT || 'json',
+    PACKETIA_LOG_FILE: process.env.PACKETIA_LOG_FILE || resolve(directory, 'artifacts/server-qos.jsonl'),
+    PACKETIA_WEBRTC_API_KEY: apiKey, PACKETIA_WEBRTC_API_SECRET: apiSecret,
     PACKETIA_TURN_USER: username, PACKETIA_TURN_PASSWORD: credential}, stdio: ['ignore', 'pipe', 'pipe']
 });
 let server;
@@ -52,6 +56,7 @@ await new Promise((resolveReady, reject) => {
   let output = '';
   const timeout = setTimeout(() => {stop(); reject(new Error('Room service startup timed out'));}, 10000);
   child.stdout.on('data', chunk => {
+    process.stdout.write(chunk);
     output = (output + chunk.toString()).slice(-2048);
     if (output.includes('ROOM_DEMO_READY')) {clearTimeout(timeout); resolveReady();}
   });
@@ -59,7 +64,8 @@ await new Promise((resolveReady, reject) => {
   child.once('exit', () => {clearTimeout(timeout); reject(new Error('Room service startup failed; check ports and build'));});
 });
 const files = new Map([['/', ['index.html', 'text/html']], ['/app.js', ['app.js', 'text/javascript']],
-  ['/style.css', ['style.css', 'text/css']]]);
+  ['/style.css', ['style.css', 'text/css']], ['/quality-stats.js', ['quality-stats.js', 'text/javascript']],
+  ['/quality-panel.js', ['quality-panel.js', 'text/javascript']]]);
 server = createServer(async (request, response) => {
   try {
     response.setHeader('Cache-Control', 'no-store');

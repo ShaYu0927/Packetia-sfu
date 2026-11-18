@@ -341,7 +341,7 @@ TEST(GroupTrend, IndependentLargeClockOffsetsPreserveTrend)
     }
 }
 
-TEST(BandwidthFramework, EmptyAlgorithmsPreserveExistingEstimationAndLegacyProbeSelection)
+TEST(BandwidthFramework, EmptyInjectedAlgorithmsPreserveEstimationAndCanUseLegacyProbeSelection)
 {
     GoogCcNetworkController defaults;
     auto calls = std::make_shared<AlgorithmCalls>();
@@ -357,7 +357,7 @@ TEST(BandwidthFramework, EmptyAlgorithmsPreserveExistingEstimationAndLegacyProbe
     }
     EXPECT_EQ(calls->group_feedbacks, 3);
     EXPECT_EQ(calls->probe_feedbacks, 3);
-    EXPECT_FALSE(defaults.GetProbeDecision({3500, 1, 32000, 800000}).handled);
+    EXPECT_TRUE(defaults.GetProbeDecision({3500, 1, 32000, 800000}).handled);
     EXPECT_FALSE(injected.GetProbeDecision({3500, 1, 32000, 800000}).handled);
 }
 
@@ -383,6 +383,7 @@ TEST(BandwidthFramework, GroupOutputReachesRateControlAndProbeFeedbackWithClockC
     EXPECT_EQ(calls->probe_context.request.active_bitrate_bps, 32000U);
     ASSERT_TRUE(calls->probe_context.bandwidth_estimate);
     EXPECT_DOUBLE_EQ(calls->probe_context.bandwidth_estimate->delay_trend_ms, 73.0);
+    EXPECT_EQ(calls->probe_context.bandwidth_estimate_time_ms, 1000U);
 }
 
 TEST(BandwidthFramework, MissingAndNonfiniteGroupResultsUsePerPacketFallback)

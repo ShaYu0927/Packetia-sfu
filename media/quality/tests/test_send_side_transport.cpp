@@ -438,3 +438,40 @@ TEST(SendSideTransportTest, ConcurrentAudioVideoHistoryAcceptsTransportWideFeedb
     EXPECT_TRUE(controller.GetNetworkState().HasUpdates());
     EXPECT_DOUBLE_EQ(controller.GetNetworkState().target_rate.estimate.loss_rate, 0.0);
 }
+
+TEST(SendSideTransportDiagnostics, ReportsMatchedLostAndRepeatedTwccWithoutDoubleCounting)
+{
+    media::SendSideController controller;
+    for (int i = 0; i < 2; ++i)
+    {
+        media::PacketSendInfo packet;
+        packet.transport_sequence = i; packet.send_time_ms = 1000 + i * 10; packet.size_bytes = 1200;
+        controller.OnPacketSent(packet);
+    }
+    const auto feedback = Twcc(0, {true, false});
+    ASSERT_TRUE(controller.OnRtcpPacket(feedback.data(), feedback.size(), 1100));
+    ASSERT_TRUE(controller.OnRtcpPacket(feedback.data(), feedback.size(), 1200));
+    const auto diagnostic = controller.GetDiagnostics(1200);
+    EXPECT_EQ(diagnostic.twcc_reports_total, 2U);
+    EXPECT_EQ(diagnostic.matched_feedback_packets_total, 2U);
+    EXPECT_EQ(diagnostic.received_feedback_packets_total, 1U);
+    EXPECT_EQ(diagnostic.unmatched_twcc_packets_total, 2U);
+    EXPECT_STREQ(diagnostic.controller.feedback_source, "twcc");
+    EXPECT_DOUBLE_EQ(*diagnostic.controller.loss_rate, 0.5);
+}
+
+TEST(SendSideTransportDiagnostics, RrOnlySenderCountsActualCompletionsWithoutInventingTwcc)
+{
+    auto transport = std::make_shared<FeedbackTransport>();
+    auto controller = transport->GetSendSideController();
+    rtsp::RtpSenderTrack sender(TrackConfig(22, 0), transport);
+    const auto packet = Rtp();
+    ASSERT_TRUE(sender.InputRtpPacket(packet.data(), packet.size()));
+    EXPECT_EQ(controller->GetDiagnostics(1000).sent_packets_total, 1U);
+    EXPECT_EQ(controller->GetDiagnostics(1000).sent_rtp_bytes_total, transport->packets.front().size());
+    EXPECT_EQ(controller->SequenceAllocator()->PeekNextExtendedSequence(), 0);
+    const auto feedback = Twcc(0, {true});
+    ASSERT_TRUE(controller->OnRtcpPacket(feedback.data(), feedback.size(), 1100));
+    EXPECT_EQ(controller->GetDiagnostics(1100).matched_feedback_packets_total, 0U);
+    EXPECT_FALSE(controller->GetDiagnostics(1100).controller.feedback_valid);
+}

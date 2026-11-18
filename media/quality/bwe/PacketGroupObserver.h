@@ -2,6 +2,7 @@
 
 #include "BandwidthUsage.h"
 #include "NetworkStats.h"
+#include "WebRtcTrendlineEstimator.h"
 
 #include <array>
 #include <cstddef>
@@ -68,29 +69,12 @@ private:
 
     static constexpr uint64_t kGroupDurationMs = 5;
     static constexpr uint64_t kMaxTrendGapMs = 2000;
-    static constexpr std::size_t kTrendWindowSize = 20;
     static constexpr std::size_t kDedupWindowSize = 4096;
     // 保存扩展序号 + 1，0 表示空槽；窗口外及无有效序号的反馈不再处理。
     std::array<uint64_t, kDedupWindowSize> seen_sequences_{};   /* 	记录最近处理过的扩展序号，避免同一包反馈被重复计算 */
     int64_t newest_sequence_ = -1;                              /*  保存最新序号，用于维护去重窗口、识别过旧反馈 */
     std::optional<PacketGroup> pending_group_;                  /* 正在收集、尚未完成的分组，可跨多次反馈继续累积 */
     std::optional<PacketGroup> previous_group_;                 /* 保留前一个分组，供相邻分组的时间差计算使用. */
-    struct TrendSample
-    {
-        double arrival_time_ms = 0;
-        double smoothed_delay_ms = 0;
-    };
-    std::array<TrendSample, kTrendWindowSize> trend_history_{};
-    std::size_t trend_sample_count_ = 0;
-    std::size_t next_trend_sample_ = 0;
-    uint64_t trend_origin_ms_ = 0;
-    unsigned num_deltas_ = 0;
-    double accumulated_delay_ms_ = 0;
-    double smoothed_delay_ms_ = 0;
-    double previous_slope_ = 0;
-    double threshold_ = 12.5;
-    double overuse_duration_ms_ = 0;
-    unsigned overuse_count_ = 0;
-    BandwidthUsage trend_usage_ = BandwidthUsage::kNormal;
+    WebRtcTrendlineEstimator trend_estimator_;
 };
 }

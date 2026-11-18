@@ -47,6 +47,10 @@ public:
     ProbeDecision GetProbeDecision(const ProbeRequest& request);
     std::optional<ProbePlan> StartProbe(ProbePlan plan, uint64_t now_ms, uint64_t path_epoch);
     void OnProbeEvent(const ProbeEvent& event);
+    uint32_t GetPacingRate(uint64_t now_ms) const;
+    bool IsProbeActive(int cluster_id, uint64_t now_ms) const;
+    std::optional<ProbeResult> LastProbeResult() const;
+    TransportDiagnostics GetDiagnostics(uint64_t now_ms) const;
 
 private:
     void NotifyBudgetObservers();
@@ -70,11 +74,15 @@ private:
     PacketHistory history_;
     TransportFeedbackAdapter adapter_;
     bool available_;
+    TransportDiagnostics diagnostic_totals_;
     bool has_twcc_ = false;
     uint64_t last_valid_twcc_receive_time_ms_ = 0;
     UpdateCallback update_callback_;
     uint64_t path_epoch_ = 1;
     int next_probe_cluster_id_ = 0;
+    struct ActiveProbe { ProbePlan plan; uint64_t started_ms; uint64_t path_epoch; };
+    std::optional<ActiveProbe> active_probe_;
+    bool ProbeActiveLocked(uint64_t now_ms) const;
     BudgetObserverId next_observer_id_ = 1;
     std::unordered_map<BudgetObserverId, std::function<void()>> budget_observers_;
     std::unordered_map<uint32_t, uint32_t> sender_clock_rates_;

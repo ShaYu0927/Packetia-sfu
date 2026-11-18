@@ -1519,12 +1519,13 @@ RTT-only 更新、重复或无法匹配发送历史的 TWCC、未知发送 SSRC 
 
 ### 分组观测与主动探测算法扩展框架
 
-框架已接通，新增核心算法尚未实现。默认继续使用现有 OU 逐包估算和受限 padding 恢复探测。
+默认分组路径已接入 WebRTC 趋势检测，主动恢复探测也已接通计划、Pacer 临时提速、TWCC 簇评估与预算更新。
+原有 OU 逐包估算仍作为分组输出缺失时的回退。探测参数和测量边界见[下行带宽探测闭环](bandwidth-probing.md)。
 每条下行 Transport 独占观测器及探测控制器，同一连接的音视频共享它们，不为每条轨道重复估算。
 
-算法填写入口：
+算法实现与可替换入口：
 
-| 文件与方法 | 输入 | 留给算法实现的内容 |
+| 文件与方法 | 输入 | 当前职责 |
 | --- | --- | --- |
 | `media/quality/bwe/PacketGroupObserver.cpp`：`OnFeedback` | 已匹配发送历史的 TWCC、目标码率、RTT | 分组边界、跨反馈组装、去重、有界窗口、跨组趋势及拥塞判断 |
 | `media/quality/ProbeController.cpp`：`OnProcessInterval` | 活动媒体需求、候选视频需求、码率约束、当前估计及 RTT | 是否探测、退避、额外 padding 码率、时长和字节预算 |

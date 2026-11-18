@@ -3,6 +3,12 @@
 第一版部署形态为单台 Linux 服务器上的一个 `PacketiaControl` 和两个 `PacketiaSfu` 容器。
 房间由控制服务分配到节点，同一房间固定到同一节点。公网入口使用 Caddy 自动申请和续期证书。
 
+当前部署支持多个房间分布到不同 SFU。单个房间跨多个 SFU、节点之间的媒体转发、
+观众分散接入与故障迁移尚未实现；增加容器数量不会自动分摊一个房间的媒体流量。
+Control 使用 SQLite 保存业务权限、节点租约与房间归属，在线成员和媒体状态在所属 SFU 内存中。
+Redis、外部关系数据库与多 Control 高可用尚未接入。
+单房间集群的目标结构与后续步骤见[集群现状与演进方向](../../README.md#集群现状与演进方向)。
+
 ```text
 客户端 ── HTTPS / WSS :443 ── Caddy
                               ├─ /api/*          → control:18082
@@ -137,6 +143,8 @@ python3 deploy/cluster/deploy.py down
 
 在 `runtime/.env` 中设置 `PACKETIA_LOG_FORMAT=json`（或 `text`）和
 `PACKETIA_LOG_LEVEL=info`（或 `debug`、`error`），然后执行 `up --recreate` 生效。
+需要诊断媒体算法时同时设置 `PACKETIA_QOS_LOG=1`；默认关闭，事件仍受 INFO 级别过滤。
+日志字段和分析方法见[媒体质量诊断日志](../../docs/media-quality-diagnostics.md)。
 修改镜像内的程序后仍需 `up --build --recreate`。
 `debug` 用于临时排查；网络可写事件已降为 DEBUG，正常运行使用 INFO。
 

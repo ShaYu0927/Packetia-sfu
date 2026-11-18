@@ -4,7 +4,11 @@
   "type": "module",
   "scripts": {
     "start": "node dev-server.mjs",
-    "check": "node check-browser.mjs"
+    "check": "node check-browser.mjs",
+    "test": "node --test quality-stats.test.mjs qos-log.test.mjs",
+    "check:quality": "node check-quality.mjs",
+    "check:algorithms": "node check-algorithms.mjs",
+    "qos:summary": "node summarize-qos.mjs"
   },
   "devDependencies": {
     "playwright": "1.56.1"

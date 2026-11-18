@@ -78,6 +78,8 @@ if(TARGET media AND PACKETIA_WITH_LIBWEBSOCKETS AND PACKETIA_SRTP_AVAILABLE)
         server packetia_signaling ROOM_LIB media network utils WebRtc LOGGER packetia_auth
         "$<$<PLATFORM_ID:Linux>:-Wl,--end-group>")
     add_test(NAME webrtc_service COMMAND test_webrtc_service)
+    add_test(NAME webrtc_twcc COMMAND test_webrtc_service --twcc)
+    set_tests_properties(webrtc_twcc PROPERTIES TIMEOUT 20)
     add_test(NAME webrtc_control COMMAND test_webrtc_service --control)
     set_tests_properties(webrtc_control PROPERTIES TIMEOUT 20)
     add_test(NAME webrtc_members COMMAND test_webrtc_service --members)

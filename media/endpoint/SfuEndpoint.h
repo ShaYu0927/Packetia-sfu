@@ -9,8 +9,6 @@
 #include "DownlinkTrackManager.h"
 #include "EncodedFrameDispatcher.h"
 #include "ReceiveFeedbackHandler.h"
-#include <functional>
-#include <atomic>
 #include <mutex>
 #include <unordered_set>
 #include <vector>

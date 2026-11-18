@@ -1,4 +1,6 @@
 add_executable(test_weak_network_manual
+    test_probe_controller.cpp
+    test_qos_trace.cpp
     test_bandwidth_framework.cpp
     test_downlink_bandwidth.cpp
     test_metric_sampling.cpp
@@ -6,6 +8,8 @@ add_executable(test_weak_network_manual
     test_send_side_transport.cpp
     test_bwe_rate_control.cpp
     test_loss_recovery.cpp
+    test_keyframe_retry.cpp
+    test_webrtc_trendline_adapter.cpp
     test_twcc_feedback.cpp
     test_receive_quality_monitor.cpp
 )
@@ -13,6 +17,7 @@ add_executable(test_weak_network_manual
 target_link_libraries(test_weak_network_manual
   PRIVATE
     media
+    packetia_webrtc_trendline
     GTest::gtest
     GTest::gtest_main
 )
