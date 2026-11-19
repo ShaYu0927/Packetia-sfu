@@ -30,3 +30,13 @@ build-win/
 /deploy/cluster/runtime/
 /deploy/cluster/.env
 recordings/
+
+# FFmpeg's upstream Makefiles are source files, not generated build output.
+!/third/ffmpeg/ffmpeg-9.0.1/**/Makefile
+!/third/ffmpeg/ffmpeg-9.0.1/doc/
+/third/ffmpeg/ffmpeg-9.0.1/doc/*
+!/third/ffmpeg/ffmpeg-9.0.1/doc/Makefile
+!/third/ffmpeg/ffmpeg-9.0.1/doc/ffprobe.xsd
+!/third/ffmpeg/ffmpeg-9.0.1/doc/examples/
+/third/ffmpeg/ffmpeg-9.0.1/doc/examples/*
+!/third/ffmpeg/ffmpeg-9.0.1/doc/examples/Makefile

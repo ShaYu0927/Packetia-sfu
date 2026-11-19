@@ -13,7 +13,12 @@ add_subdirectory(FileIO)
 add_subdirectory(../Index recording-index)
 unset(RECORDING_FFMPEG)
 unset(RECORDING_FFMPEG CACHE)
-find_program(RECORDING_FFMPEG NAMES ffmpeg)
+if(PACKETIA_FFMPEG_ROOT)
+    find_program(RECORDING_FFMPEG NAMES ffmpeg
+        PATHS "${PACKETIA_FFMPEG_ROOT}/bin" NO_DEFAULT_PATH)
+else()
+    find_program(RECORDING_FFMPEG NAMES ffmpeg)
+endif()
 if(RECORDING_FFMPEG)
     set(RECORDING_FIXTURE "${CMAKE_CURRENT_BINARY_DIR}/recording-fixture.mp4")
     add_test(NAME recording_fixture COMMAND ${RECORDING_FFMPEG} -hide_banner -loglevel error -y
@@ -87,6 +92,7 @@ if(RECORDING_FFMPEG)
     set_tests_properties(segmented_recording PROPERTIES FIXTURES_REQUIRED recording_media TIMEOUT 150)
 else()
     message(FATAL_ERROR
-        "Recording integration tests require ffmpeg on PATH with libx264 and AAC encoding support. "
-        "Install the system ffmpeg package or disable PACKETIA_BUILD_RECORDING_TESTS.")
+        "Recording integration tests require ffmpeg with libx264 and AAC encoding support. "
+        "For PACKETIA_FFMPEG_ROOT, build with scripts/build_ffmpeg.py --programs --codec-library x264 --enable-gpl; "
+        "otherwise install ffmpeg on PATH or disable PACKETIA_BUILD_RECORDING_TESTS.")
 endif()

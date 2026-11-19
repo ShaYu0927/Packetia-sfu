@@ -130,7 +130,8 @@ Redis、MySQL/PostgreSQL 或 OceanBase 都属于后续存储方案评估，目�
 默认启用 libwebsockets；WebRTC 媒体运行需要 libsrtp2，控制面 HTTP 客户端需要 libcurl。
 
 `BUILD_TESTING` 默认开启，需要 GoogleTest。录像集成测试另需 `ffmpeg` 命令行、Python 3 及相应编码器。
-项目使用系统 FFmpeg 开发包，无需编译 `third/ffmpeg`。
+项目默认使用系统 FFmpeg 开发包，也支持从 `third/ffmpeg` 编译后通过 `PACKETIA_FFMPEG_ROOT` 接入。
+源码构建、组件选择和录制 / 转码复测见[FFmpeg 源码构建说明](third/ffmpeg/README.md)。
 以下命令均从仓库根目录执行。
 
 ### Linux
@@ -169,6 +170,18 @@ cmake --build build/dev --parallel
 | `PACKETIA_WITH_LIBWEBSOCKETS` | `ON` | WebSocket 信令和相应 HTTP 后端 |
 | `PACKETIA_WITH_SRTP` | `ON` | 查找并启用 libsrtp2 媒体后端 |
 | `PACKETIA_BUILD_RECORDING_TESTS` | `OFF` | 额外的 FFmpeg 录像集成测试 |
+| `PACKETIA_FFMPEG_ROOT` | 空 | 指定自编译 FFmpeg 安装目录；头文件、容器 / 编解码库与缩放库统一从该目录查找 |
+
+编译仓库内的 FFmpeg 并用于主程序：
+
+```sh
+python3 scripts/build_ffmpeg.py --jobs 4
+cmake -S . -B build/ffmpeg-app -DPACKETIA_FFMPEG_ROOT="$PWD/build/ffmpeg/install"
+cmake --build build/ffmpeg-app --target Packetia --parallel 4
+```
+
+基础构建包含常用解码、AAC 编码、容器与缩放库；H264/H265 等软件编码需显式启用外部 codec。
+脚本使用独立的源码、工作和安装目录，不写系统目录，构建产物留在已忽略的 `build/` 中。
 
 只构建需要的程序：
 
@@ -323,6 +336,18 @@ Docker Compose 默认使用控制台 JSON 日志，交给 Docker 保存和轮转
 字段口径和与浏览器报告的关联方法见[媒体质量诊断日志](docs/media-quality-diagnostics.md)。
 
 ## 近期改动与验证
+
+### 2026-11-19：FFmpeg 源码构建与统一依赖接入
+
+- 新增 `scripts/build_ffmpeg.py`，从仓库内 FFmpeg 9.0.1 源码构建动态库，支持基础组件、可选软件 codec 及 `ffmpeg` / `ffprobe` 工具。
+- 新增 `PACKETIA_FFMPEG_ROOT`，统一选择编解码、容器与缩放库及其头文件；指定安装缺少所需包信息或库时拒绝混用系统安装，未指定时仍使用系统开发包。
+- 补齐被忽略规则遗漏的上游 Makefile 和安装所需文件，保留上游算法；工作目录、安装目录和日志均位于已忽略的 `build/` 下。
+- 录制测试在指定安装时只使用该安装的命令行工具，构建参数、增量编译记录及复测步骤见 [FFmpeg README](third/ffmpeg/README.md)。
+
+本机 macOS ARM64 上，基础版及启用 x264、x265、vpx、dav1d 和命令行工具的版本均构建成功，
+Packetia 主程序构建通过，并确认动态库来自指定安装。配置测试 5 项、录制 CTest 8 项通过；
+转码 CTest 3 项通过，其中内部用例 30 项通过、8 项跳过，实际验证了 H264、HEVC、VP8、VP9 编码。
+本次未启用 AV1 编码器，Linux 构建尚未实测；主程序构建环境未发现 libsrtp2，不能据此认定 WebRTC 媒体运行链路已验证。
 
 ### 2026-11-19：UDP 发送健壮性与控制 / 媒体故障隔离
 
@@ -481,6 +506,7 @@ ctest --test-dir build/dev --output-on-failure -R 'recording|mp4_reader'
 - [传输实验室](examples/webrtc-room/README.md)：浏览器收发、质量面板与 TWCC 验证步骤。
 - [集群部署](deploy/cluster/README.md)：Control/SFU 启动、Docker、公网入口与当前部署边界。
 - [控制服务与媒体服务的职责边界](docs/control-media-boundaries.md)：状态归属、租约过期、探针语义与真实浏览器故障验证。
+- [FFmpeg 源码构建](third/ffmpeg/README.md)：本地编译、codec 组件选择、统一 CMake 接入及录制 / 转码验证。
 - [会议混流](service/ConferenceMixService/README.md)：任务、后端契约与输出边界。
 - [录像合成示例](service/RecordService/examples/README.md)：离线拼画面与混音实验。
 - [解包与弱网测试](Common/Depacketizer/Test/README.md)：H264 接收与恢复实验。
