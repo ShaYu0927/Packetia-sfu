@@ -2,6 +2,7 @@
 .vscode/
 __pycache__/
 build/
+/build-*/
 cmake-build-debug/
 .clangd/
 doc/
