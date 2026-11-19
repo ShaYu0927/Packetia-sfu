@@ -124,6 +124,16 @@ void MetricRegistry::RecordSend(Transport transport, SendEvent event, uint64_t b
     case SendEvent::Abandoned: total.abandoned += packets; break;
     }
 }
+void MetricRegistry::RecordSendDrop(Transport transport, SendDropReason reason)
+{
+    const auto reason_index = static_cast<size_t>(reason);
+    if (reason_index >= static_cast<size_t>(SendDropReason::Count)) return;
+    thread_local const size_t index = std::hash<std::thread::id>{}(std::this_thread::get_id()) % 32;
+    auto& shard = impl_->traffic[static_cast<size_t>(transport)][index];
+    std::lock_guard<std::mutex> lock(shard.mutex);
+    ++shard.totals.abandoned;
+    ++shard.totals.drops[reason_index];
+}
 RuntimeSnapshot MetricRegistry::Collect() const
 {
     std::vector<std::shared_ptr<WorkerMetrics>> workers;
@@ -156,6 +166,8 @@ RuntimeSnapshot MetricRegistry::Collect() const
             total.bytes += shard.totals.bytes; total.packets += shard.totals.packets;
             total.failures += shard.totals.failures; total.blocked += shard.totals.blocked;
             total.rejected += shard.totals.rejected; total.abandoned += shard.totals.abandoned;
+            for (size_t reason = 0; reason < total.drops.size(); ++reason)
+                total.drops[reason] += shard.totals.drops[reason];
             for (size_t i = 0; i < shard.seconds.size(); ++i)
                 if (shard.seconds[i] <= second && second - shard.seconds[i] < 5)
                 { recent_bytes += shard.bytes[i]; recent_packets += shard.packets[i]; }
@@ -194,6 +206,11 @@ void RecordSend(Transport transport, SendEvent event, uint64_t bytes, uint64_t p
 {
     auto registry = std::atomic_load(&active_registry);
     if (registry) registry->RecordSend(transport, event, bytes, packets);
+}
+void RecordSendDrop(Transport transport, SendDropReason reason)
+{
+    auto registry = std::atomic_load(&active_registry);
+    if (registry) registry->RecordSendDrop(transport, reason);
 }
 TaskScope::TaskScope(WorkerMetrics* worker, uint64_t enqueued, size_t type) : worker_(worker), type_(type)
 { if (worker_) worker_->Begin(enqueued, type, NowNs()); }

@@ -174,6 +174,9 @@ Docker 的 `restart: unless-stopped` 会重启退出的进程，单纯变成 `un
 部署工具的 `down` 不删除卷；不要用 `docker compose down -v` 代替正常停机。
 证书申请失败先看 `logs edge`，节点不就绪先看 `logs sfu-a` / `logs sfu-b`；
 通过 Docker 网络恢复控制服务后，SFU 可继续对同一实例续租。
+租约过期拒绝新入房和恢复请求，已有媒体会话不因控制租约过期而主动关闭。
+不要把 `/readyz` 失败当成杀死进程或中断现有媒体的依据。完整边界和故障验证见
+[控制服务与媒体服务的职责边界](../../docs/control-media-boundaries.md)。
 
 ## 验证方式与当前状态
 
@@ -192,7 +195,12 @@ python3 scripts/test_meeting_control.py \
 ```
 
 集成测试会验证节点注册、会议管理、租约过期与恢复，以及 Control 重启后房间分配保持。
+同时验证过期租约拒绝新入房 / 恢复及内部管理请求，已有成员信令仍可用，续租后重新开放准入。
 两项测试也已注册到启用测试和 WebRTC 依赖的 CMake/CTest 构建中。
+
+增加 `--media-node node --media-report examples/webrtc-room/artifacts/cluster-outage-result.json`
+可启用真实浏览器音视频检查；需要安装示例 Playwright 依赖和 Chrome。
+该可选检查使用实际控制服务签发的入房凭证，验证控制服务停机及租约过期后仍能发送、接收和解码媒体。
 
 部署配置测试、原生双节点集成测试，以及 Compose 官方 CLI 对本地和公网两套配置的校验已通过。
 镜像构建及容器启动尚未完成验证；首次部署需在目标服务器上执行

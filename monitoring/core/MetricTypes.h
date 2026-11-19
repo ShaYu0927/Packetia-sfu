@@ -31,6 +31,8 @@ private:
 };
 enum class Transport { Tcp, Udp };
 enum class SendEvent { Sent, Failed, Blocked, Rejected, Abandoned };
+// Terminal queue drops are separate from individual socket send attempts.
+enum class SendDropReason { Expired, Invalidated, Closed, Cancelled, Blocked, Failed, CallbackError, Count };
 struct TaskSnapshot { std::string name; Histogram queue_wait, execution; };
 struct WorkerSnapshot
 {
@@ -50,6 +52,7 @@ struct SendQueueSnapshot
 struct TrafficSnapshot
 {
     uint64_t bytes = 0, packets = 0, failures = 0, blocked = 0, rejected = 0, abandoned = 0;
+    std::array<uint64_t, static_cast<size_t>(SendDropReason::Count)> drops{};
     double bitrate_bps = 0, packet_rate_pps = 0;
 };
 // Values own their data. Consumers may calculate/encode without producer locks.

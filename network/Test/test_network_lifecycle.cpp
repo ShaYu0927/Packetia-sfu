@@ -376,6 +376,26 @@ struct UdpCollector : network::IUdpHandler {
     void OnClosed(int) override { ++closed; }
 };
 
+TEST(NetworkLifecycle, UdpCreateSetsDescriptorFlagsAndRecreationReleasesOldSocket) {
+    struct OwnedSocket : network::UdpSocket { ~OwnedSocket() { Close(); } };
+    OwnedSocket socket;
+    ASSERT_GE(socket.Create(), 0);
+    EXPECT_NE(::fcntl(socket.Fd(), F_GETFL) & O_NONBLOCK, 0);
+    EXPECT_NE(::fcntl(socket.Fd(), F_GETFD) & FD_CLOEXEC, 0);
+    ASSERT_TRUE(socket.Bind("127.0.0.1", 0, false));
+    sockaddr_in bound{};
+    socklen_t length = sizeof(bound);
+    ASSERT_EQ(::getsockname(socket.Fd(), reinterpret_cast<sockaddr*>(&bound), &length), 0);
+    const auto port = ntohs(bound.sin_port);
+    ASSERT_NE(port, 0);
+    ASSERT_GE(socket.Create(), 0);
+    OwnedSocket replacement;
+    ASSERT_GE(replacement.Create(), 0);
+    EXPECT_TRUE(replacement.Bind("127.0.0.1", port, false));
+    EXPECT_NE(::fcntl(socket.Fd(), F_GETFL) & O_NONBLOCK, 0);
+    EXPECT_NE(::fcntl(socket.Fd(), F_GETFD) & FD_CLOEXEC, 0);
+}
+
 TEST(NetworkLifecycle, UdpReceivesLargeDatagramsAndDestructionCompletesCleanup) {
     EventLoop loop(2);
     ASSERT_TRUE(loop.Start());

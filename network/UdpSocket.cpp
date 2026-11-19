@@ -3,9 +3,19 @@
 int network::UdpSocket::Create(int family, bool dual_stack)
 {
     if ((family != AF_INET && family != AF_INET6) || (dual_stack && family != AF_INET6)) return -1;
+    Close();
     family_ = family;
     dual_stack_ = dual_stack;
-    fd_ = ::socket(family, SOCK_DGRAM, 0);
+    int type = SOCK_DGRAM;
+#if defined(__linux__)
+    type |= SOCK_NONBLOCK | SOCK_CLOEXEC;
+#endif
+    fd_ = ::socket(family, type, 0);
+    if (fd_ >= 0 && (!SocketUtil::SetNonBlock(fd_) || !SocketUtil::SetCloseOnExec(fd_)))
+    {
+        Close();
+        return -1;
+    }
     if (fd_ >= 0 && family == AF_INET6)
     {
         int only_v6 = dual_stack ? 0 : 1;
@@ -24,7 +34,7 @@ bool network::UdpSocket::Bind(const std::string &ip, uint16_t port, bool reuse_a
     if (!addr.IsValid() || addr.ss.ss_family != family_) return false;
 
     int reuse = reuse_address ? 1 : 0;
-    setsockopt(fd_, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+    if (setsockopt(fd_, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) != 0) return false;
 
     int ret = ::bind(fd_, reinterpret_cast<const sockaddr*>(&addr.ss), addr.len);
 
@@ -34,7 +44,6 @@ bool network::UdpSocket::Bind(const std::string &ip, uint16_t port, bool reuse_a
         return false;
     }
 
-    SocketUtil::SetNonBlock(fd_);
     return true;
 }
 

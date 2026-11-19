@@ -50,9 +50,17 @@ std::string EncodeMetricsJson(const service::MonitorSnapshot& snapshot, const se
     for (size_t i = 0; i < runtime.send.size(); ++i)
     {
         const auto& send = runtime.send[i];
+        const auto drops = [&](monitoring::SendDropReason reason) { return send.drops[static_cast<size_t>(reason)]; };
         result["send"][i == 0 ? "tcp" : "udp"] = {{"bytes_total", send.bytes}, {"packets_total", send.packets},
             {"failures_total", send.failures}, {"blocked_total", send.blocked}, {"rejected_total", send.rejected},
-            {"abandoned_packets_total", send.abandoned}, {"bitrate_bps", send.bitrate_bps}, {"packet_rate_pps", send.packet_rate_pps}};
+            {"abandoned_packets_total", send.abandoned}, {"bitrate_bps", send.bitrate_bps}, {"packet_rate_pps", send.packet_rate_pps},
+            {"dropped_packets_total", {{"expired", drops(monitoring::SendDropReason::Expired)},
+                {"invalidated", drops(monitoring::SendDropReason::Invalidated)},
+                {"closed", drops(monitoring::SendDropReason::Closed)},
+                {"cancelled", drops(monitoring::SendDropReason::Cancelled)},
+                {"blocked", drops(monitoring::SendDropReason::Blocked)},
+                {"failed", drops(monitoring::SendDropReason::Failed)},
+                {"callback_error", drops(monitoring::SendDropReason::CallbackError)}}}};
     }
     const auto& r = snapshot.resources;
     result["resources"] = {{"logical_cpus", r.logical_cpus}, {"process_cpu_percent", Value(r.process_cpu_percent)},

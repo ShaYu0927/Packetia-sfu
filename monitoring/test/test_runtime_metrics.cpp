@@ -43,6 +43,13 @@ void Run()
     auto send = registry->Collect().send[1];
     CHECK(send.bytes == 4800000 && send.packets == 4000);
     CHECK(send.blocked == 1 && send.failures == 2 && send.bitrate_bps > 0);
+    RecordSendDrop(Transport::Udp, SendDropReason::Blocked);
+    RecordSendDrop(Transport::Udp, SendDropReason::Expired);
+    RecordSendDrop(Transport::Udp, SendDropReason::Count); // Ignore invalid reasons.
+    send = registry->Collect().send[1];
+    CHECK(send.abandoned == 2 && send.failures == 2 && send.blocked == 1);
+    CHECK(send.drops[static_cast<size_t>(SendDropReason::Blocked)] == 1);
+    CHECK(send.drops[static_cast<size_t>(SendDropReason::Expired)] == 1);
     CHECK(registry->Collect().send[1].packets == 4000);
     MetricRegistry independent;
     CHECK(independent.Collect().workers.empty() && independent.Collect().send[1].packets == 0);
@@ -53,6 +60,7 @@ try
     Run();
     CHECK(!RegisterWorker("unbound", 0) && !RegisterSendQueue("tcp"));
     RecordSend(Transport::Udp, SendEvent::Failed); // No-op after application teardown.
+    RecordSendDrop(Transport::Udp, SendDropReason::Cancelled);
     MetricsContext fresh;
     CHECK(fresh.Registry()->Collect().send[1].packets == 0);
     std::cout << "Core metrics: typed snapshots, concurrency, application isolation and cleanup passed\n";

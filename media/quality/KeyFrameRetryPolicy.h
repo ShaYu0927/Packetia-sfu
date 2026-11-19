@@ -1,4 +1,5 @@
-#pragma once
+#ifndef PACKETIA_KEY_FRAME_RETRY_POLICY_H_
+#define PACKETIA_KEY_FRAME_RETRY_POLICY_H_
 
 #include <algorithm>
 #include <cmath>
@@ -31,3 +32,5 @@ inline uint64_t ComputeKeyFrameRetryIntervalMs(std::optional<double> publisher_r
     return static_cast<uint64_t>(std::ceil(interval_ms));
 }
 }
+
+#endif

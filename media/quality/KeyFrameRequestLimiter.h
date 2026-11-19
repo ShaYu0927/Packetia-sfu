@@ -15,7 +15,12 @@ public:
 
     bool Allow(uint64_t now_ms)
     {
-        if (last_request_ms_ && now_ms >= *last_request_ms_ && now_ms - *last_request_ms_ < interval_ms_)
+        return Allow(now_ms, interval_ms_);
+    }
+
+    bool Allow(uint64_t now_ms, uint64_t interval_ms)
+    {
+        if(last_request_ms_ && now_ms >= *last_request_ms_ && now_ms - *last_request_ms_ < interval_ms)
             return false;
         last_request_ms_ = now_ms;
         return true;

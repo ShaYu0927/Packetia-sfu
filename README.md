@@ -119,6 +119,8 @@ Redis、MySQL/PostgreSQL 或 OceanBase 都属于后续存储方案评估，目�
 
 下一步先验证现有集群入房路径并测量节点容量，再以“两台 SFU 服务同一房间的一路源流”为跨节点分发的首个验收目标。
 当前尚无万人房间、多房间大规模并发或公网弱网容量的实测结论。
+控制服务与 SFU 的状态归属、租约过期行为及真实浏览器故障测试见
+[控制服务与媒体服务的职责边界](docs/control-media-boundaries.md)。
 部署入口见[集群 README](deploy/cluster/README.md)，源码与接口见[会议控制与节点调度](docs/reference.md#会议控制与节点调度)。
 
 ## 构建与依赖
@@ -282,9 +284,13 @@ python3 deploy/cluster/deploy.py check
 | `estimated_drain_ms` | `ceil(queued_rtp_bytes × 8000 / pacing_bitrate_bps)`；空队列为 0，有积压且速率为 0 时无值 |
 
 预计排空时间假设没有新包入队、速率不变，不包含 pacing 债务和 socket 队列，不能作为端到端时延。
-上述统计已接入可选的服务端 QoS 诊断日志，记录反馈、控制决策、分配和队列状态；
+Pacer 之后的 `UdpSendQueue` 同样有容量限制，默认最多 4096 包、4 MiB，入队满 100 ms 的包在出队时丢弃。
+有效性检查、发送和完成回调异常会被隔离；Socket 背压时丢弃当前包并继续，不阻塞网络线程或无限重试。
+`GetStats()` 提供本地队列统计，HTTP 指标中的 `send.udp.dropped_packets_total` 提供按原因分类的丢弃计数，
+具体口径见[网络发送与队列说明](docs/reference.md#网络层边界与线程约定)。
+`PacedSendQueue` 的统计已接入可选的服务端 QoS 诊断日志，记录反馈、控制决策、分配和队列状态；
 开启方式、字段口径与复测步骤见[媒体质量诊断日志](docs/media-quality-diagnostics.md)。
-浏览器面板仍使用自身 `getStats()`，服务端指标尚未通过 HTTP 接口提供。
+浏览器面板仍使用自身 `getStats()`；逐连接的 BWE、Pacer 与探测诊断尚未通过 HTTP 接口提供。
 
 带宽恢复后，视频进入 `WaitingKeyFrame`，请求上游关键帧并等待可恢复画面。
 当前 `Tick()` 将下一次 PLI 重试设为一秒后；实际发出还受 Tick 调用时机和请求限流影响。
@@ -292,8 +298,10 @@ python3 deploy/cluster/deploy.py check
 `ComputeKeyFrameRetryIntervalMs(publisher_rtt_ms)`：有效发布端 RTT 按两倍计算，
 限制在 200–1000 ms 并向上取整；未知、非有限值或非正数回退为 1000 ms。
 例如 RTT 为 150 ms 时返回 300 ms，30 ms 时返回 200 ms。
-该函数尚未接入 `Tick()` 和下游请求限流，当前运行行为仍保持一秒重试。
-Simulcast/SVC 选层、RTT 驱动的重试闭环和多协议适配仍待后续实现。
+`SfuEndpoint::OnTrackPli()` 已使用发布端反馈快照中的 RTT 计算限流间隔，
+并通过同一发布轨道共享的 `KeyFrameRequestLimiter` 合并多个订阅者的请求。
+`DownlinkTrackManager::Tick()` 的重试调度仍固定为一秒，限流间隔变短不会自动提高它的触发频率。
+Simulcast/SVC 选层、RTT 驱动的完整重试调度和多协议适配仍待后续实现。
 
 ## 日志
 
@@ -316,7 +324,39 @@ Docker Compose 默认使用控制台 JSON 日志，交给 Docker 保存和轮转
 
 ## 近期改动与验证
 
-2026-11-18 的媒体诊断与 TWCC 接入记录：
+### 2026-11-19：UDP 发送健壮性与控制 / 媒体故障隔离
+
+| 改动 | 实际行为 |
+| --- | --- |
+| UDP 发送队列 | 默认 100 ms 队列期限；检查队列与 Socket 使用同一执行器；背压时丢包并继续处理后续包 |
+| 队列生命周期与异常 | 取消、析构和排队任务失效均结算已接受包；有效性与完成回调异常不阻断后续发送，成功发送不会因完成回调异常被改记为失败 |
+| UDP Socket | 创建时设置非阻塞和 `FD_CLOEXEC`，有效重复创建时释放旧 FD；检查地址有效性与 `SO_REUSEADDR` 设置结果 |
+| 丢弃诊断 | 新增队列快照及 `/metrics`、`/api/v1/metrics` 中的 UDP 丢弃原因分类，区分入队拒绝、发送背压和最终丢弃 |
+| 关键帧请求限流 | `OnTrackPli()` 接入发布端 RTT 间隔计算，限流器支持每次传入间隔；策略头文件改为 include guard，`Tick()` 仍为一秒重试 |
+| 集群故障验证 | Control 停机并等待租约过期后，拒绝新入房 / 恢复和内部管理请求；已有成员信令和已建立媒体仍可运行，续租后重新开放准入 |
+| 浏览器集群检查 | 使用实际账号与入房 JWT 验证停机前、租约过期后和 Control 重启后的音视频；前端支持未配置 TURN 的直接连接 |
+| 架构阅读说明 | 补充控制服务与 SFU 的调用顺序、状态归属、租约语义、探针用途及后续业务回调边界 |
+
+本机 macOS 验证记录：
+
+| 范围 | 已完成验证 |
+| --- | --- |
+| 构建 | `Packetia`、`PacketiaControl`、`PacketiaSfu` 构建通过 |
+| 网络、传输与运行指标 | 10 个相关 CTest 入口通过，覆盖 UDP 生命周期、队列超时 / 背压 / 并发取消、回调异常、WebRTC 及指标接口 |
+| 集群 | `ClusterUnitTest`、`ClusterApiUnitTest`、`MeetingControlIntegrationTest` 共 3 个 CTest 入口通过 |
+| 浏览器统计与日志汇总 | JavaScript 单元测试 11/11 通过 |
+| 真实浏览器故障检查 | 合成摄像头 / 麦克风通过真实 ICE、DTLS/SRTP 和 SFU 转发；Control 停机及租约过期后，发布字节、音频接收字节与视频解码帧数增长，参与者和媒体会话 ID 保持不变 |
+
+复测命令与操作边界见[控制服务与媒体服务的职责边界](docs/control-media-boundaries.md)。
+可选浏览器测试使用 `scripts/test_meeting_control.py --media-node node`，
+通过 `--media-report examples/webrtc-room/artifacts/cluster-outage-result.json` 保存计数报告；
+测试自动启动临时 Control/SFU 和页面，无需提前启动演示开发服务器。
+报告目录已被 Git 忽略，不保存登录凭证、JWT、恢复令牌或 SDP。
+
+控制租约与媒体转发原本已有分离，本次补齐了回归测试与真实媒体验证；
+未新增跨节点媒体迁移、Control 高可用或完整 Full ICE，也未完成 Linux、公网弱网、长稳和万人并发容量验证。
+
+### 2026-11-18：媒体诊断与 TWCC 接入
 
 | 改动 | 实际行为 |
 | --- | --- |
@@ -440,6 +480,7 @@ ctest --test-dir build/dev --output-on-failure -R 'recording|mp4_reader'
 - [媒体质量诊断日志](docs/media-quality-diagnostics.md)：服务端采样、TWCC 协商、字段口径与实测记录。
 - [传输实验室](examples/webrtc-room/README.md)：浏览器收发、质量面板与 TWCC 验证步骤。
 - [集群部署](deploy/cluster/README.md)：Control/SFU 启动、Docker、公网入口与当前部署边界。
+- [控制服务与媒体服务的职责边界](docs/control-media-boundaries.md)：状态归属、租约过期、探针语义与真实浏览器故障验证。
 - [会议混流](service/ConferenceMixService/README.md)：任务、后端契约与输出边界。
 - [录像合成示例](service/RecordService/examples/README.md)：离线拼画面与混音实验。
 - [解包与弱网测试](Common/Depacketizer/Test/README.md)：H264 接收与恢复实验。

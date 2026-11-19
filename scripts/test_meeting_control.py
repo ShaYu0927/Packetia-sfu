@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import select
 import socket
 import struct
 import subprocess
@@ -188,8 +189,56 @@ class Process:
         check(self.process.returncode == 0, f'process exited with {self.process.returncode}')
 
 
-def run(control, sfu):
+class BrowserMedia:
+    """Drive real browser media while this process controls the cluster outage."""
+    def __init__(self, node, directory, env):
+        root = Path(__file__).resolve().parents[1]
+        self.log = (directory / 'browser.log').open('wb')
+        try:
+            browser_env = {key: value for key, value in env.items()
+                if key not in ('PACKETIA_JWT_SECRET', 'PACKETIA_NODE_SECRETS', 'PACKETIA_NODE_SECRET')}
+            self.process = subprocess.Popen([node, str(root / 'examples/webrtc-room/check-cluster-outage.mjs')],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.log, env=browser_env)
+        except BaseException:
+            self.log.close()
+            raise
+
+    def request(self, kind, **body):
+        self.process.stdin.write((json.dumps(dict(body, type=kind)) + '\n').encode())
+        self.process.stdin.flush()
+        readable, _, _ = select.select([self.process.stdout], [], [], 60)
+        check(readable, 'browser command timed out')
+        line = self.process.stdout.readline()
+        check(line, 'browser worker exited unexpectedly')
+        reply = json.loads(line)
+        check('error' not in reply, 'browser: ' + reply.get('error', ''))
+        return reply['result']
+
+    def stop(self):
+        try:
+            if self.process.poll() is None:
+                try:
+                    self.process.stdin.write(b'{"type":"stop"}\n')
+                    self.process.stdin.flush()
+                except BrokenPipeError:
+                    pass
+                try:
+                    self.process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
+                    self.process.wait()
+                    raise AssertionError('browser shutdown timed out')
+            check(self.process.returncode == 0, 'browser worker failed')
+        finally:
+            self.process.stdin.close()
+            self.process.stdout.close()
+            self.log.close()
+
+
+def run(control, sfu, media_node=None, media_report=None):
     processes, clients = [], []
+    browser = None
+    report = {'passed': False, 'source': 'browser-getStats', 'phases': []}
     with tempfile.TemporaryDirectory(prefix='packetia-meeting-') as temporary:
         directory = Path(temporary)
         secret = secrets.token_hex(32)
@@ -298,25 +347,92 @@ def run(control, sfu):
             post(public, '/api/v1/room-admissions', {'room_id': rooms[1]}, owner_token, 410)
             c = admit(rooms[2])
             check(c['node_id'] == b['node_id'], 'end did not free node capacity')
+            # Keep a real participant alive throughout the control-plane outage.
+            observer, observer_joined = connect(c)
+            check(observer_joined['type'] == 'joined', 'outage observer join failed')
+            post(public, '/api/v1/room-members', {'room_id': rooms[2],
+                'user_id': bob['identity']['user_id'], 'role': 'listener'}, owner_token)
+            if media_node:
+                media_owner, media_viewer = account('media-owner'), account('media-viewer')
+                post(public, '/api/v1/room-members', {'room_id': rooms[2],
+                    'user_id': media_owner['identity']['user_id'], 'role': 'speaker'}, owner_token)
+                post(public, '/api/v1/room-members', {'room_id': rooms[2],
+                    'user_id': media_viewer['identity']['user_id'], 'role': 'listener'}, owner_token)
+                browser = BrowserMedia(media_node, directory, env)
+                baseline = browser.request('start', publisher=admit(rooms[2], media_owner['session_token']),
+                    viewer=admit(rooms[2], media_viewer['session_token']))
+                report['phases'].append({'name': 'before-outage', 'states': baseline})
+            # Refresh test credentials after browser startup so lease denial cannot
+            # be confused with JWT expiry on a slow machine.
+            c = admit(rooms[2])
+            waiting_admission = admit(rooms[2], bob_token)
             # 控制面重启保留会议、用户会话与代次；SFU 不需要重建参与者。
             processes[0].stop()
             for node, _ in nodes.values():
                 eventually(lambda node=node: get(node['management_url'], '/readyz', expected=None)['status'] == 'lease_expired', timeout=15)
+                get(node['management_url'], '/readyz', expected=503)
                 check(get(node['management_url'], '/healthz')['status'] == 'ok', 'lease expiry killed SFU liveness')
+            # A valid pre-issued token must not bypass an expired node lease.
+            _, unavailable_join = connect(waiting_admission)
+            check(unavailable_join.get('code') == 'forbidden', 'expired lease admitted a new participant')
+            _, unavailable_resume = connect(c, 'resume', participant_id=observer_joined['participant_id'],
+                resume_token=observer_joined['resume_token'])
+            check(unavailable_resume.get('code') == 'forbidden', 'expired lease admitted a resume')
+            outage_node = nodes[c['node_id']][0]
+            outage_command = dict(node_id=c['node_id'], instance_id=c['instance_id'], room_id=rooms[2],
+                assignment_id=c['assignment_id'], command={'type': 'participants'})
+            post(outage_node['management_url'], '/internal/v1/rooms/command', outage_command,
+                credentials[c['node_id']], 503)
+            roster = observer.request({'type': 'participants'})
+            check(any(item['participant_id'] == observer_joined['participant_id'] for item in roster['participants']),
+                'lease expiry destroyed the existing participant')
+            if browser:
+                progress = browser.request('progress')
+                check([state['participant'] for state in progress['after']] ==
+                    [state['participant'] for state in baseline], 'outage replaced browser participants')
+                report['phases'].append({'name': 'control-stopped-lease-expired', **progress})
             processes[0] = Process(control, 'control-restarted', config, directory, env)
             for node, _ in nodes.values():
                 eventually(lambda node=node: get(node['management_url'], '/readyz', expected=None)['status'] == 'ok')
             check(admit(rooms[2])['assignment_id'] == c['assignment_id'], 'control restart lost assignment')
+            newcomer, newcomer_joined = connect(waiting_admission)
+            check(newcomer_joined['type'] == 'joined', 'lease recovery did not reopen admission')
+            # A fresh socket resumes an existing participant only after renewal.
+            observer.close()
+            def resume_observer():
+                _, reply = connect(c, 'resume', participant_id=observer_joined['participant_id'],
+                    resume_token=observer_joined['resume_token'])
+                return reply if reply['type'] == 'resumed' else None
+            check(eventually(resume_observer)['participant_id'] == observer_joined['participant_id'],
+                'control recovery replaced the existing participant')
+            if browser:
+                progress = browser.request('progress')
+                check([state['participant'] for state in progress['after']] ==
+                    [state['participant'] for state in baseline], 'control restart replaced browser participants')
+                report['phases'].append({'name': 'control-restarted-lease-renewed', **progress})
+                browser.stop()
+                browser = None
             nodes[c['node_id']][1].stop()
             manage(rooms[2], 'participants', expected=503)
             print('PASS two-node meeting management, readiness, lease expiry/recovery, epochs and control restart')
-        except Exception:
+            if media_node:
+                report['passed'] = True
+                print('PASS real browser audio/video continues across control outage and lease expiry')
+        except Exception as error:
+            report['error'] = str(error)
             for process in processes:
                 print(process.log_path.name + ':\n' + process.log_path.read_text(errors='replace')[-2500:])
+            if (directory / 'browser.log').exists():
+                print('browser.log:\n' + (directory / 'browser.log').read_text(errors='replace')[-2500:])
             raise
         finally:
             failed = sys.exc_info()[0] is not None
             cleanup_errors = []
+            if browser:
+                try:
+                    browser.stop()
+                except Exception as error:
+                    cleanup_errors.append(error)
             for client in clients:
                 client.close()
             for process in reversed(processes):
@@ -324,6 +440,13 @@ def run(control, sfu):
                     process.stop()
                 except Exception as error:
                     cleanup_errors.append(error)
+            if media_report:
+                destination = Path(media_report)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if cleanup_errors:
+                    report['passed'] = False
+                    report['cleanup_errors'] = [str(error) for error in cleanup_errors]
+                destination.write_text(json.dumps(report, indent=2) + '\n')
             if cleanup_errors and not failed:
                 raise cleanup_errors[0]
 
@@ -332,5 +455,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--control', required=True)
     parser.add_argument('--sfu', required=True)
+    parser.add_argument('--media-node', help='Node.js executable; enable the optional Playwright audio/video check')
+    parser.add_argument('--media-report', help='Write browser counters without credentials or SDP (requires --media-node)')
     args = parser.parse_args()
-    run(args.control, args.sfu)
+    if args.media_report and not args.media_node:
+        parser.error('--media-report requires --media-node')
+    run(args.control, args.sfu, args.media_node, args.media_report)

@@ -132,7 +132,7 @@ UdpServer::SendResult UdpServer::TrySendTo(const network::SocketAddr& dst,
         }
     } metrics{SendResult::Closed, len};
     // Empty UDP datagrams are valid TURN relay payloads.
-    if ((!data && len != 0) || len > 65507 || dst.len == 0 || dst.len > sizeof(dst.ss))
+    if ((!data && len != 0) || len > 65507 || !dst.IsValid())
         return metrics.result = SendResult::Failed;
     if (!scheduler_ || !started_) return SendResult::Closed;
     SendResult result = SendResult::Closed;

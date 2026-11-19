@@ -240,7 +240,8 @@ function receive(state, event) {
   binding.received = event.track; view.stream.addTrack(event.track); view.video.play().catch(() => {});
 }
 function connection(state, forceRelay) {
-  state.pc = new RTCPeerConnection({iceServers: [config.iceServer], iceTransportPolicy: forceRelay ? 'relay' : 'all'});
+  state.pc = new RTCPeerConnection({iceServers: config.iceServer ? [config.iceServer] : [],
+    iceTransportPolicy: forceRelay ? 'relay' : 'all'});
   const current = state.pc;
   current.onicecandidate = event => {
     if (active(state) && event.candidate) state.candidates.push({type: event.candidate.type, protocol: event.candidate.protocol});

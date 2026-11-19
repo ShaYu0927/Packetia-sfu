@@ -11,6 +11,8 @@ try
     monitoring::MetricsContext context;
     auto worker = monitoring::RegisterWorker("http_test", 0);
     worker->Queue(2, 2048, monitoring::NowNs() - 1000000);
+    monitoring::RecordSendDrop(monitoring::Transport::Udp, monitoring::SendDropReason::Blocked);
+    monitoring::RecordSendDrop(monitoring::Transport::Udp, monitoring::SendDropReason::Expired);
     auto monitor = std::make_shared<service::MonitorService>(context.Registry(), std::chrono::seconds(10));
     server::api::ApiRouter::Builder routes;
     server::api::MetricsController(monitor).RegisterRoutes(routes);
@@ -24,6 +26,9 @@ try
         auto json = nlohmann::json::parse(response.body);
         CHECK(json["workers"][0]["pool"] == "http_test" && json["workers"][0]["queue_bytes"] == 2048);
         CHECK(json["monitor"]["healthy"] == true && json["monitor"].contains("snapshot_age_ms"));
+        CHECK(json["send"]["udp"]["abandoned_packets_total"] == 2);
+        CHECK(json["send"]["udp"]["dropped_packets_total"]["blocked"] == 1);
+        CHECK(json["send"]["udp"]["dropped_packets_total"]["expired"] == 1);
         CHECK(router.Dispatch({"POST", path, {}, {}}).status == 405);
         CHECK(router.Dispatch({"GET", path, "unexpected", {}}).status == 400);
     }

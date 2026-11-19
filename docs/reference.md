@@ -191,6 +191,28 @@ RTMP 的 transport 初始化位于 `OnConnected`，其内部 `Start` 仍然是�
 两者均不保证对端收到；UDP 跨线程调用当前会同步等待所属线程完成，媒体路径应尽量同线程调用。
 队列满后的拒绝、暂停或关闭策略由协议决定，TCP 不可任意丢弃已经发送了一部分的消息。
 
+WebRTC 的跨线程 UDP 出口使用 `UdpSendQueue`，按消息数、缓冲存储字节数和共享预算限制入队，
+默认每队列最多 4096 包、4 MiB。每批最多处理 16 包，再让出网络执行器。
+队列与 Socket 必须使用同一个执行器，构造时检查该约束，避免发送时同步等待另一个 I/O 线程。
+默认入队满 100 ms 的数据报会在出队时丢弃；`Options::max_queue_age_ms` 可调整，
+设为 0 关闭过期检查，但容量限制仍有效。此期限只覆盖该 UDP 队列，不包含上游 Pacer 或内核排队。
+这是实时媒体出口：遇到 `EAGAIN/EWOULDBLOCK/ENOBUFS` 时丢弃本包并继续处理后续包，
+不在网络线程阻塞或无限重试；需要可靠交付的协议应另外实现确认、超时和重传。
+
+`UdpSendQueue::GetStats()` 返回入队、待处理包数/存储字节数、成功发送、入队拒绝及各类丢弃计数。
+已开始的发送/回调也计入待处理量，完成后统一结算；已接受包因队列取消或析构而丢弃也只计数一次。
+只有 Socket 接受数据后才调用 `on_sent`。有效性检查抛异常会丢弃本包；完成回调抛异常会记录错误，
+保留实际发送成功的结果，后续包继续处理。
+
+运行时指标 `/metrics`、`/api/v1/metrics` 的 `send.udp.dropped_packets_total` 按
+`expired`、`invalidated`、`closed`、`cancelled`、`blocked`、`failed`、`callback_error` 分类。
+这些终止丢弃也计入 `abandoned_packets_total`；未入队的队列拒绝计入 `rejected_total`。
+底层 Socket 的 `blocked_total` 和 `failures_total` 仍表示发送尝试结果，不能与丢弃数直接相加。
+TCP 的同名分类当前保持 0，尚未接入该分类；旧的累计指标保留原有含义。
+
+UDP Socket 在创建时设置非阻塞和 `FD_CLOEXEC`；设置失败则关闭并返回失败。
+Linux 使用原子的 Socket 创建标记，macOS 使用 `fcntl`；重复 `Create()` 会释放旧 Socket。
+
 连接关闭只通知一次，通知期间不持有发送锁；对端半关闭时先完成已安排的解析与排队回复，
 再释放连接。UDP 会话清理与共享监听 socket 关闭分别管理。
 进程停止时先停止接入、清理协议与网络对象，再停止 I/O 线程；网络对象也保留停机后清理能力。

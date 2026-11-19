@@ -39,6 +39,7 @@ public:
                                                 std::vector<std::string> task_names = {});
     std::shared_ptr<SendQueueMetrics> RegisterSendQueue(const std::string& transport);
     void RecordSend(Transport transport, SendEvent event, uint64_t bytes = 0, uint64_t packets = 0);
+    void RecordSendDrop(Transport transport, SendDropReason reason);
     RuntimeSnapshot Collect() const;
 private:
     struct Impl;
@@ -64,6 +65,7 @@ std::shared_ptr<WorkerMetrics> RegisterWorker(const std::string& pool, size_t in
                                             std::vector<std::string> task_names = {});
 std::shared_ptr<SendQueueMetrics> RegisterSendQueue(const std::string& transport);
 void RecordSend(Transport transport, SendEvent event, uint64_t bytes = 0, uint64_t packets = 0);
+void RecordSendDrop(Transport transport, SendDropReason reason);
 class TaskScope
 {
 public:

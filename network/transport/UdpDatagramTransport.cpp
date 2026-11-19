@@ -42,7 +42,7 @@ DatagramSendResult UdpDatagramTransport::SendDatagramWithCompletion(
     {
         return DatagramSendResult::Closed;
     }
-    if (!data || size == 0 || size > 65507 || remote.len == 0 || remote.len > sizeof(remote.ss))
+    if (!data || size == 0 || size > 65507 || !remote.IsValid())
     {
         return DatagramSendResult::Failed;
     }

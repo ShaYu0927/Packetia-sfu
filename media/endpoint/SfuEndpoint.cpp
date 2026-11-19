@@ -10,7 +10,9 @@
 #include <mutex>
 #include <algorithm>
 #include <chrono>
+#include <optional>
 #include "utils.h"
+#include "KeyFrameRetryPolicy.h"
 
 namespace media 
 {
@@ -363,6 +365,11 @@ void SfuEndpoint::OnTrackNack(uint32_t media_ssrc, const std::vector<uint16_t>& 
 void SfuEndpoint::OnTrackPli(uint32_t media_ssrc)
 {
     std::lock_guard<std::recursive_mutex> guard(runtime_mutex_);
+    const uint64_t now_ms = SteadyNowMs();
+    std::optional<double> publisher_rtt_ms;
+    const auto stats = receive_feedback_.GetSnapshot(media_ssrc, now_ms);
+    if (stats) publisher_rtt_ms = stats->rtt_ms;
+
     if (!IsRunning()) return;
     auto send = RtcpSenderFor(media_ssrc);
     if (!send)
@@ -378,7 +385,11 @@ void SfuEndpoint::OnTrackPli(uint32_t media_ssrc)
         if (track == published_tracks_.end()) return;
         limiter = &track->second.keyframe_requests;
     }
-    if (!limiter->Allow(SteadyNowMs())) return;
+
+    const uint64_t interval_ms = ComputeKeyFrameRetryIntervalMs(publisher_rtt_ms);
+
+
+    if (!limiter->Allow(now_ms, interval_ms)) return;
 
     const auto packet = rtcpx::RtcpFeedback::BuildPli(local_rtcp_ssrc_, media_ssrc);
     if (!send(packet.data(), packet.size()))

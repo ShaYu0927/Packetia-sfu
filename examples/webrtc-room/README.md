@@ -102,6 +102,11 @@ PACKETIA_EXPECT_TWCC=1 npm run check:quality
 
 ## 自动验证
 
+集群控制服务故障下的媒体连续性检查见
+[控制服务与媒体服务的职责边界](../../docs/control-media-boundaries.md#可复现验证)。
+它使用实际业务账号和入房许可，自动启动临时 Control/SFU，验证控制服务停机、
+租约过期与恢复期间的音视频转发，无需提前运行本示例开发服务器。
+
 在此目录执行：
 
 ```sh
