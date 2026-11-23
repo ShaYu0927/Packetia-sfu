@@ -1,0 +1,40 @@
+# Ubuntu/Linux host networking lets this frontend reuse the loopback backend ports.
+services:
+  browser-test:
+    image: node:22-alpine
+    init: true
+    network_mode: host
+    working_dir: /app
+    command: ["node", "public-cluster-server.mjs"]
+    volumes:
+      - ../../examples/webrtc-room:/app:ro
+      - ${PACKETIA_CONFIG_DIR:-./runtime}/browser-test/config.json:/etc/packetia-browser-test/config.json:ro
+      - ${PACKETIA_CONFIG_DIR:-./runtime}/browser-test/server.crt:/etc/packetia-browser-test/server.crt:ro
+      - ${PACKETIA_CONFIG_DIR:-./runtime}/browser-test/server.key:/etc/packetia-browser-test/server.key:ro
+    depends_on:
+      control:
+        condition: service_healthy
+      sfu-a:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          const u = new URL(require('/etc/packetia-browser-test/config.json').origin);
+          require('https').get({hostname: '127.0.0.1', port: u.port || 443,
+          path: '/healthz', headers: {Host: u.host}, rejectUnauthorized: false},
+          r => {r.resume(); process.exit(r.statusCode === 200 ? 0 : 1);})
+          .on('error', () => process.exit(1));
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    stop_grace_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -198,9 +198,9 @@ std::shared_ptr<rtsp::RtpReceiverTrack> SfuEndpoint::GetOrCreateReceiverTrack(ui
             return;
         }
 
-        LOG_INFO("[RTCP][NACK] recovery exhausted",
+        LOG_INFO("[RTCP][NACK] recovery failed",
                  " media_ssrc=", media_ssrc,
-                 " count=", abandoned_seqs.size());
+                 " reported_sequences=", abandoned_seqs.size());
         self->OnTrackPli(media_ssrc);
     });
 

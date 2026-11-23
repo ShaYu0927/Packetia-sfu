@@ -1,0 +1,22 @@
+services:
+  room-demo:
+    build:
+      context: ../..
+      dockerfile: deploy/browser-test/Dockerfile
+      args:
+        BUILD_JOBS: ${PACKETIA_BUILD_JOBS:-2}
+    init: true
+    environment:
+      PACKETIA_DEMO_PUBLIC_IP: ${PACKETIA_PUBLIC_IP:?Set the server public IPv4 address}
+      PACKETIA_DEMO_LISTEN_IP: 0.0.0.0
+    ports:
+      - "127.0.0.1:18000:18000/tcp"
+      - "127.0.0.1:18080:18080/tcp"
+      - "19000:19000/udp"
+    restart: unless-stopped
+    stop_grace_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

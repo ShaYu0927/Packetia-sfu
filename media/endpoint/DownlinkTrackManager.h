@@ -22,6 +22,7 @@ public:
     {
         std::function<void()> source_closed;
         rtsp::RtpSenderTrack::KeyFrameRequestCallback request_keyframe;
+        rtsp::RtpSenderTrack::RetransmitScheduler schedule_retransmit;
     };
 
     ~DownlinkTrackManager();

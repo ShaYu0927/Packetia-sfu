@@ -8,6 +8,7 @@ add_executable(test_weak_network_manual
     test_send_side_transport.cpp
     test_bwe_rate_control.cpp
     test_loss_recovery.cpp
+    test_nack_retransmission_queue.cpp
     test_keyframe_retry.cpp
     test_webrtc_trendline_adapter.cpp
     test_twcc_feedback.cpp

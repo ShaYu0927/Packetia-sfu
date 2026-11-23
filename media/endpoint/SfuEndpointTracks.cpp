@@ -561,6 +561,19 @@ bool SfuEndpoint::Subscribe(const std::string& id, const std::shared_ptr<SfuEndp
                         if (auto publisher = current->source.lock()) publisher->RequestKeyFrame(current->source_track_id);
                 });
     };
+    callbacks.schedule_retransmit = [weak](std::function<void()> task) {
+        const auto route = weak.lock();
+        const auto target = route ? route->destination.lock() : nullptr;
+        if (!target || !target->IsRunning() || route->Closed()) return false;
+        return media_affinity::PostToMediaStream(target->Id(), route->sender->GetSsrc(),
+            [weak, task = std::move(task)] {
+                const auto current = weak.lock();
+                const auto endpoint = current ? current->destination.lock() : nullptr;
+                if (!endpoint) return;
+                std::lock_guard<std::recursive_mutex> guard(endpoint->runtime_mutex_);
+                if (endpoint->IsRunning() && !current->Closed()) task();
+            }) == 0;
+    };
     if (!downlinks_.Subscribe(id, info, ref, route, std::move(callbacks))) return false;
     try { track->second.subscribers.push_back(route); }
     catch (...) { downlinks_.Unsubscribe(id); throw; }

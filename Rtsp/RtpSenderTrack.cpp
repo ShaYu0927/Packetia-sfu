@@ -152,6 +152,8 @@ bool RtpSenderTrack::InputRtpPacket(const uint8_t* data, size_t len)
 
 void RtpSenderTrack::BeginDiscontinuity()
 {
+    _retransmit_task.reset();
+    _pending_nacks.clear();
     _retransmission_cache.Clear();
     _forwarding.BeginDiscontinuity();
 }
@@ -178,7 +180,6 @@ bool RtpSenderTrack::SendPadding(size_t padding_bytes, int probe_cluster_id)
 }
 
 void RtpSenderTrack::OnRtcpNack(const std::vector<uint16_t>& lost_seqs)
-try
 {
     const auto transport = _transport.lock();
     if (!transport || transport->IsClosed() || !transport->IsWritable() || lost_seqs.empty())
@@ -186,6 +187,94 @@ try
         return;
     }
 
+    if (!_retransmit_scheduler)
+    {
+        RetransmitNow(lost_seqs);
+        return;
+    }
+
+    DiscardOldPathNacks();
+    const size_t limit = std::min(_config.max_pending_nacks, _config.rtp_cache_size);
+    if (!limit) return;
+    // Allocate lazily and keep only the newest requests under a NACK flood.
+    _pending_nacks.reserve(limit);
+    if (lost_seqs.size() >= limit)
+    {
+        _nack_overflow_drops += _pending_nacks.size() + lost_seqs.size() - limit;
+        _pending_nacks.assign(lost_seqs.end() - limit, lost_seqs.end());
+    }
+    else
+    {
+        const size_t overflow = _pending_nacks.size() + lost_seqs.size() > limit ?
+            _pending_nacks.size() + lost_seqs.size() - limit : 0;
+        _nack_overflow_drops += overflow;
+        _pending_nacks.erase(_pending_nacks.begin(), _pending_nacks.begin() + overflow);
+        _pending_nacks.insert(_pending_nacks.end(), lost_seqs.begin(), lost_seqs.end());
+    }
+    ScheduleRetransmissions();
+}
+
+
+void RtpSenderTrack::SetRetransmitScheduler(RetransmitScheduler scheduler)
+{
+    _retransmit_task.reset();
+    _pending_nacks.clear();
+    _retransmit_scheduler = std::move(scheduler);
+}
+
+RtpSenderTrack::NackQueueStats RtpSenderTrack::GetNackQueueStats() const
+{
+    return {_pending_nacks.size(), _nack_overflow_drops, _nack_post_failures};
+}
+
+void RtpSenderTrack::ScheduleRetransmissions()
+{
+    if (!_retransmit_scheduler || _pending_nacks.empty() || !_retransmit_task.expired()) return;
+    const auto weak = weak_from_this();
+    if (weak.expired()) return;
+    const auto token = std::make_shared<RetransmitTask>();
+    _retransmit_task = token;
+    if (!_retransmit_scheduler([weak, token] {
+        const auto sender = weak.lock();
+        if (!sender || sender->_retransmit_task.lock() != token) return;
+        sender->_retransmit_task.reset();
+        sender->DrainRetransmissions();
+    }))
+    {
+        _retransmit_task.reset();
+        ++_nack_post_failures;
+    }
+}
+
+void RtpSenderTrack::DiscardOldPathNacks()
+{
+    const auto epoch = _send_controller ? _send_controller->PathEpoch() : 0;
+    if (_nack_path_epoch == epoch) return;
+    _nack_path_epoch = epoch;
+    _pending_nacks.clear();
+    _retransmit_task.reset();
+}
+
+void RtpSenderTrack::DrainRetransmissions()
+{
+    DiscardOldPathNacks();
+    if (_pending_nacks.empty()) return;
+    const auto transport = _transport.lock();
+    if (!transport || !transport->IsWritable())
+    {
+        _pending_nacks.clear();
+        return;
+    }
+    const size_t count = std::min(_pending_nacks.size(), std::max<size_t>(1, _config.retransmit_batch_size));
+    std::vector<uint16_t> batch(_pending_nacks.begin(), _pending_nacks.begin() + count);
+    _pending_nacks.erase(_pending_nacks.begin(), _pending_nacks.begin() + count);
+    RetransmitNow(batch);
+    // Yield between bounded batches so unrelated media tasks can make progress.
+    ScheduleRetransmissions();
+}
+
+void RtpSenderTrack::RetransmitNow(const std::vector<uint16_t>& lost_seqs)
+{
     const uint64_t now_ms = _clock();
     _retransmission_cache.Retransmit(lost_seqs, now_ms,
         [this](uint16_t seq, const common::SharedBuffer& cached) {
@@ -199,8 +288,6 @@ try
             return true;
         });
 }
-
-catch (const std::bad_alloc&) {} // Retry on subsequent feedback when capacity is available.
 
 void RtpSenderTrack::OnRtcpReceiverReport(uint32_t reporter_ssrc, uint32_t media_ssrc, uint8_t fraction_lost, int32_t cumulative_lost, uint32_t highest_seq, uint32_t jitter, uint32_t lsr, uint32_t dlsr)
 {
@@ -233,6 +320,9 @@ void RtpSenderTrack::OnRtcpFir()
 void RtpSenderTrack::Tick(uint64_t now_ms)
 {
     _last_tick_ms = now_ms;
+    DiscardOldPathNacks();
+    try { ScheduleRetransmissions(); }
+    catch (const std::bad_alloc&) {}
 }
 
 void RtpSenderTrack::SetKeyFrameRequestCallback(KeyFrameRequestCallback cb)
@@ -335,11 +425,8 @@ bool RtpSenderTrack::RewriteHeaderExtensions(common::ByteVector& packet)
     return true;
 }
 
-bool RtpSenderTrack::WriteTransportCcExtension(common::ByteVector& packet,
-                                                uint16_t transport_sequence) const
+bool RtpSenderTrack::WriteTransportCcExtension(common::ByteVector& packet, uint16_t transport_sequence) const
 {
-    // extension ID 来自 SDP a=extmap 协商。0 表示未启用，1~14 是 RFC 8285
-    // one-byte header 可使用的 ID；绝不能在这里写死成某个固定数字。
     const uint8_t extension_id = _config.transport_cc_extension_id;
     if (extension_id == 0 || extension_id > 14 || packet.size() < RtpHeader::kSize)
     {
@@ -371,16 +458,13 @@ bool RtpSenderTrack::WriteTransportCcExtension(common::ByteVector& packet,
     {
         return false;
     }
-    const uint16_t profile = static_cast<uint16_t>(packet[base_header_size] << 8) |
-                             packet[base_header_size + 1];
+    const uint16_t profile = static_cast<uint16_t>(packet[base_header_size] << 8) | packet[base_header_size + 1];
     if (profile != 0xBEDE)
     {
-        // 不擅自改写 two-byte 或应用自定义扩展格式。
         return false;
     }
 
-    const uint16_t words = static_cast<uint16_t>(packet[base_header_size + 2] << 8) |
-                           packet[base_header_size + 3];
+    const uint16_t words = static_cast<uint16_t>(packet[base_header_size + 2] << 8) | packet[base_header_size + 3];
     const size_t extension_data = base_header_size + 4;
     const size_t extension_end = extension_data + static_cast<size_t>(words) * 4;
     if (packet.size() < extension_end)

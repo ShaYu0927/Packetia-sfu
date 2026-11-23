@@ -69,16 +69,27 @@ NackRequester::PacketResult NackRequester::OnReceivedPacket(uint16_t seq, uint64
     }
 
     const uint16_t gap = static_cast<uint16_t>(seq - newest_seq_);
+    const uint16_t missing_begin = static_cast<uint16_t>(newest_seq_ + 1);
     if (gap > config_.max_sequence_gap)
     {
-        missing_packets_.clear();
         newest_seq_ = seq;
         ++stats_.large_gap_resets;
+        AbandonGap(missing_begin, seq, now_ms);
         return result;
     }
     if (gap > 1)
     {
-        AddMissingPackets(static_cast<uint16_t>(newest_seq_ + 1), seq, now_ms);
+        const auto available = config_.max_nack_list_size - missing_packets_.size();
+        if (static_cast<std::size_t>(gap - 1) > available)
+        {
+            // Commit the new head before notifying external code. Do not
+            // retain a partial burst when the rest cannot be repaired.
+            newest_seq_ = seq;
+            ++stats_.list_overflow_resets;
+            AbandonGap(missing_begin, seq, now_ms);
+            return result;
+        }
+        AddMissingPackets(missing_begin, seq, now_ms);
     }
 
     newest_seq_ = seq;
@@ -93,9 +104,15 @@ void NackRequester::Process(uint64_t now_ms)
         return;
     }
 
-    std::vector<uint16_t> nack_batch;
+    struct Candidate
+    {
+        uint16_t sequence;
+        uint64_t overdue_ms;
+    };
+    std::vector<Candidate> candidates;
     std::vector<uint16_t> abandoned_batch;
-    nack_batch.reserve(std::min(missing_packets_.size(), config_.max_batch_size));
+    candidates.reserve(missing_packets_.size());
+    const uint32_t retry_interval_ms = RetryIntervalMs();
 
     for (auto it = missing_packets_.begin(); it != missing_packets_.end();)
     {
@@ -109,7 +126,6 @@ void NackRequester::Process(uint64_t now_ms)
         }
         const uint64_t packet_age_ms = now_ms - packet.first_missing_ms;
 
-        const uint32_t retry_interval_ms = RetryIntervalMs();
         const bool retry_due = packet.nack_count == 0 ||
             (now_ms >= packet.last_nack_ms && now_ms - packet.last_nack_ms >= retry_interval_ms);
         // Give the final request a full response interval before declaring it
@@ -126,33 +142,44 @@ void NackRequester::Process(uint64_t now_ms)
             continue;
         }
 
-        /*
-         * 状态：WaitingReorder
-         *
-         * 刚发现序号缺口时不能立即认为丢包，
-         * 先给乱序 RTP 留出到达时间。
-         */
+        // Allow reordered RTP to arrive before requesting a repair.
         if (packet_age_ms < config_.reorder_wait_ms)
         {
             ++it;
             continue;
         }
 
-        if (retry_due && nack_callback_ && nack_batch.size() < config_.max_batch_size)
+        if (retry_due && nack_callback_)
         {
-            nack_batch.push_back(seq);
-            packet.last_nack_ms = now_ms;
-            ++packet.nack_count;
-            ++stats_.nack_requests;
-
-            ++it;
-
-            // Continue inspecting the rest even when the send batch is full:
-            // expired entries must not be kept alive by unrelated losses.
-            continue;
+            // Subtract elapsed durations instead of adding deadlines, so the
+            // scheduling key cannot overflow near the clock's upper bound.
+            const uint64_t overdue_ms = packet.nack_count == 0 ?
+                packet_age_ms - config_.reorder_wait_ms :
+                now_ms - packet.last_nack_ms - retry_interval_ms;
+            candidates.push_back({seq, overdue_ms});
         }
         ++it;
+    }
 
+    // A bounded batch must serve the oldest due request first. Iterating the
+    // sequence map directly lets low sequence numbers consume every retry
+    // batch while other missing packets never receive their first request.
+    // This also allows an overdue retry to precede newly discovered losses.
+    std::sort(candidates.begin(), candidates.end(), [](const Candidate& left, const Candidate& right) {
+        if (left.overdue_ms != right.overdue_ms) return left.overdue_ms > right.overdue_ms;
+        return left.sequence < right.sequence;
+    });
+    std::vector<uint16_t> nack_batch;
+    const auto batch_size = std::min(candidates.size(), config_.max_batch_size);
+    nack_batch.reserve(batch_size);
+    for (std::size_t i = 0; i < batch_size; ++i)
+    {
+        const auto seq = candidates[i].sequence;
+        auto& packet = missing_packets_.at(seq);
+        nack_batch.push_back(seq);
+        packet.last_nack_ms = now_ms;
+        ++packet.nack_count;
+        ++stats_.nack_requests;
     }
 
     if (!nack_batch.empty() && nack_callback_)
@@ -160,14 +187,39 @@ void NackRequester::Process(uint64_t now_ms)
         nack_callback_(nack_batch);
     }
 
-    if (!abandoned_batch.empty() && recovery_failure_callback_ &&
+    NotifyRecoveryFailure(abandoned_batch, now_ms);
+}
+
+void NackRequester::NotifyRecoveryFailure(const std::vector<uint16_t>& abandoned, uint64_t now_ms)
+{
+    if (!abandoned.empty() && recovery_failure_callback_ &&
         (!has_failure_callback_time_ || now_ms < last_failure_callback_ms_ ||
          now_ms - last_failure_callback_ms_ >= config_.failure_callback_interval_ms))
     {
         last_failure_callback_ms_ = now_ms;
         has_failure_callback_time_ = true;
-        recovery_failure_callback_(abandoned_batch);
+        recovery_failure_callback_(abandoned);
     }
+}
+
+void NackRequester::AbandonGap(uint16_t begin, uint16_t end, uint64_t now_ms)
+{
+    std::vector<uint16_t> sample;
+    // Bound allocation even when a sequence jump spans thousands of packets.
+    for (const auto& entry : missing_packets_)
+    {
+        if (sample.size() >= config_.max_batch_size) break;
+        sample.push_back(entry.first);
+    }
+    for (uint16_t seq = begin; seq != end && sample.size() < config_.max_batch_size; ++seq)
+    {
+        sample.push_back(seq);
+    }
+    stats_.untracked_packets += static_cast<uint16_t>(end - begin);
+    AbandonPending();
+    // Overflow, jumps and normal expiry all share one notification budget.
+    // The endpoint applies the publisher track's PLI limiter as well.
+    NotifyRecoveryFailure(sample, now_ms);
 }
 
 void NackRequester::UpdateRtt(uint32_t rtt_ms)
@@ -214,11 +266,7 @@ void NackRequester::AddMissingPackets(uint16_t begin, uint16_t end, uint64_t now
     uint16_t seq = begin;
     while(seq != end)
     {
-        if(missing_packets_.size() >= config_.max_nack_list_size)
-        {
-            break;
-        }
-
+        // OnReceivedPacket checks capacity for the entire gap before insertion.
         // Ignore duplicate entries.
         MissingPacket packet;
         packet.first_missing_ms = now_ms;

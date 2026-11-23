@@ -87,6 +87,11 @@ struct RtpSenderTrackConfig
      */
     uint32_t max_retransmit_count = 3;
 
+    // Deferred NACK requests contain sequence numbers only. The effective
+    // queue limit is also bounded by rtp_cache_size; zero disables the queue.
+    size_t max_pending_nacks = 512;
+    size_t retransmit_batch_size = 64;
+
     /*
      * SDP 协商得到的 Transport-CC RTP Header Extension ID。
      * 0 表示禁用；当前写入器支持 RFC 8285 one-byte ID 1~14。
@@ -118,7 +123,9 @@ struct RtpSenderTrackConfig
     uint16_t initial_rtx_sequence = 0;
 };
 
-class RtpSenderTrack
+// Mutable state, callbacks and statistics are accessed on one serialized
+// execution context. The endpoint holds its runtime lock around worker tasks.
+class RtpSenderTrack : public std::enable_shared_from_this<RtpSenderTrack>
 {
 public:
     using Ptr = std::shared_ptr<RtpSenderTrack>;
@@ -130,6 +137,16 @@ public:
                                                   uint16_t rtp_sequence,
                                                   uint64_t send_time_ms,
                                                   uint32_t size_bytes)>;
+    // Enqueue tasks for later execution on this sender's serialized context.
+    // Return false when posting fails. Destroying an unexecuted task permits
+    // the next feedback or Tick to retry scheduling it.
+    using RetransmitScheduler = std::function<bool(std::function<void()>)>;
+    struct NackQueueStats
+    {
+        size_t pending = 0;
+        uint64_t overflow_drops = 0;
+        uint64_t post_failures = 0;
+    };
 
 public:
     RtpSenderTrack(const RtpSenderTrackConfig& config, std::shared_ptr<IMediaTransport> transport,
@@ -142,6 +159,10 @@ public:
 public:
     bool InputRtpPacket(const uint8_t* data, size_t len);
     void OnRtcpNack(const std::vector<uint16_t>& lost_seqs);
+    // Configure on the sender's serialized context, after shared ownership
+    // has been established. An empty scheduler preserves synchronous use.
+    void SetRetransmitScheduler(RetransmitScheduler scheduler);
+    NackQueueStats GetNackQueueStats() const;
 
     void OnRtcpReceiverReport(uint32_t reporter_ssrc,
                               uint32_t media_ssrc,
@@ -185,6 +206,10 @@ public:
 
 
 private:
+    void ScheduleRetransmissions();
+    void DiscardOldPathNacks();
+    void DrainRetransmissions();
+    void RetransmitNow(const std::vector<uint16_t>& lost_seqs);
     bool ParseRtpHeader(const uint8_t* data, size_t len, RtpHeader& header);
 
     bool RewriteRtpPacket(common::ByteVector& packet, const RtpHeader& in_header, uint16_t& out_seq, uint32_t& out_timestamp);
@@ -214,6 +239,15 @@ private:
     uint16_t _next_rtx_sequence;
     RtpRetransmissionCache _retransmission_cache;
     RtpForwardingState _forwarding;
+    RetransmitScheduler _retransmit_scheduler;
+    std::vector<uint16_t> _pending_nacks;
+    // A weak token coalesces notifications without getting stuck if a worker
+    // queue evicts an accepted task. Resetting it invalidates old epochs.
+    struct RetransmitTask {};
+    std::weak_ptr<RetransmitTask> _retransmit_task;
+    uint64_t _nack_overflow_drops = 0;
+    uint64_t _nack_post_failures = 0;
+    uint64_t _nack_path_epoch = 0;
 
     /*
      * Underlying media transport.

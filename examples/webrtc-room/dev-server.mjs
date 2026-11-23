@@ -4,18 +4,11 @@ import {readFile} from 'node:fs/promises';
 import {createHmac, randomBytes} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {resolve, dirname} from 'node:path';
+import {readDemoSettings} from './demo-config.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
 const root = resolve(directory, '../..');
-const port = name => {
-  const number = Number(process.env[name]);
-  if (!Number.isInteger(number) || number < 1 || number > 65535) throw new Error(`Invalid ${name}`);
-  return number;
-};
-const httpPort = process.env.PACKETIA_DEMO_HTTP_PORT ? port('PACKETIA_DEMO_HTTP_PORT') : 18000;
-const wsPort = process.env.PACKETIA_DEMO_WS_PORT ? port('PACKETIA_DEMO_WS_PORT') : 18080;
-const mediaPort = process.env.PACKETIA_DEMO_MEDIA_PORT ? port('PACKETIA_DEMO_MEDIA_PORT') : 19000;
-const turnPort = process.env.PACKETIA_DEMO_TURN_PORT ? port('PACKETIA_DEMO_TURN_PORT') : 13478;
+const {httpPort, wsPort, mediaPort, turnPort, publicIp, listenIp, localTurnEnabled} = readDemoSettings();
 if (process.env.PACKETIA_WEBRTC_TOKEN !== undefined)
   throw new Error('PACKETIA_WEBRTC_TOKEN was removed; unset it before running the JWT demo');
 // Only this loopback development issuer and the child service see the secret.
@@ -23,11 +16,13 @@ const apiKey = `demo-${randomBytes(8).toString('hex')}`;
 const apiSecret = randomBytes(32).toString('hex');
 const username = 'room-demo';
 const credential = randomBytes(24).toString('hex');
-const config = {url: `ws://127.0.0.1:${wsPort}`,
-  iceServer: {urls: `turn:127.0.0.1:${turnPort}?transport=udp`, username, credential}};
+const config = {url: `ws://127.0.0.1:${wsPort}`};
+if (localTurnEnabled)
+  config.iceServer = {urls: `turn:127.0.0.1:${turnPort}?transport=udp`, username, credential};
 const binary = process.env.PACKETIA_ROOM_DEMO_BINARY || resolve(root, 'build/webrtc-integration/server/PacketiaRoomDemo');
 const child = spawn(binary, [String(wsPort), String(mediaPort), String(turnPort)], {
   cwd: '/tmp', env: {...process.env, PACKETIA_QOS_LOG: process.env.PACKETIA_QOS_LOG ?? '1',
+    PACKETIA_DEMO_PUBLIC_IP: publicIp, PACKETIA_DEMO_LISTEN_IP: listenIp,
     PACKETIA_LOG_MODE: process.env.PACKETIA_LOG_MODE || 'both',
     PACKETIA_LOG_FORMAT: process.env.PACKETIA_LOG_FORMAT || 'json',
     PACKETIA_LOG_FILE: process.env.PACKETIA_LOG_FILE || resolve(directory, 'artifacts/server-qos.jsonl'),
@@ -106,4 +101,4 @@ server = createServer(async (request, response) => {
   } catch {response.writeHead(500).end();}
 });
 server.on('error', error => {console.error(error.message); process.exitCode = 1; stop();});
-server.listen(httpPort, '127.0.0.1', () => console.log(`Room demo: http://127.0.0.1:${httpPort}`));
+server.listen(httpPort, listenIp, () => console.log(`Room demo: http://127.0.0.1:${httpPort}`));

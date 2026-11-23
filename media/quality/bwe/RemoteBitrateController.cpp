@@ -106,7 +106,8 @@ BweResult RemoteBitrateController::Update(BandwidthUsage usage, uint32_t incomin
         state_ = RateControlState::kDecrease;
         // New delay congestion invalidates the pre-loss recovery anchor.
         loss_probe_start_ms_ = -1;
-    } else if (usage == BandwidthUsage::kUnderUsing || previous_state == RateControlState::kDecrease || loss_probe_start_ms_ >= 0)
+    }
+    else if (usage == BandwidthUsage::kUnderUsing || previous_state == RateControlState::kDecrease || loss_probe_start_ms_ >= 0)
         state_ = RateControlState::kHold;
     else state_ = RateControlState::kIncrease;
 
@@ -136,8 +137,7 @@ BweResult RemoteBitrateController::Update(BandwidthUsage usage, uint32_t incomin
         const double growth = std::log(1.06) * sensitivity;
         // Continuous alpha*rate+delta: frequency changes do not multiply growth.
         const double alpha = std::exp(growth * elapsed_ms / reaction_ms);
-        const double candidate = target_bitrate_bps_ * alpha +
-            4500.0 * sensitivity / growth * (alpha - 1.0);
+        const double candidate = target_bitrate_bps_ * alpha + 4500.0 * sensitivity / growth * (alpha - 1.0);
         const double radical_incoming = incoming / (1.0 - std::min(baseline_loss_, 0.8));
         if (candidate <= 1.7 * radical_incoming || target_bitrate_bps_ <= start_bitrate_bps_ * 0.5)
             target_bitrate_bps_ = candidate;

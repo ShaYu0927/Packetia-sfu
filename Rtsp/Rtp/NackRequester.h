@@ -17,7 +17,7 @@ public:
         uint32_t retry_interval_ms      = 50;               // Minimum interval between NACK retries.
         uint32_t max_packet_age_ms      = 500;              // Maximum time to keep a missing packet.
         uint32_t max_retries            = 5;                // Maximum NACK retries per packet.
-        std::size_t max_nack_list_size  = 1000;             // Maximum number of tracked missing packets.
+        std::size_t max_nack_list_size  = 1000;             // Capacity overflow abandons pending repairs and signals recovery.
         std::size_t max_batch_size      = 50;               // Maximum number of sequence numbers per NACK batch.
         uint16_t max_sequence_gap       = 100;              // Reset instead of NACKing an implausibly large jump.
         uint32_t min_retry_interval_ms  = 20;
@@ -41,9 +41,15 @@ public:
         uint64_t nack_requests = 0;
         uint64_t abandoned_packets = 0;
         uint64_t large_gap_resets = 0;
+        uint64_t list_overflow_resets = 0;
+        // Missing sequences skipped on overflow or a large jump. These were
+        // never inserted, so they are not included in abandoned_packets.
+        uint64_t untracked_packets = 0;
     };
 
     using NackCallback = std::function<void(const std::vector<uint16_t>&)>;
+    // Overflow and large jumps report a sample bounded by max_batch_size;
+    // the sequence list is a recovery signal, not a complete loss inventory.
     using RecoveryFailureCallback = std::function<void(const std::vector<uint16_t>&)>;
 
 public:
@@ -81,6 +87,8 @@ private:
     }
 
     void AddMissingPackets(uint16_t begin, uint16_t end, uint64_t now_ms);
+    void AbandonGap(uint16_t begin, uint16_t end, uint64_t now_ms);
+    void NotifyRecoveryFailure(const std::vector<uint16_t>& abandoned, uint64_t now_ms);
     uint32_t RetryIntervalMs() const;
 
 private:

@@ -196,7 +196,15 @@ def main():
             values = initialize(args.runtime_dir, args.public_ip, args.domain, args.registration)
             print(f'Configuration: {args.runtime_dir.resolve()}')
             endpoint = f'https://{values["PACKETIA_DOMAIN"]}' if values['PACKETIA_DOMAIN'] else 'http://127.0.0.1:18082'
-            print(f'Control API: {endpoint}/api/v1/\nNext: python3 {Path(__file__).resolve()} up --build')
+            print(f'Control API: {endpoint}/api/v1/')
+            if not values['PACKETIA_DOMAIN'] and values['PACKETIA_PUBLIC_IP'] != '127.0.0.1':
+                print('Public IP without a domain: deploy.py up requires HTTPS/WSS. '
+                      'For SSH-only testing, set signaling_url to the forwarded localhost URL '
+                      'and start the base compose.yaml with --no-build. '
+                      'See START-PREBUILT-SSH.md in the prebuilt deployment bundle.')
+            else:
+                print(f'Next: python3 {Path(__file__).resolve()} up '
+                      '(add --build if the image has not been built or loaded)')
         else:
             operate(args.runtime_dir.resolve(), args)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:

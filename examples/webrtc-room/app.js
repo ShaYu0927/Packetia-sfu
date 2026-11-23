@@ -3,6 +3,11 @@ import {QualityPanel} from './quality-panel.js';
 
 const $ = id => document.getElementById(id);
 const config = await (await fetch('/config')).json();
+if (config.defaultRoom) $('room').value = config.defaultRoom;
+if (config.testRoles) {
+  for (const option of [...$('role').options])
+    if (!config.testRoles.includes(option.value)) option.remove();
+}
 const identity = `demo-${crypto.randomUUID()}`;
 const qualityPanel = new QualityPanel();
 const roles = ['publish', 'subscribe'];
@@ -21,7 +26,7 @@ function controls() {
   const joined = Boolean(participant), unavailable = busy || Boolean(recovery);
   $('join').disabled = joined || unavailable;
   $('room').disabled = $('role').disabled = joined || busy;
-  $('relay').disabled = hasMedia() || unavailable;
+  $('relay').disabled = !config.iceServer || hasMedia() || unavailable;
   $('leave').disabled = !joined || busy;
   $('publish').disabled = !joined || !participantInfo?.permissions.can_publish || Boolean(media.publish.pc) || media.publish.starting || unavailable;
   $('publisher').disabled = !joined || Boolean(media.subscribe.pc) || unavailable;

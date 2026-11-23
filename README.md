@@ -337,6 +337,28 @@ Docker Compose 默认使用控制台 JSON 日志，交给 Docker 保存和轮转
 
 ## 近期改动与验证
 
+### 2026-11-20：RR 回退的 AIMD 码率控制
+
+新增 `RrAimdRateController`，替换发送侧 `NetworkController` 在 RR 回退时逐反馈乘系数的码率调整。
+连续健康反馈按时间增加 20 kbps/s，Weak/Bad 按比例降低，并等待 RTT 相关观察窗口；重复或倒退时间不推进目标码率。
+TWCC 目标优先并同步回退基准，结果继续输出给现有 Pacer；RR 不被当成有效链路容量用于订阅分配。
+新增 12 个回归测试，本机两个媒体测试入口合计 315 个内部用例通过；尚未进行浏览器弱网实测。
+算法公式、接线和限制见 [RR 回退的 AIMD 码率控制](docs/bitrate-control.md)。
+
+### 2026-11-20：NACK 缺包调度与下行批量重传
+
+接收侧 NACK 改为按请求到期时间选择批次，避免连续丢包超过单批上限时，首批包的重复请求长期挤占其他缺包的首次请求。
+首次请求与重试使用同一优先级口径，保留乱序等待、RTT 间隔、恢复期限和批次上限。
+新增连续丢包、序号回绕及新缺包与旧重试竞争的回归测试；链路入口、默认参数和未完成场景见 [NACK 业务场景与代码阅读](docs/nack-recovery.md)。
+
+下行反馈改为有界请求列表和合并通知，复用订阅发送轨道的媒体 Worker；默认最多积压 512 个序号，每个任务最多处理 64 个。
+投递失败或任务被队列淘汰后可由反馈或 Tick 重新调度；退订、关闭及转发不连续时旧任务不能继续重传。
+新增队列与实际 Worker 接线测试，保留缓存包龄、重复重传限制、暂停闸门和 TWCC 行为。
+该改动控制积压与处理批次，每个订阅者仍保存完整 RTP 重传缓存；共享源包缓存与下行改写映射尚未实现，内存与吞吐收益尚未压测。
+补齐缺包表溢出与序号大跳的恢复通知：整段缺口无法登记时放弃待修复包，更新序号基准，复用已有回调请求上行关键帧。
+恢复通知共用频率限制，PLI 继续使用发布轨道共享额度；新增容量、回绕、限频与端点接线测试，以及溢出和未登记序号统计。
+本机 macOS 上 `test_weak_network_manual` 与 `test_rtp_input` 两个 CTest 入口通过，合计 303 个内部用例；本轮未执行公网弱网测试。
+
 ### 2026-11-19：FFmpeg 源码构建与统一依赖接入
 
 - 新增 `scripts/build_ffmpeg.py`，从仓库内 FFmpeg 9.0.1 源码构建动态库，支持基础组件、可选软件 codec 及 `ffmpeg` / `ffprobe` 工具。
@@ -505,8 +527,11 @@ ctest --test-dir build/dev --output-on-failure -R 'recording|mp4_reader'
 - [媒体质量诊断日志](docs/media-quality-diagnostics.md)：服务端采样、TWCC 协商、字段口径与实测记录。
 - [传输实验室](examples/webrtc-room/README.md)：浏览器收发、质量面板与 TWCC 验证步骤。
 - [集群部署](deploy/cluster/README.md)：Control/SFU 启动、Docker、公网入口与当前部署边界。
+- [只有公网 IP 的浏览器测试](deploy/browser-test/README.md)：通过 SSH 访问测试页面和信令，音视频直连公网 UDP。
 - [控制服务与媒体服务的职责边界](docs/control-media-boundaries.md)：状态归属、租约过期、探针语义与真实浏览器故障验证。
 - [FFmpeg 源码构建](third/ffmpeg/README.md)：本地编译、codec 组件选择、统一 CMake 接入及录制 / 转码验证。
+- [NACK 业务场景与代码阅读](docs/nack-recovery.md)：上行请求、下行重传、批次调度、恢复期限与当前边界。
+- [RR 回退的 AIMD 码率控制](docs/bitrate-control.md)：按时间升码率、RTT 观察窗口与实际发送接线。
 - [会议混流](service/ConferenceMixService/README.md)：任务、后端契约与输出边界。
 - [录像合成示例](service/RecordService/examples/README.md)：离线拼画面与混音实验。
 - [解包与弱网测试](Common/Depacketizer/Test/README.md)：H264 接收与恢复实验。

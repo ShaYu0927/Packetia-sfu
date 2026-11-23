@@ -141,6 +141,31 @@ protected:
     WorkerRegistry registry;
 };
 
+class BlockedMediaWorker
+{
+public:
+    explicit BlockedMediaWorker(uint64_t key)
+    {
+        const auto waiting = release_->get_future().share();
+        auto entered = std::make_shared<std::promise<void>>();
+        ready = entered->get_future();
+        posted = WorkerService::post_fn(POOL_MEDIA, key, [entered, waiting] {
+            entered->set_value();
+            waiting.wait();
+        });
+    }
+    ~BlockedMediaWorker() { Release(); }
+    void Release()
+    {
+        if (!released_) { released_ = true; release_->set_value(); }
+    }
+    int posted = -1;
+    std::future<void> ready;
+private:
+    std::shared_ptr<std::promise<void>> release_ = std::make_shared<std::promise<void>>();
+    bool released_ = false;
+};
+
 struct RegisteredReceiver
 {
     std::shared_ptr<media::SfuEndpoint> endpoint;
@@ -213,6 +238,7 @@ TEST_F(SfuConference, GlobalTrackControlsGateRtpRetransmissionAndIndependentCons
     EXPECT_EQ(toC->Count(), 2U);
     ASSERT_TRUE(streams.SetConsumerPaused(bConsumer, false));
     Input(b, nack, {}, true);
+    drain();
     EXPECT_EQ(toB->Count(), 2U); // 恢复使用原发送器及重传缓存。
     ASSERT_TRUE(streams.DetachConsumer(bConsumer));
     Drain(b->Id());
@@ -263,6 +289,7 @@ TEST_F(SfuConference, AudioMuteKeepsRoutesAndOtherReceiversIndependent)
     ASSERT_TRUE(a->SetAudioSubscriptionMuted("mic", true, changed)); EXPECT_FALSE(changed);
     EXPECT_FALSE(a->SetAudioSubscriptionMuted("missing", true, changed));
     send(2); Input(a, nack, {}, true);
+    Drain(media_affinity::MakeStreamKey(a->Id(), 777));
     EXPECT_EQ(toA->Count(), 1U); EXPECT_EQ(toC->Count(), 2U);
     ASSERT_TRUE(streams.SetTrackPaused(ref, true));
     send(3);
@@ -469,6 +496,36 @@ TEST_F(SfuConference, KeyFrameRequestsFromManySubscribersShareThePublishedTrackB
     endpoint->OnTrackPli(22);
     EXPECT_EQ(camera_requests, 1U);
     EXPECT_EQ(screen_requests, 1U);
+}
+
+TEST_F(SfuConference, LargeVideoGapRequestsPliThroughThePublishedTrackBudget)
+{
+    auto endpoint = std::make_shared<media::SfuEndpoint>(1112);
+    ASSERT_TRUE(endpoint->AddPublishedTrack("camera", Description(0, false, 102)));
+    ASSERT_TRUE(endpoint->AddPublishedTrack("screen", Description(1, false, 102)));
+    ASSERT_TRUE(endpoint->BindSsrc("camera", 11));
+    ASSERT_TRUE(endpoint->BindSsrc("screen", 22));
+    ASSERT_TRUE(endpoint->Start());
+    std::vector<uint32_t> requested_sources;
+    auto capture = [&](const uint8_t* data, size_t size) {
+        uint32_t sender = 0, source = 0;
+        if (rtcpx::RtcpFeedback::ParsePli(data, size, &sender, &source))
+            requested_sources.push_back(source);
+        return true;
+    };
+    endpoint->SetTrackRtcpSendCallback("camera", capture);
+    endpoint->SetTrackRtcpSendCallback("screen", capture);
+    Input(endpoint, Packet(11, 102, 100));
+    EXPECT_TRUE(requested_sources.empty());
+    Input(endpoint, Packet(11, 102, 1000));
+    ASSERT_EQ(requested_sources, (std::vector<uint32_t>{11}));
+    // Explicit subscriber requests share the budget consumed by gap recovery.
+    for (int subscriber = 0; subscriber < 100; ++subscriber) endpoint->OnTrackPli(11);
+    Input(endpoint, Packet(11, 102, 2000));
+    EXPECT_EQ(requested_sources, (std::vector<uint32_t>{11}));
+    Input(endpoint, Packet(22, 102, 100));
+    Input(endpoint, Packet(22, 102, 1000));
+    EXPECT_EQ(requested_sources, (std::vector<uint32_t>{11, 22}));
 }
 
 TEST_F(SfuConference, PeriodicRecoveryCanSendNackAfterRtpStops)
@@ -728,6 +785,7 @@ TEST_F(SfuConference, SubscriberOwnsSenderAndFeedbackReturnsToPublisher)
     EXPECT_EQ(media_affinity::ReadUint32BE(packet.data() + 8), 777U);
     const auto nack = rtcpx::RtRtcpNack::Build(888, 777, {1});
     Input(subscriber, nack, {}, true);
+    Drain(media_affinity::MakeStreamKey(subscriber->Id(), 777));
     EXPECT_EQ(transport->Count(), 2U);
     Input(publisher, nack, {}, true); // Source endpoint does not own this sender.
     EXPECT_EQ(transport->Count(), 2U);
@@ -744,6 +802,61 @@ TEST_F(SfuConference, SubscriberOwnsSenderAndFeedbackReturnsToPublisher)
     EXPECT_EQ(subscriber->SubscriptionCount(), 0U);
     Input(subscriber, nack, {}, true);
     EXPECT_EQ(transport->Count(), 2U);
+}
+
+TEST_F(SfuConference, NackFeedbackCoalescesUntilTheSubscribedMediaWorkerRuns)
+{
+    auto source = std::make_shared<media::SfuEndpoint>(1401);
+    auto destination = std::make_shared<media::SfuEndpoint>(1402);
+    ASSERT_TRUE(source->AddPublishedTrack("camera", Description(0, false, 102)));
+    ASSERT_TRUE(source->Start());
+    ASSERT_TRUE(destination->Start());
+    auto transport = std::make_shared<CaptureTransport>();
+    Configure(destination, "camera", transport, false, 777, 96);
+    ASSERT_TRUE(destination->Subscribe("camera", source, "camera"));
+    const auto key = media_affinity::MakeStreamKey(destination->Id(), 777);
+    Input(source, Packet(11, 102));
+    Drain(key);
+    ASSERT_EQ(transport->Count(), 1U);
+    BlockedMediaWorker blocked(key);
+    ASSERT_EQ(blocked.posted, 0);
+    ASSERT_EQ(blocked.ready.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    const auto nack = rtcpx::RtRtcpNack::Build(888, 777, {1});
+    for (int i = 0; i < 3; ++i) Input(destination, nack, {}, true);
+    EXPECT_EQ(transport->Count(), 1U); // Parsing feedback did not retransmit inline.
+    blocked.Release();
+    Drain(key);
+    EXPECT_EQ(transport->Count(), 2U); // Repeated requests still obey the cache interval.
+    EXPECT_EQ(media_affinity::ReadUint16BE(transport->Last().data() + 2), 1);
+}
+
+TEST_F(SfuConference, QueuedRetransmissionCannotCrossUnsubscribeAndResubscribe)
+{
+    auto source = std::make_shared<media::SfuEndpoint>(1403);
+    auto destination = std::make_shared<media::SfuEndpoint>(1404);
+    ASSERT_TRUE(source->AddPublishedTrack("camera", Description(0, false, 102)));
+    ASSERT_TRUE(source->Start());
+    ASSERT_TRUE(destination->Start());
+    auto transport = std::make_shared<CaptureTransport>();
+    Configure(destination, "camera", transport, false, 777, 96);
+    ASSERT_TRUE(destination->Subscribe("camera", source, "camera"));
+    const auto key = media_affinity::MakeStreamKey(destination->Id(), 777);
+    Input(source, Packet(11, 102));
+    Drain(key);
+    ASSERT_EQ(transport->Count(), 1U);
+    BlockedMediaWorker blocked(key);
+    ASSERT_EQ(blocked.posted, 0);
+    ASSERT_EQ(blocked.ready.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    Input(destination, rtcpx::RtRtcpNack::Build(888, 777, {1}), {}, true);
+    ASSERT_TRUE(destination->Unsubscribe("camera"));
+    ASSERT_TRUE(destination->Subscribe("camera", source, "camera"));
+    blocked.Release();
+    Drain(key);
+    EXPECT_EQ(transport->Count(), 1U);
+    Input(source, Packet(11, 102, 2));
+    Drain(key);
+    EXPECT_EQ(transport->Count(), 2U);
+    EXPECT_EQ(media_affinity::ReadUint16BE(transport->Last().data() + 2), 2);
 }
 
 TEST_F(SfuConference, RoomRoutesMultipleTracksAndLeaveCleansOtherParticipants)

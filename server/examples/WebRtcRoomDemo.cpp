@@ -4,6 +4,7 @@
 #include "EndpointBase.h"
 #include "WorkerRegistry.h"
 #include "logger.h"
+#include "Socket.h"
 
 #include <charconv>
 #include <chrono>
@@ -45,7 +46,15 @@ struct Demo
     Demo(uint16_t ws, uint16_t media, uint16_t relay)
     {
         config::AppConfig config;
-        config.listen_ip = config.webrtc.public_ip = "127.0.0.1";
+        const auto public_ip = std::getenv("PACKETIA_DEMO_PUBLIC_IP");
+        const auto listen_ip = std::getenv("PACKETIA_DEMO_LISTEN_IP");
+        config.webrtc.public_ip = public_ip ? public_ip : "127.0.0.1";
+        config.listen_ip = listen_ip ? listen_ip : "127.0.0.1";
+        in_addr address{};
+        if (inet_pton(AF_INET, config.webrtc.public_ip.c_str(), &address) != 1)
+            throw std::invalid_argument("Invalid demo media IPv4 address");
+        if (config.listen_ip != "127.0.0.1" && config.listen_ip != "0.0.0.0")
+            throw std::invalid_argument("Invalid demo listen address");
         config.websocket_port = ws; config.udp_port = media;
         config.webrtc.enabled = true;
         config.webrtc.api_keys.emplace(Credential("PACKETIA_WEBRTC_API_KEY"), Credential("PACKETIA_WEBRTC_API_SECRET", 32));

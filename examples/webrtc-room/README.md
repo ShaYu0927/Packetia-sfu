@@ -3,9 +3,16 @@
 用于学习和验证 SFU 单层转发的简单前端。使用原生 JavaScript，无需前端编译步骤。
 同一页面支持摄像头发布、多人订阅或同时收发，复用项目现有房间信令、ICE、DTLS/SRTP 与 TURN。
 
-本示例通过本地开发服务签发令牌，直连一个 `PacketiaRoomDemo`，不经过 `PacketiaControl`
+默认启动方式通过本地开发服务签发令牌，直连一个 `PacketiaRoomDemo`，不经过 `PacketiaControl`
 的 `/api/v1/room-admissions`。浏览器质量测试验证单节点媒体与反馈链路，尚未覆盖集群房间调度
 或单房间跨节点分发；集群现状与目标见[项目 README](../../README.md#集群现状与演进方向)。
+
+已有 `packetia-cluster:local` 公网部署时，使用 `npm run start:cluster` 连接真正的 Control/SFU。
+该入口通过 SSH 使用真实账号 API 和入房许可，不启动本机媒体后端；
+服务器注册开关、隧道、UDP 端口与操作步骤见[集群公网浏览器测试](../../deploy/cluster/SSH-BROWSER-TEST.md)。
+
+希望直接在浏览器访问公网 IP 时，使用[公网 HTTPS 测试入口](../../deploy/cluster/PUBLIC-BROWSER-TEST.md)：
+页面运行在服务器，复用已有后端镜像，支持测试密码登录和 WSS；电脑信任测试证书后即可推流和观看。
 
 ## 启动
 
@@ -38,7 +45,12 @@ npm start
 端口占用时，可分别设置 `PACKETIA_DEMO_HTTP_PORT`、`PACKETIA_DEMO_WS_PORT`、
 `PACKETIA_DEMO_MEDIA_PORT` 和 `PACKETIA_DEMO_TURN_PORT`。
 其他构建产物通过 `PACKETIA_ROOM_DEMO_BINARY` 指定。
-启动器仅监听本机并生成临时开发凭证；远程部署需要独立配置 HTTPS/WSS、鉴权及媒体可达地址。
+启动器默认仅监听本机并生成临时开发凭证；通过公网域名提供页面时，需要独立配置 HTTPS/WSS、鉴权及媒体可达地址。
+
+只有公网 IPv4、尚无域名时，可使用 [SSH 转发与 Docker 媒体测试](../../deploy/browser-test/README.md)。
+页面和信令经 SSH 到电脑的回环地址，媒体直接走服务器 UDP 19000。
+该模式通过 `PACKETIA_DEMO_PUBLIC_IP` 指定媒体候选地址、`PACKETIA_DEMO_LISTEN_IP` 指定进程监听地址；
+两者默认仍为 `127.0.0.1`。远程模式不提供本机 TURN，页面相应禁用强制 TURN 选项。
 
 ## 服务端诊断日志
 
@@ -101,6 +113,27 @@ PACKETIA_EXPECT_TWCC=1 npm run check:quality
 `maxBitrate` 是编码器上限，不保证实际发送达到该值，也不能模拟网络拥塞。
 
 ## 自动验证
+
+已部署公网 HTTPS 集群测试入口时，可在电脑上运行真实公网收发检查：
+
+```sh
+PACKETIA_PUBLIC_TEST_PASSWORD='服务器生成的测试访问密码' npm run check:public
+```
+
+需要先安装本目录依赖和 Chrome，并在电脑上信任测试 CA。CA 文件默认读取仓库根目录的
+`ca.crt`，其他位置通过 `PACKETIA_PUBLIC_TEST_CA` 指定；默认服务器为
+`https://45.76.105.146:18443`，其他入口通过 `PACKETIA_PUBLIC_TEST_URL` 指定。
+开始前将手动测试页面中的 Publisher/Viewer 点击 Leave，释放两个固定测试身份。
+
+该检查启动两个独立 Chrome 进程，使用模拟摄像头和音频，通过实际公网 SFU 收发。
+默认每个主要阶段采样 20 次，约一秒一次，覆盖 360p30 的 900 → 300 → 1500 kbps
+编码上限调整、订阅 ICE 重启和 720p60 采集请求，并记录实际输出而非将请求值当成结果。
+`PACKETIA_PUBLIC_TEST_SECONDS` 可设为 5–120；重启后阶段最多采样 10 次。
+编码上限调整不模拟网络限速，测试没有注入网络丢包或延迟，也不测多人并发容量。
+
+每次运行在 `artifacts/public-transport-时间戳/` 下保存 `REPORT.md`、`summary.csv`、
+原始 `result.json` 和接收画面截图，不覆盖原有本机报告。密码、入房令牌、Cookie 和完整 SDP
+不写入这些产物；错误或中断会保留失败阶段数据。服务器 BWE/TWCC/Pacer 状态仍需配合服务端日志。
 
 集群控制服务故障下的媒体连续性检查见
 [控制服务与媒体服务的职责边界](../../docs/control-media-boundaries.md#可复现验证)。

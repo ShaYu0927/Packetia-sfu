@@ -163,6 +163,7 @@ bool DownlinkTrackManager::Subscribe(const std::string& id, const ::TrackInfo& s
         route->send_transport = std::make_shared<ConsumerTransport>(params->second.transport, route);
         route->sender = std::make_shared<rtsp::RtpSenderTrack>(params->second.config, route->send_transport);
         route->sender->SetKeyFrameRequestCallback(std::move(callbacks.request_keyframe));
+        route->sender->SetRetransmitScheduler(std::move(callbacks.schedule_retransmit));
         subscriptions_.emplace(id, route);
         dispatcher_->AddSenderTrack(route->sender->GetSsrc(), route->sender);
         if (existing == transports_.end())
@@ -339,6 +340,8 @@ void DownlinkTrackManager::Tick(uint64_t now_ms, bool force)
 {
     if (!force && now_ms < next_tick_ms_) return;
     next_tick_ms_ = now_ms + 20;
+    for (const auto& entry : subscriptions_)
+        if (!entry.second->Closed()) entry.second->sender->Tick(now_ms);
 
     std::vector<std::shared_ptr<SendSideController>> controllers;
     controllers.reserve(transports_.size());

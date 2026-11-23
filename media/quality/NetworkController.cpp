@@ -1,5 +1,6 @@
 #include "NetworkController.h"
 #include <algorithm>
+#include <cmath>
 #include <stdexcept>
 
 namespace media
@@ -7,7 +8,6 @@ namespace media
 
 NetworkController::NetworkController()
 {
-    fallback_target_bitrate_bps_ = bitrate_.start_bitrate_bps;
     stable_target_bitrate_bps_ = bitrate_.start_bitrate_bps;
 }
 
@@ -15,12 +15,12 @@ void NetworkController::SetBitrateConstraints(const BitrateConstraints& constrai
 {
     if (!constraints.min_bitrate_bps || constraints.min_bitrate_bps > constraints.start_bitrate_bps || constraints.start_bitrate_bps > constraints.max_bitrate_bps)
         throw std::invalid_argument("invalid network bitrate constraints");
+    rr_rate_controller_.SetBitrateConstraints(constraints);
     bitrate_ = constraints;
     if (!has_feedback_)
-        fallback_target_bitrate_bps_ = stable_target_bitrate_bps_ = bitrate_.start_bitrate_bps;
+        stable_target_bitrate_bps_ = bitrate_.start_bitrate_bps;
     else 
     {
-        fallback_target_bitrate_bps_ = std::clamp(fallback_target_bitrate_bps_, bitrate_.min_bitrate_bps, bitrate_.max_bitrate_bps);
         stable_target_bitrate_bps_ = std::clamp(stable_target_bitrate_bps_, bitrate_.min_bitrate_bps, bitrate_.max_bitrate_bps);
     }
 }
@@ -79,6 +79,8 @@ void NetworkController::RemoveObserver(const std::shared_ptr<INetworkControlObse
 
 NetworkQualityLevel NetworkController::EstimateQuality(const WeakNetFeedback& feedback) const
 {
+    // Invalid loss must not be interpreted as an Excellent sample.
+    if (!std::isfinite(feedback.loss_rate)) return NetworkQualityLevel::Bad;
     if (feedback.loss_rate >= 0.20 || feedback.rtt_ms >= 500)
     {
         return NetworkQualityLevel::Bad;
@@ -101,34 +103,18 @@ NetworkControlUpdate NetworkController::BuildUpdate(const BweResult* bwe, const 
 {
     const NetworkQualityLevel quality = EstimateQuality(feedback);
 
-    uint32_t target_bitrate_bps = fallback_target_bitrate_bps_;
+    uint32_t target_bitrate_bps;
     if (bwe && bwe->target_bitrate_bps > 0)
     {
-        target_bitrate_bps = bwe->target_bitrate_bps;
+        target_bitrate_bps = rr_rate_controller_.SetEstimate(bwe->target_bitrate_bps, feedback.now_ms);
     }
     else
     {
-        switch (quality)
-        {
-        case NetworkQualityLevel::Excellent:
-            target_bitrate_bps = static_cast<uint32_t>(std::min<double>(
-                target_bitrate_bps * 1.05, bitrate_.max_bitrate_bps));
-            break;
-        case NetworkQualityLevel::Weak:
-            target_bitrate_bps = static_cast<uint32_t>(target_bitrate_bps * 0.85);
-            break;
-        case NetworkQualityLevel::Bad:
-            target_bitrate_bps = static_cast<uint32_t>(target_bitrate_bps * 0.65);
-            break;
-        case NetworkQualityLevel::Good:
-        default:
-            break;
-        }
+        target_bitrate_bps = rr_rate_controller_.Update(quality, feedback.rtt_ms, feedback.now_ms);
     }
 
     target_bitrate_bps = std::max(bitrate_.min_bitrate_bps,
                                   std::min(target_bitrate_bps, bitrate_.max_bitrate_bps));
-    fallback_target_bitrate_bps_ = target_bitrate_bps;
     stable_target_bitrate_bps_ = static_cast<uint32_t>(stable_target_bitrate_bps_ * 0.8 +
                                                        target_bitrate_bps * 0.2);
 

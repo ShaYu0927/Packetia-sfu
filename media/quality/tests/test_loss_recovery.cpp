@@ -4,6 +4,8 @@
 #include "RtcpNack.h"
 #include "RtpSenderTrack.h"
 
+#include <set>
+
 namespace
 {
 class LossRecovery : public ::testing::Test
@@ -154,6 +156,68 @@ TEST_F(LossRecovery, FullSendBatchDoesNotPreventExpiredEntryCleanup)
     EXPECT_EQ(failures[0], (std::vector<uint16_t>{65534}));
 }
 
+TEST_F(LossRecovery, BurstLossGetsAFirstRequestEvenWhenEarlierRepairsNeverArrive)
+{
+    auto config = Config();
+    config.max_retries = 5;
+    rtsp::NackRequester receiver(config);
+    Observe(receiver);
+    receiver.OnReceivedPacket(100, 0);
+    receiver.OnReceivedPacket(161, 0); // Sixty missing packets exceed one batch.
+    receiver.Process(20);
+    ASSERT_EQ(nacks.size(), 1U);
+    ASSERT_EQ(nacks[0].size(), 50U);
+
+    // No repair arrives. A later tick must still request the rest of the burst,
+    // rather than spend the whole batch retrying the original fifty packets.
+    receiver.Process(120);
+    ASSERT_EQ(nacks.size(), 2U);
+    EXPECT_LE(nacks[1].size(), config.max_batch_size);
+    std::set<uint16_t> requested;
+    for (const auto& batch : nacks)
+        requested.insert(batch.begin(), batch.end());
+    EXPECT_EQ(requested.size(), 60U);
+    EXPECT_EQ(*requested.begin(), 101);
+    EXPECT_EQ(*requested.rbegin(), 160);
+    EXPECT_TRUE(failures.empty());
+}
+
+TEST_F(LossRecovery, WrappedLossesAreScheduledByWaitingTimeInsteadOfNumericSequence)
+{
+    auto config = Config();
+    config.max_batch_size = 1;
+    config.max_retries = 5;
+    rtsp::NackRequester receiver(config);
+    Observe(receiver);
+    receiver.OnReceivedPacket(65533, 0);
+    receiver.OnReceivedPacket(65535, 0); // Missing 65534 is older.
+    receiver.OnReceivedPacket(1, 1);     // Missing 0 sorts first numerically.
+    receiver.Process(21);
+    receiver.Process(121);
+    ASSERT_EQ(nacks.size(), 2U);
+    EXPECT_EQ(nacks[0], (std::vector<uint16_t>{65534}));
+    EXPECT_EQ(nacks[1], (std::vector<uint16_t>{0}));
+    EXPECT_TRUE(failures.empty());
+}
+
+TEST_F(LossRecovery, NewLossDoesNotDisplaceAnOlderDueRetry)
+{
+    auto config = Config();
+    config.reorder_wait_ms = 0;
+    config.max_batch_size = 1;
+    config.max_retries = 5;
+    rtsp::NackRequester receiver(config);
+    Observe(receiver);
+    Gap(receiver);
+    receiver.Process(0);
+    receiver.OnReceivedPacket(104, 60); // New missing 103; retry 101 was due at 50.
+    receiver.Process(60);
+    receiver.Process(61);
+    ASSERT_EQ(nacks.size(), 3U);
+    EXPECT_EQ(nacks[1], (std::vector<uint16_t>{101}));
+    EXPECT_EQ(nacks[2], (std::vector<uint16_t>{103}));
+}
+
 TEST_F(LossRecovery, ReorderedAndWrappedPacketsDoNotNeedRetransmission)
 {
     rtsp::NackRequester receiver(Config());
@@ -194,6 +258,145 @@ TEST_F(LossRecovery, FailureCallbackAtTimeZeroIsStillRateLimitedAndResettable)
     Gap(receiver);
     receiver.Process(0);
     EXPECT_EQ(failures.size(), 2U);
+}
+
+TEST_F(LossRecovery, FullMissingListAbandonsOldGapsAndSignalsRecoveryImmediately)
+{
+    auto config = Config();
+    config.max_nack_list_size = 2;
+    rtsp::NackRequester receiver(config);
+    Observe(receiver);
+    receiver.OnReceivedPacket(100, 0);
+    receiver.OnReceivedPacket(103, 0); // Exactly fills the list with 101 and 102.
+    EXPECT_TRUE(failures.empty());
+    receiver.OnReceivedPacket(105, 1); // Cannot track the new missing 104.
+    ASSERT_EQ(failures.size(), 1U);
+    EXPECT_EQ(failures[0], (std::vector<uint16_t>{101, 102, 104}));
+    EXPECT_EQ(receiver.GetStats().list_overflow_resets, 1U);
+    EXPECT_EQ(receiver.GetStats().abandoned_packets, 2U);
+    EXPECT_EQ(receiver.GetStats().untracked_packets, 1U);
+    receiver.Process(20);
+    EXPECT_TRUE(nacks.empty());
+    EXPECT_FALSE(receiver.OnReceivedPacket(101, 21).was_missing);
+
+    // New losses are tracked from the new head, independently of old repairs.
+    receiver.OnReceivedPacket(107, 22);
+    receiver.Process(42);
+    ASSERT_EQ(nacks.size(), 1U);
+    EXPECT_EQ(nacks[0], (std::vector<uint16_t>{106}));
+}
+
+TEST_F(LossRecovery, OversizedBurstDoesNotPartiallyFillTheMissingList)
+{
+    auto config = Config();
+    config.max_nack_list_size = 2;
+    rtsp::NackRequester receiver(config);
+    Observe(receiver);
+    receiver.OnReceivedPacket(100, 0);
+    receiver.OnReceivedPacket(105, 1);
+    ASSERT_EQ(failures.size(), 1U);
+    EXPECT_EQ(receiver.GetStats().missing_packets, 0U);
+    EXPECT_EQ(receiver.GetStats().abandoned_packets, 0U);
+    EXPECT_EQ(receiver.GetStats().untracked_packets, 4U);
+    EXPECT_EQ(receiver.GetStats().list_overflow_resets, 1U);
+    receiver.Process(21);
+    EXPECT_TRUE(nacks.empty());
+}
+
+TEST_F(LossRecovery, LargeSequenceJumpReportsBoundedSampleAndResumesTracking)
+{
+    auto config = Config();
+    config.max_batch_size = 2;
+    rtsp::NackRequester receiver(config);
+    Observe(receiver);
+    Gap(receiver);
+    receiver.OnReceivedPacket(1000, 1);
+    ASSERT_EQ(failures.size(), 1U);
+    EXPECT_EQ(failures[0], (std::vector<uint16_t>{101, 103}));
+    EXPECT_EQ(receiver.GetStats().large_gap_resets, 1U);
+    EXPECT_EQ(receiver.GetStats().abandoned_packets, 1U);
+    EXPECT_EQ(receiver.GetStats().untracked_packets, 897U);
+    receiver.Process(21);
+    EXPECT_TRUE(nacks.empty());
+    receiver.OnReceivedPacket(1002, 22);
+    receiver.Process(42);
+    ASSERT_EQ(nacks.size(), 1U);
+    EXPECT_EQ(nacks[0], (std::vector<uint16_t>{1001}));
+}
+
+TEST_F(LossRecovery, OversizedWrappedGapReportsMissingSequenceInsteadOfReceivedHead)
+{
+    auto config = Config();
+    config.max_sequence_gap = 2;
+    rtsp::NackRequester receiver(config);
+    Observe(receiver);
+    receiver.OnReceivedPacket(65534, 0);
+    receiver.OnReceivedPacket(2, 1);
+    ASSERT_EQ(failures.size(), 1U);
+    EXPECT_EQ(failures[0], (std::vector<uint16_t>{65535, 0, 1}));
+    EXPECT_EQ(receiver.GetStats().untracked_packets, 3U);
+    receiver.OnReceivedPacket(1, 2); // Late packet must not create another jump.
+    EXPECT_EQ(failures.size(), 1U);
+}
+
+TEST_F(LossRecovery, GapFailuresShareTheExpiryNotificationBudgetAndResetClearsIt)
+{
+    auto config = Config();
+    config.max_sequence_gap = 10;
+    rtsp::NackRequester receiver(config);
+    Observe(receiver);
+    Gap(receiver);
+    receiver.Process(20);
+    receiver.Process(70); // Exhaustion consumes the common notification budget.
+    ASSERT_EQ(failures.size(), 1U);
+    receiver.OnReceivedPacket(200, 71);
+    receiver.OnReceivedPacket(300, 569);
+    EXPECT_EQ(failures.size(), 1U);
+    receiver.OnReceivedPacket(400, 570);
+    EXPECT_EQ(failures.size(), 2U);
+    receiver.Reset();
+    receiver.OnReceivedPacket(100, 0);
+    receiver.OnReceivedPacket(200, 0);
+    EXPECT_EQ(failures.size(), 3U);
+    receiver.OnReceivedPacket(300, 1);
+    EXPECT_EQ(failures.size(), 3U);
+    EXPECT_EQ(receiver.GetStats().large_gap_resets, 2U);
+}
+
+TEST_F(LossRecovery, ZeroCapacitySignalsLossWithoutAllocatingMissingEntries)
+{
+    auto config = Config();
+    config.max_nack_list_size = 0;
+    rtsp::NackRequester receiver(config);
+    Observe(receiver);
+    Gap(receiver);
+    ASSERT_EQ(failures.size(), 1U);
+    EXPECT_EQ(failures[0], (std::vector<uint16_t>{101}));
+    receiver.Process(20);
+    EXPECT_TRUE(nacks.empty());
+    EXPECT_EQ(receiver.GetStats().missing_packets, 0U);
+    EXPECT_EQ(receiver.GetStats().untracked_packets, 1U);
+}
+
+TEST_F(LossRecovery, GapRecoveryCallbackCanResetSequenceTracking)
+{
+    auto config = Config();
+    config.max_sequence_gap = 10;
+    rtsp::NackRequester receiver(config);
+    Observe(receiver);
+    receiver.SetRecoveryFailureCallback([&](const auto& batch) {
+        failures.push_back(batch);
+        receiver.Reset();
+    });
+    receiver.OnReceivedPacket(100, 0);
+    receiver.OnReceivedPacket(200, 1);
+    ASSERT_EQ(failures.size(), 1U);
+    receiver.OnReceivedPacket(500, 2); // First packet after callback's reset.
+    EXPECT_EQ(failures.size(), 1U);
+    receiver.OnReceivedPacket(502, 3);
+    receiver.Process(23);
+    ASSERT_EQ(nacks.size(), 1U);
+    EXPECT_EQ(nacks[0], (std::vector<uint16_t>{501}));
 }
 
 TEST(LossRecoverySender, OriginalSendAgeLimitsRetriesEvenWhenCacheIsNotFull)

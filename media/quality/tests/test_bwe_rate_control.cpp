@@ -9,6 +9,7 @@
 #include "RemoteBitrateController.h"
 #include "OUTrendDetect.h"
 #include "IncomingBitrateEstimator.h"
+#include "NetworkController.h"
 
 namespace
 {
@@ -389,4 +390,188 @@ TEST(BweRateControlTest, PacerSuggestionSaturatesAtLargeConfiguredRate)
     const auto fallback = controller.OnReceiverFeedback({});
     EXPECT_EQ(fallback.target_rate.target_bitrate_bps, UINT32_MAX);
     EXPECT_EQ(fallback.pacer_config.pacing_bitrate_bps, UINT32_MAX);
+}
+
+TEST(RrAimdRateControlTest, HealthyStartupDoesNotAssumeAnUnobservedGrowthInterval)
+{
+    media::NetworkController controller;
+    const auto update = controller.OnFeedback({});
+    EXPECT_EQ(update.target_rate.target_bitrate_bps, media::BitrateConstraints{}.start_bitrate_bps);
+}
+
+TEST(RrAimdRateControlTest, AdditiveGrowthDependsOnTimeInsteadOfReportCount)
+{
+    media::NetworkController slow, fast;
+    media::WeakNetFeedback feedback;
+    slow.OnFeedback(feedback);
+    fast.OnFeedback(feedback);
+    media::NetworkControlUpdate a, b;
+    for (uint64_t t = 100; t <= 1000; t += 100) {
+        feedback.now_ms = t;
+        a = slow.OnFeedback(feedback);
+    }
+    for (uint64_t t = 10; t <= 1000; t += 10) {
+        feedback.now_ms = t;
+        b = fast.OnFeedback(feedback);
+    }
+    EXPECT_EQ(a.target_rate.target_bitrate_bps, 820000U);
+    EXPECT_EQ(a.target_rate.target_bitrate_bps, b.target_rate.target_bitrate_bps);
+    EXPECT_EQ(b.pacer_config.pacing_bitrate_bps, 984000U);
+}
+
+TEST(RrAimdRateControlTest, RepeatedBadReportsWaitForTheObservationWindow)
+{
+    media::NetworkController controller;
+    media::WeakNetFeedback feedback;
+    feedback.loss_rate = 0.25;
+    EXPECT_EQ(controller.OnFeedback(feedback).target_rate.target_bitrate_bps, 520000U);
+    for (uint64_t t : {0, 10, 100, 499}) {
+        feedback.now_ms = t;
+        EXPECT_EQ(controller.OnFeedback(feedback).target_rate.target_bitrate_bps, 520000U);
+    }
+    feedback.now_ms = 500;
+    EXPECT_EQ(controller.OnFeedback(feedback).target_rate.target_bitrate_bps, 338000U);
+}
+
+TEST(RrAimdRateControlTest, ReductionWindowUsesBoundedRttAndHandlesTimeZero)
+{
+    for (const auto rtt_and_window : {std::pair<uint32_t, uint64_t>{20, 300},
+                                     {400, 800}, {UINT32_MAX, 2000}}) {
+        media::NetworkController controller;
+        media::WeakNetFeedback feedback;
+        feedback.loss_rate = 0.25;
+        feedback.rtt_ms = rtt_and_window.first;
+        const auto first = controller.OnFeedback(feedback).target_rate.target_bitrate_bps;
+        feedback.now_ms = rtt_and_window.second - 1;
+        EXPECT_EQ(controller.OnFeedback(feedback).target_rate.target_bitrate_bps, first);
+        ++feedback.now_ms;
+        EXPECT_LT(controller.OnFeedback(feedback).target_rate.target_bitrate_bps, first);
+    }
+}
+
+TEST(RrAimdRateControlTest, WorseningLossCanReduceImmediatelyWithoutQualityFlappingRepeatingIt)
+{
+    media::NetworkController controller;
+    media::WeakNetFeedback feedback;
+    feedback.loss_rate = 0.1;
+    EXPECT_EQ(controller.OnFeedback(feedback).target_rate.target_bitrate_bps, 680000U);
+    feedback.now_ms = 10;
+    feedback.loss_rate = 0.25;
+    EXPECT_EQ(controller.OnFeedback(feedback).target_rate.target_bitrate_bps, 442000U);
+    for (uint64_t t : {20, 30, 40}) {
+        feedback.now_ms = t;
+        feedback.loss_rate = t == 30 ? 0.25 : 0.1;
+        EXPECT_EQ(controller.OnFeedback(feedback).target_rate.target_bitrate_bps, 442000U);
+    }
+}
+
+TEST(RrAimdRateControlTest, RecoveryDoesNotCreditTimeSpentCongestedOrCoolingDown)
+{
+    media::NetworkController controller;
+    media::WeakNetFeedback feedback;
+    feedback.loss_rate = 0.25;
+    controller.OnFeedback(feedback);
+    feedback.loss_rate = 0;
+    for (uint64_t t : {100, 400}) {
+        feedback.now_ms = t;
+        EXPECT_EQ(controller.OnFeedback(feedback).target_rate.target_bitrate_bps, 520000U);
+    }
+    feedback.now_ms = 600;
+    EXPECT_EQ(controller.OnFeedback(feedback).target_rate.target_bitrate_bps, 522000U);
+    feedback.now_ms = 700;
+    feedback.loss_rate = 0.03; // Good holds, rather than probing upward.
+    EXPECT_EQ(controller.OnFeedback(feedback).target_rate.target_bitrate_bps, 522000U);
+    feedback.now_ms = 800;
+    feedback.loss_rate = 0;
+    EXPECT_EQ(controller.OnFeedback(feedback).target_rate.target_bitrate_bps, 522000U);
+}
+
+TEST(RrAimdRateControlTest, StaleReportsCannotRewindTheRateControlClock)
+{
+    media::NetworkController controller;
+    media::WeakNetFeedback feedback;
+    feedback.now_ms = 1000;
+    controller.OnFeedback(feedback);
+    feedback.now_ms = 2000;
+    const auto current = controller.OnFeedback(feedback).target_rate.target_bitrate_bps;
+    feedback.loss_rate = 0.25;
+    for (uint64_t t : {2000, 1999, 0}) {
+        feedback.now_ms = t;
+        EXPECT_EQ(controller.OnFeedback(feedback).target_rate.target_bitrate_bps, current);
+    }
+    feedback.now_ms = 2001;
+    EXPECT_LT(controller.OnFeedback(feedback).target_rate.target_bitrate_bps, current);
+}
+
+TEST(RrAimdRateControlTest, FeedbackSilenceDoesNotBuildAnUnboundedGrowthCredit)
+{
+    media::NetworkController controller;
+    media::WeakNetFeedback feedback;
+    controller.OnFeedback(feedback);
+    feedback.now_ms = 60000;
+    EXPECT_EQ(controller.OnFeedback(feedback).target_rate.target_bitrate_bps, 820000U);
+}
+
+TEST(RrAimdRateControlTest, TwccTargetSeedsFallbackWithoutAnImmediateUpwardStep)
+{
+    media::NetworkController controller;
+    media::WeakNetFeedback feedback;
+    feedback.now_ms = 100;
+    BweResult bwe;
+    bwe.target_bitrate_bps = 1200000;
+    bwe.estimate_valid = true;
+    EXPECT_EQ(controller.OnBweResultAndFeedback(bwe, feedback).target_rate.target_bitrate_bps, 1200000U);
+    feedback.now_ms = 200;
+    EXPECT_EQ(controller.OnFeedback(feedback).target_rate.target_bitrate_bps, 1200000U);
+    feedback.now_ms = 300;
+    EXPECT_EQ(controller.OnFeedback(feedback).target_rate.target_bitrate_bps, 1202000U);
+}
+
+TEST(RrAimdRateControlTest, ConstraintsAndClockUpperBoundDoNotOverflow)
+{
+    media::NetworkController controller;
+    controller.SetBitrateConstraints({100000, UINT32_MAX - 1000, UINT32_MAX});
+    media::WeakNetFeedback feedback;
+    feedback.now_ms = UINT64_MAX - 1000;
+    controller.OnFeedback(feedback);
+    feedback.now_ms = UINT64_MAX;
+    const auto maximum = controller.OnFeedback(feedback);
+    EXPECT_EQ(maximum.target_rate.target_bitrate_bps, UINT32_MAX);
+    EXPECT_EQ(maximum.pacer_config.pacing_bitrate_bps, UINT32_MAX);
+    controller.SetBitrateConstraints({100000, 100000, 100000});
+    feedback.loss_rate = 1;
+    EXPECT_EQ(controller.OnFeedback(feedback).target_rate.target_bitrate_bps, 100000U);
+}
+
+TEST(RrAimdRateControlTest, InvalidLossDoesNotCauseUpwardGrowth)
+{
+    for (const auto loss : {std::numeric_limits<double>::quiet_NaN(),
+                            std::numeric_limits<double>::infinity()}) {
+        media::NetworkController controller;
+        media::WeakNetFeedback feedback;
+        feedback.loss_rate = loss;
+        EXPECT_EQ(controller.OnFeedback(feedback).target_rate.target_bitrate_bps, 520000U);
+        EXPECT_EQ(controller.GetSnapshot().quality, media::NetworkQualityLevel::Bad);
+    }
+}
+
+TEST(RrAimdRateControlTest, TransportFallbackPublishesTheRateAndRouteChangeClearsCooldown)
+{
+    media::GoogCcNetworkController controller;
+    media::WeakNetFeedback feedback;
+    feedback.loss_rate = 0.25;
+    EXPECT_EQ(controller.OnReceiverFeedback(feedback).target_rate.target_bitrate_bps, 520000U);
+    for (uint64_t t = 100; t < 500; t += 100) {
+        feedback.now_ms = t;
+        EXPECT_EQ(controller.OnReceiverFeedback(feedback).target_rate.target_bitrate_bps, 520000U);
+    }
+    EXPECT_EQ(controller.OnProcessInterval({499}).target_rate.target_bitrate_bps, 520000U);
+    feedback.now_ms = 500;
+    const auto reduced = controller.OnReceiverFeedback(feedback);
+    EXPECT_EQ(reduced.target_rate.target_bitrate_bps, 338000U);
+    EXPECT_EQ(reduced.pacer_config.pacing_bitrate_bps, 405600U);
+    EXPECT_EQ(reduced.target_rate.estimate.bandwidth_bps, 0U); // RR is not a capacity measurement.
+    EXPECT_FALSE(controller.OnNetworkRouteChange({501, {100000, 400000, 1000000}}).HasUpdates());
+    feedback.now_ms = 502;
+    EXPECT_EQ(controller.OnReceiverFeedback(feedback).target_rate.target_bitrate_bps, 260000U);
 }

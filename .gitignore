@@ -29,6 +29,8 @@ build-win/
 .codex-build-transport/
 /deploy/cluster/runtime/
 /deploy/cluster/.env
+/ca.crt
+/deploy/cluster/ca.crt
 recordings/
 
 # FFmpeg's upstream Makefiles are source files, not generated build output.
