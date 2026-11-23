@@ -5,7 +5,6 @@
 #include <vector>
 #include "WeakNetController.h"
 #include "TransportBweController.h"
-#include "bwe/RrAimdRateController.h"
 
 namespace media
 {
@@ -45,7 +44,7 @@ private:
     WeakNetFeedback latest_feedback_;
     bool has_feedback_ = false;
 
-    RrAimdRateController rr_rate_controller_;
+    uint32_t fallback_target_bitrate_bps_ = 800 * 1000;
     uint32_t stable_target_bitrate_bps_ = 800 * 1000;
 
     uint64_t last_keyframe_request_ms_ = 0;

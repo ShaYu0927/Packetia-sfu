@@ -1,11 +1,14 @@
 #include "HttpServer.h"
 #include "EventLoop.h"
+#include "logger.h"
+#include "third/nlohmann/json.hpp"
 #include <gtest/gtest.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <chrono>
 #include <future>
+#include <set>
 #include <thread>
 #include <vector>
 
@@ -121,15 +124,57 @@ protected:
     HttpServerOptions options;
 };
 
+class CapturedLogs
+{
+public:
+    explicit CapturedLogs(HttpServer& server) : server_(server)
+    {
+        GlobalLogger().flush();
+        testing::internal::CaptureStdout();
+    }
+    ~CapturedLogs()
+    {
+        if (!finished_)
+        {
+            server_.Stop();
+            GlobalLogger().flush();
+            testing::internal::GetCapturedStdout();
+        }
+    }
+    std::string Finish()
+    {
+        server_.Stop(); // Drain owner callbacks before flushing the async logger.
+        GlobalLogger().flush();
+        finished_ = true;
+        return testing::internal::GetCapturedStdout();
+    }
+private:
+    HttpServer& server_;
+    bool finished_ = false;
+};
+
+std::vector<nlohmann::json> Events(const std::string& output, const char* event)
+{
+    std::istringstream stream(output);
+    std::vector<nlohmann::json> records;
+    for (std::string line; std::getline(stream, line);)
+    {
+        const auto record = nlohmann::json::parse(line, nullptr, false);
+        if (record.is_object() && record.value("event", "") == event) records.push_back(record);
+    }
+    return records;
+}
+
 TEST_F(HttpIntegration, FragmentedPostAndKeepAliveHead)
 {
+    CapturedLogs logs(server);
     ASSERT_TRUE(server.Start(options, [](HttpRequest request, IHttpServer::Respond respond) {
         respond({200, request.method + ':' + request.path + ':' + request.body,
                  {{"content-type", "text/plain"}, {"x-test", "yes"}}});
     }));
     Socket client(Connect(options.listen_port));
     ASSERT_GE(client.Get(), 0);
-    ASSERT_TRUE(Send(client.Get(), "POST /echo?ignored=yes HTTP/1.1\r\nHost: localhost\r\nContent-Type: text/plain\r\nContent-Length: 5\r\n\r\nhe"));
+    ASSERT_TRUE(Send(client.Get(), "POST /echo?token=QUERY_SECRET HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer HEADER_SECRET\r\nCookie: COOKIE_SECRET\r\nContent-Type: text/plain\r\nContent-Length: 5\r\n\r\nhe"));
     ASSERT_TRUE(Send(client.Get(), "llo"));
     const auto first = Response(client.Get());
     EXPECT_NE(first.find("200 OK"), std::string::npos);
@@ -141,10 +186,31 @@ TEST_F(HttpIntegration, FragmentedPostAndKeepAliveHead)
     const auto head = Response(client.Get(), true);
     EXPECT_EQ(head.size(), head.find("\r\n\r\n") + 4);
     EXPECT_NE(head.find("content-length: 11"), std::string::npos);
+    const auto output = logs.Finish();
+    const auto records = Events(output, "http_request_completed");
+    ASSERT_EQ(records.size(), 3U);
+    std::set<std::uint64_t> ids;
+    for (const auto& record : records)
+    {
+        ids.insert(record["data"]["request_id"].get<std::uint64_t>());
+        EXPECT_EQ(record["data"]["status"], 200);
+        EXPECT_GE(record["data"]["duration_ms"].get<double>(), 0);
+    }
+    EXPECT_EQ(ids.size(), 3U);
+    EXPECT_EQ(records[0]["data"]["method"], "POST");
+    EXPECT_EQ(records[0]["data"]["path"], "/echo");
+    EXPECT_EQ(records[0]["data"]["request_body_bytes"], 5);
+    EXPECT_EQ(records[2]["data"]["response_body_bytes"], 0); // HEAD never sends the body.
+    EXPECT_EQ(Events(output, "http_request_failed").size(), 0U);
+    EXPECT_EQ(Events(output, "http_server_started").size(), 1U);
+    EXPECT_EQ(Events(output, "http_server_stopped").size(), 1U);
+    EXPECT_EQ(output.find("SECRET"), std::string::npos);
+    EXPECT_EQ(output.find("POST:/echo:hello"), std::string::npos);
 }
 
 TEST_F(HttpIntegration, RepliesFromWorkerAndIgnoresDuplicateReplies)
 {
+    CapturedLogs logs(server);
     std::promise<IHttpServer::Respond> captured;
     auto future = captured.get_future();
     ASSERT_TRUE(server.Start(options, [&](HttpRequest, IHttpServer::Respond respond) { captured.set_value(respond); }));
@@ -161,6 +227,10 @@ TEST_F(HttpIntegration, RepliesFromWorkerAndIgnoresDuplicateReplies)
     EXPECT_EQ(response.find("HTTP/1.1 201"), 0U) << response;
     EXPECT_NE(response.find("worker"), std::string::npos);
     EXPECT_EQ(response.find("duplicate"), std::string::npos);
+    const auto records = Events(logs.Finish(), "http_request_completed");
+    ASSERT_EQ(records.size(), 1U);
+    EXPECT_EQ(records[0]["data"]["status"], 201);
+    EXPECT_EQ(records[0]["data"]["response_body_bytes"], 6);
 }
 
 TEST_F(HttpIntegration, RejectsOversizeAndAmbiguousFramingBeforeBusiness)
@@ -208,6 +278,7 @@ TEST_F(HttpIntegration, DropsRepliesAfterDisconnectAndRestart)
 
 TEST_F(HttpIntegration, TimesOutUnansweredRequestAndRejectsLateReply)
 {
+    CapturedLogs logs(server);
     options.request_timeout_seconds = 1;
     std::promise<IHttpServer::Respond> captured;
     auto future = captured.get_future();
@@ -218,10 +289,18 @@ TEST_F(HttpIntegration, TimesOutUnansweredRequestAndRejectsLateReply)
     char byte;
     EXPECT_EQ(recv(client.Get(), &byte, 1, 0), 0);
     future.get()({200, "too late", {}});
+    const auto output = logs.Finish();
+    EXPECT_TRUE(Events(output, "http_request_completed").empty());
+    const auto records = Events(output, "http_request_failed");
+    ASSERT_EQ(records.size(), 1U);
+    EXPECT_EQ(records[0]["data"]["reason"], "request_timeout");
+    EXPECT_TRUE(records[0]["data"]["status"].is_null());
+    EXPECT_GE(records[0]["data"]["duration_ms"].get<double>(), 900);
 }
 
 TEST_F(HttpIntegration, CapsConnectionsAndRejectsInvalidResponseHeaders)
 {
+    CapturedLogs logs(server);
     options.max_connections = 1;
     std::promise<IHttpServer::Respond> captured;
     auto future = captured.get_future();
@@ -238,6 +317,36 @@ TEST_F(HttpIntegration, CapsConnectionsAndRejectsInvalidResponseHeaders)
     }
     future.get()({200, "bad", {{"x-test", "injected\r\nheader: value"}}});
     EXPECT_TRUE(Response(first.Get()).empty());
+    const auto records = Events(logs.Finish(), "http_request_failed");
+    ASSERT_EQ(records.size(), 1U);
+    EXPECT_EQ(records[0]["data"]["reason"], "invalid_response");
+    EXPECT_TRUE(records[0]["data"]["status"].is_null());
+}
+
+TEST_F(HttpIntegration, LogsRejectionsAndServerErrorsButSuppressesSuccessfulHealthChecks)
+{
+    CapturedLogs logs(server);
+    options.max_body_bytes = 4;
+    ASSERT_TRUE(server.Start(options, [](HttpRequest request, IHttpServer::Respond respond) {
+        respond({request.path == "/healthz" ? std::uint16_t(200) : std::uint16_t(500), "", {}});
+    }));
+    {
+        Socket client(Connect(options.listen_port));
+        ASSERT_TRUE(Send(client.Get(), "POST /oversize HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\nhello"));
+        EXPECT_NE(Response(client.Get()).find("413"), std::string::npos);
+    }
+    for (const auto* path : {"/healthz", "/server-error"})
+    {
+        Socket client(Connect(options.listen_port));
+        ASSERT_TRUE(Send(client.Get(), Get(path)));
+        Response(client.Get());
+    }
+    const auto records = Events(logs.Finish(), "http_request_completed");
+    ASSERT_EQ(records.size(), 2U);
+    EXPECT_EQ(records[0]["data"]["status"], 413);
+    EXPECT_EQ(records[0]["level"], "INFO");
+    EXPECT_EQ(records[1]["data"]["status"], 500);
+    EXPECT_EQ(records[1]["level"], "ERROR");
 }
 
 TEST_F(HttpIntegration, PartialBodyAndIdleConnectionExpire)
@@ -290,6 +399,7 @@ TEST_F(HttpIntegration, DisconnectReleasesConnectionBudgetAndOldReplyCannotReach
 
 TEST_F(HttpIntegration, EnforcesGlobalResponseBudgetWhileOwnerIsBusy)
 {
+    CapturedLogs logs(server);
     options.max_response_bytes = 1024;
     options.max_total_response_bytes = 1024;
     std::promise<IHttpServer::Respond> first_reply, second_reply;
@@ -315,6 +425,9 @@ TEST_F(HttpIntegration, EnforcesGlobalResponseBudgetWhileOwnerIsBusy)
     release.set_value();
     EXPECT_NE(Response(first.Get()).find(std::string(800, 'a')), std::string::npos);
     EXPECT_TRUE(Response(second.Get()).empty());
+    const auto records = Events(logs.Finish(), "http_request_failed");
+    ASSERT_EQ(records.size(), 1U);
+    EXPECT_EQ(records[0]["data"]["reason"], "response_budget_exceeded");
 }
 
 TEST_F(HttpIntegration, HandlesConcurrentClientsAndMultiChunkResponses)
@@ -333,6 +446,7 @@ TEST_F(HttpIntegration, HandlesConcurrentClientsAndMultiChunkResponses)
 
 TEST_F(HttpIntegration, StopInsideHandlerAndRebindAfterLoopRestart)
 {
+    CapturedLogs logs(server);
     ASSERT_TRUE(server.Start(options, [&](HttpRequest, IHttpServer::Respond) { server.Stop(); }));
     Socket client(Connect(options.listen_port));
     ASSERT_TRUE(Send(client.Get(), Get()));
@@ -344,6 +458,9 @@ TEST_F(HttpIntegration, StopInsideHandlerAndRebindAfterLoopRestart)
     Socket next(Connect(options.listen_port));
     ASSERT_TRUE(Send(next.Get(), Get()));
     EXPECT_NE(Response(next.Get()).find("restarted"), std::string::npos);
+    const auto records = Events(logs.Finish(), "http_request_failed");
+    ASSERT_EQ(records.size(), 1U);
+    EXPECT_EQ(records[0]["data"]["reason"], "server_stopped");
 }
 
 TEST_F(HttpIntegration, FailsCleanlyWhenPortIsOccupied)

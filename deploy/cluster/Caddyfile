@@ -1,23 +1,37 @@
-{$PACKETIA_DOMAIN} {
-    encode gzip
+{
+	# Test clients explicitly import the exported root certificate.
+	skip_install_trust
+	# IP clients usually omit SNI; Docker's local address is not the public IP.
+	default_sni {$PACKETIA_PUBLIC_HOST}
+	# Docker may publish internal 443 on a different host port.
+	auto_https disable_redirects
+}
 
-    handle_path /sfu-a/* {
-        reverse_proxy sfu-a:18180
-    }
+http://{$PACKETIA_PUBLIC_HOST} {
+	redir https://{$PACKETIA_PUBLIC_HOST}:{$PACKETIA_HTTPS_PORT:443}{uri} 308
+}
 
-    handle_path /sfu-b/* {
-        reverse_proxy sfu-b:18181
-    }
+https://{$PACKETIA_PUBLIC_HOST} {
+	{$PACKETIA_TLS_CONFIG}
+	encode gzip
 
-    handle /api/* {
-        reverse_proxy control:18082
-    }
+	handle_path /sfu-a/* {
+		reverse_proxy sfu-a:18180
+	}
 
-    handle /healthz {
-        reverse_proxy control:18082
-    }
+	handle_path /sfu-b/* {
+		reverse_proxy sfu-b:18181
+	}
 
-    handle {
-        respond "Not found" 404
-    }
+	handle /api/* {
+		reverse_proxy control:18082
+	}
+
+	handle /healthz {
+		reverse_proxy control:18082
+	}
+
+	handle {
+		respond "Not found" 404
+	}
 }

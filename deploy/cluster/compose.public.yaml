@@ -2,10 +2,12 @@ services:
   edge:
     image: ${PACKETIA_EDGE_IMAGE:-caddy:2-alpine}
     environment:
-      PACKETIA_DOMAIN: ${PACKETIA_DOMAIN:?Set a domain with deploy.py init --domain}
+      PACKETIA_PUBLIC_HOST: ${PACKETIA_PUBLIC_HOST:-${PACKETIA_DOMAIN}}
+      PACKETIA_TLS_CONFIG: ${PACKETIA_TLS_CONFIG:-}
+      PACKETIA_HTTPS_PORT: ${PACKETIA_HTTPS_PORT:-443}
     ports:
       - "80:80/tcp"
-      - "443:443/tcp"
+      - "${PACKETIA_HTTPS_PORT:-443}:443/tcp"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
@@ -15,8 +17,12 @@ services:
         condition: service_healthy
       sfu-a:
         condition: service_healthy
-      sfu-b:
-        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2019/config/"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
     restart: unless-stopped
     stop_grace_period: 15s
     logging:

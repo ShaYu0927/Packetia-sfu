@@ -23,7 +23,6 @@ set(QUALITY_SRC
     quality/bwe/OUTrendDetect.cpp
     quality/bwe/PacketGroupObserver.cpp
     quality/bwe/RemoteBitrateController.cpp
-    quality/bwe/RrAimdRateController.cpp
     quality/bwe/TransportBweController.cpp
     quality/bwe/WebRtcTrendlineEstimator.cpp
 )

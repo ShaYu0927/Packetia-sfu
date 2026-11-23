@@ -31,6 +31,7 @@ build-win/
 /deploy/cluster/.env
 /ca.crt
 /deploy/cluster/ca.crt
+/packetia-cluster*.tar
 recordings/
 
 # FFmpeg's upstream Makefiles are source files, not generated build output.

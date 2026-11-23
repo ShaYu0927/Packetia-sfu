@@ -69,8 +69,7 @@ public:
     bool Input(const RtpView& view) override
     {
         if (!view.valid() || !view.payload || view.payload_len == 0) return false;
-        frames_.push_back(MakePacketFrame(view, codec_, sample_rate_, channels_,
-                                          static_cast<uint32_t>(view.payload_len)));
+        frames_.push_back(MakePacketFrame(view, codec_, sample_rate_, channels_,  static_cast<uint32_t>(view.payload_len)));
         return true;
     }
 
@@ -80,8 +79,7 @@ private:
     uint16_t channels_;
 };
 
-// Returns the number of samples represented by one RFC 7587 Opus packet at
-// 48 kHz, or zero for a malformed/overlong packet.
+
 uint32_t OpusPacketSampleCount(const uint8_t* data, size_t len)
 {
     if (!data || len == 0) return 0;
@@ -122,12 +120,8 @@ public:
         if (!view.valid() || !view.payload || view.payload_len == 0) return false;
         const uint32_t samples_48k = OpusPacketSampleCount(view.payload, view.payload_len);
         if (samples_48k == 0) return false;
-        const uint32_t samples = sample_rate_ == 48000
-                                     ? samples_48k
-                                     : static_cast<uint32_t>(
-                                           static_cast<uint64_t>(samples_48k) * sample_rate_ / 48000);
-        frames_.push_back(MakePacketFrame(view, CodecType::Opus, sample_rate_,
-                                          channels_, samples));
+        const uint32_t samples = sample_rate_ == 48000 ? samples_48k : static_cast<uint32_t>(static_cast<uint64_t>(samples_48k) * sample_rate_ / 48000);
+        frames_.push_back(MakePacketFrame(view, CodecType::Opus, sample_rate_,channels_, samples));
         return true;
     }
 
@@ -146,28 +140,14 @@ std::unique_ptr<IAudioRtpDepacketizer> AudioRtpDepacketizerFactory::Create(
     {
     case CodecType::PCMU:
     case CodecType::PCMA:
-        LOG_INFO("[AUDIO][FACTORY] selected G711 RTP depacketizer",
-                 " encoding=", encoding_name,
-                 " sample_rate=", sample_rate,
-                 " channels=", channels);
-        return std::make_unique<G711RtpDepacketizer>(
-            codec, sample_rate, channels);
+        return std::make_unique<G711RtpDepacketizer>(codec, sample_rate, channels);
     case CodecType::Opus:
-        LOG_INFO("[AUDIO][FACTORY] selected Opus RTP depacketizer",
-                 " sample_rate=", sample_rate,
-                 " channels=", channels);
         return std::make_unique<OpusRtpDepacketizer>(sample_rate, channels);
     case CodecType::AAC:
         if (encoding.empty() || encoding == "MPEG4-GENERIC" || encoding == "AAC")
         {
-            LOG_INFO("[AUDIO][FACTORY] selected MPEG4-GENERIC RTP depacketizer",
-                     " sample_rate=", sample_rate,
-                     " channels=", channels);
-            return std::make_unique<AudioDepacketizer>(
-                codec, sample_rate, channels, fmtp);
+            return std::make_unique<AudioDepacketizer>(codec, sample_rate, channels, fmtp);
         }
-        LOG_ERROR("[AudioRtpDepacketizerFactory] unsupported AAC payload format",
-                  " encoding=", encoding_name);
         return nullptr;
     default:
         LOG_ERROR("[AudioRtpDepacketizerFactory] unsupported audio codec",

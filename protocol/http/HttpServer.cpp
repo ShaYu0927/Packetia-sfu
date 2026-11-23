@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <atomic>
 #include <charconv>
+#include <chrono>
 #include <mutex>
 #include <optional>
 #include <unordered_map>
@@ -24,6 +25,18 @@ namespace
 {
 constexpr std::size_t kWriteChunk = 16 * 1024;
 
+void LogServer(const HttpServerOptions& options, int level, const char* event, const char* reason = "") noexcept
+{
+    try
+    {
+        auto& logger = GlobalLogger();
+        if (level < logger.min_level()) return;
+        logger.WriteEvent(__FILE__, __LINE__, level, event, "HTTP server lifecycle",
+            {{"listen_ip", options.listen_ip}, {"listen_port", options.listen_port}, {"reason", reason}});
+    }
+    catch (...) {} // Diagnostics must not change transport behavior.
+}
+
 }
 
 class HttpServer::Impl : public std::enable_shared_from_this<Impl>
@@ -32,12 +45,19 @@ class HttpServer::Impl : public std::enable_shared_from_this<Impl>
     {
         bool answered = false;
         bool close = false;
+        const char* close_reason = "";
         std::size_t bytes = 0;
         std::optional<HttpResponse> response;
     };
     struct Connection
     {
         std::uint64_t request_id = 0;
+        std::chrono::steady_clock::time_point started_at;
+        // The request itself is moved to a worker; keep only safe access-log fields.
+        std::string method, path;
+        std::size_t received_body_bytes = 0;
+        bool logged = false;
+        const char* failure_reason = nullptr;
         HttpRequest request;
         std::size_t expected_body = 0;
         bool dispatched = false;
@@ -62,14 +82,18 @@ public:
     bool Start(const HttpServerOptions& options, RequestHandler handler)
     {
         if (!options.enabled) return true;
-        if (!options.IsValid() || !handler) return false;
+        if (!options.IsValid() || !handler)
+        {
+            LogServer(options, BaseLogger::ERR, "http_server_start_failed", "invalid_configuration");
+            return false;
+        }
         auto old = Owner(false);
         if (old && old->IsStopped())
             old->Invoke([self = shared_from_this(), old] { self->StopOnOwner(old); });
         auto owner = Owner(true);
         if (!owner || !owner->IsStarted() || owner->IsStopped())
         {
-            LOG_ERROR("[HttpServer] Start requires a running EventLoop or TaskScheduler");
+            LogServer(options, BaseLogger::ERR, "http_server_start_failed", "scheduler_not_running");
             return false;
         }
         bool result = false;
@@ -97,7 +121,12 @@ public:
             info.timeout_secs_ah_idle = options.request_timeout_seconds;
             info.keepalive_timeout = static_cast<int>(options.idle_timeout_seconds);
             self->context_ = lws_create_context(&info);
-            if (!self->context_) { self->handler_ = {}; return; }
+            if (!self->context_)
+            {
+                self->handler_ = {};
+                LogServer(options, BaseLogger::ERR, "http_server_start_failed", "context_creation_failed");
+                return;
+            }
             self->stopping_ = false;
             const auto generation = ++self->generation_;
             {
@@ -113,7 +142,13 @@ public:
                 }
                 return false;
             }, options.service_interval_ms);
-            if (!self->timer_) { self->StopOnOwner(owner); return; }
+            if (!self->timer_)
+            {
+                LogServer(options, BaseLogger::ERR, "http_server_start_failed", "service_timer_failed");
+                self->StopOnOwner(owner);
+                return;
+            }
+            LogServer(options, BaseLogger::INFO, "http_server_started");
             result = true;
         });
         return result;
@@ -126,6 +161,36 @@ public:
     }
 
 private:
+    void LogRequest(Connection& connection, bool completed, const char* reason = "") noexcept
+    {
+        if (!connection.request_id || connection.logged) return;
+        connection.logged = true;
+        try
+        {
+            // A null status means no complete response headers were written.
+            const auto status = connection.headers_sent
+                ? std::optional<std::uint16_t>(connection.response.status) : std::nullopt;
+            int level = BaseLogger::INFO;
+            if ((status && *status >= 500) || (!completed &&
+                std::string_view(reason) != "disconnected" && std::string_view(reason) != "server_stopped"))
+                level = BaseLogger::ERR;
+            else if (completed && status && *status < 400 &&
+                     (connection.path == "/healthz" || connection.path == "/readyz"))
+                level = BaseLogger::DEBUG;
+            auto& logger = GlobalLogger();
+            if (level < logger.min_level()) return;
+            const auto elapsed = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - connection.started_at).count();
+            logger.WriteEvent(__FILE__, __LINE__, level,
+                completed ? "http_request_completed" : "http_request_failed", "HTTP request",
+                {{"request_id", connection.request_id}, {"listen_port", options_.listen_port},
+                 {"method", connection.method}, {"path", connection.path}, {"status", status},
+                 {"duration_ms", elapsed}, {"request_body_bytes", connection.received_body_bytes},
+                 {"response_body_bytes", connection.offset}, {"reason", reason}});
+        }
+        catch (...) {}
+    }
+
     std::shared_ptr<TaskScheduler> Owner(bool bind)
     {
         std::unique_lock<std::recursive_mutex> context_lock(context_mutex_, std::defer_lock);
@@ -162,6 +227,7 @@ private:
         ArmReplies();
         const int result = lws_service(context_, -1);
         servicing_ = false;
+        if (result < 0) LogServer(options_, BaseLogger::ERR, "http_server_service_failed", "lws_service_failed");
         if (result < 0 || stopping_ || owner->IsStopped()) StopOnOwner(owner);
     }
 
@@ -184,12 +250,14 @@ private:
         service_posted_ = false;
         auto* context = context_;
         context_ = nullptr;
+        for (auto& entry : connections_) LogRequest(entry.second, false, "server_stopped");
         lws_context_destroy(context);
         connections_.clear();
         sockets_.clear();
         network_connections_.clear();
         handler_ = {};
         destroying_ = false;
+        LogServer(options_, BaseLogger::INFO, "http_server_stopped");
     }
 
     void Retire(std::uint64_t id)
@@ -205,7 +273,21 @@ private:
     void Drop(lws* wsi)
     {
         auto it = connections_.find(wsi);
-        if (it != connections_.end()) { Retire(it->second.request_id); connections_.erase(it); }
+        if (it != connections_.end())
+        {
+            auto& connection = it->second;
+            const char* reason = connection.failure_reason;
+            if (!reason)
+            {
+                // LWS may expire its own HTTP timer before LWS_CALLBACK_TIMER.
+                const bool expired = connection.request_id && std::chrono::steady_clock::now() >=
+                    connection.started_at + std::chrono::seconds(options_.request_timeout_seconds);
+                reason = stopping_ ? "server_stopped" : expired ? "request_timeout" : "disconnected";
+            }
+            LogRequest(connection, false, reason);
+            Retire(connection.request_id);
+            connections_.erase(it);
+        }
         network_connections_.erase(wsi);
     }
 
@@ -231,7 +313,11 @@ private:
         auto& slot = it->second;
         slot.answered = true;
         const auto bytes = response.body.size() + header_bytes;
-        if (invalid || bytes > options_.max_total_response_bytes - response_bytes_) slot.close = true;
+        if (invalid || bytes > options_.max_total_response_bytes - response_bytes_)
+        {
+            slot.close = true;
+            slot.close_reason = invalid ? "invalid_response" : "response_budget_exceeded";
+        }
         else
         {
             slot.bytes = bytes;
@@ -253,7 +339,10 @@ private:
             auto connection = connections_.find(socket->second);
             if (connection == connections_.end()) continue;
             if (slot->second.close)
+            {
+                connection->second.failure_reason = slot->second.close_reason;
                 lws_set_timeout(socket->second, PENDING_TIMEOUT_USER_OK, LWS_TO_KILL_ASYNC);
+            }
             else if (slot->second.response)
             {
                 connection->second.response = std::move(*slot->second.response);
@@ -314,7 +403,7 @@ private:
             if (copied < 0) return false;
             request.headers.emplace(std::move(name), std::string(buffer.data(), copied));
         }
-#if defined(LWS_WITH_CUSTOM_HEADERS)
+#if defined(LWS_WITH_CUSTOM_HEADERS) && defined(PACKETIA_LWS_HAS_CUSTOM_HEADER_ENUMERATION)
         struct CustomHeaders { lws* wsi; HttpRequest* request; bool valid = true; } custom{wsi, &request};
         if (lws_hdr_custom_name_foreach(wsi, [](const char* name, int length, void* opaque) {
             auto& custom = *static_cast<CustomHeaders*>(opaque);
@@ -346,6 +435,7 @@ private:
         auto& connection = connections_[wsi];
         connection = {};
         connection.request_id = ++next_request_id_;
+        connection.started_at = std::chrono::steady_clock::now();
         sockets_.emplace(connection.request_id, wsi);
         {
             std::lock_guard<std::mutex> lock(mail_mutex_);
@@ -360,6 +450,8 @@ private:
         connection.request.method = methods[method];
         connection.head = method == LWSHUMETH_HEAD;
         connection.request.path.assign(uri, length);
+        connection.method = connection.request.method;
+        connection.path = connection.request.path.substr(0, connection.request.path.find_first_of("?#"));
         if (!ReadHeaders(wsi, connection.request)) return Error(wsi, connection, 400);
         const auto& headers = connection.request.headers;
         // This bounded JSON API adapter accepts Content-Length framing. Reject
@@ -382,6 +474,7 @@ private:
     int Complete(lws* wsi, Connection& connection)
     {
         const bool close = connection.close_after_response;
+        LogRequest(connection, true);
         Retire(connection.request_id);
         connection = {};
         if (close) return -1;
@@ -445,7 +538,13 @@ private:
         auto* self = static_cast<Impl*>(lws_context_user(lws_get_context(wsi)));
         if (!self) return 0;
         try { return self->Handle(wsi, reason, user, in, len); }
-        catch (...) { lwsl_err("Packetia: HTTP callback failed; closing connection\n"); return -1; }
+        catch (...)
+        {
+            const auto connection = self->connections_.find(wsi);
+            if (connection != self->connections_.end()) connection->second.failure_reason = "callback_failed";
+            LogServer(self->options_, BaseLogger::ERR, "http_callback_failed");
+            return -1;
+        }
     }
 
     int Handle(lws* wsi, lws_callback_reasons reason, void* user, void* in, std::size_t len)
@@ -470,6 +569,7 @@ private:
             if (connection.dispatched) return 0; // Error response awaiting writable.
             if (len > connection.expected_body - connection.request.body.size()) return Error(wsi, connection, 400);
             connection.request.body.append(static_cast<const char*>(in), len);
+            connection.received_body_bytes += len;
             return 0;
         }
         case LWS_CALLBACK_HTTP_BODY_COMPLETION:
@@ -485,9 +585,22 @@ private:
             return stopping_ ? -1 : 0;
         }
         case LWS_CALLBACK_HTTP_WRITEABLE:
-            return Write(wsi);
+        {
+            const auto result = Write(wsi);
+            auto connection = connections_.find(wsi);
+            if (result < 0 && connection != connections_.end() && connection->second.request_id &&
+                !connection->second.failure_reason)
+                connection->second.failure_reason = "write_failed";
+            return result;
+        }
         case LWS_CALLBACK_TIMER:
+        {
+            auto connection = connections_.find(wsi);
+            if (connection != connections_.end() && connection->second.request_id &&
+                !connection->second.failure_reason)
+                connection->second.failure_reason = "request_timeout";
             return -1; // Absolute request deadline, or idle keep-alive deadline.
+        }
         case LWS_CALLBACK_CLOSED_HTTP:
         case LWS_CALLBACK_WSI_DESTROY:
             Drop(wsi);

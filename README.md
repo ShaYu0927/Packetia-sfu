@@ -242,6 +242,16 @@ python3 deploy/cluster/deploy.py check
 
 替换示例域名和地址，详细端口、更新方式和客户端接入见 [Docker 部署](deploy/cluster/README.md)。
 
+只有公网 IP 时，可使用 Caddy 测试 CA 提供 HTTPS/WSS，并复用已加载的后端镜像：
+
+```sh
+python3 deploy/cluster/deploy.py init --domain '' --public-ip 203.0.113.10 --tls-mode internal
+python3 deploy/cluster/deploy.py up --single-sfu --recreate
+```
+
+客户端需导入 Caddy 根证书，导出和信任步骤见上述部署说明。
+反向代理提供后端 API 和信令入口，不包含测试网页；媒体直接通过 SFU 的 UDP 端口传输。
+
 单进程入口提供账号 API 和本地服务；会议创建、成员管理、节点分配和入房 JWT 签发由 `PacketiaControl` 提供。
 独立 `PacketiaSfu` 当前专注房间和媒体转发，本地录制、AI、混流、转码组件尚未接入该入口。
 接口和权限说明见[会议控制与节点调度](docs/reference.md#会议控制与节点调度)。
@@ -328,7 +338,16 @@ PACKETIA_LOG_MODE=console PACKETIA_LOG_FORMAT=json PACKETIA_LOG_LEVEL=info \
 
 原生程序默认使用 `both`（控制台和文件）、`text`、`info`；本地集群启动器固定使用控制台输出并保存各进程日志。
 Docker Compose 默认使用控制台 JSON 日志，交给 Docker 保存和轮转。
-配置、队列上限、丢弃统计、启动就绪事件和独立测试见[日志模块 README](log/README.md)。
+`PACKETIA_LOG_MODE` 决定写入控制台（`console`）、应用文件（`file`）还是两者（`both`）；
+应用文件默认为进程工作目录下的 `app.log`，可用 `PACKETIA_LOG_FILE` 指定路径。
+Docker 的 `json-file` 驱动保存控制台输出，与应用自身文件输出是两种机制。
+配置默认值见 [LoggerConfig.h](log/LoggerConfig.h)，结构化字段、队列和轮转实现见 [logger.h](log/logger.h)。
+
+HTTP 适配器复用该日志器，记录启动/停止、关键运行失败和请求终态。
+请求字段包括方法、路径、状态码、耗时和正文字节数；异步响应、重复回调和长连接不会重复记录同一次请求。
+普通请求使用 INFO，5xx 和传输故障使用 ERROR，成功的 `/healthz`、`/readyz` 使用 DEBUG。
+查询参数、正文、Authorization 和 Cookie 不写入日志；尚未写出完整响应头的中止请求状态码为 `null`。
+详细事件、查看和导出命令见 [Docker 日志说明](deploy/cluster/README.md#http-核心日志)。
 
 通过 `PACKETIA_QOS_LOG=1` 开启媒体诊断，配合 JSON 与 INFO 输出，记录下行连接约每秒一次的反馈、
 目标码率、实际发送完成速率与队列快照，以及轨道和探测状态事件。未知指标输出 `null`。
@@ -337,13 +356,27 @@ Docker Compose 默认使用控制台 JSON 日志，交给 Docker 保存和轮转
 
 ## 近期改动与验证
 
-### 2026-11-20：RR 回退的 AIMD 码率控制
+### 2026-11-23：公网反向代理、HTTP 日志与接口验证
 
-新增 `RrAimdRateController`，替换发送侧 `NetworkController` 在 RR 回退时逐反馈乘系数的码率调整。
-连续健康反馈按时间增加 20 kbps/s，Weak/Bad 按比例降低，并等待 RTT 相关观察窗口；重复或倒退时间不推进目标码率。
+- Docker 部署支持公网 IPv4 + Caddy 内部测试 CA，以及自定义 HTTPS/WSS 端口；`--single-sfu` 可只启动 Control、SFU A 和代理，已有镜像直接复用。
+- Caddy 为 IP 客户端设置 `default_sni`，解决无 SNI 且 Docker 内部地址与公网 IP 不同时的证书选择失败；80 端口跳转与准入返回的 WSS 地址均包含配置的公网 HTTPS 端口。
+- 补齐镜像的 `libswscale` 构建/运行依赖；HTTP 后端检测 libwebsockets 自定义请求头枚举 API，兼容 Debian bookworm 的 4.1 版本。
+- HTTP 适配器新增结构化生命周期、请求完成和中止日志，复用现有异步日志器；记录超时、提前断开、无效响应和响应预算不足等原因。
+- 新增 `scripts/check_public_api.py`：以独立账号/房间检查公开 API 和 WSS，报告脱敏；结束测试房间并撤销会话，随机账号记录保留。
+- 镜像导出包、构建目录、运行配置、密钥和测试产物不进入源码提交；镜像包同时从 Docker 构建上下文排除。
+
+验证记录：HTTP 集成测试 13 项及账号、路由测试通过；部署配置和无 SNI 的 IP TLS 回归通过。
+本轮公网接口测试覆盖 15 个公开 HTTP 方法/路径，97 次 HTTP 请求、13 次 WSS 请求和 12 项响应语义检查，合计 122 项通过。
+公网接口检查跳过了 TLS 证书校验；不包含真实音视频、弱网、并发容量或跨节点故障验证。
+当前 `/api/v1/metrics` 允许匿名读取，内部节点管理路由未暴露到 Caddy 公网入口。
+部署文件职责、端口映射、配置修改生效方式和日志导出见 [Docker 部署说明](deploy/cluster/README.md)。
+
+### 2026-11-23：移除缺失的独立 RR 控制器依赖
+
+发送侧恢复使用 `NetworkController` 内置的 RR 回退策略，移除缺失源文件的构建和头文件引用。
+每次反馈按网络质量调整目标：Excellent 增加 5%，Good 保持，Weak 降低 15%，Bad 降低 35%，并限制在配置范围内。
+该基础策略依赖反馈频率，不包含按时间增加和 RTT 冷却窗口。
 TWCC 目标优先并同步回退基准，结果继续输出给现有 Pacer；RR 不被当成有效链路容量用于订阅分配。
-新增 12 个回归测试，本机两个媒体测试入口合计 315 个内部用例通过；尚未进行浏览器弱网实测。
-算法公式、接线和限制见 [RR 回退的 AIMD 码率控制](docs/bitrate-control.md)。
 
 ### 2026-11-20：NACK 缺包调度与下行批量重传
 
@@ -521,7 +554,7 @@ ctest --test-dir build/dev --output-on-failure -R 'recording|mp4_reader'
 - [技术参考](docs/reference.md)：线程、网络、协议、媒体管理、控制面和详细验证记录。
 - [开发记录](docs/changelog.md)：历史变更与对应验证范围。
 - [运行指标](monitoring/README.md)：指标口径、采样和 HTTP 查询。
-- [日志模块](log/README.md)：结构化输出、节点身份、有界队列与轮转。
+- [日志实现](log/logger.h)：结构化输出、节点身份、有界队列与轮转；[Docker 日志说明](deploy/cluster/README.md#http-核心日志)提供 HTTP 事件和导出步骤。
 - [下行分配阅读指南](docs/downlink-allocation-livekit.md)：LiveKit 源码对照、分配阶段与预算移交算例。
 - [WebRTC 趋势检测学习指南](docs/webrtc-trendline.md)：固定版本源码、移植边界与算法阅读顺序。
 - [媒体质量诊断日志](docs/media-quality-diagnostics.md)：服务端采样、TWCC 协商、字段口径与实测记录。
@@ -531,7 +564,7 @@ ctest --test-dir build/dev --output-on-failure -R 'recording|mp4_reader'
 - [控制服务与媒体服务的职责边界](docs/control-media-boundaries.md)：状态归属、租约过期、探针语义与真实浏览器故障验证。
 - [FFmpeg 源码构建](third/ffmpeg/README.md)：本地编译、codec 组件选择、统一 CMake 接入及录制 / 转码验证。
 - [NACK 业务场景与代码阅读](docs/nack-recovery.md)：上行请求、下行重传、批次调度、恢复期限与当前边界。
-- [RR 回退的 AIMD 码率控制](docs/bitrate-control.md)：按时间升码率、RTT 观察窗口与实际发送接线。
+- [RR 回退实现](media/quality/NetworkController.cpp)：内置比例调整、TWCC 目标接入与 Pacer 输出。
 - [会议混流](service/ConferenceMixService/README.md)：任务、后端契约与输出边界。
 - [录像合成示例](service/RecordService/examples/README.md)：离线拼画面与混音实验。
 - [解包与弱网测试](Common/Depacketizer/Test/README.md)：H264 接收与恢复实验。

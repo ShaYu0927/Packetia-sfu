@@ -5,8 +5,13 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
+import socket
+import ssl
 import stat
+import subprocess
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -71,6 +76,57 @@ class ClusterDeploymentTest(unittest.TestCase):
         public = deploy.initialize(self.runtime, '203.0.113.10', 'rtc.example.com')
         self.assertEqual(deploy.compose_command(self.runtime, public).count('-f'), 2)
 
+    def test_public_ip_uses_https_proxy_and_test_ca(self):
+        values = deploy.initialize(self.runtime, '203.0.113.10', '')
+        self.assertEqual(values['PACKETIA_PUBLIC_HOST'], '203.0.113.10')
+        self.assertEqual(values['PACKETIA_TLS_MODE'], 'internal')
+        self.assertEqual(values['PACKETIA_TLS_CONFIG'], 'tls internal')
+        self.assertEqual(deploy.compose_command(self.runtime, values).count('-f'), 2)
+        for name in ('sfu-a', 'sfu-b'):
+            self.assertEqual(self.config(name)['signaling_url'], f'wss://203.0.113.10/{name}/webrtc')
+
+    def test_switching_ip_and_domain_updates_tls_without_rotating_credentials(self):
+        original = deploy.initialize(self.runtime, '203.0.113.10', '')
+        public = deploy.initialize(self.runtime, domain='rtc.example.com')
+        self.assertEqual(public['PACKETIA_TLS_MODE'], 'auto')
+        self.assertEqual(public['PACKETIA_TLS_CONFIG'], '')
+        internal = deploy.initialize(self.runtime, tls_mode='internal')
+        self.assertEqual(deploy.initialize(self.runtime)['PACKETIA_TLS_MODE'], 'internal')
+        self.assertEqual(internal['PACKETIA_PUBLIC_HOST'], 'rtc.example.com')
+        again = deploy.initialize(self.runtime, domain='')
+        self.assertEqual(again['PACKETIA_TLS_MODE'], 'internal')
+        for key in deploy.SECRET_KEYS:
+            self.assertEqual(original[key], again[key])
+
+    def test_invalid_certificate_modes_do_not_create_configuration(self):
+        for mode in ('auto', 'tls internal\nrespond broken'):
+            with self.subTest(mode=mode), self.assertRaises(ValueError):
+                deploy.initialize(self.runtime, '203.0.113.10', '', tls_mode=mode)
+        self.assertFalse(self.runtime.exists())
+
+    def test_custom_https_port_updates_both_signaling_routes_and_survives_reinitialization(self):
+        original = deploy.initialize(self.runtime, '203.0.113.10', '')
+        values = deploy.initialize(self.runtime, https_port=8443)
+        self.assertEqual(values['PACKETIA_HTTPS_PORT'], '8443')
+        self.assertEqual(deploy.public_origin(values), 'https://203.0.113.10:8443')
+        for name in ('sfu-a', 'sfu-b'):
+            self.assertEqual(self.config(name)['signaling_url'], f'wss://203.0.113.10:8443/{name}/webrtc')
+        again = deploy.initialize(self.runtime)
+        self.assertEqual(again['PACKETIA_HTTPS_PORT'], '8443')
+        for key in deploy.SECRET_KEYS:
+            self.assertEqual(original[key], again[key])
+        domain = deploy.initialize(self.runtime, domain='rtc.example.com')
+        self.assertEqual(deploy.public_origin(domain), 'https://rtc.example.com:8443')
+        default = deploy.initialize(self.runtime, https_port=443)
+        self.assertEqual(deploy.public_origin(default), 'https://rtc.example.com')
+        self.assertEqual(self.config('sfu-a')['signaling_url'], 'wss://rtc.example.com/sfu-a/webrtc')
+
+    def test_invalid_https_ports_do_not_create_configuration(self):
+        for port in (0, -1, 65536, 80, 'not-a-port'):
+            with self.subTest(port=port), self.assertRaises(ValueError):
+                deploy.initialize(self.runtime, '203.0.113.10', '', https_port=port)
+        self.assertFalse(self.runtime.exists())
+
     def test_invalid_addresses_and_domains_do_not_create_configuration(self):
         for address, domain in [('0.0.0.0', ''), ('224.0.0.1', ''), ('169.254.1.1', ''),
                                 ('127.0.0.1', 'rtc.example.com'), ('203.0.113.10', 'https://rtc.example.com'),
@@ -108,15 +164,39 @@ class ClusterDeploymentTest(unittest.TestCase):
     def test_up_builds_shared_image_before_starting_and_uses_generated_credentials(self, run, _which):
         values = deploy.initialize(self.runtime, '203.0.113.10', 'rtc.example.com')
         with mock.patch.dict(os.environ, {'PACKETIA_JWT_SECRET': 'unrelated-shell-key'}):
-            deploy.operate(self.runtime, argparse.Namespace(action='up', build=True, recreate=True, timeout=90))
+            deploy.operate(self.runtime, argparse.Namespace(action='up', build=True, recreate=True, timeout=90,
+                                                          single_sfu=False))
         commands = [call.args[0] for call in run.call_args_list]
         self.assertEqual(commands[0][-2:], ['config', '--quiet'])
         self.assertEqual(commands[1][-2:], ['build', 'control'])
-        self.assertEqual(commands[2][-6:], ['up', '-d', '--wait', '--wait-timeout', '90', '--force-recreate'])
+        self.assertEqual(commands[2][-7:], ['up', '-d', '--no-build', '--wait', '--wait-timeout', '90', '--force-recreate'])
         self.assertEqual(commands[3][-1], 'ps')
         for call in run.call_args_list:
             self.assertFalse(call.kwargs.get('shell', False))
             self.assertEqual(call.kwargs['env']['PACKETIA_JWT_SECRET'], values['PACKETIA_JWT_SECRET'])
+
+    @mock.patch.object(deploy.shutil, 'which', return_value='/mock/docker')
+    @mock.patch.object(deploy.subprocess, 'run')
+    def test_single_sfu_public_start_reuses_image_and_does_not_start_sfu_b(self, run, _which):
+        deploy.initialize(self.runtime, '203.0.113.10', '')
+        deploy.operate(self.runtime, argparse.Namespace(action='up', build=False, recreate=True, timeout=120,
+                                                      single_sfu=True))
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertEqual(len(commands), 3)
+        self.assertIn('compose.public.yaml', ' '.join(commands[1]))
+        self.assertEqual(commands[1][-3:], ['control', 'sfu-a', 'edge'])
+        self.assertIn('--no-build', commands[1])
+        self.assertNotIn('sfu-b', commands[1])
+
+    @mock.patch.object(deploy.shutil, 'which', return_value='/mock/docker')
+    @mock.patch.object(deploy.subprocess, 'run')
+    def test_single_sfu_check_does_not_require_sfu_b(self, run, _which):
+        deploy.initialize(self.runtime, '203.0.113.10', '')
+        deploy.operate(self.runtime, argparse.Namespace(action='check', single_sfu=True))
+        self.assertEqual(len(run.call_args_list), 3)
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertTrue(any('http://127.0.0.1:19080/readyz' in command for command in commands))
+        self.assertFalse(any('sfu-b' in command for command in commands))
 
     @mock.patch.object(deploy.shutil, 'which', return_value='/mock/docker')
     @mock.patch.object(deploy.subprocess, 'run')
@@ -127,6 +207,71 @@ class ClusterDeploymentTest(unittest.TestCase):
         self.assertEqual(command[-1], 'down')
         self.assertNotIn('--volumes', command)
         self.assertNotIn('-v', command)
+
+
+CADDY_BINARY = os.environ.get('PACKETIA_CADDY_BINARY') or shutil.which('caddy')
+
+
+@unittest.skipUnless(CADDY_BINARY, 'set PACKETIA_CADDY_BINARY or install caddy for the IP TLS regression')
+class PublicIpTlsTest(unittest.TestCase):
+    def test_no_sni_client_behind_port_mapping_receives_the_public_ip_certificate(self):
+        # The public address differs from the listening address, as with Docker
+        # NAT. Testing a 127.0.0.1 certificate on loopback hides this failure.
+        public_ip = '203.0.113.10'
+        with tempfile.TemporaryDirectory(prefix='packetia-caddy-ip-test-') as temporary:
+            directory = Path(temporary)
+            with socket.socket() as tls_listener, socket.socket() as http_listener:
+                tls_listener.bind(('127.0.0.1', 0))
+                http_listener.bind(('127.0.0.1', 0))
+                tls_port = tls_listener.getsockname()[1]
+                http_port = http_listener.getsockname()[1]
+            source = (ROOT / 'deploy/cluster/Caddyfile').read_text()
+            source = source.replace('skip_install_trust',
+                f'skip_install_trust\n\tadmin off\n\thttp_port {http_port}\n\thttps_port {tls_port}'
+                '\n\tdefault_bind 127.0.0.1')
+            config = directory / 'Caddyfile'
+            config.write_text(source)
+            environment = dict(os.environ, PACKETIA_PUBLIC_HOST=public_ip, PACKETIA_HTTPS_PORT='8443',
+                PACKETIA_TLS_CONFIG='tls internal', XDG_DATA_HOME=str(directory / 'data'),
+                XDG_CONFIG_HOME=str(directory / 'config'))
+            with (directory / 'caddy.log').open('w') as log:
+                process = subprocess.Popen([CADDY_BINARY, 'run', '--config', str(config), '--adapter', 'caddyfile'],
+                    env=environment, stdin=subprocess.DEVNULL, stdout=log, stderr=log)
+                try:
+                    ca = directory / 'data/caddy/pki/authorities/local/root.crt'
+
+                    def request():
+                        context = ssl.create_default_context(cafile=str(ca))
+                        context.check_hostname = False
+                        with socket.create_connection(('127.0.0.1', tls_port), timeout=1) as connection:
+                            with context.wrap_socket(connection, server_hostname=None) as tls:
+                                certificate = tls.getpeercert()
+                                tls.sendall(f'GET / HTTP/1.1\r\nHost: {public_ip}:8443\r\nConnection: close\r\n\r\n'.encode())
+                                response = tls.recv(4096)
+                        return certificate, response
+
+                    deadline = time.monotonic() + 15
+                    while True:
+                        if process.poll() is not None:
+                            self.fail((directory / 'caddy.log').read_text())
+                        # Wait for the CA and managed leaf certificate to exist
+                        # before testing certificate selection without SNI.
+                        certificates = directory / 'data/caddy/certificates'
+                        if ca.is_file() and any(certificates.rglob(f'{public_ip}.crt')):
+                            break
+                        if time.monotonic() >= deadline:
+                            self.fail((directory / 'caddy.log').read_text())
+                        time.sleep(0.05)
+                    certificate, response = request()
+                    self.assertIn(('IP Address', public_ip), certificate['subjectAltName'])
+                    self.assertTrue(response.startswith(b'HTTP/1.1 404'), response)
+                finally:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait()
 
 
 if __name__ == '__main__':
