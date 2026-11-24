@@ -100,10 +100,11 @@ struct Subscription
 };
 
 // 订阅者连接协商出的下行参数，在创建转发关系前配置。
+// 连接由会话拥有；闲置的协商信息不能延长连接寿命。
 struct SubscriptionParameters
 {
     rtsp::RtpSenderTrackConfig config;
-    std::shared_ptr<IMediaTransport> transport;
+    std::weak_ptr<IMediaTransport> transport;
     CodecId codec = CodecId::Unknown;
 };
 

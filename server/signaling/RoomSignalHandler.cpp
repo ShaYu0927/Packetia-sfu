@@ -1108,8 +1108,10 @@ void RoomSignalHandler::LeaveRoom(const std::string& connection)
 void RoomSignalHandler::RemoveSession(const std::string& connection)
 {
     const auto key = connection;
-    LeaveRoom(key);
+    // 业务身份结束前先关闭媒体入口与发送队列；仍在房间中时撤销精确的
+    // 发布/订阅绑定，最后再移除成员。临时信令断开不走这条路径。
     RemoveMediaSession(key);
+    LeaveRoom(key);
 }
 
 void RoomSignalHandler::RemoveMediaSession(const std::string& connection, std::optional<bool> subscriber)
@@ -1128,6 +1130,10 @@ void RoomSignalHandler::RemoveMediaSession(const std::string& connection, std::o
     if (found->second.Empty()) sessions_.erase(found);
     if (!session) return;
     if (session->capacity_reserved) capacity_->ReleaseMedia();
+    // 先关发送闸门和 Pacer，再关闭 ICE/DTLS/SRTP，避免拆轨道期间继续出包。
+    // Close 的异步 stop 只是兜底；此处已在 owner 上，必须同步完成协议关闭。
+    if (session->transport) session->transport->Close();
+    if (session->rtc) session->rtc->stop();
     const auto member = memberships_.find(connection);
     if (member != memberships_.end() && session->room_binding)
     {
@@ -1136,8 +1142,6 @@ void RoomSignalHandler::RemoveMediaSession(const std::string& connection, std::o
             member->second->room->UnsubscribeTrack(member->second->participant->Id(), track);
         member->second->participant->UnbindMediaSession(session->room_binding);
     }
-    if (session->rtc) session->rtc->stop();
-    if (session->transport) session->transport->Close();
     if (mux_) mux_->Unregister(session->ufrag);
     if (session->endpoint_registered) utils::EndpointManager::Instance().Remove(session->id);
     if (session->endpoint) session->endpoint->Stop();

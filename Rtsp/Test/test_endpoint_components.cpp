@@ -50,6 +50,74 @@ TEST(EndpointComponents, DownlinkOwnerClosesRetainedRoutesAndRemovesFeedbackRegi
     EXPECT_EQ(transport->closed, 0U);
 }
 
+TEST(EndpointComponents, NegotiatedParametersDoNotOwnTheTransport)
+{
+    rtsp::RtcpDispatcher dispatcher;
+    media::endpoint::DownlinkTrackManager downlinks;
+    downlinks.SetDispatcher(&dispatcher);
+    rtsp::RtpSenderTrackConfig config;
+    config.local_ssrc = 777;
+    auto transport = std::make_shared<TestTransport>();
+    std::weak_ptr<IMediaTransport> weak = transport;
+    ASSERT_TRUE(downlinks.Configure("camera", config, transport, CodecId::H264));
+    transport.reset();
+    EXPECT_TRUE(weak.expired());
+
+    auto source = std::make_shared<media::SfuEndpoint>(1);
+    auto destination = std::make_shared<media::SfuEndpoint>(2);
+    auto route = std::make_shared<media::endpoint::Subscription>();
+    route->source = source;
+    route->destination = destination;
+    ::TrackInfo info;
+    info.codec_id = CodecId::H264;
+    info.clock_rate = 90000;
+    EXPECT_FALSE(downlinks.Subscribe("camera", info, {}, route, {}));
+    EXPECT_EQ(downlinks.Count(), 0U);
+    EXPECT_FALSE(route->sender);
+
+    // Expired negotiation must not reserve an SSRC forever.
+    auto replacement = std::make_shared<TestTransport>();
+    EXPECT_TRUE(downlinks.Configure("replacement", config, replacement, CodecId::H264));
+}
+
+TEST(EndpointComponents, UnsubscribeRetainsNegotiationWithoutKeepingAnUnusedTransportAlive)
+{
+    rtsp::RtcpDispatcher dispatcher;
+    media::endpoint::DownlinkTrackManager downlinks;
+    downlinks.SetDispatcher(&dispatcher);
+    auto source = std::make_shared<media::SfuEndpoint>(1);
+    auto destination = std::make_shared<media::SfuEndpoint>(2);
+    auto transport = std::make_shared<TestTransport>();
+    std::weak_ptr<IMediaTransport> weak = transport;
+    rtsp::RtpSenderTrackConfig config;
+    config.local_ssrc = 777;
+    ASSERT_TRUE(downlinks.Configure("camera", config, transport, CodecId::H264));
+    ::TrackInfo info;
+    info.codec_id = CodecId::H264;
+    info.clock_rate = 90000;
+    const auto make_route = [&] {
+        auto route = std::make_shared<media::endpoint::Subscription>();
+        route->source = source;
+        route->destination = destination;
+        return route;
+    };
+    auto old = make_route();
+    ASSERT_TRUE(downlinks.Subscribe("camera", info, {}, old, {}));
+    ASSERT_TRUE(downlinks.Unsubscribe("camera"));
+    EXPECT_TRUE(old->Closed());
+    EXPECT_EQ(transport->closed, 0U); // Other tracks may still use this connection.
+    auto current = make_route();
+    ASSERT_TRUE(downlinks.Subscribe("camera", info, {}, current, {}));
+    EXPECT_TRUE(old->Closed()); // Reusing the ID never reopens the old gate.
+    transport.reset();
+    EXPECT_FALSE(weak.expired()); // Active routes hold the transport while in use.
+    ASSERT_TRUE(downlinks.Unsubscribe("camera"));
+    old.reset();
+    current.reset();
+    EXPECT_TRUE(weak.expired()); // Retained SDP parameters alone are not owners.
+    EXPECT_FALSE(downlinks.Unsubscribe("camera"));
+}
+
 TEST(EndpointComponents, ReceiveFeedbackReportsTheReceivedSourceWithTheLocalRtcpIdentity)
 {
     ::TrackInfo info;

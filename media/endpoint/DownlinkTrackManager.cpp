@@ -139,9 +139,10 @@ bool DownlinkTrackManager::Subscribe(const std::string& id, const ::TrackInfo& s
         params->second.config.sample_rate != static_cast<int>(source_info.clock_rate)) return false;
     const auto source = route->source.lock();
     const auto destination = route->destination.lock();
-    if (!source || !destination) return false;
-    const auto transport_id = params->second.transport->Id();
-    const auto controller = params->second.transport->GetSendSideController();
+    const auto transport = params->second.transport.lock();
+    if (!source || !destination || !transport || transport->IsClosed()) return false;
+    const auto transport_id = transport->Id();
+    const auto controller = transport->GetSendSideController();
     const auto existing = transports_.find(transport_id);
     if (existing != transports_.end() && existing->second.controller != controller) return false;
     if (source_info.ssrc) route->source_ssrc = source_info.ssrc;
@@ -160,7 +161,7 @@ bool DownlinkTrackManager::Subscribe(const std::string& id, const ::TrackInfo& s
         route->transport_id = transport_id;
         route->codec = source_info.codec_id;
         route->audio = source_info.codec_id != CodecId::H264 && source_info.codec_id != CodecId::H265;
-        route->send_transport = std::make_shared<ConsumerTransport>(params->second.transport, route);
+        route->send_transport = std::make_shared<ConsumerTransport>(transport, route);
         route->sender = std::make_shared<rtsp::RtpSenderTrack>(params->second.config, route->send_transport);
         route->sender->SetKeyFrameRequestCallback(std::move(callbacks.request_keyframe));
         route->sender->SetRetransmitScheduler(std::move(callbacks.schedule_retransmit));
@@ -170,7 +171,7 @@ bool DownlinkTrackManager::Subscribe(const std::string& id, const ::TrackInfo& s
         {
             auto& group = transports_[transport_id];
             group.controller = controller;
-            group.transport = params->second.transport;
+            group.transport = transport;
             group.transport_id = transport_id;
             if (controller && schedule_) group.observer = controller->AddBudgetObserver(schedule_);
         }
@@ -226,6 +227,12 @@ void DownlinkTrackManager::Prune()
             const auto id = it++->first;
             Unsubscribe(id);
         }
+        else ++it;
+    }
+    // 保留仍有连接的协商参数以支持重新订阅；过期连接不再占用 SSRC。
+    for (auto it = parameters_.begin(); it != parameters_.end();)
+    {
+        if (it->second.transport.expired()) it = parameters_.erase(it);
         else ++it;
     }
 }

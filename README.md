@@ -60,6 +60,9 @@ RTP 接收 / 解包 → 完整编码帧 → EncodedFrameRouter
 `MediaProcessingServices` 描述组件集合与输出路由；默认工厂只创建对象，实际线程和任务由各服务管理。
 服务启动失败会回滚，停机按依赖顺序排空资源。
 
+房间、成员、媒体会话和发送队列的归属及释放顺序见[资源生命周期](media/endpoint/RESOURCE_LIFECYCLE.md)。
+临时 WebSocket 断开保留成员及媒体等待恢复；退出或结束房间时，先关闭发送与协议，再解除轨道关系和成员身份。
+
 | 目录 | 主要职责 |
 | --- | --- |
 | `server/` | 应用启动、信令接入、HTTP 接口和进程组装 |
@@ -355,6 +358,17 @@ HTTP 适配器复用该日志器，记录启动/停止、关键运行失败和�
 字段口径和与浏览器报告的关联方法见[媒体质量诊断日志](docs/media-quality-diagnostics.md)。
 
 ## 近期改动与验证
+
+### 2026-11-24：房间与媒体资源归属、释放顺序
+
+- 完整退出时先关闭 WebRTC 发送适配器和 Pacer，再在房间 owner 上同步停止 ICE、DTLS 与 SRTP，随后撤销轨道关系、端点及发布流注册，最后移除成员。
+- 下行协商参数改为弱引用传输对象，活动订阅持有发送所需引用；闲置配置不再延长连接寿命，过期配置在清理时释放 SSRC 占位。
+- 临时 WebSocket 断开仍保留成员与媒体等待恢复；单条端点订阅取消后可复用有效协商参数，其他轨道共用的连接继续运行。
+- 新增传输引用释放与重新订阅隔离测试；结束房间测试覆盖活动发布端和断线订阅端，并保留外部端点引用检查显式停止与注册清理。
+
+本机 macOS 上 `test_rtp_input`、`webrtc_service`、`webrtc_members`、`webrtc_control`、`webrtc_duplex`、
+`webrtc_audio_controls`、`webrtc_twcc` 共 7 个 CTest 入口通过；本轮未执行公网或容量测试。
+账号注销与已有 SFU 成员清理尚未联动。对象归属、操作差异、关闭顺序及复测命令见[资源生命周期](media/endpoint/RESOURCE_LIFECYCLE.md)。
 
 ### 2026-11-23：公网反向代理、HTTP 日志与接口验证
 

@@ -1612,6 +1612,8 @@ void RunRoomOwners()
 void RunBackendControls()
 {
     const auto baseline = utils::EndpointManager::Instance().Size();
+    auto& streams = media::MediaStreamRegistry::Instance();
+    const auto streamBaseline = streams.Size();
     EventLoop loop(3);
     Require(loop.Start(), "control loop did not start");
     config::AppConfig config;
@@ -1630,7 +1632,8 @@ void RunBackendControls()
     };
     const auto joined = join(member, "member", "epoch-one");
     Require(joined.value("type", "") == "joined", "assigned join failed");
-    Require(join(peer, "peer", "epoch-one").value("type", "") == "joined", "assigned peer join failed");
+    const auto peerJoined = join(peer, "peer", "epoch-one");
+    Require(peerJoined.value("type", "") == "joined", "assigned peer join failed");
     Require(service->ControlRoom("backend", "epoch-wrong", {{"type", "end_room"}}).value("code", "") == "stale_assignment",
         "wrong epoch ended active room");
     Require(service->ControlRoom("backend", "epoch-one", {{"type", "reclaim_room"}}).at("released") == false,
@@ -1643,12 +1646,42 @@ void RunBackendControls()
         {"participant_id", joined.at("participant_id")}, {"name", "backend name"}, {"permissions", {{"can_publish", false}}}});
     Require(updated.at("media_stopped") == true && !utils::EndpointManager::Instance().Find(publication.at("session_id").get<uint64_t>()),
         "backend revoke retained media");
+    // End a room with a live publisher and a disconnected subscriber. Keep
+    // endpoint references to verify logical shutdown independently of destruction.
+    const auto peerPublication = peer.Request({{"type", "publish"}, {"sdp", Offer()}});
+    CheckAnswer(peerPublication, config.udp_port);
+    auto browser = ParseDescription({{"sdp", Offer()}}, sdp::SdpType::Offer);
+    Json bindings = Json::array();
+    for (auto& media : browser.medias)
+    {
+        media.direction = sdp::MediaDirection::RecvOnly;
+        media.ssrcs.clear(); media.ssrcGroups.clear();
+        bindings.push_back({{"track_id", peerJoined.at("participant_id").get<std::string>() + ":" + media.mid}, {"mid", media.mid}});
+    }
+    const auto subscription = member.Request({{"type", "subscribe"}, {"sdp", sdp::Sdp::Serialize(browser)}, {"tracks", bindings}});
+    Require(subscription.value("type", "") == "answer", subscription.dump().c_str());
+    const auto source = std::dynamic_pointer_cast<media::SfuEndpoint>(utils::EndpointManager::Instance().Find(peerPublication.at("session_id").get<uint64_t>()));
+    const auto destination = std::dynamic_pointer_cast<media::SfuEndpoint>(utils::EndpointManager::Instance().Find(subscription.at("session_id").get<uint64_t>()));
+    Require(source && destination && destination->SubscriptionCount() == 2, "backend cleanup routes missing");
     member.Close();
     const auto deadline = std::chrono::steady_clock::now() + 2s;
     while (!service->GetStats().reconnecting_participants && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(10ms);
+    Require(service->GetStats().reconnecting_participants == 1 && destination->SubscriptionCount() == 2,
+        "temporary signaling close released subscriber resources");
     Require(service->ControlRoom("backend", "epoch-one", {{"type", "reclaim_room"}}).at("released") == false,
         "reclaimed room during recovery grace");
     Require(service->ControlRoom("backend", "epoch-one", {{"type", "end_room"}}).at("released") == true, "backend end failed");
+    Require(source->GetState() == utils::EndpointBase::State::kStopped &&
+        destination->GetState() == utils::EndpointBase::State::kStopped, "room end left an endpoint running");
+    Require(source->PublishedTrackCount() == 0 && destination->SubscriptionCount() == 0,
+        "room end retained media tracks");
+    Require(utils::EndpointManager::Instance().Size() == baseline && streams.Size() == streamBaseline,
+        "room end retained registered media resources");
+    // Coordinator metrics arrive asynchronously from the room owner.
+    const auto releasedDeadline = std::chrono::steady_clock::now() + 2s;
+    while (service->GetStats().reconnecting_participants && std::chrono::steady_clock::now() < releasedDeadline)
+        std::this_thread::sleep_for(10ms);
+    Require(service->GetStats().reconnecting_participants == 0, "room end retained a reconnecting member");
     Require(peer.Receive().value("type", "") == "removed", "end omitted terminal notification");
     Require(stale.Request({{"type", "resume"}, {"room_id", "backend"}, {"token", token("member", "epoch-one")},
         {"participant_id", joined.at("participant_id")}, {"resume_token", joined.at("resume_token")}}).value("type", "") == "error",

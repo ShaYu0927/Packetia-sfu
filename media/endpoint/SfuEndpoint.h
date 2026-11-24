@@ -66,6 +66,7 @@ public:
 
     // 先配置订阅者协商出的下行参数，再由 Room::SubscribeTrack 建立关系。
     // 输出 PT 和头扩展编号以订阅者协商结果为准。
+    // 调用方拥有 transport；闲置配置仅弱引用它，活动路由才持有发送所需引用。
     bool ConfigureSubscription(const std::string& id, const rtsp::RtpSenderTrackConfig& config, std::shared_ptr<IMediaTransport> transport, CodecId codec);
 
     // 当前端点订阅 source 的指定轨道，创建独立发送器和可选的全局消费闸门。
