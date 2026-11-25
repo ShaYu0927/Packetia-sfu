@@ -6,6 +6,7 @@
 #include "ServiceManager.h"
 #include "RuntimeConfig.h"
 #include "AccountController.h"
+#include "AgentController.h"
 #include "ApiResponse.h"
 #include "ApiServer.h"
 #include "HttpServer.h"
@@ -23,7 +24,9 @@ struct ControlApp::Impl
     std::shared_ptr<service::MonitorService> monitor = std::make_shared<service::MonitorService>(metrics_context.Registry());
     EventLoop loop{1};
     std::shared_ptr<service::account::AccountService> accounts;
+    std::shared_ptr<const api::BusinessAccessPolicy> business_policy = std::make_shared<api::BusinessAccessPolicy>();
     std::shared_ptr<service::meeting::MeetingModule> meetings;
+    std::shared_ptr<service::ai::VoiceAgentService> agents;
     service::ServiceManager services;
     std::unique_ptr<api::ApiServer> public_api, internal_api;
     explicit Impl(const std::string& path)
@@ -39,9 +42,10 @@ struct ControlApp::Impl
         if (cluster_path.empty()) throw std::runtime_error("invalid cluster database");
         accounts = std::make_shared<service::account::AccountService>(options,std::make_shared<service::account::SqliteAccountStore>(), std::make_shared<service::account::ScryptPasswordHasher>());
         meetings = std::make_shared<service::meeting::MeetingModule>(service::meeting::MeetingModuleOptions{cluster_path, JwtIssuer(), JwtSecret()}, MakeNodeCommandSender(NodeSecrets()));
-        if (!services.Register(monitor) || !services.Register(meetings))
+        agents = std::make_shared<service::ai::VoiceAgentService>(meetings);
+        if (!services.Register(monitor) || !services.Register(meetings) || !services.Register(agents))
             throw std::runtime_error("cannot register control services");
-        meeting::RoomController rooms(accounts, meetings);
+        meeting::RoomController rooms(accounts, meetings, business_policy);
         NodeController nodes(meetings, NodeSecrets());
         protocol::http::HttpServerOptions http;
         http.enabled = true;
@@ -49,7 +53,8 @@ struct ControlApp::Impl
         http.listen_port = Port(config, "http_port");
         http.max_body_bytes = 256 * 1024;
         api::ApiRouter::Builder routes;
-        api::AccountController(accounts).RegisterRoutes(routes);
+        api::AccountController(accounts, business_policy).RegisterRoutes(routes);
+        api::AgentController(accounts, agents).RegisterRoutes(routes);
         api::MetricsController(monitor).RegisterRoutes(routes);
         const api::ApiRouter::Handler readiness = [module = meetings](const auto&) {
             const auto health = module->Health();

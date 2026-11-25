@@ -23,6 +23,7 @@ public:
     ServiceType Type() const override { return ServiceType::Meeting; }
 
     std::string CreateRoom(const std::string& owner);
+    void RequireRoomOwner(const std::string& room, const std::string& owner);
     void SetMemberRole(const std::string& room, const std::string& owner, const std::string& user, bool can_publish);
     RoomAdmission Admit(const std::string& room, const std::string& user, const std::string& name);
     RoomCommandResult ManageRoom(const std::string& room, const std::string& owner, nlohmann::json command);

@@ -48,6 +48,18 @@ public:
     std::vector<signaling::RoomRelease> ReleasedRooms();
 
 private:
+    // 统一初始化入口，按网络、鉴权、房间、信令的依赖顺序创建并启动组件。
+    bool InitializeComponents();
+    bool InitializeNetwork(const std::shared_ptr<utils::ChannelBudget>& udp_budget,
+                           uint16_t& port, int& address_family);
+    bool InitializeRoomOwners(const std::vector<std::shared_ptr<TaskScheduler>>& executors,
+                              const std::shared_ptr<service::auth::AuthService>& auth_service,
+                              const std::shared_ptr<utils::ChannelBudget>& udp_budget,
+                              uint16_t port, int address_family);
+    void InitializeRoomControl(signaling::RoomOwner& room,
+                               const std::shared_ptr<utils::ChannelBudget>& control_budget);
+    bool InitializeSignaling(const std::shared_ptr<service::auth::AuthService>& auth_service);
+
     EventLoop* const loop_;
     const config::AppConfig config_;
     const std::shared_ptr<media::IEncodedFramePublisher> publisher_;

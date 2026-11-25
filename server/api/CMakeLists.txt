@@ -3,14 +3,22 @@ target_compile_features(packetia_api PUBLIC cxx_std_17)
 target_include_directories(packetia_api PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../../third)
 target_link_libraries(packetia_api PUBLIC packetia_http utils)
 
-add_library(packetia_account_api STATIC AccountController.cpp AccountApiServer.cpp)
+add_library(packetia_account_api STATIC AccountController.cpp AccountApiServer.cpp BusinessAccessPolicy.cpp)
 target_include_directories(packetia_account_api PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 target_link_libraries(packetia_account_api PUBLIC packetia_account packetia_api)
 
 add_library(packetia_monitoring_api STATIC MetricsController.cpp MetricsJsonEncoder.cpp)
 target_link_libraries(packetia_monitoring_api PUBLIC packetia_api packetia_monitor_service)
 
+add_library(packetia_agent_api STATIC AgentController.cpp)
+target_include_directories(packetia_agent_api PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../cluster)
+target_link_libraries(packetia_agent_api PUBLIC packetia_api packetia_account packetia_agent_service)
+
 if(BUILD_TESTING)
+    add_executable(test_voice_agent test/test_voice_agent.cpp)
+    target_link_libraries(test_voice_agent PRIVATE packetia_agent_api GTest::gtest_main)
+    add_test(NAME VoiceAgentUnitTest COMMAND test_voice_agent)
+    set_tests_properties(VoiceAgentUnitTest PROPERTIES TIMEOUT 30)
     add_executable(test_account_api test/test_account_api.cpp)
     target_link_libraries(test_account_api PRIVATE packetia_account_api GTest::gtest_main)
     add_test(NAME AccountApiFrameworkUnitTest COMMAND test_account_api)

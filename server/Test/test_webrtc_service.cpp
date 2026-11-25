@@ -1827,7 +1827,8 @@ void RunTransportCcNegotiation()
     const auto joined = Join(publisher, "twcc-publisher", "twcc");
     Join(viewer, "twcc-viewer", "twcc", false, true);
     // The source has no TWCC: downstream capabilities must not depend on it.
-    CheckAnswer(publisher.Request({{"type", "publish"}, {"sdp", Offer()}}), config.udp_port);
+    const auto publication = publisher.Request({{"type", "publish"}, {"sdp", Offer()}});
+    CheckAnswer(publication, config.udp_port);
     constexpr const char* uri = "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01";
     for (int scenario = 0; scenario < 4; ++scenario)
     {
@@ -1869,6 +1870,52 @@ void RunTransportCcNegotiation()
         }
         Require(viewer.Request({{"type", "unsubscribe"}, {"session_id", reply.at("session_id")}})
             .value("type", "") == "unsubscribed", "could not replace TWCC subscription");
+    }
+    Require(publisher.Request({{"type", "unpublish"}, {"session_id", publication.at("session_id")}})
+        .value("type", "") == "unpublished", "could not replace TWCC publication");
+    // Exercise the actual publish entry point for both bundled audio and video.
+    // The last two offers use an unsupported two-byte ID or the wrong direction.
+    for (int scenario = 0; scenario < 6; ++scenario)
+    {
+        const bool extension = scenario == 0 || scenario == 2 || scenario >= 4;
+        const bool feedback = scenario == 0 || scenario == 1 || scenario >= 4;
+        const bool accepted_extension = extension && scenario < 4;
+        auto offer = ParseDescription({{"sdp", Offer()}}, sdp::SdpType::Offer);
+        for (auto& media : offer.medias)
+        {
+            media.direction = sdp::MediaDirection::SendOnly;
+            media.headerExtensions = {{7, "urn:ietf:params:rtp-hdrext:sdes:mid", sdp::MediaDirection::SendOnly, {}}};
+            if (extension) media.headerExtensions.push_back({scenario == 4 ? 20 : 5, uri,
+                scenario == 5 ? sdp::MediaDirection::RecvOnly : sdp::MediaDirection::SendOnly, {}});
+            auto codec = media.codecs.front();
+            codec.payloadType = media.media == "video" ? 120 : 112;
+            if (feedback) codec.rtcpFeedback.emplace_back("transport-cc");
+            sdp::Sdp::SetCodecs(media, {codec});
+        }
+        const auto reply = publisher.Request({{"type", "publish"}, {"sdp", sdp::Sdp::Serialize(offer)}});
+        Require(reply.value("type", "") == "answer", reply.dump().c_str());
+        const auto answer = ParseDescription(reply, sdp::SdpType::Answer);
+        Require(answer.medias.size() == 2, "publish answer lost audio or video");
+        for (const auto& media : answer.medias)
+        {
+            Require(media.port && media.direction == sdp::MediaDirection::RecvOnly, "TWCC publication was rejected");
+            Require(media.codecs.size() == 1 && media.codecs.front().payloadType == (media.media == "video" ? 120 : 112),
+                "publish answer did not preserve the offered payload type");
+            const auto mid = std::find_if(media.headerExtensions.begin(), media.headerExtensions.end(),
+                [](const auto& item) { return item.uri == "urn:ietf:params:rtp-hdrext:sdes:mid"; });
+            Require(mid != media.headerExtensions.end() && mid->id == 7, "publish answer lost the offered MID ID");
+            const auto cc = std::find_if(media.headerExtensions.begin(), media.headerExtensions.end(),
+                [&](const auto& item) { return item.uri == uri; });
+            Require((cc != media.headerExtensions.end()) == accepted_extension, "publish answer invented or lost the TWCC extension");
+            if (accepted_extension) Require(cc->id == 5 && cc->direction == sdp::MediaDirection::RecvOnly,
+                "publish answer did not preserve the TWCC ID and reverse its direction");
+            const auto& selected = media.codecs.front().rtcpFeedback;
+            const bool has_feedback = std::any_of(selected.begin(), selected.end(),
+                [](const auto& item) { return item.type == "transport-cc"; });
+            Require(has_feedback == (accepted_extension && feedback), "publish TWCC feedback requires both negotiated capabilities");
+        }
+        Require(publisher.Request({{"type", "unpublish"}, {"session_id", reply.at("session_id")}})
+            .value("type", "") == "unpublished", "could not replace TWCC publication");
     }
     service->Stop();
     WaitForEndpoints(baseline);
@@ -2011,7 +2058,7 @@ int main(int argc, char** argv)
     try
     {
         if (argc == 2 && std::string(argv[1]) == "--twcc")
-        { RunTransportCcNegotiation(); std::cout << "PASS downstream TWCC negotiation and RR compatibility\n"; return 0; }
+        { RunTransportCcNegotiation(); std::cout << "PASS upstream/downstream TWCC negotiation and RR compatibility\n"; return 0; }
         if (argc == 2 && std::string(argv[1]) == "--members")
         {
             RunMembers();

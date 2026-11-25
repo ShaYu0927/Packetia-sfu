@@ -2,6 +2,7 @@
 #define PACKETIA_SERVER_API_ACCOUNT_CONTROLLER_H_
 
 #include "ApiRouter.h"
+#include "BusinessAccessPolicy.h"
 
 #include <memory>
 
@@ -13,7 +14,8 @@ namespace server::api
 class AccountController final
 {
 public:
-    explicit AccountController(std::shared_ptr<service::account::AccountService> accounts);
+    explicit AccountController(std::shared_ptr<service::account::AccountService> accounts,
+        std::shared_ptr<const BusinessAccessPolicy> policy = std::make_shared<BusinessAccessPolicy>());
 
     void RegisterRoutes(ApiRouter::Builder& router) const;
 
@@ -22,6 +24,7 @@ private:
     protocol::http::HttpResponse Login(const ApiRequest& request) const;
 
     const std::shared_ptr<service::account::AccountService> accounts_;
+    const std::shared_ptr<const BusinessAccessPolicy> policy_;
 };
 
 }

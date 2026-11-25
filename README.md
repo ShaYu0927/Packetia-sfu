@@ -31,6 +31,7 @@
 | 视频转码 | FFmpeg 软件编解码，支持 H264/H265/VP8/VP9/AV1，一次解码生成多档输出 | 依赖本机 FFmpeg 实现；尚无远程任务 API、派生流 RTP 输出与浏览器播放闭环 |
 | 混流 | 输入配置、任务生命周期、有界队列及输出接口 | 实际拼画面、混音和编解码后端需要实现 `IMixBackend` |
 | AI | 模型提供者接口、请求编排与帧处理入口 | 默认提供者未配置模型，不会执行实际推理 |
+| 语音 Agent 框架 | Control 内的会话创建、查询、停止与房主权限检查 | 仅管理内存元数据，Agent 入房、gRPC、音频及 ASR/LLM/TTS 尚未接通 |
 | 控制面 | 账号与会话、房间管理、节点注册与心跳、房间分配、JWT 准入 | 单控制服务与 SQLite；同一房间固定一个 SFU，尚无跨节点媒体分发和节点故障迁移 |
 | 监控 | HTTP 指标快照、Worker、发送队列与进程资源指标 | AI、混流和转码自有队列的指标尚未统一覆盖 |
 
@@ -70,7 +71,7 @@ RTP 接收 / 解包 → 完整编码帧 → EncodedFrameRouter
 | `service/meeting/`、`service/Cluster/` | 会议业务、节点租约和房间调度 |
 | `service/processing/` | 处理组件接口集合、工厂类型和默认本地组装 |
 | `service/RecordService/` | 录制、文件、切片及索引 |
-| `service/AIService/` | 模型接口、AI 编排和帧入口 |
+| `service/AIService/` | 模型接口、AI 编排、帧入口和语音 Agent 会话框架 |
 | `service/ConferenceMixService/` | 混流任务和后端接口 |
 | `service/TranscodeService/` | 转码任务、队列和运行时 |
 | `media/` | 媒体类型、流与轨道、帧路由、端点、质量控制和 codec 适配 |
@@ -258,6 +259,8 @@ python3 deploy/cluster/deploy.py up --single-sfu --recreate
 单进程入口提供账号 API 和本地服务；会议创建、成员管理、节点分配和入房 JWT 签发由 `PacketiaControl` 提供。
 独立 `PacketiaSfu` 当前专注房间和媒体转发，本地录制、AI、混流、转码组件尚未接入该入口。
 接口和权限说明见[会议控制与节点调度](docs/reference.md#会议控制与节点调度)。
+登录、建房、入会许可的额外业务限制集中在 `server/api/BusinessAccessPolicy.cpp`，
+原有账号凭证、房主和房间成员权限检查继续由各自服务执行。
 
 浏览器示例位于 [examples/webrtc-room](examples/webrtc-room)，启用 WebSocket 和 libSRTP 时可构建
 `PacketiaRoomDemo`。选择 Participant 后可同时发布摄像头、麦克风并接收其他参与者，
@@ -291,8 +294,11 @@ python3 deploy/cluster/deploy.py up --single-sfu --recreate
 
 房间订阅已接通下行 TWCC 协商：独立声明头扩展和 `transport-cc` 反馈能力，与订阅浏览器的 Offer 取交集，
 再将 Answer 中的扩展 ID 配给 `RtpSenderTrack`。只有两项能力同时协商成功才启用编号，
-同一下行连接共享序号分配器；未协商成功时保留 RR 回退。该实现不要求发布端支持 TWCC，
-也不表示上行 TWCC 接收反馈生成已经实现。
+同一下行连接共享序号分配器；未协商成功时保留 RR 回退。该实现不要求发布端支持 TWCC。
+
+上行发布也声明音频、视频的 TWCC 扩展与 `transport-cc` 反馈能力，Answer 保留 Offer 的扩展 ID 并使用 `recvonly` 方向；
+仅在双方协商出扩展和反馈时保留 `transport-cc`，对未提供 TWCC 的客户端保持兼容。
+当前仅完成上行 SDP 协商，接收 Transport 的到达记录、反馈定时生成与 RTCP 回传尚未接通，不能据此认为上行拥塞控制已经工作。
 
 暂停视频的恢复探测已接通：计划 → RTP Padding → WebRTC Pacer 临时提速 → 发送完成历史 → TWCC 簇评估 → 更新共享预算。
 成功后仍经过分配器等待和关键帧恢复；丢包或拥塞撤销提速，反馈不足则超时退避。
@@ -358,6 +364,45 @@ HTTP 适配器复用该日志器，记录启动/停止、关键运行失败和�
 字段口径和与浏览器报告的关联方法见[媒体质量诊断日志](docs/media-quality-diagnostics.md)。
 
 ## 近期改动与验证
+
+### 2026-11-25：业务接入、WebRTC 初始化整理与语音 Agent 框架
+
+- `WebRtcService::Start()` 保留状态检查与失败回收，组件组装集中到 `InitializeComponents()`，
+  再按网络、鉴权、房间 owner、管理通道和信令入口拆成独立函数。房间仍在各自执行器上启动，信令巡检保持 100 ms。
+- `RoomController` 将路由注册与处理函数分开；`BusinessAccessPolicy` 提供登录、创建房间、入会许可三个扩展点。
+  当前包含 `banned_user` 和 `restricted_user` 的练习规则，策略允许后仍须通过原有鉴权，不会直接生成登录或入会凭证。
+- 发布端音频和视频补充 TWCC 扩展与 `transport-cc` 的 SDP 能力协商，覆盖缺失反馈、缺失扩展、
+  不支持的扩展 ID 和错误方向；上行到达记录与反馈发送尚未实现。
+- `server/api/AgentController` 统一处理 HTTP 入口；`service::ai::VoiceAgentService` 位于 `service/AIService`，
+  由 `PacketiaControl` 的 `ServiceManager` 管理，先于会议模块停止。头文件前向声明 `MeetingModule`，完整定义在实现文件中包含。
+
+Agent 接口沿用账号登录的 Bearer token，全部使用 POST 与 JSON 请求体；客户端不能指定任务所有者或权限：
+
+| 路径 | 请求体 | 成功结果 |
+| --- | --- | --- |
+| `/api/v1/agent-sessions` | `{"room_id":"..."}` | 201，返回 `session_id`、`room_id`、`state: prepared` |
+| `/api/v1/agent-sessions/get` | `{"session_id":"..."}` | 200，返回会话快照 |
+| `/api/v1/agent-sessions/stop` | `{"session_id":"..."}` | 200，返回 `state: stopped` 并删除记录 |
+
+仅开放房间的房主可创建，只有创建者可查询或停止。每房间最多一个会话，默认总上限 128；
+重复创建或超额返回 409，未知及其他账号的会话返回 404，登录失效返回 401，服务停止后返回 503。
+停止后再次查询或停止返回 404。会话只保存在内存，服务关闭时清空；房间结束暂不会自动清理这些元数据。
+接口目前只注册到 `PacketiaControl`，单进程 `Packetia` 未注册。
+
+`prepared` 只表示元数据准备完成。下一步计划让独立 Agent 进程以机器人身份入房：
+由 Control 检查房主权限，为机器人登记成员角色并签发房间 JWT，再由 Agent 连接目标 SFU 的 WSS，
+使用 `packetia` 子协议发送 `join`，收到 `joined` 后才算实际入房。
+机器人身份与发起者账号、SFU 返回的 `participant_id` 分开保存；后续 WebRTC 订阅用户音轨、发布回复音轨。
+gRPC 可用于独立 Agent 的任务调度，实时媒体通过 WebRTC；这些入房与跨进程链路当前均未实现。
+LiveKit Python SDK 不能直接使用 Packetia 的自定义信令协议。
+
+填写业务逻辑从 `VoiceAgentService::CreateSession()` 开始；后续资源释放统一接入 `ReleaseSession()`。
+这两处目前在会话锁内执行，网络调用、等待入房、解码和模型推理必须移到独立执行器并增加取消机制。
+
+本机 macOS 上从本次提交源码编译 `PacketiaControl`、`PacketiaSfu` 成功；
+`AccountApiFrameworkUnitTest`、`MeetingModuleUnitTest`、`ClusterApiUnitTest`、`VoiceAgentUnitTest`、
+`webrtc_service`、`webrtc_twcc`、`webrtc_control`、`webrtc_members`、`webrtc_audio_controls`、`webrtc_duplex`
+共 10 个 CTest 入口通过，其中新增 Agent 测试包含 8 个用例。本轮未验证真实 Agent 入房、公网媒体或容量。
 
 ### 2026-11-24：房间与媒体资源归属、释放顺序
 

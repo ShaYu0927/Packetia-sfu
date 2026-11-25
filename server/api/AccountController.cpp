@@ -142,8 +142,10 @@ HttpResponse Logout(service::account::AccountService& accounts, std::string_view
 
 }
 
-AccountController::AccountController(std::shared_ptr<service::account::AccountService> accounts)
-    : accounts_(std::move(accounts)) {}
+AccountController::AccountController(std::shared_ptr<service::account::AccountService> accounts,
+    std::shared_ptr<const BusinessAccessPolicy> policy)
+    : accounts_(std::move(accounts)),
+      policy_(policy ? std::move(policy) : std::make_shared<BusinessAccessPolicy>()) {}
 
 void AccountController::RegisterRoutes(ApiRouter::Builder& router) const
 {
@@ -186,6 +188,7 @@ HttpResponse AccountController::Login(const ApiRequest& request) const
         !OnlyFields(request.json, {"login", "password"}))
         return AccountFailure(AccountError::InvalidArgument);
     if (!accounts_) return AccountFailure(AccountError::NotConfigured);
+    if (auto rejection = policy_->CheckLogin(login)) return std::move(*rejection);
     const auto result = accounts_->Login({std::move(login), std::move(password)});
     return result.Succeeded() ? SessionResponse(*result.value) : AccountFailure(result.error);
 }

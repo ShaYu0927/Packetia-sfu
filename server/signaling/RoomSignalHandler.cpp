@@ -58,7 +58,11 @@ std::vector<WebRtcMediaDescription> Capabilities()
     video.rtcpMux = audio.rtcpMux = true;
     sdp::Sdp::SetCodecs(video, {sdp::SdpCodec::H264(96)});
     sdp::Sdp::SetCodecs(audio, {sdp::SdpCodec::Opus(111)});
+    video.rtcpFeedback.emplace_back(RtcpFeedbackType::TRANSPORT_CC);
+    audio.rtcpFeedback = video.rtcpFeedback;
     video.headerExtensions.push_back({1, RtpHeaderExtensionUri::SDES_MID, MediaDirection::RecvOnly, {}});
+    // Capability IDs are placeholders; the answer preserves the offered IDs.
+    video.headerExtensions.push_back({2, RtpHeaderExtensionUri::TRANSPORT_CC, MediaDirection::RecvOnly, {}});
     audio.headerExtensions = video.headerExtensions;
     return {std::move(video), std::move(audio)};
 }
@@ -678,7 +682,11 @@ Json RoomSignalHandler::CreateSession(const std::string& connection, const std::
 void RoomSignalHandler::OnSignalingClosed(const std::string& connection)
 {
     const auto found = memberships_.find(connection);
-    if (!started_ || found == memberships_.end()) { RemoveSession(connection); return; }
+    if (!started_ || found == memberships_.end())
+    {
+        RemoveSession(connection);
+        return;
+    }
     auto& member = *found->second;
     if (!member.participant->UnbindSignaling(member.binding)) return;
     member.reconnect_deadline_ms = Timestamp::NowMs() + config_.webrtc.reconnect_timeout_ms;
@@ -686,6 +694,8 @@ void RoomSignalHandler::OnSignalingClosed(const std::string& connection)
     member.room->NotifyParticipantChanged(member.participant->Id());
     const auto session = sessions_.find(connection);
     if (session != sessions_.end())
+    {
+
         for (const auto& media : {session->second.publish, session->second.subscribe})
         {
             if (!media) continue;
@@ -693,6 +703,7 @@ void RoomSignalHandler::OnSignalingClosed(const std::string& connection)
             media->pending_offer_id.clear();
             media->negotiation_deadline_ms = 0;
         }
+    }
 }
 
 Json RoomSignalHandler::ResumeRoom(const std::string& connection, const std::string& roomId,

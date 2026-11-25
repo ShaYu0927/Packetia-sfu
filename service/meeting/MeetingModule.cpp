@@ -79,6 +79,11 @@ void MeetingModule::SetMemberRole(const std::string& room, const std::string& ow
     const auto operation = Acquire();
     operation.runtime->meetings->SetMemberRole(room, owner, user, publish);
 }
+void MeetingModule::RequireRoomOwner(const std::string& room, const std::string& owner)
+{
+    const auto operation = Acquire();
+    operation.runtime->meetings->RequireOwner(room, owner);
+}
 RoomAdmission MeetingModule::Admit(const std::string& room, const std::string& user, const std::string& name)
 {
     const auto operation = Acquire();

@@ -26,91 +26,175 @@ WebRtcService::~WebRtcService() { Stop(); }
 
 bool WebRtcService::Start()
 {
-    if (started_) return scheduler_ && !scheduler_->IsStopped();
+    // 1. 检查服务状态、对象归属和启动配置。
+    if (started_)
+    {
+        return scheduler_ && !scheduler_->IsStopped();
+    }
     if (!loop_ || weak_from_this().expired())
     {
         LOG_ERROR("WebRtcService Start: requires an event loop and shared service ownership");
         return false;
     }
-    try { config_.Validate(); }
+    try
+    {
+        config_.Validate();
+    }
     catch (const std::invalid_argument& error)
-    { LOG_ERROR("WebRtcService Start: ", error.what()); return false; }
+    {
+        LOG_ERROR("WebRtcService Start: ", error.what());
+        return false;
+    }
     if (!config_.webrtc.enabled || config_.webrtc.api_keys.empty() || !config_.webrtc.max_sessions)
-    { LOG_ERROR("WebRtcService Start: enable WebRTC with API keys and a positive session limit"); return false; }
+    {
+        LOG_ERROR("WebRtcService Start: enable WebRTC with API keys and a positive session limit");
+        return false;
+    }
+
+    // 2. 选择网络入口所属的调度器。
     scheduler_ = loop_->GetTaskScheduler();
     if (!scheduler_ || scheduler_->IsStopped())
-    { LOG_ERROR("WebRtcService Start: event loop is not running"); return false; }
+    {
+        LOG_ERROR("WebRtcService Start: event loop is not running");
+        return false;
+    }
+
+    // 3. 统一初始化组件；任一步失败都通过 Stop() 回收已创建资源。
+    try
+    {
+        const bool ready = InitializeComponents();
+        if (!ready)
+        {
+            Stop();
+        }
+        return ready;
+    }
+    catch (...)
+    {
+        Stop();
+        throw;
+    }
+}
+
+bool WebRtcService::InitializeComponents()
+{
+    // 房间业务优先使用网络入口之外的执行器；单线程模式下共用一个。
     auto executors = loop_->GetTaskSchedulers();
     executors.erase(std::remove(executors.begin(), executors.end(), scheduler_), executors.end());
     if (executors.empty()) executors.push_back(scheduler_);
-    bool networkReady = false;
+
+    // 1. 创建并启动 UDP、发送队列和媒体分流入口。
+    auto udp_budget = std::make_shared<utils::ChannelBudget>();
     uint16_t port = 0;
-    int addressFamily = 0;
-    try
-    {
-        auto udp_budget = std::make_shared<utils::ChannelBudget>();
-        scheduler_->Invoke([&] {
-            udp_ = std::make_shared<network::UdpServer>(scheduler_);
-            if (!udp_->Start(config_.listen_ip, config_.udp_port, false)) return;
-            const auto local = udp_->LocalAddress();
-            port = local.Port(); addressFamily = local.ss.ss_family;
-            udp_sends_ = std::make_shared<network::transport::UdpSendQueue>(scheduler_, udp_, udp_budget);
-            mux_ = std::make_shared<protocol::webrtc::WebRtcUdpMux>(udp_, udp_sends_->MakeSender());
-            udp_->SetHandler(mux_);
-            networkReady = port != 0;
-        });
-        if (!networkReady) { Stop(); return false; }
-        auto auth = std::make_shared<auth::AuthService>(
-            std::make_shared<auth::JwtAuthenticator>(std::make_shared<auth::StaticKeyProvider>(config_.webrtc.api_keys)),
-            std::make_shared<auth::RoomAccessPolicy>());
-        auto capacity = std::make_shared<signaling::RoomCapacity>(config_.webrtc.max_sessions);
-        auto control_budget = std::make_shared<utils::ChannelBudget>();
-        for (const auto& executor : executors)
-        {
-            signaling::RoomOwner room{executor, {}, std::make_shared<WebRtcServiceStats>()};
-            room.handler = std::make_shared<signaling::RoomSignalHandler>(executor, config_, publisher_, auth, *room.stats, capacity);
-            const std::weak_ptr<TaskScheduler> control_owner = executor;
-            const auto handler = room.handler;
-            room.controls = std::make_shared<signaling::RoomControlChannel>(
-                [control_owner](auto task) { const auto owner = control_owner.lock(); return owner && owner->Post(std::move(task)); },
-                [handler](signaling::RoomControlRequest request) {
-                    signaling::Json result;
-                    if (request.cancelled->load() || Timestamp::NowMs() >= request.deadline_ms)
-                        result = {{"type", "error"}, {"code", "unavailable"}, {"error", "Room command deadline exceeded"}};
-                    else try { result = handler->ControlRoom(request.room_id, request.assignment_id, request.command); }
-                    catch (...) { result = signaling::Error("Invalid room management command"); }
-                    request.result->set_value(std::move(result));
-                }, control_budget, utils::ChannelLimits{4 * 1024 * 1024, 64});
-            room_owners_.push_back(room);
-            bool ready = false;
-            executor->Invoke([&] {
-                room.handler->AttachNetwork(udp_, mux_, port, addressFamily, udp_budget);
-                ready = room.handler->Start();
-            });
-            if (!ready) { Stop(); return false; }
-        }
-        bool ready = false;
-        scheduler_->Invoke([&] {
-            coordinator_ = std::make_shared<signaling::SignalSessionCoordinator>(scheduler_, room_owners_,
-                signaling::AdmissionValidator(auth, admission_guard_), stats_, config_.webrtc.admission_timeout_ms);
-            coordinator_->Start();
-            gateway_ = std::make_shared<signaling::WsSignalGateway>(scheduler_, config_, coordinator_);
-            if (!gateway_->Start(config_.listen_ip, config_.websocket_port)) return;
-            const auto weak = weak_from_this();
-            timer_ = scheduler_->AddTimer([weak] {
-                const auto self = weak.lock();
-                if (!self || !self->started_) return false;
-                self->coordinator_->Tick();
-                self->gateway_->Tick();
-                return true;
-            }, 100);
-            started_ = ready = timer_ != 0;
-        });
-        if (!ready) Stop();
-        return ready;
-    }
-    catch (...) { Stop(); throw; }
+    int address_family = 0;
+    if (!InitializeNetwork(udp_budget, port, address_family)) return false;
+
+    // 2. 创建所有房间和信令入口共用的鉴权服务。
+    auto key_provider = std::make_shared<auth::StaticKeyProvider>(config_.webrtc.api_keys);
+    auto authenticator = std::make_shared<auth::JwtAuthenticator>(key_provider);
+    auto access_policy = std::make_shared<auth::RoomAccessPolicy>();
+    auto auth_service = std::make_shared<auth::AuthService>(authenticator, access_policy);
+
+    // 3. 在各自执行器上启动房间处理器，并配置管理命令通道。
+    if (!InitializeRoomOwners(executors, auth_service, udp_budget, port, address_family)) return false;
+
+    // 4. 启动信令协调器、WebSocket 入口和周期巡检。
+    return InitializeSignaling(auth_service);
 }
+
+bool WebRtcService::InitializeNetwork(const std::shared_ptr<utils::ChannelBudget>& udp_budget, uint16_t& port, int& address_family)
+{
+    bool ready = false;
+    scheduler_->Invoke([&] {
+        udp_ = std::make_shared<network::UdpServer>(scheduler_);
+        if (!udp_->Start(config_.listen_ip, config_.udp_port, false)) return;
+        const auto local = udp_->LocalAddress();
+        port = local.Port();
+        address_family = local.ss.ss_family;
+        udp_sends_ = std::make_shared<network::transport::UdpSendQueue>(scheduler_, udp_, udp_budget);
+        mux_ = std::make_shared<protocol::webrtc::WebRtcUdpMux>(udp_, udp_sends_->MakeSender());
+        udp_->SetHandler(mux_);
+        ready = port != 0;
+    });
+    return ready;
+}
+
+bool WebRtcService::InitializeRoomOwners(const std::vector<std::shared_ptr<TaskScheduler>>& executors,
+                                        const std::shared_ptr<auth::AuthService>& auth_service,
+                                        const std::shared_ptr<utils::ChannelBudget>& udp_budget,
+                                        uint16_t port, int address_family)
+{
+    auto capacity = std::make_shared<signaling::RoomCapacity>(config_.webrtc.max_sessions);
+    auto control_budget = std::make_shared<utils::ChannelBudget>();
+    for (const auto& executor : executors)
+    {
+        signaling::RoomOwner room;
+        room.executor = executor;
+        room.stats = std::make_shared<WebRtcServiceStats>();
+        room.handler = std::make_shared<signaling::RoomSignalHandler>(
+            executor, config_, publisher_, auth_service, *room.stats, capacity);
+        InitializeRoomControl(room, control_budget);
+        room_owners_.push_back(room);
+        bool ready = false;
+        executor->Invoke([&] {
+            room.handler->AttachNetwork(udp_, mux_, port, address_family, udp_budget);
+            ready = room.handler->Start();
+        });
+        if (!ready) return false;
+    }
+    return true;
+}
+
+void WebRtcService::InitializeRoomControl(signaling::RoomOwner& room,
+                                         const std::shared_ptr<utils::ChannelBudget>& control_budget)
+{
+    const std::weak_ptr<TaskScheduler> control_owner = room.executor;
+    const auto handler = room.handler;
+    auto post_to_owner = [control_owner](auto task) {
+        const auto owner = control_owner.lock();
+        return owner && owner->Post(std::move(task));
+    };
+    auto handle_request = [handler](signaling::RoomControlRequest request) {
+        signaling::Json result;
+        if (request.cancelled->load() || Timestamp::NowMs() >= request.deadline_ms)
+        {
+            result = {{"type", "error"}, {"code", "unavailable"}, {"error", "Room command deadline exceeded"}};
+        }
+        else
+        {
+            try { result = handler->ControlRoom(request.room_id, request.assignment_id, request.command); }
+            catch (...) { result = signaling::Error("Invalid room management command"); }
+        }
+        request.result->set_value(std::move(result));
+    };
+    room.controls = std::make_shared<signaling::RoomControlChannel>(
+        std::move(post_to_owner), std::move(handle_request), control_budget,
+        utils::ChannelLimits{4 * 1024 * 1024, 64});
+}
+
+bool WebRtcService::InitializeSignaling(const std::shared_ptr<auth::AuthService>& auth_service)
+{
+    bool ready = false;
+    scheduler_->Invoke([&] {
+        coordinator_ = std::make_shared<signaling::SignalSessionCoordinator>(scheduler_, room_owners_,
+            signaling::AdmissionValidator(auth_service, admission_guard_), stats_, config_.webrtc.admission_timeout_ms);
+        coordinator_->Start();
+        gateway_ = std::make_shared<signaling::WsSignalGateway>(scheduler_, config_, coordinator_);
+        if (!gateway_->Start(config_.listen_ip, config_.websocket_port)) return;
+        const auto weak = weak_from_this();
+        timer_ = scheduler_->AddTimer([weak] {
+            const auto self = weak.lock();
+            if (!self || !self->started_) return false;
+            self->coordinator_->Tick();
+            self->gateway_->Tick();
+            return true;
+        }, 100);
+        ready = timer_ != 0;
+        started_ = ready;
+    });
+    return ready;
+}
+
 void WebRtcService::Stop()
 {
     // 生命周期调用由控制线程发起；先取消接入，再逐个等待房间清理，最后关闭网络。

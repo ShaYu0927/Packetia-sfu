@@ -1,5 +1,6 @@
 #include "AccountController.h"
 #include "ApiServer.h"
+#include "ApiResponse.h"
 #include "HttpServer.h"
 #include "AccountService.h"
 #include "ScryptPasswordHasher.h"
@@ -83,6 +84,34 @@ TEST(AccountApiFramework, NeverAuthenticatesOrRegistersThroughUnconfiguredDepend
     const auto method = router.Dispatch({"POST", "/api/v1/me", {}, {}});
     EXPECT_EQ(method.status, 405);
     EXPECT_EQ(method.headers.at("allow"), "GET");
+}
+
+TEST(AccountApiFramework, BusinessPolicyRejectsLoginWithoutIssuingSessionAndKeepsInputValidation)
+{
+    class RestrictLogin final : public server::api::BusinessAccessPolicy
+    {
+    public:
+        mutable std::string observed_login;
+        Rejection CheckLogin(std::string_view login) const override
+        {
+            observed_login = login;
+            return server::api::ErrorResponse(429, "login_restricted", "Try again later.");
+        }
+    };
+    const auto policy = std::make_shared<RestrictLogin>();
+    server::api::ApiRouter::Builder builder;
+    server::api::AccountController(UnconfiguredAccounts(), policy).RegisterRoutes(builder);
+    const auto router = builder.Build();
+    EXPECT_EQ(router.Dispatch(Login(R"({"login":"alice","password":true})")).status, 400);
+    EXPECT_TRUE(policy->observed_login.empty());
+    const auto response = router.Dispatch(Login(R"({"login":"alice","password":"secret"})"));
+    EXPECT_EQ(response.status, 429);
+    EXPECT_EQ(policy->observed_login, "alice");
+    EXPECT_EQ(nlohmann::json::parse(response.body).at("error").at("code"), "login_restricted");
+    EXPECT_EQ(response.body.find("session_token"), std::string::npos);
+
+    // 默认策略只允许继续原校验，不会把未配置的账号服务变成登录成功。
+    EXPECT_EQ(AccountRoutes().Dispatch(Login(R"({"login":"alice","password":"secret"})")).status, 503);
 }
 
 TEST(AccountApiFramework, MissingIoOwnerRollsBackWorkerPool)

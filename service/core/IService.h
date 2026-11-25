@@ -24,6 +24,7 @@ enum class ServiceType : uint16_t
     Ai      = 400,
     Asr     = 401,
     Vision  = 402,
+    VoiceAgent = 403,
 
     Record  = 500,
     ConferenceMix = 501,

@@ -104,6 +104,61 @@ TEST_F(ClusterApiTest, IdentityAndGrantsComeFromSessionAndMembership)
     ASSERT_TRUE(accounts->Logout(session).Succeeded());
     EXPECT_EQ(Post(*public_routes, "/api/v1/room-admissions", {{"room_id", room}}, session).status, 401);
 }
+TEST_F(ClusterApiTest, BusinessPolicyUsesVerifiedIdentityAndCannotBypassMembership)
+{
+    class RestrictRooms final : public BusinessAccessPolicy
+    {
+    public:
+        bool deny_create = true, deny_admission = true;
+        mutable std::string observed_user, observed_room;
+        Rejection CheckCreateRoom(const service::account::AccountIdentity& identity) const override
+        {
+            observed_user = identity.user_id;
+            if (deny_create) return ErrorResponse(403, "creation_restricted", "Creation is restricted.");
+            return std::nullopt;
+        }
+        Rejection CheckRoomAdmission(const service::account::AccountIdentity& identity,
+                                    std::string_view room) const override
+        {
+            observed_user = identity.user_id;
+            observed_room = room;
+            if (deny_admission) return ErrorResponse(403, "admission_restricted", "Admission is restricted.");
+            return std::nullopt;
+        }
+    };
+    const auto policy = std::make_shared<RestrictRooms>();
+    ApiRouter::Builder builder;
+    server::meeting::RoomController(accounts, meetings, policy).RegisterRoutes(builder);
+    const auto routes = builder.Build();
+
+    EXPECT_EQ(Post(routes, "/api/v1/rooms", Json::object()).status, 401);
+    EXPECT_TRUE(policy->observed_user.empty());
+    EXPECT_EQ(Post(routes, "/api/v1/rooms", {{"owner", "mallory"}}, session).status, 400);
+    EXPECT_TRUE(policy->observed_user.empty());
+    EXPECT_EQ(Post(routes, "/api/v1/rooms", Json::object(), session).status, 403);
+    EXPECT_EQ(policy->observed_user, user);
+
+    policy->deny_create = false;
+    const auto created = Post(routes, "/api/v1/rooms", Json::object(), session);
+    ASSERT_EQ(created.status, 201);
+    const auto room = Json::parse(created.body).at("room_id").get<std::string>();
+    const auto denied = Post(routes, "/api/v1/room-admissions", {{"room_id", room}}, session);
+    EXPECT_EQ(denied.status, 403); // 无可用节点时也应先被业务策略拒绝。
+    EXPECT_EQ(Json::parse(denied.body).at("error").at("code"), "admission_restricted");
+    EXPECT_EQ(denied.body.find("token"), std::string::npos);
+    EXPECT_EQ(policy->observed_room, room);
+    EXPECT_EQ(policy->observed_user, user);
+
+    meetings->RegisterNode({"sfu-a", "boot-a", "ws://localhost:30000/webrtc", 100, 0});
+    policy->deny_admission = false;
+    EXPECT_EQ(Post(routes, "/api/v1/room-admissions", {{"room_id", room}}, session).status, 200);
+    ASSERT_TRUE(accounts->CreateAccount({"bob", "correct-password-123", "Bob"}).Succeeded());
+    const auto bob = accounts->Login({"bob", "correct-password-123"});
+    ASSERT_TRUE(bob.Succeeded());
+    EXPECT_EQ(Post(routes, "/api/v1/room-admissions", {{"room_id", room}}, bob.value->session_token).status, 403);
+    EXPECT_EQ(policy->observed_user, bob.value->identity.user_id);
+}
+
 TEST_F(ClusterApiTest, OwnerManagementRoutesToAssignedNodeAndPropagatesFailures)
 {
     meetings->RegisterNode({"sfu-a", "boot-a", "ws://localhost:30000/webrtc", 100, 0, "http://localhost:19080"});
