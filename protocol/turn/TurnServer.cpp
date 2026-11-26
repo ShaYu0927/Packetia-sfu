@@ -434,17 +434,19 @@ std::shared_ptr<network::UdpServer> TurnServer::Impl::OpenRelay(IpFamily family)
     return {};
 }
 
-std::vector<uint8_t> TurnServer::Impl::HandleRequest(const network::SocketAddr& client, Session& session,
-    const StunMessageInfo& msg, const TurnAuthResult& authenticated, const uint8_t* data, size_t len)
+std::vector<uint8_t> TurnServer::Impl::HandleRequest(const network::SocketAddr& client, Session& session, const StunMessageInfo& msg, const TurnAuthResult& authenticated, const uint8_t* data, size_t len)
 {
     const auto key = std::string_view(authenticated.integrity_key);
     auto* allocation = session.allocation.get();
     if (allocation && allocation->username != authenticated.username)
-        return Error(msg, msg.method == StunMethod::Allocate
-            ? PACKETIA_STUN_ERROR_ALLOCATION_MISMATCH : PACKETIA_STUN_ERROR_WRONG_CREDENTIALS, key);
+    {
+        return Error(msg, msg.method == StunMethod::Allocate ? PACKETIA_STUN_ERROR_ALLOCATION_MISMATCH : PACKETIA_STUN_ERROR_WRONG_CREDENTIALS, key);
+    }
+
     const auto unknown = UnknownAttributes(msg);
     if (!unknown.empty()) return Error(msg, PACKETIA_STUN_ERROR_UNKNOWN_ATTRIBUTE, key, unknown);
     const uint64_t now = clock();
+
     if (msg.method == StunMethod::Allocate || msg.method == StunMethod::Refresh)
     {
         uint32_t lifetime = kDefaultLifetime;

@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <deque>
+#include <optional>
 #include "BandwidthUsage.h"
 
 /*
@@ -33,6 +34,12 @@ public:
 
         /* 估算包大小所引入传输时延时使用的基准码率，单位：bit/s。 */
         uint32_t size_delay_bitrate_bps = 1000 * 1000;
+
+        /* 超过此间隔，认为观测不连续； 不是rtt 的阈值 */
+        int max_sample_gap_ms = 250;
+
+        /* 至少 需要多少个 连续 超阈值的样本 */
+        int min_overuse_samples = 2;
     };
 
     /* 使用默认配置创建检测器。 */
@@ -88,6 +95,9 @@ private:
     /* 更新抖动窗口并返回最大抖动估计，时间参数及返回值单位均为毫秒。 */
     double UpdateMaxJitter(int64_t arrival_ms, double delay_delta_ms);
 
+    // Clear sample history without discarding external RTT/rate/region estimates.
+    void ResetObservation();
+
 private:
     /* 检测器配置。 */
     Config config_;
@@ -116,8 +126,9 @@ private:
     /* 包大小引入的时延估计，单位：毫秒。 */
     double size_delay_ms_ = 0.0;
 
-    /* 当前过载累计持续时间，单位：毫秒。 */
-    int overuse_duration_ms_ = 0;
+    // First positive threshold excursion and distinct receive-time confirmations.
+    std::optional<int64_t> overuse_start_ms_;
+    int overuse_samples_ = 0;
 
     /* 当前检测到的网络带宽使用状态。 */
     BandwidthUsage usage_ = BandwidthUsage::kNormal;
@@ -133,6 +144,11 @@ private:
 
     /* RTT 估计是否发生变化，供后续检测处理使用。 */
     bool rtt_changed_ = false;
+
+
+    double jitter_peak_ms_ = 0.0;
+
+    std::optional<int64_t> last_jitter_update_ms_;
 
     /* 按到达时间维护的抖动样本窗口。 */
     std::deque<JitterSample> jitter_window_;

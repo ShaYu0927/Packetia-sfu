@@ -1,0 +1,39 @@
+# Standalone optional TURN service for Linux Docker Engine.
+# Host networking keeps advertised relay ports identical to actual UDP ports.
+services:
+  turn:
+    image: ${PACKETIA_IMAGE:-packetia-cluster:local}
+    build:
+      context: ../..
+      dockerfile: deploy/cluster/Dockerfile
+      args:
+        BUILD_JOBS: ${PACKETIA_BUILD_JOBS:-2}
+    init: true
+    network_mode: host
+    restart: unless-stopped
+    stop_grace_period: 15s
+    command:
+      - PacketiaTurn
+      - --listen-ip
+      - 0.0.0.0
+      - --listen-port
+      - "${PACKETIA_TURN_PORT:-3478}"
+      - --relay-ip
+      - 0.0.0.0
+      - --public-ip
+      - "${PACKETIA_TURN_PUBLIC_IP:?Set the server public IPv4 in turn.env}"
+      - --realm
+      - "${PACKETIA_TURN_REALM:-packetia}"
+      - --relay-min-port
+      - "${PACKETIA_TURN_RELAY_MIN_PORT:-49160}"
+      - --relay-max-port
+      - "${PACKETIA_TURN_RELAY_MAX_PORT:-49259}"
+    environment:
+      PACKETIA_TURN_USER: ${PACKETIA_TURN_USER:?Set a TURN username in turn.env}
+      PACKETIA_TURN_PASSWORD: ${PACKETIA_TURN_PASSWORD:?Set a TURN password in turn.env}
+      PACKETIA_LOG_MODE: console
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

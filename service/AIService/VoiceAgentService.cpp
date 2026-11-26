@@ -81,7 +81,7 @@ AgentSession VoiceAgentService::StopSession(const std::string& session, const st
     auto& stored = RequireSession(session, owner);
     ReleaseSession(stored);
     auto result = stored;
-    sessions_.erase(session); // 不保留无界的历史记录；停止后查询返回 404。
+    sessions_.erase(session);
     return result;
 }
 

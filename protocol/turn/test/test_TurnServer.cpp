@@ -172,15 +172,17 @@ protected:
         ASSERT_NE(attr, nullptr);
         nonce = std::string(msg.AttrValue(*attr));
     }
-    std::vector<uint8_t> Allocate(uint8_t family = 0)
+    std::vector<uint8_t> Allocate(uint8_t family = 0, UdpPeer* socket = nullptr,
+                                  std::string_view username = "alice")
     {
-        Challenge();
+        const auto& source = socket ? *socket : client;
+        Challenge(socket);
         std::vector<StunAttribute> attributes = {TurnCodec::RequestedTransportAttribute(17)};
         if (family != 0)
             attributes.push_back({static_cast<uint16_t>(AttrType::REQUESTED_ADDRESS_FAMILY), {family, 0, 0, 0}});
-        const auto request = Request(StunMethod::Allocate, attributes, Id());
-        const auto response = Exchange(request);
-        ExpectCode(response, 0);
+        const auto request = Request(StunMethod::Allocate, attributes, Id(), username);
+        const auto response = Exchange(request, socket);
+        ExpectCode(response, 0, username);
         StunMessageInfo msg;
         EXPECT_TRUE(TurnCodec::ParseStunDatagram(response.data(), response.size(), msg));
         XorMappedAddress addr;
@@ -189,9 +191,9 @@ protected:
         relay = network::SocketAddr::FromIPPort(addr.is_ipv6 ? "::1" : "127.0.0.1", addr.port);
         EXPECT_GT(relay.Port(), 0);
         EXPECT_TRUE(StunCodec::DecodeXorMappedAddress(msg, addr));
-        EXPECT_EQ(addr.is_ipv6, client.address.IsV6());
-        EXPECT_EQ(addr.port, client.address.Port());
-        const auto client_ip = client.address.IsV6() ? client.address.IPv6Bytes() : client.address.IPv4Bytes();
+        EXPECT_EQ(addr.is_ipv6, source.address.IsV6());
+        EXPECT_EQ(addr.port, source.address.Port());
+        const auto client_ip = source.address.IsV6() ? source.address.IPv6Bytes() : source.address.IPv4Bytes();
         EXPECT_EQ(std::string(reinterpret_cast<const char*>(addr.ip.data()), client_ip.size()), client_ip);
         return request;
     }
@@ -490,6 +492,94 @@ TEST_F(TurnServerTest, ChannelDataRelaysBinaryAndEmptyDatagrams)
         EXPECT_EQ(view.channel, 0x4001);
         EXPECT_EQ(view.data, std::string_view(reinterpret_cast<const char*>(payload.data()), payload.size()));
     }
+}
+
+TEST_F(TurnServerTest, TwoClientsRelayToEachOtherAndReallocationDoesNotRestoreOldChannels)
+{
+    Allocate();
+    const auto relay_a = relay;
+    const auto nonce_a = nonce;
+    Allocate(0, &peer, "bob");
+    const auto relay_b = relay;
+    const auto nonce_b = nonce;
+    ASSERT_EQ(server->GetStats().allocations, 2u);
+
+    nonce = nonce_a;
+    ExpectCode(Permission(relay_b), 0);
+    const std::vector<uint8_t> payload{0, 1, 0x80, 0xff};
+    ASSERT_TRUE(client.Send(control, SendIndication(relay_b, payload)));
+    std::vector<uint8_t> received;
+    // A's permission alone cannot authorize inbound traffic at B's allocation.
+    EXPECT_FALSE(peer.Receive(received, nullptr, 50));
+    nonce = nonce_b;
+    auto id = Id();
+    ExpectCode(Exchange(Request(StunMethod::CreatePermission,
+        {PeerAttribute(relay_a, id)}, id, "bob"), &peer), 0, "bob");
+
+    auto expect_data = [&](UdpPeer& destination, const network::SocketAddr& from) {
+        ASSERT_TRUE(destination.Receive(received));
+        StunMessageInfo msg;
+        ASSERT_TRUE(TurnCodec::ParseStunDatagram(received.data(), received.size(), msg));
+        EXPECT_EQ(msg.method, StunMethod::Data);
+        EXPECT_EQ(msg.klass, StunClass::Indication);
+        const auto* data = msg.FindAttr(static_cast<uint16_t>(AttrType::DATA));
+        ASSERT_NE(data, nullptr);
+        EXPECT_EQ(msg.AttrValue(*data), std::string_view(
+            reinterpret_cast<const char*>(payload.data()), payload.size()));
+        XorMappedAddress address;
+        ASSERT_TRUE(StunCodec::DecodeXorAddress(msg, AttrType::XOR_PEER_ADDRESS, address));
+        EXPECT_EQ(address.port, from.Port());
+    };
+    ASSERT_TRUE(client.Send(control, SendIndication(relay_b, payload)));
+    expect_data(peer, relay_a);
+    ASSERT_TRUE(peer.Send(control, SendIndication(relay_a, payload)));
+    expect_data(client, relay_b);
+
+    nonce = nonce_a;
+    ExpectCode(BindChannel(0x4000, relay_b), 0);
+    nonce = nonce_b;
+    id = Id();
+    StunAttribute channel;
+    ASSERT_TRUE(TurnCodec::ChannelNumberAttribute(0x4001, channel));
+    ExpectCode(Exchange(Request(StunMethod::ChannelBind,
+        {channel, PeerAttribute(relay_a, id)}, id, "bob"), &peer), 0, "bob");
+    std::vector<uint8_t> packet_a, packet_b;
+    const std::string_view binary(reinterpret_cast<const char*>(payload.data()), payload.size());
+    ASSERT_TRUE(TurnCodec::BuildChannelData(0x4000, binary, packet_a));
+    ASSERT_TRUE(TurnCodec::BuildChannelData(0x4001, binary, packet_b));
+    auto expect_channel = [&](UdpPeer& destination, uint16_t number) {
+        ASSERT_TRUE(destination.Receive(received));
+        TurnChannelDataView view;
+        ASSERT_TRUE(TurnCodec::ParseChannelDataDatagram(received.data(), received.size(), view));
+        EXPECT_EQ(view.channel, number);
+        EXPECT_EQ(view.data, binary);
+    };
+    ASSERT_TRUE(client.Send(control, packet_a));
+    expect_channel(peer, 0x4001);
+    ASSERT_TRUE(peer.Send(control, packet_b));
+    expect_channel(client, 0x4000);
+
+    nonce = nonce_a;
+    ExpectCode(Exchange(Request(StunMethod::Refresh,
+        {TurnCodec::UInt32Attribute(AttrType::LIFETIME, 0)}, Id())), 0);
+    EXPECT_EQ(server->GetStats().allocations, 1u);
+    ASSERT_TRUE(peer.Send(control, packet_b));
+    EXPECT_FALSE(client.Receive(received, nullptr, 50));
+    Allocate(); // Same client socket, new allocation generation and no channels.
+    const auto new_relay_a = relay;
+    const auto before = server->GetStats().client_to_peer;
+    ASSERT_TRUE(client.Send(control, packet_a));
+    EXPECT_FALSE(peer.Receive(received, nullptr, 50));
+    EXPECT_EQ(server->GetStats().client_to_peer, before);
+
+    ExpectCode(BindChannel(0x4000, relay_b), 0);
+    ASSERT_TRUE(client.Send(control, packet_a));
+    // B's old channel only matches A's old relay port; a fresh port yields Data.
+    if (new_relay_a == relay_a) expect_channel(peer, 0x4001);
+    else expect_data(peer, new_relay_a);
+    ASSERT_TRUE(peer.Send(control, SendIndication(new_relay_a, payload)));
+    expect_channel(client, 0x4000);
+    EXPECT_EQ(server->GetStats().allocations, 2u);
 }
 
 TEST_F(TurnServerTest, PermissionsMatchIpAndChannelsMatchFullPeerAddress)

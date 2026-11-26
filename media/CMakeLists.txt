@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.16)
 
+# Paper reproduction builds independently of the production congestion controller.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/quality/gcc2016/CMakeLists.txt")
+    add_subdirectory(quality/gcc2016)
+endif()
+
 set(QUALITY_SRC
     quality/DownlinkBandwidthAllocator.cpp
     quality/GoogCcNetworkController.cpp

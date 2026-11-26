@@ -3,6 +3,12 @@
 用于学习和验证 SFU 单层转发的简单前端。使用原生 JavaScript，无需前端编译步骤。
 同一页面支持摄像头发布、多人订阅或同时收发，复用项目现有房间信令、ICE、DTLS/SRTP 与 TURN。
 
+独立验证 `A → TURN → B` 中继可运行 `npm run check:turn-p2p`；
+该测试不经过 SFU，检查双向音视频、二进制数据和 ICE restart 后的 relay 路径。
+当前源码没有独立 TURN 程序入口，需要准备已有 TURN 服务或用 `PACKETIA_TURN_BINARY` 指定测试程序。
+外部服务使用 `PACKETIA_TURN_URL`、`PACKETIA_TURN_USER`、`PACKETIA_TURN_PASSWORD` 配置；
+部署准备条件见[可选 TURN 实验](../../deploy/cluster/README.md#可选-turn-实验)。
+
 默认启动方式通过本地开发服务签发令牌，直连一个 `PacketiaRoomDemo`，不经过 `PacketiaControl`
 的 `/api/v1/room-admissions`。浏览器质量测试验证单节点媒体与反馈链路，尚未覆盖集群房间调度
 或单房间跨节点分发；集群现状与目标见[项目 README](../../README.md#集群现状与演进方向)。

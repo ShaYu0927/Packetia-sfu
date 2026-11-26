@@ -84,9 +84,11 @@ target_include_directories(TURN PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/turn)
 target_compile_features(TURN PUBLIC cxx_std_17)
 target_link_libraries(TURN PUBLIC ICE PRIVATE network utils)
 
-add_executable(PacketiaTurn turn/TurnServerMain.cpp)
-target_compile_features(PacketiaTurn PRIVATE cxx_std_17)
-target_link_libraries(PacketiaTurn PRIVATE TURN utils)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/turn/TurnServerMain.cpp")
+    add_executable(PacketiaTurn turn/TurnServerMain.cpp)
+    target_compile_features(PacketiaTurn PRIVATE cxx_std_17)
+    target_link_libraries(PacketiaTurn PRIVATE TURN utils)
+endif()
 
 add_library(WebRtc STATIC
     WebRtc/WebRtcSession.cpp

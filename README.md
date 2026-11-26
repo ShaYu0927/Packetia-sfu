@@ -365,6 +365,24 @@ HTTP 适配器复用该日志器，记录启动/停止、关键运行失败和�
 
 ## 近期改动与验证
 
+### 2026-11-26：弱网观测与 TURN 实验整理
+
+- `OUTrendDetect` 的抖动补偿改成随时间指数衰减的峰值；乱序样本不回退参考时钟，
+  长时间采样间隔重建观测基线，连续过载需同时满足时间与不同到达时刻的样本数要求。
+  新增乱序、时间戳回绕、间断采样、重置和过载确认测试；这些检查不代表公网弱网效果已经验证。
+- TURN 增加双分配之间的中继测试，并保留 relay-only 浏览器验证脚本、可选 Linux Compose 和凭证模板。
+  浏览器脚本覆盖双向音视频、数据通道和 ICE restart；需另行提供 TURN 服务或已有测试程序。
+- 移除独立 TURN 程序入口与无有效模块映射的 libhv Git 引用；TURN 协议库仍保留。
+  独立 TURN 程序、Docker 中的对应程序，以及 GCC 论文实验目录均改为源码存在时才构建。
+- `scripts/run_gcc2016_experiment.py` 保留外部实验程序的轨迹汇总工具；本仓库当前不包含对应复现源码，需通过 `--binary` 指定已有程序。
+
+本轮未接入 gRPC 依赖、未启动独立 Agent，相关语音业务仍停留在会话框架阶段。
+
+本轮验证：本机 Debug 构建通过 `PacketiaControl`、`PacketiaSfu` 及相关测试目标；
+`TurnUnitTest`、`VoiceAgentUnitTest`、`AccountApiFrameworkUnitTest`、`test_weak_network_manual` 四组 CTest 全部通过。
+部署脚本测试通过 16 项、跳过 1 项；TURN 浏览器脚本语法、Python 脚本编译及 Compose 配置检查通过。
+尚未执行真实浏览器 TURN 中继、Docker 镜像构建或公网弱网效果验证。
+
 ### 2026-11-25：业务接入、WebRTC 初始化整理与语音 Agent 框架
 
 - `WebRtcService::Start()` 保留状态检查与失败回收，组件组装集中到 `InitializeComponents()`，

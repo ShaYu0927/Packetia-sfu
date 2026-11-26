@@ -87,13 +87,15 @@ AccountStatus AccountService::Start()
 {
     std::unique_lock<std::shared_mutex> lock(mutex_);
     if (!options_.enabled || !store_ || !password_hasher_)
+    {
         return AccountStatus::Failure(AccountError::NotConfigured);
+    }
+
     if (!options_.IsValid()) return AccountStatus::Failure(AccountError::InvalidArgument);
     if (started_) return AccountStatus::Success();
     if (!password_hasher_->IsReady()) return AccountStatus::Failure(AccountError::Unavailable);
     try
     {
-        // Missing accounts still execute password verification with the same KDF.
         const auto dummy = password_hasher_->Hash(RandomHex(32));
         if (!dummy.Succeeded()) return AccountStatus::Failure(dummy.error);
         const auto result = store_->Open(options_.database_path);
@@ -140,7 +142,10 @@ AccountResult<User> AccountService::CreateAccount(const CreateAccountRequest& re
         std::string login;
         if (!NormalizeLogin(request.login, login) || !ValidPasswordInput(request.password) ||
             request.password.size() < 12 || !ValidDisplayName(request.display_name))
+        {
             return AccountResult<User>::Failure(AccountError::InvalidArgument);
+        }
+
         const auto hash = password_hasher_->Hash(request.password);
         if (!hash.Succeeded()) return AccountResult<User>::Failure(hash.error);
         const auto now = clock_();
@@ -151,7 +156,10 @@ AccountResult<User> AccountService::CreateAccount(const CreateAccountRequest& re
         if (!inserted.Succeeded()) return AccountResult<User>::Failure(inserted.error);
         return AccountResult<User>::Success(std::move(user));
     }
-    catch (...) { return AccountResult<User>::Failure(AccountError::InternalError); }
+    catch (...)
+    {
+        return AccountResult<User>::Failure(AccountError::InternalError);
+    }
 }
 
 AccountResult<LoginResult> AccountService::Login(const LoginRequest& request)

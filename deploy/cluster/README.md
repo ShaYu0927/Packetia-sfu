@@ -2,6 +2,7 @@
 
 Control 与 SFU 共用 `packetia-cluster:local` 镜像；Caddy 单独提供 HTTPS/WSS 入口。
 只有公网 IPv4 时使用 Caddy 测试 CA；有域名时可自动申请公开证书。
+可选 TURN 部署与双浏览器验证的准备条件见下方说明。
 
 ```text
 客户端 ── HTTPS :443 /api/* ─────────→ Caddy → Control :18082
@@ -17,9 +18,10 @@ Caddy 自动处理 WebSocket 升级，`/sfu-a/webrtc` 转发为 SFU 内部的 `/
 
 | 文件 | 职责 |
 | --- | --- |
-| `Dockerfile` | 在构建阶段编译 `PacketiaControl` 与 `PacketiaSfu`，再复制程序和运行依赖到最终镜像 |
+| `Dockerfile` | 编译 Control/SFU；若源码包含独立 TURN 入口，也编译并复制 `PacketiaTurn` |
 | `compose.yaml` | 定义 Control/SFU 的启动命令、环境变量、端口、挂载、健康检查和日志轮转 |
 | `compose.public.yaml` | 与基础 Compose 文件合并，增加 Caddy 容器和公网入口 |
+| `compose.turn.yaml` | 独立、可选的 Linux UDP TURN 部署，由 `runtime/turn.env` 配置 |
 | `Caddyfile` | 配置证书、HTTP 跳转、HTTP API 和 WebSocket 代理 |
 | `control.json`、`sfu-a.json`、`sfu-b.json` | `deploy.py init` 使用的配置模板 |
 | `runtime/.env` | 生成的部署变量与持久密钥，由 Compose 的 `--env-file` 读取 |
@@ -29,6 +31,23 @@ Caddy 自动处理 WebSocket 升级，`/sfu-a/webrtc` 转发为 SFU 内部的 `/
 Control 与 SFU 使用同一个镜像，通过 `command` 分别运行不同的程序。
 Compose 的 `services` 是容器定义；`x-runtime`、`x-jwt-environment` 是公共配置，
 `&name` 定义 YAML 锚点，`<<: *name` 将公共字段合并进服务，不会额外启动容器。
+
+### 可选 TURN 实验
+
+`compose.turn.yaml` 是单独使用的 Linux host-network 配置，`deploy.py up` 不会自动启用它。
+当前已移除独立的 `TurnServerMain.cpp` 入口，TURN 协议库和测试仍保留，默认新构建的镜像不包含 `PacketiaTurn`。
+此 Compose 配置只能用于已包含该程序的镜像，或补齐入口后重新构建的镜像；不是现成的 TURN 启动闭环。
+
+准备好对应镜像后，将 `turn.env.example` 复制到 `runtime/turn.env`，填写实际公网地址与独立测试凭证，执行：
+
+```sh
+docker compose --env-file deploy/cluster/runtime/turn.env \
+  -f deploy/cluster/compose.turn.yaml up -d
+```
+
+配置只提供 UDP TURN；宿主机需开放监听端口和配置的 UDP relay 端口范围。
+浏览器中继检查位于 `examples/webrtc-room/check-turn-p2p.mjs`，可连接现有外部 TURN，
+也可通过 `PACKETIA_TURN_BINARY` 指定已有的本机测试程序；验证不经过 SFU。
 
 常见配置的具体作用：
 

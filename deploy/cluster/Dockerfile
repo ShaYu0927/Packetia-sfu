@@ -9,7 +9,13 @@ WORKDIR /src
 COPY . .
 RUN cmake -S . -B /tmp/packetia-build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
     -DPACKETIA_WITH_LIBWEBSOCKETS=ON -DPACKETIA_WITH_SRTP=ON \
-    && cmake --build /tmp/packetia-build --target PacketiaControl PacketiaSfu --parallel "${BUILD_JOBS}"
+    && cmake --build /tmp/packetia-build --target PacketiaControl PacketiaSfu --parallel "${BUILD_JOBS}" \
+    && mkdir /tmp/packetia-bin \
+    && cp /tmp/packetia-build/server/PacketiaControl /tmp/packetia-build/server/PacketiaSfu /tmp/packetia-bin/ \
+    && if [ -f protocol/turn/TurnServerMain.cpp ]; then \
+         cmake --build /tmp/packetia-build --target PacketiaTurn --parallel "${BUILD_JOBS}" \
+         && cp /tmp/packetia-build/protocol/PacketiaTurn /tmp/packetia-bin/; \
+       fi
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -17,8 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libavcodec59 libavformat59 libavutil57 libswscale6 \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir /data && chown 10001:10001 /data
-COPY --from=build /tmp/packetia-build/server/PacketiaControl /usr/local/bin/PacketiaControl
-COPY --from=build /tmp/packetia-build/server/PacketiaSfu /usr/local/bin/PacketiaSfu
+COPY --from=build /tmp/packetia-bin/ /usr/local/bin/
 USER 10001:10001
 WORKDIR /data
 CMD ["PacketiaControl", "/etc/packetia/control.json"]

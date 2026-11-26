@@ -6,6 +6,7 @@
     "start": "node dev-server.mjs",
     "start:cluster": "node cluster-server.mjs",
     "check": "node check-browser.mjs",
+    "check:turn-p2p": "node check-turn-p2p.mjs",
     "test": "node --test quality-stats.test.mjs qos-log.test.mjs demo-config.test.mjs demo-server.test.mjs cluster-server.test.mjs public-access.test.mjs",
     "check:quality": "node check-quality.mjs",
     "check:public": "node check-public-transport.mjs",

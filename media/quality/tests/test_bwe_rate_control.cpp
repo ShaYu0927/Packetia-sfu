@@ -22,6 +22,16 @@ void Initialize(RemoteBitrateController& controller, uint32_t rtt = 100)
     ASSERT_EQ(ready.target_bitrate_bps, 800000U);
 }
 
+OUTrendDetect::Config ObservationConfig()
+{
+    OUTrendDetect::Config config;
+    config.threshold_ms = 1;
+    config.weak_threshold_ms = 0;
+    config.jitter_floor_ms = 0;
+    config.min_overuse_samples = 3;
+    return config;
+}
+
 media::TransportFeedback Feedback(uint64_t first_send, uint64_t receive_offset,
                                   uint64_t feedback_time, bool all_lost = false)
 {
@@ -189,6 +199,125 @@ TEST(BweRateControlTest, DelayDetectsPersistentQueueThenResetsAndHandlesWrap)
     EXPECT_DOUBLE_EQ(detector.trend_ms(), before);
 }
 
+TEST(BweRateControlTest, OveruseNeedsDistinctSamplesAfterFirstExcursion)
+{
+    OUTrendDetect detector(ObservationConfig());
+    detector.OnPacket(0, 1000, 1200);
+    EXPECT_EQ(detector.OnPacket(10, 1030, 1200), BandwidthUsage::kNormal);
+    EXPECT_EQ(detector.OnPacket(20, 1060, 1200), BandwidthUsage::kUnderUsing);
+    // 40ms is sufficient time, but only two threshold excursions were observed.
+    EXPECT_EQ(detector.OnPacket(30, 1100, 1200), BandwidthUsage::kUnderUsing);
+    // More packets sharing this arrival millisecond cannot supply another confirmation.
+    EXPECT_EQ(detector.OnPacket(31, 1100, 1200), BandwidthUsage::kUnderUsing);
+    EXPECT_EQ(detector.OnPacket(32, 1100, 1200), BandwidthUsage::kUnderUsing);
+    EXPECT_EQ(detector.OnPacket(40, 1110, 1200), BandwidthUsage::kOverUsing);
+}
+
+TEST(BweRateControlTest, OveruseConfirmationDoesNotCountTimeBeforeFirstExcursion)
+{
+    auto config = ObservationConfig();
+    config.min_overuse_samples = 2;
+    config.overuse_duration_ms = 100;
+    OUTrendDetect detector(config);
+    detector.OnPacket(0, 1000, 1200);
+    detector.OnPacket(10, 1030, 1200);
+    // The first excursion is at 1060ms, not at the preceding packet's 1030ms.
+    for (int i = 2; i <= 5; ++i)
+        EXPECT_EQ(detector.OnPacket(10 * i, 1000 + 30 * i, 1200), BandwidthUsage::kUnderUsing);
+    EXPECT_EQ(detector.OnPacket(60, 1180, 1200), BandwidthUsage::kOverUsing);
+}
+
+TEST(BweRateControlTest, ReorderedPacketsPreserveCongestionAndNextSample)
+{
+    OUTrendDetect detector(ObservationConfig()), reference(ObservationConfig());
+    for (int i = 0; i <= 4; ++i) {
+        detector.OnPacket(10 * i, 1000 + 30 * i, 1200);
+        reference.OnPacket(10 * i, 1000 + 30 * i, 1200);
+    }
+    const double trend = detector.trend_ms();
+    const double jitter = detector.max_jitter_ms();
+    EXPECT_EQ(detector.OnPacket(50, 1119, 6000), BandwidthUsage::kOverUsing);
+    EXPECT_EQ(detector.OnPacket(39, 1121, 6000), BandwidthUsage::kOverUsing);
+    EXPECT_EQ(detector.OnPacket(50, -1, 6000), BandwidthUsage::kOverUsing);
+    EXPECT_DOUBLE_EQ(detector.trend_ms(), trend);
+    EXPECT_DOUBLE_EQ(detector.max_jitter_ms(), jitter);
+    EXPECT_EQ(detector.OnPacket(50, 1150, 1200), reference.OnPacket(50, 1150, 1200));
+    EXPECT_DOUBLE_EQ(detector.trend_ms(), reference.trend_ms());
+    EXPECT_DOUBLE_EQ(detector.effective_trend_ms(), reference.effective_trend_ms());
+    EXPECT_DOUBLE_EQ(detector.size_delay_ms(), reference.size_delay_ms());
+}
+
+TEST(BweRateControlTest, ObservationGapClearsHistoryAndPreservesExternalEstimates)
+{
+    const std::pair<uint32_t, int64_t> gap_packets[] = {
+        {50, 1500}, // Receive-clock gap.
+        {1000, 1130}, // Send-clock gap.
+        {50, static_cast<int64_t>(INT32_MAX) + 2000}, // Very long receive-clock gap.
+    };
+    for (const auto& [send, arrival] : gap_packets) {
+        SCOPED_TRACE(arrival);
+        OUTrendDetect detector(ObservationConfig()), reference(ObservationConfig());
+        for (auto* candidate : {&detector, &reference}) {
+            candidate->SetNetworkEstimate(100000, 100);
+            candidate->SetRateControlRegion(RateControlRegion::kNearMax);
+        }
+        for (int i = 0; i <= 4; ++i)
+            detector.OnPacket(10 * i, 1000 + 30 * i, 1200);
+
+        EXPECT_EQ(detector.OnPacket(send, arrival, 1200), BandwidthUsage::kNormal);
+        EXPECT_DOUBLE_EQ(detector.trend_ms(), 0);
+        EXPECT_DOUBLE_EQ(detector.effective_trend_ms(), 0);
+        EXPECT_DOUBLE_EQ(detector.max_jitter_ms(), 0);
+        reference.OnPacket(send, arrival, 1200);
+        // Size compensation must still use the external bitrate estimate.
+        EXPECT_EQ(detector.OnPacket(send + 10, arrival + 30, 2200),
+                  reference.OnPacket(send + 10, arrival + 30, 2200));
+        EXPECT_NEAR(detector.size_delay_ms(), 1000.0 * 8000 / 150000, 1e-9);
+        EXPECT_DOUBLE_EQ(detector.trend_ms(), reference.trend_ms());
+        EXPECT_DOUBLE_EQ(detector.max_jitter_ms(), reference.max_jitter_ms());
+        EXPECT_EQ(detector.OnPacket(send + 20, arrival + 60, 2200),
+                  reference.OnPacket(send + 20, arrival + 60, 2200));
+        EXPECT_EQ(detector.OnPacket(send + 30, arrival + 90, 2200),
+                  reference.OnPacket(send + 30, arrival + 90, 2200));
+    }
+}
+
+TEST(BweRateControlTest, ResetForgetsPendingConfirmationAndJitterClock)
+{
+    OUTrendDetect detector(ObservationConfig()), reference(ObservationConfig());
+    for (int i = 0; i <= 3; ++i)
+        detector.OnPacket(10 * i, 1000 + 30 * i, 1200);
+    ASSERT_GT(detector.max_jitter_ms(), 0);
+    detector.Reset();
+    EXPECT_DOUBLE_EQ(detector.trend_ms(), 0);
+    EXPECT_DOUBLE_EQ(detector.max_jitter_ms(), 0);
+    for (int i = 0; i <= 5; ++i) {
+        EXPECT_EQ(detector.OnPacket(10 * i, 30 * i, 1200),
+                  reference.OnPacket(10 * i, 30 * i, 1200));
+        EXPECT_DOUBLE_EQ(detector.trend_ms(), reference.trend_ms());
+        EXPECT_DOUBLE_EQ(detector.max_jitter_ms(), reference.max_jitter_ms());
+    }
+}
+
+TEST(BweRateControlTest, CustomObservationConfigUsesSameParameterGuards)
+{
+    auto invalid = ObservationConfig();
+    invalid.max_sample_gap_ms = 0;
+    invalid.min_overuse_samples = 0;
+    invalid.overuse_duration_ms = 1;
+    auto normalized = invalid;
+    normalized.max_sample_gap_ms = 1;
+    normalized.min_overuse_samples = 2;
+    OUTrendDetect detector(invalid), reference(normalized);
+    BandwidthUsage last = BandwidthUsage::kNormal;
+    for (int i = 0; i <= 10; ++i) {
+        last = detector.OnPacket(0, i, 1200);
+        EXPECT_EQ(last, reference.OnPacket(0, i, 1200));
+        EXPECT_DOUBLE_EQ(detector.trend_ms(), reference.trend_ms());
+    }
+    EXPECT_EQ(last, BandwidthUsage::kOverUsing);
+}
+
 TEST(BweRateControlTest, ReceiveRateHasWarmupAndReset)
 {
     IncomingBitrateEstimator estimator;
@@ -202,16 +331,18 @@ TEST(BweRateControlTest, ReceiveRateHasWarmupAndReset)
     EXPECT_EQ(estimator.Update(std::numeric_limits<size_t>::max(), 100), UINT32_MAX);
 }
 
-TEST(BweRateControlTest, IsolatedJitterIsToleratedAndExpiresFromHistory)
+TEST(BweRateControlTest, IsolatedJitterDecaysWithoutFalseOveruse)
 {
     OUTrendDetect detector;
     detector.OnPacket(0, 1000, 1200);
     EXPECT_EQ(detector.OnPacket(20, 1220, 1200), BandwidthUsage::kNormal);
     EXPECT_DOUBLE_EQ(detector.max_jitter_ms(), 200);
-    detector.OnPacket(1040, 2240, 1200);
-    detector.OnPacket(10040, 11240, 1200);
-    EXPECT_DOUBLE_EQ(detector.max_jitter_ms(), 200);
-    EXPECT_EQ(detector.OnPacket(11040, 12240, 1200), BandwidthUsage::kNormal);
+    // Keep observations continuous so this tests decay rather than gap reset.
+    for (int i = 1; i <= 100; ++i) {
+        EXPECT_EQ(detector.OnPacket(20 + i * 200, 1220 + i * 200, 1200), BandwidthUsage::kNormal);
+        EXPECT_NEAR(detector.max_jitter_ms(),
+            std::max(30.0, 200 * std::exp(-i * 200.0 / 10500)), 1e-9);
+    }
     EXPECT_DOUBLE_EQ(detector.max_jitter_ms(), 30);
 }
 
