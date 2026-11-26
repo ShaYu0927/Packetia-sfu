@@ -89,6 +89,11 @@ RoomAdmission MeetingModule::Admit(const std::string& room, const std::string& u
     const auto operation = Acquire();
     return operation.runtime->admissions->Admit(room, user, name);
 }
+RoomAdmission MeetingModule::AdmitAgent(const std::string& room, const std::string& owner, const std::string& agent)
+{
+    const auto operation = Acquire();
+    return operation.runtime->admissions->AdmitAgent(room, owner, agent);
+}
 RoomCommandResult MeetingModule::ManageRoom(const std::string& room, const std::string& owner, nlohmann::json command)
 {
     const auto operation = Acquire();

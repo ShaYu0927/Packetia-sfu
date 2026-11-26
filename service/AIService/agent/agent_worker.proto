@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package packetia.agent.v1;
+
+service AgentWorker {
+  rpc RunSession(stream SessionJob) returns (stream SessionJoined);
+}
+
+message SessionJob {
+  string session_id = 1;
+  string room_id = 2;
+  string agent_id = 3;
+  string signaling_url = 4;
+  string join_token = 5;
+}
+
+message SessionJoined {
+  string participant_id = 1;
+}

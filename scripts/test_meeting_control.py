@@ -38,7 +38,8 @@ def post(base, path, body, token='', expected=200):
         response = error
     with response:
         value = json.load(response)
-        check(response.status == expected, f'{path}: HTTP {response.status}, expected {expected}: {value}')
+        if expected is not None:
+            check(response.status == expected, f'{path}: HTTP {response.status}, expected {expected}: {value}')
         return value
 
 
@@ -136,13 +137,14 @@ class WebSocket:
 
 
 class Process:
-    def __init__(self, binary, name, config, directory, env):
+    def __init__(self, binary, name, config, directory, env, *, worker_address=None):
         path = directory / (name + '.json')
         path.write_text(json.dumps(config))
         self.log_path = directory / (name + '.log')
         self.node_id = config.get('node_id', '')
+        self.service = 'agent-worker' if worker_address else ('sfu' if self.node_id else 'control')
         self.log = self.log_path.open('wb')
-        self.process = subprocess.Popen([str(Path(binary).resolve()), str(path)], env=env,
+        self.process = subprocess.Popen([str(Path(binary).resolve()), worker_address or str(path)], env=env,
             stdout=self.log, stderr=subprocess.STDOUT, cwd=directory)
         try:
             self.wait_ready()
@@ -173,7 +175,7 @@ class Process:
                 records.append(record)
         check(len(records) == 1, 'missing structured readiness event')
         ready = records[0]
-        check(ready['service'] == ('sfu' if self.node_id else 'control') and ready['node_id'] == self.node_id,
+        check(ready['service'] == self.service and ready['node_id'] == self.node_id,
             'incorrect process log identity')
 
     def stop(self):
@@ -196,7 +198,8 @@ class BrowserMedia:
         self.log = (directory / 'browser.log').open('wb')
         try:
             browser_env = {key: value for key, value in env.items()
-                if key not in ('PACKETIA_JWT_SECRET', 'PACKETIA_NODE_SECRETS', 'PACKETIA_NODE_SECRET')}
+                if key not in ('PACKETIA_JWT_SECRET', 'PACKETIA_NODE_SECRETS', 'PACKETIA_NODE_SECRET',
+                    'PACKETIA_AGENT_RPC_TOKEN')}
             self.process = subprocess.Popen([node, str(root / 'examples/webrtc-room/check-cluster-outage.mjs')],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.log, env=browser_env)
         except BaseException:
@@ -235,7 +238,7 @@ class BrowserMedia:
             self.log.close()
 
 
-def run(control, sfu, media_node=None, media_report=None):
+def run(control, sfu, media_node=None, media_report=None, agent_worker=None):
     processes, clients = [], []
     browser = None
     report = {'passed': False, 'source': 'browser-getStats', 'phases': []}
@@ -252,7 +255,13 @@ def run(control, sfu, media_node=None, media_report=None):
             'account_database': str(directory / 'accounts.db'), 'cluster_database': str(directory / 'rooms.db'),
             'registration_enabled': True}
         try:
-            processes.append(Process(control, 'control', config, directory, env))
+            if agent_worker:
+                worker_address = f'127.0.0.1:{port()}'
+                config['voice_agent_worker_address'] = worker_address
+                env['PACKETIA_AGENT_RPC_TOKEN'] = secrets.token_hex(32)
+                worker = Process(agent_worker, 'agent-worker', {}, directory, env, worker_address=worker_address)
+                processes.append(worker)
+            processes.insert(0, Process(control, 'control', config, directory, env))
             check(get(public, '/readyz')['status'] == 'ok', 'control readyz failed')
             with urllib.request.urlopen(public + '/healthz', timeout=2) as response:
                 health = json.load(response)
@@ -295,10 +304,41 @@ def run(control, sfu, media_node=None, media_report=None):
             a, b = admit(rooms[0]), admit(rooms[1])
             check(a['node_id'] != b['node_id'], 'rooms did not spread across nodes')
             post(public, '/api/v1/room-admissions', {'room_id': rooms[2]}, owner_token, 503)
+            agent_path = '/api/v1/agent-sessions'
+            post(public, agent_path, {'room_id': rooms[2]}, owner_token, 503)
             post(public, '/api/v1/room-members', {'room_id': rooms[0], 'user_id': bob['identity']['user_id'], 'role': 'speaker'}, owner_token)
             bob_admission = admit(rooms[0], bob_token)
             member, joined = connect(bob_admission)
             check(joined['type'] == 'joined', 'member join failed')
+            post(public, agent_path, {'room_id': rooms[0]}, bob_token, 403)
+
+            def start_agent(room):
+                created = post(public, agent_path, {'room_id': room}, owner_token, 201)
+                check(created['state'] == 'starting', 'agent creation did not dispatch the join')
+                session = {'session_id': created['session_id']}
+
+                def running_agent():
+                    current = post(public, agent_path + '/get', session, owner_token)
+                    check(current['state'] != 'failed', f'agent join failed: {current}')
+                    return current if current['state'] == 'running' else None
+
+                return eventually(running_agent)
+
+            def wait_for_agent_removal(agent_session):
+                eventually(lambda: post(public, agent_path + '/get', agent_session, owner_token, expected=None)
+                    .get('error', {}).get('code') == 'agent_not_found')
+
+            agent = start_agent(rooms[0])
+            agent_session = {'session_id': agent['session_id']}
+            agent_member = manage(rooms[0], 'participant', {'participant_id': agent['participant_id']})['participant']
+            check(agent_member['subject_id'] == agent['agent_id'] and
+                not agent_member['permissions']['can_publish'] and not agent_member['permissions']['can_subscribe'],
+                'SFU participant did not have the agent identity and signaling-only grant')
+            check(post(public, agent_path + '/stop', agent_session, owner_token)['state'] == 'stopping',
+                'agent stop did not send leave')
+            eventually(lambda: manage(rooms[0], 'participants')['total'] == 1)
+            wait_for_agent_removal(agent_session)
+            closing_agent = start_agent(rooms[1])
             other, other_joined = connect(b)
             check(other_joined['type'] == 'joined', 'second node join failed')
             roster = manage(rooms[0], 'participants')
@@ -343,6 +383,7 @@ def run(control, sfu, media_node=None, media_report=None):
 
             manage(rooms[1], 'end')
             check(other.reply()['type'] == 'removed', 'end did not notify second node')
+            wait_for_agent_removal({'session_id': closing_agent['session_id']})
             manage(rooms[1], 'end')
             post(public, '/api/v1/room-admissions', {'room_id': rooms[1]}, owner_token, 410)
             c = admit(rooms[2])
@@ -350,6 +391,21 @@ def run(control, sfu, media_node=None, media_report=None):
             # Keep a real participant alive throughout the control-plane outage.
             observer, observer_joined = connect(c)
             check(observer_joined['type'] == 'joined', 'outage observer join failed')
+            if agent_worker:
+                interrupted_agent = start_agent(rooms[2])
+                interrupted_session = {'session_id': interrupted_agent['session_id']}
+                worker.stop()
+
+                def worker_failure():
+                    current = post(public, agent_path + '/get', interrupted_session, owner_token)
+                    return current.get('error') if current['state'] == 'failed' else None
+
+                check(eventually(worker_failure) == 'agent_worker_unavailable', 'worker exit did not fail the session')
+                post(public, agent_path + '/stop', interrupted_session, owner_token)
+                wait_for_agent_removal(interrupted_session)
+                eventually(lambda: all(member['participant_id'] != interrupted_agent['participant_id']
+                    for member in manage(rooms[2], 'participants')['participants']))
+                print('PASS gRPC worker join, leave, SFU removal and worker shutdown')
             post(public, '/api/v1/room-members', {'room_id': rooms[2],
                 'user_id': bob['identity']['user_id'], 'role': 'listener'}, owner_token)
             if media_node:
@@ -455,9 +511,10 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--control', required=True)
     parser.add_argument('--sfu', required=True)
+    parser.add_argument('--agent-worker', help='Use a separate gRPC Agent Worker process')
     parser.add_argument('--media-node', help='Node.js executable; enable the optional Playwright audio/video check')
     parser.add_argument('--media-report', help='Write browser counters without credentials or SDP (requires --media-node)')
     args = parser.parse_args()
     if args.media_report and not args.media_node:
         parser.error('--media-report requires --media-node')
-    run(args.control, args.sfu, args.media_node, args.media_report)
+    run(args.control, args.sfu, args.media_node, args.media_report, args.agent_worker)

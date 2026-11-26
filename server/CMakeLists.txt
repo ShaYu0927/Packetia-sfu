@@ -86,7 +86,15 @@ if(PACKETIA_WITH_LIBWEBSOCKETS)
     endif()
     add_executable(PacketiaControl cluster/ProcessMain.cpp cluster/ControlApp.cpp)
     target_compile_definitions(PacketiaControl PRIVATE PACKETIA_CONTROL_PROCESS=1)
-    target_link_libraries(PacketiaControl PRIVATE packetia_cluster_api packetia_monitoring_api packetia_agent_api)
+    target_link_libraries(PacketiaControl PRIVATE packetia_cluster_api packetia_monitoring_api packetia_agent_api
+        packetia_agent_worker packetia_agent_room_websocket)
+    if(TARGET packetia_agent_rpc)
+        target_compile_definitions(PacketiaControl PRIVATE PACKETIA_AGENT_RPC=1)
+        target_link_libraries(PacketiaControl PRIVATE packetia_agent_rpc)
+        add_executable(PacketiaAgentWorker cluster/AgentWorkerMain.cpp)
+        target_link_libraries(PacketiaAgentWorker PRIVATE packetia_agent_rpc packetia_agent_worker
+            packetia_agent_room_websocket OpenSSL::Crypto LOGGER)
+    endif()
     if(PACKETIA_SRTP_AVAILABLE)
         find_package(CURL REQUIRED)
         add_executable(PacketiaSfu cluster/ProcessMain.cpp cluster/SfuApp.cpp cluster/NodeClient.cpp meeting/RoomControlController.cpp)
@@ -104,6 +112,13 @@ if(PACKETIA_WITH_LIBWEBSOCKETS)
                     ${PROJECT_SOURCE_DIR}/scripts/test_meeting_control.py
                     --control $<TARGET_FILE:PacketiaControl> --sfu $<TARGET_FILE:PacketiaSfu>)
                 set_tests_properties(MeetingControlIntegrationTest PROPERTIES TIMEOUT 90)
+                if(TARGET PacketiaAgentWorker)
+                    add_test(NAME AgentWorkerRpcIntegrationTest COMMAND ${Python3_EXECUTABLE}
+                        ${PROJECT_SOURCE_DIR}/scripts/test_meeting_control.py
+                        --control $<TARGET_FILE:PacketiaControl> --sfu $<TARGET_FILE:PacketiaSfu>
+                        --agent-worker $<TARGET_FILE:PacketiaAgentWorker>)
+                    set_tests_properties(AgentWorkerRpcIntegrationTest PROPERTIES TIMEOUT 90)
+                endif()
             endif()
         endif()
     endif()

@@ -7,6 +7,11 @@
 #include "RuntimeConfig.h"
 #include "AccountController.h"
 #include "AgentController.h"
+#ifdef PACKETIA_AGENT_RPC
+#include "GrpcAgentWorkerClient.h"
+#endif
+#include "LocalAgentWorker.h"
+#include "WebSocketAgentRoomClient.h"
 #include "ApiResponse.h"
 #include "ApiServer.h"
 #include "HttpServer.h"
@@ -32,7 +37,8 @@ struct ControlApp::Impl
     explicit Impl(const std::string& path)
     {
         const auto config = ReadConfig(path, {"listen_ip", "http_port", "internal_listen_ip", "internal_http_port",
-            "account_database", "cluster_database", "registration_enabled"});
+            "account_database", "cluster_database", "registration_enabled", "voice_agent_enabled",
+            "voice_agent_worker_address"});
         service::account::AccountOptions options;
         options.enabled = true;
         options.registration_enabled = config.value("registration_enabled", false);
@@ -42,7 +48,22 @@ struct ControlApp::Impl
         if (cluster_path.empty()) throw std::runtime_error("invalid cluster database");
         accounts = std::make_shared<service::account::AccountService>(options,std::make_shared<service::account::SqliteAccountStore>(), std::make_shared<service::account::ScryptPasswordHasher>());
         meetings = std::make_shared<service::meeting::MeetingModule>(service::meeting::MeetingModuleOptions{cluster_path, JwtIssuer(), JwtSecret()}, MakeNodeCommandSender(NodeSecrets()));
-        agents = std::make_shared<service::ai::VoiceAgentService>(meetings);
+        service::ai::VoiceAgentService::Options agent_options;
+        agent_options.enabled = config.value("voice_agent_enabled", agent_options.enabled);
+        if (agent_options.enabled)
+        {
+            if (config.contains("voice_agent_worker_address"))
+            {
+#ifdef PACKETIA_AGENT_RPC
+                agent_options.worker = service::ai::MakeGrpcAgentWorkerClient(
+                    config.at("voice_agent_worker_address").get<std::string>());
+#else
+                throw std::runtime_error("voice_agent_worker_address requires PACKETIA_WITH_GRPC");
+#endif
+            }
+            else agent_options.worker = service::ai::MakeLocalAgentWorker(service::ai::MakeAgentRoomClient());
+        }
+        agents = std::make_shared<service::ai::VoiceAgentService>(meetings, agent_options);
         if (!services.Register(monitor) || !services.Register(meetings) || !services.Register(agents))
             throw std::runtime_error("cannot register control services");
         meeting::RoomController rooms(accounts, meetings, business_policy);

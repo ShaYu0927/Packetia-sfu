@@ -8,8 +8,22 @@ namespace
 {
 Json Describe(const service::ai::AgentSession& session)
 {
-    return {{"session_id", session.session_id}, {"room_id", session.room_id},
-            {"state", session.state == service::ai::AgentSessionState::Prepared ? "prepared" : "stopped"}};
+    using State = service::ai::AgentSessionState;
+    const char* state = "failed";
+    switch (session.state)
+    {
+    case State::Prepared: state = "prepared"; break;
+    case State::Starting: state = "starting"; break;
+    case State::Running: state = "running"; break;
+    case State::Stopping: state = "stopping"; break;
+    case State::Stopped: state = "stopped"; break;
+    case State::Failed: break;
+    }
+    Json result = {{"session_id", session.session_id}, {"room_id", session.room_id}, {"state", state}};
+    if (!session.agent_id.empty()) result["agent_id"] = session.agent_id;
+    if (!session.participant_id.empty()) result["participant_id"] = session.participant_id;
+    if (!session.error.empty()) result["error"] = session.error;
+    return result;
 }
 }
 

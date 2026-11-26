@@ -6,6 +6,9 @@
 #include "SqliteAccountStore.h"
 #include <gtest/gtest.h>
 #include <future>
+#include <algorithm>
+#include <chrono>
+#include <thread>
 
 namespace
 {
@@ -89,6 +92,85 @@ TEST_F(VoiceAgentTest, StopGatesCallsAndRestartDoesNotRestoreSessions)
     EXPECT_NO_THROW(agents->CreateSession(room, "alice"));
 }
 
+TEST_F(VoiceAgentTest, DisabledAgentRejectsCreationAfterOwnerCheck)
+{
+    service::ai::VoiceAgentService::Options options;
+    options.enabled = false;
+    service::ai::VoiceAgentService disabled(meetings, options);
+    ASSERT_TRUE(disabled.Init());
+    ASSERT_TRUE(disabled.Start());
+    const auto room = meetings->CreateRoom("alice");
+    ExpectFailure([&] { disabled.CreateSession(room, "bob"); }, 403, "room_owner_required");
+    ExpectFailure([&] { disabled.CreateSession(room, "alice"); }, 503, "agent_disabled");
+}
+
+class TestAgentWorker final : public service::ai::AgentWorker
+{
+public:
+    bool Start() override
+    {
+        running = true;
+        return true;
+    }
+
+    void Stop() override
+    {
+        running = false;
+        on_event = {};
+    }
+
+    bool StartSession(service::ai::AgentWorkerJob request, EventHandler handler) override
+    {
+        job = std::move(request);
+        on_event = std::move(handler);
+        return true;
+    }
+
+    void StopSession(const std::string& session_id) override { stopped_session = session_id; }
+
+    bool running = false;
+    service::ai::AgentWorkerJob job;
+    EventHandler on_event;
+    std::string stopped_session;
+};
+
+TEST_F(VoiceAgentTest, DrivesInjectedWorkerAndIgnoresLateJoinWhileStopping)
+{
+    using EventKind = service::ai::AgentWorkerEvent::Kind;
+    using State = service::ai::AgentSessionState;
+    auto worker = std::make_shared<TestAgentWorker>();
+    service::ai::VoiceAgentService::Options options;
+    options.worker = worker;
+    service::ai::VoiceAgentService service(meetings, options);
+    meetings->RegisterNode({"sfu-a", "boot-a", "ws://localhost:30000/webrtc", 10, 0});
+    ASSERT_TRUE(service.Init());
+    ASSERT_TRUE(service.Start());
+    EXPECT_TRUE(worker->running);
+
+    const auto room = meetings->CreateRoom("alice");
+    const auto session = service.CreateSession(room, "alice");
+    EXPECT_EQ(session.state, State::Starting);
+    EXPECT_EQ(worker->job.session_id, session.session_id);
+    EXPECT_EQ(worker->job.room_id, room);
+    EXPECT_EQ(worker->job.agent_id, session.agent_id);
+    EXPECT_FALSE(worker->job.join_token.empty());
+
+    ASSERT_TRUE(worker->on_event);
+    worker->on_event({EventKind::Joined, "participant-one", {}});
+    const auto running = service.GetSession(session.session_id, "alice");
+    EXPECT_EQ(running.state, State::Running);
+    EXPECT_EQ(running.participant_id, "participant-one");
+
+    EXPECT_EQ(service.StopSession(session.session_id, "alice").state, State::Stopping);
+    EXPECT_EQ(worker->stopped_session, session.session_id);
+    worker->on_event({EventKind::Joined, "participant-two", {}});
+    EXPECT_EQ(service.GetSession(session.session_id, "alice").state, State::Stopping);
+    worker->on_event({EventKind::Stopped, {}, {}});
+    ExpectFailure([&] { service.GetSession(session.session_id, "alice"); }, 404, "agent_not_found");
+    service.Stop();
+    EXPECT_FALSE(worker->running);
+}
+
 TEST_F(VoiceAgentTest, ConcurrentCreationDoesNotCreateTwoAgentsForOneRoom)
 {
     const auto room = meetings->CreateRoom("alice");
@@ -113,6 +195,104 @@ TEST(VoiceAgentConfiguration, RejectsMissingDependenciesAndZeroCapacity)
     service::ai::VoiceAgentService unavailable(meetings);
     ASSERT_TRUE(unavailable.Init());
     EXPECT_FALSE(unavailable.Start());
+}
+
+// 即使断言提前返回，也先解开阻塞任务，再由 executor 析构回收线程。
+struct TaskGate
+{
+    std::promise<void> promise;
+    std::shared_future<void> ready = promise.get_future().share();
+    bool released = false;
+    void Release() { if (!released) { released = true; promise.set_value(); } }
+    ~TaskGate() { Release(); }
+};
+
+TEST(AgentExecutorTest, DedicatedThreadBoundsQueueCancelsPendingAndCleansUpOnOwner)
+{
+    service::ai::AgentExecutor executor(1);
+    TaskGate gate;
+    std::promise<std::thread::id> cleanup;
+    auto cleaned = cleanup.get_future();
+    std::promise<std::thread::id> entered;
+    auto running = entered.get_future();
+    bool pending_executed = false;
+    ASSERT_TRUE(executor.Start([&] { cleanup.set_value(std::this_thread::get_id()); }));
+    // 清理回调不能引用比 executor 更早析构的局部对象。
+    struct StopGuard { service::ai::AgentExecutor& executor; TaskGate& gate;
+        ~StopGuard() { gate.Release(); executor.Stop(); } } stop{executor, gate};
+    auto first = executor.Submit([&] {
+        entered.set_value(std::this_thread::get_id());
+        gate.ready.wait();
+        return 7;
+    });
+    ASSERT_EQ(running.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    const auto worker_id = running.get();
+    EXPECT_NE(worker_id, std::this_thread::get_id());
+    const auto threads = utils::ThreadManager::Instance().Snapshot();
+    const auto worker = std::find_if(threads.begin(), threads.end(), [&](const auto& item) {
+        return item.native_id == worker_id;
+    });
+    ASSERT_NE(worker, threads.end());
+    EXPECT_EQ(worker->options.group, "agent");
+    EXPECT_EQ(worker->options.model, utils::ThreadModel::Dedicated);
+
+    auto pending = executor.Submit([&] { pending_executed = true; });
+    ExpectFailure([&] { executor.Submit([] {}); }, 503, "agent_busy");
+    ASSERT_TRUE(utils::ThreadManager::Instance().RequestStop(worker->id));
+    ExpectFailure([&] { executor.Submit([] {}); }, 503, "agent_unavailable");
+    gate.Release();
+    EXPECT_EQ(first.get(), 7); // 已开始的任务允许完成。
+    ExpectFailure([&] { pending.get(); }, 503, "agent_unavailable");
+    executor.Stop();
+    EXPECT_FALSE(pending_executed);
+    EXPECT_EQ(cleaned.get(), worker_id);
+    const auto remaining = utils::ThreadManager::Instance().Snapshot();
+    EXPECT_TRUE(std::none_of(remaining.begin(), remaining.end(), [&](const auto& item) {
+        return item.id == worker->id;
+    }));
+}
+
+TEST(AgentExecutorTest, PropagatesErrorsSurvivesReentrancyAndRestarts)
+{
+    service::ai::AgentExecutor executor;
+    ExpectFailure([&] { executor.Submit([] {}); }, 503, "agent_unavailable");
+    ASSERT_TRUE(executor.Start({}));
+    auto failed = executor.Submit([] { throw Failure(409, "test_failure"); });
+    ExpectFailure([&] { failed.get(); }, 409, "test_failure");
+    auto reentrant = executor.Submit([&] { executor.Submit([] {}).get(); });
+    EXPECT_THROW(reentrant.get(), std::logic_error);
+    EXPECT_EQ(executor.Submit([] { return 42; }).get(), 42);
+    executor.Stop();
+    executor.Stop();
+    ASSERT_TRUE(executor.Start({}));
+    EXPECT_EQ(executor.Submit([] { return 43; }).get(), 43);
+    service::ai::AgentExecutor disabled(0);
+    EXPECT_FALSE(disabled.Start({}));
+}
+
+TEST_F(VoiceAgentTest, ConcurrentRequestsAndStopCompleteWithoutLeakingOldSessions)
+{
+    const auto room = meetings->CreateRoom("alice");
+    const auto session = agents->CreateSession(room, "alice");
+    std::promise<void> start;
+    auto ready = start.get_future().share();
+    std::vector<std::future<int>> requests;
+    for (int i = 0; i < 16; ++i)
+        requests.push_back(std::async(std::launch::async, [&, ready] {
+            ready.wait();
+            try { agents->GetSession(session.session_id, "alice"); return 200; }
+            catch (const Failure& error) { return int(error.status); }
+        }));
+    start.set_value();
+    agents->Stop();
+    for (auto& request : requests)
+    {
+        const auto status = request.get();
+        EXPECT_TRUE(status == 200 || status == 503);
+    }
+    ASSERT_TRUE(agents->Start());
+    ExpectFailure([&] { agents->GetSession(session.session_id, "alice"); }, 404, "agent_not_found");
+    EXPECT_NO_THROW(agents->CreateSession(room, "alice"));
 }
 
 class AgentApiTest : public VoiceAgentTest

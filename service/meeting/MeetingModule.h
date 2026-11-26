@@ -26,6 +26,7 @@ public:
     void RequireRoomOwner(const std::string& room, const std::string& owner);
     void SetMemberRole(const std::string& room, const std::string& owner, const std::string& user, bool can_publish);
     RoomAdmission Admit(const std::string& room, const std::string& user, const std::string& name);
+    RoomAdmission AdmitAgent(const std::string& room, const std::string& owner, const std::string& agent);
     RoomCommandResult ManageRoom(const std::string& room, const std::string& owner, nlohmann::json command);
     RoomCommandResult EndRoom(const std::string& room, const std::string& owner);
     std::vector<cluster::RoomAssignment> RegisterNode(const cluster::Node& node);

@@ -372,6 +372,30 @@ HTTP 适配器复用该日志器，记录启动/停止、关键运行失败和�
 
 ## 近期改动与验证
 
+### 2026-11-26：独立 Agent Worker 与优先级桶队列
+
+- `PacketiaControl` 可通过 gRPC 将语音 Agent 会话派发给同机运行的 `PacketiaAgentWorker`。
+  Worker 通过 WebSocket 加入或退出 SFU，并回传入会结果。部署参数见[独立 Agent Worker](#独立-agent-worker)。
+- `VoiceAgentService` 使用专属线程管理会话状态。派发与回调流程见[会话执行模型](#会话执行模型)。
+- [`BoundedPriorityQueue`](utils/BoundedPriorityQueue.h) 的普通桶和高优先级桶各有独立容量。
+  `TryPush()` 在目标桶满时返回 `false`。`TryPop()` 优先取高优先级桶，同一桶内按 FIFO 取出。
+  队列由调用方负责同步，可作为独立工具使用。当前 `AgentExecutor` 使用单个 FIFO。
+
+```cpp
+#include "BoundedPriorityQueue.h"
+
+utils::BoundedPriorityQueue<int> queue(2, 1);
+using Priority = decltype(queue)::Priority;
+queue.TryPush(Priority::Normal, 1);
+queue.TryPush(Priority::Normal, 2);
+queue.TryPush(Priority::High, 3);
+```
+
+此时普通桶已满，高优先级任务 `3` 仍能入队。连续调用 `TryPop()` 会依次得到 `3`、`1`、`2`，随后得到 `std::nullopt`。
+
+本机 macOS 验证通过 `GrpcSmokeTest`、`VoiceAgentUnitTest`、`MeetingControlIntegrationTest`、
+`AgentWorkerRpcIntegrationTest` 和 `UtilityHelpersUnitTest`，覆盖信令入退会、SFU 移除、Worker 停机与桶队列行为。
+
 ### 2026-11-26：可选 gRPC C++ 构建
 
 - 新增 `PACKETIA_WITH_GRPC`，默认关闭；启用后可从 `third/grpc` 编译，或通过
@@ -383,7 +407,7 @@ HTTP 适配器复用该日志器，记录启动/停止、关键运行失败和�
 - 本机 macOS ARM64 验证：源码方式的 `PacketiaControl` 构建、`GrpcSmokeTest`、`VoiceAgentUnitTest` 通过；
   安装包方式的 `GrpcSmokeTest` 通过；关闭 gRPC 后的 Control 构建和 Agent 测试通过。
   缺失源码、无效安装前缀和错误 provider 均按预期报错。
-- Linux 使用同一套原生构建配置，本轮未进行 Linux 实机编译；Agent RPC 业务及独立 Worker 仍待接入。
+- Linux 使用同一套原生构建配置。该次构建验证在 macOS 上执行。
 
 ### 2026-11-26：弱网观测与 TURN 实验整理
 
@@ -418,29 +442,51 @@ Agent 接口沿用账号登录的 Bearer token，全部使用 POST 与 JSON 请�
 
 | 路径 | 请求体 | 成功结果 |
 | --- | --- | --- |
-| `/api/v1/agent-sessions` | `{"room_id":"..."}` | 201，返回 `session_id`、`room_id`、`state: prepared` |
-| `/api/v1/agent-sessions/get` | `{"session_id":"..."}` | 200，返回会话快照 |
-| `/api/v1/agent-sessions/stop` | `{"session_id":"..."}` | 200，返回 `state: stopped` 并删除记录 |
+| `/api/v1/agent-sessions` | `{"room_id":"..."}` | 201，返回 `session_id`、`room_id`、`agent_id`、`state: starting` |
+| `/api/v1/agent-sessions/get` | `{"session_id":"..."}` | 200，`running` 时返回 SFU 的 `participant_id`，`failed` 时返回错误码 |
+| `/api/v1/agent-sessions/stop` | `{"session_id":"..."}` | 200，返回 `stopping` 并异步退会；已失败的会话直接删除 |
 
 仅开放房间的房主可创建，只有创建者可查询或停止。每房间最多一个会话，默认总上限 128；
 重复创建或超额返回 409，未知及其他账号的会话返回 404，登录失效返回 401，服务停止后返回 503。
-停止后再次查询或停止返回 404。会话只保存在内存，服务关闭时清空；房间结束暂不会自动清理这些元数据。
+Control 配置项 `voice_agent_enabled` 默认开启，设为 `false` 后创建接口返回 503 `agent_disabled`。
+退会完成或收到 SFU 的 `removed` 通知后删除会话，再查询或停止返回 404。会话只保存在内存，服务关闭时清空。
 接口目前只注册到 `PacketiaControl`，单进程 `Packetia` 未注册。
 
-`prepared` 只表示元数据准备完成。下一步计划让独立 Agent 进程以机器人身份入房：
-由 Control 检查房主权限，为机器人登记成员角色并签发房间 JWT，再由 Agent 连接目标 SFU 的 WSS，
-使用 `packetia` 子协议发送 `join`，收到 `joined` 后才算实际入房。
-机器人身份与发起者账号、SFU 返回的 `participant_id` 分开保存；后续 WebRTC 订阅用户音轨、发布回复音轨。
-gRPC 可用于独立 Agent 的任务调度，实时媒体通过 WebRTC；这些入房与跨进程链路当前均未实现。
-LiveKit Python SDK 不能直接使用 Packetia 的自定义信令协议。
+Control 先检查房主权限并分配 SFU，再为独立的机器人身份签发 60 秒的入会 JWT。凭证绑定房间、节点及房间分配代次，
+只授予入会权限。Worker 的 WebSocket 客户端使用 `packetia` 子协议连接该 SFU 并发送 `join`。
+收到匹配房间和机器人身份的 `joined` 后，会话转为 `running`。停止会话会发送 `leave`。
+本阶段实现信令入会及退会。音轨订阅、音轨发布和模型调用留待媒体接入。
 
-填写业务逻辑从 `VoiceAgentService::CreateSession()` 开始；后续资源释放统一接入 `ReleaseSession()`。
-这两处目前在会话锁内执行，网络调用、等待入房、解码和模型推理必须移到独立执行器并增加取消机制。
+`VoiceAgentService` 通过 `Options::worker` 注入 `AgentWorker`，使用 `StartSession` 和 `StopSession` 启停任务。
+这两个入口异步执行，Worker 通过事件报告入会、停止和失败。Worker 的 `Stop` 返回前需结束所有回调。
+`packetia_agent_worker` 接收一个 `AgentRoomClient` 实现。外部 CMake 工程可通过 `add_subdirectory`
+引入 `service/AIService/agent`，链接 `packetia_agent_worker` 后使用 `MakeLocalAgentWorker` 注入自己的房间客户端。
 
-本机 macOS 上从本次提交源码编译 `PacketiaControl`、`PacketiaSfu` 成功；
+#### 独立 Agent Worker
+
+配置 CMake 时启用 `-DPACKETIA_WITH_GRPC=ON -DPACKETIA_WITH_LIBWEBSOCKETS=ON`，构建
+`PacketiaAgentWorker` 和 `PacketiaControl`。为两个进程设置相同的 `PACKETIA_AGENT_RPC_TOKEN`
+（可用 `openssl rand -hex 32` 生成），启动 `PacketiaAgentWorker 127.0.0.1:50051`，并在 Control JSON 中加入
+`"voice_agent_worker_address": "127.0.0.1:50051"` 后启动 `PacketiaControl`。RPC 按同机部署，只允许 IPv4 回环地址。
+省略 `voice_agent_worker_address` 时，Control 直接加载进程内 Worker。
+
+Control 通过 gRPC 双向流 `RunSession` 派发任务，Worker 使用任务里的 JWT 连接 SFU 并回传 `participant_id`。
+Control 结束流的发送方向后，Worker 发起退会并返回终止状态。SFU 移除了 Agent 时，Worker 也会结束流。
+Worker 进程退出时，活动 RPC 会话进入 `failed`，可通过停止接口清理后重新创建。
+
+#### 会话执行模型
+
+每个 `VoiceAgentService` 启动一个 `voice-agent` 专属线程，登记在 `ThreadManager` 的 `agent` 组中。
+HTTP 业务线程将创建、查询和停止命令投递给 `AgentExecutor`，等待 future 后返回响应；网络 I/O 线程不等待。
+会话表及停服清理只在 Agent 线程操作，队列锁在执行任务前释放。队列深度达到默认阈值 128 后，业务请求返回
+503 `agent_busy`。Worker 回调仍可以入队。停服后拒绝新任务，未开始的任务返回 503 `agent_unavailable`。
+正在执行的任务完成后，在 Agent 线程释放全部会话，再 join 回收线程。重新启动不会恢复旧会话。
+入会及退会由独立的 WebSocket I/O 线程处理，结果再投递回控制线程。连接及入会超时为 10 秒，退会超时为 2 秒。
+
+会话框架阶段在 macOS 上编译 `PacketiaControl`、`PacketiaSfu` 成功。
 `AccountApiFrameworkUnitTest`、`MeetingModuleUnitTest`、`ClusterApiUnitTest`、`VoiceAgentUnitTest`、
 `webrtc_service`、`webrtc_twcc`、`webrtc_control`、`webrtc_members`、`webrtc_audio_controls`、`webrtc_duplex`
-共 10 个 CTest 入口通过，其中新增 Agent 测试包含 8 个用例。本轮未验证真实 Agent 入房、公网媒体或容量。
+共 10 个 CTest 入口通过，其中当时新增的 Agent 测试包含 8 个用例。
 
 ### 2026-11-24：房间与媒体资源归属、释放顺序
 
