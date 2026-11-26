@@ -1,0 +1,7 @@
+bazel-bin
+bazel-genfiles
+bazel-grpc-proto
+bazel-out
+bazel-testlogs
+tools/bazel-*
+MODULE.bazel.lock

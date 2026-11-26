@@ -1,0 +1,45 @@
+{
+  "grpc_version": "v1.85.0",
+  "repositories": [
+    {
+      "path": ".",
+      "upstream": "git@github.com:grpc/grpc.git",
+      "commit": "a83eb274517ef49e95d5529dac071f4b74abae0d"
+    },
+    {
+      "path": "third_party/abseil-cpp",
+      "upstream": "https://github.com/abseil/abseil-cpp.git",
+      "commit": "5650e9cf76d3be4318d5fa3af38ee483ddfd5e4a"
+    },
+    {
+      "path": "third_party/cares/cares",
+      "upstream": "https://github.com/c-ares/c-ares.git",
+      "commit": "d3a507e920e7af18a5efb7f9f1d8044ed4750013"
+    },
+    {
+      "path": "third_party/protobuf",
+      "upstream": "https://github.com/protocolbuffers/protobuf.git",
+      "commit": "35cd01f9fe9afbeea38cc7b979a3b6bfcde82c03"
+    },
+    {
+      "path": "third_party/re2",
+      "upstream": "https://github.com/google/re2.git",
+      "commit": "0c5616df9c0aaa44c9440d87422012423d91c7d1"
+    },
+    {
+      "path": "third_party/zlib",
+      "upstream": "https://github.com/madler/zlib",
+      "commit": "f1f503da85d52e56aae11557b4d79a42bcaa2b86"
+    },
+    {
+      "path": "third_party/grpc-proto",
+      "upstream": "https://github.com/grpc/grpc-proto.git",
+      "commit": "dd549fc4ed04b60b0fdd3866b82ef0a7c87c6e4f"
+    },
+    {
+      "path": "third_party/cel-c",
+      "upstream": "https://github.com/cel-expr/cel-c.git",
+      "commit": "bbdb358f202b275731a0d7ee3162fd211886c945"
+    }
+  ]
+}

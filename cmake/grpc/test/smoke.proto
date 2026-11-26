@@ -1,0 +1,5 @@
+syntax = "proto3";
+package packetia.grpc_test;
+
+message EchoMessage { string text = 1; }
+service Echo { rpc Call(EchoMessage) returns (EchoMessage); }

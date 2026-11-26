@@ -136,6 +136,9 @@ Redis、MySQL/PostgreSQL 或 OceanBase 都属于后续存储方案评估，目�
 `BUILD_TESTING` 默认开启，需要 GoogleTest。录像集成测试另需 `ffmpeg` 命令行、Python 3 及相应编码器。
 项目默认使用系统 FFmpeg 开发包，也支持从 `third/ffmpeg` 编译后通过 `PACKETIA_FFMPEG_ROOT` 接入。
 源码构建、组件选择和录制 / 转码复测见[FFmpeg 源码构建说明](third/ffmpeg/README.md)。
+Agent 可选的 gRPC C++ 依赖支持随项目编译 `third/grpc`，或使用已安装的库；
+gRPC v1.85.0 及 C++ 构建所需依赖已随仓库提供；macOS/Linux 配置和 RPC 验证见
+[gRPC 构建说明](third/grpc/PACKETIA.md)。
 以下命令均从仓库根目录执行。
 
 ### Linux
@@ -175,6 +178,10 @@ cmake --build build/dev --parallel
 | `PACKETIA_WITH_SRTP` | `ON` | 查找并启用 libsrtp2 媒体后端 |
 | `PACKETIA_BUILD_RECORDING_TESTS` | `OFF` | 额外的 FFmpeg 录像集成测试 |
 | `PACKETIA_FFMPEG_ROOT` | 空 | 指定自编译 FFmpeg 安装目录；头文件、容器 / 编解码库与缩放库统一从该目录查找 |
+| `PACKETIA_WITH_GRPC` | `OFF` | 为 Agent 服务启用 gRPC C++ 编译依赖 |
+| `PACKETIA_GRPC_PROVIDER` | `source` | `source` 随项目编译，`package` 查找已安装的库 |
+| `PACKETIA_GRPC_SOURCE_DIR` | `third/grpc` | 指定 gRPC 源码目录；源码方式需要 CMake 3.22+ |
+| `PACKETIA_GRPC_ROOT` | 空 | `package` 方式使用的 gRPC 安装目录 |
 
 编译仓库内的 FFmpeg 并用于主程序：
 
@@ -364,6 +371,19 @@ HTTP 适配器复用该日志器，记录启动/停止、关键运行失败和�
 字段口径和与浏览器报告的关联方法见[媒体质量诊断日志](docs/media-quality-diagnostics.md)。
 
 ## 近期改动与验证
+
+### 2026-11-26：可选 gRPC C++ 构建
+
+- 新增 `PACKETIA_WITH_GRPC`，默认关闭；启用后可从 `third/grpc` 编译，或通过
+  `PACKETIA_GRPC_PROVIDER=package` 使用已安装的 gRPC 和 Protobuf。
+- `third/grpc` 保存 gRPC v1.85.0 和 7 个必要依赖的固定版本源码快照，保留上游许可证；
+  来源及提交号见 `third/grpc/PACKETIA_SOURCES.json`，普通 clone 即可获得源码模式的依赖。
+- Agent 服务链接统一的 `packetia_grpc` 目标。源码构建复用项目 OpenSSL，检查必要依赖文件，
+  关闭上游测试及其他语言插件，保留 Packetia 自身测试。
+- 本机 macOS ARM64 验证：源码方式的 `PacketiaControl` 构建、`GrpcSmokeTest`、`VoiceAgentUnitTest` 通过；
+  安装包方式的 `GrpcSmokeTest` 通过；关闭 gRPC 后的 Control 构建和 Agent 测试通过。
+  缺失源码、无效安装前缀和错误 provider 均按预期报错。
+- Linux 使用同一套原生构建配置，本轮未进行 Linux 实机编译；Agent RPC 业务及独立 Worker 仍待接入。
 
 ### 2026-11-26：弱网观测与 TURN 实验整理
 

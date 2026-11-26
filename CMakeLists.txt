@@ -7,6 +7,10 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS ON)
 
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
+endif()
+
 include(CTest)
 if(BUILD_TESTING)
   find_package(GTest REQUIRED)
@@ -14,6 +18,15 @@ endif()
 find_package(OpenSSL REQUIRED)
 set(THREADS_PREFER_PTHREAD_FLAG TRUE)
 find_package(Threads REQUIRED)
+
+option(PACKETIA_WITH_GRPC "Enable gRPC support for the Agent service" OFF)
+if(PACKETIA_WITH_GRPC)
+  include(cmake/grpc/PacketiaGrpc.cmake)
+  if(BUILD_TESTING)
+    add_subdirectory(cmake/grpc/test)
+  endif()
+endif()
+
 add_subdirectory(monitoring)
 add_subdirectory(utils/threading)
 add_subdirectory(config)
@@ -24,10 +37,6 @@ option(PACKETIA_WITH_LIBWEBSOCKETS "Build the libwebsockets signaling server" ON
 if(PACKETIA_WITH_LIBWEBSOCKETS)
   add_subdirectory(cmake/libwebsockets)
   add_subdirectory(network/websocket)
-endif()
-
-if(NOT CMAKE_BUILD_TYPE)
-  set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
 endif()
 
 add_compile_definitions(RTP_DEBUG=0)
